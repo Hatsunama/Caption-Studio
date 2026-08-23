@@ -24,6 +24,8 @@ declare class CaptionMediaModule extends NativeModule<{}> {
       timeMs: number;
       threshold: number;
       softness: number;
+      temporalStability: number;
+      edgeFeather: number;
       positionX: number;
       positionY: number;
       scale: number;
@@ -31,6 +33,25 @@ declare class CaptionMediaModule extends NativeModule<{}> {
     },
   ): Promise<VideoThumbnailResult>;
   resetPersonSegmentation(): Promise<void>;
+  exportPersonVideo(
+    inputUri: string,
+    backgroundUri: string,
+    outputPath: string,
+    options: {
+      durationMs: number;
+      sourceStartMs: number;
+      backgroundKind: 'image' | 'video';
+      threshold: number;
+      softness: number;
+      temporalStability: number;
+      edgeFeather: number;
+      positionX: number;
+      positionY: number;
+      scale: number;
+      rotation: number;
+    },
+  ): Promise<{ outputUri: string; mediaUri: string; durationMs: number; width: number; height: number; sizeBytes: number }>;
+  cancelPersonVideoExport(): Promise<void>;
 }
 
 export default requireNativeModule<CaptionMediaModule>('CaptionMedia');

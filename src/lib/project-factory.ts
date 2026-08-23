@@ -43,7 +43,7 @@ export function createCaptionProject(options: {
     },
     backgroundReplacement: {
       enabled: false,
-      mask: { threshold: 0.5, softness: 0.18 },
+      mask: { threshold: 0.5, softness: 0.18, temporalStability: 0.55, edgeFeather: 0.65 },
       personTransform: { position: { x: 0.5, y: 0.5 }, scale: 1, rotation: 0 },
       keyframes: [],
     },

@@ -14,6 +14,9 @@ export function BackgroundTools(props: {
     props.onChange({ ...props.value, personTransform: { ...props.value.personTransform, ...patch } });
   };
   const transform = props.value.personTransform;
+  const updateMask = (patch: Partial<BackgroundReplacement['mask']>) => {
+    props.onChange({ ...props.value, mask: { ...props.value.mask, ...patch } });
+  };
   return (
     <View style={{ gap: 9, padding: 12, borderRadius: 16, backgroundColor: '#151A20' }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -27,6 +30,13 @@ export function BackgroundTools(props: {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           <Chip label={props.value.source ? `Background: ${props.value.source.displayName}` : 'Choose background'} active={Boolean(props.value.source)} onPress={props.onChooseMedia} />
           <Chip label="Clear background" onPress={() => props.onChange({ ...props.value, source: undefined })} />
+        </ScrollView>
+        <Text style={{ color: '#B8C1CC', fontSize: 11, fontWeight: '800' }}>HUMAN EDGE QUALITY</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          <Chip label={`Edge hold ${Math.round(props.value.mask.temporalStability * 100)}%`} active onPress={() => updateMask({ temporalStability: props.value.mask.temporalStability >= 0.85 ? 0.35 : props.value.mask.temporalStability + 0.1 })} />
+          <Chip label={`Feather ${Math.round(props.value.mask.edgeFeather * 100)}%`} active onPress={() => updateMask({ edgeFeather: props.value.mask.edgeFeather >= 0.9 ? 0.3 : props.value.mask.edgeFeather + 0.1 })} />
+          <Chip label="Less subject" onPress={() => updateMask({ threshold: clamp(props.value.mask.threshold + 0.05, 0, 1) })} />
+          <Chip label="More subject" onPress={() => updateMask({ threshold: clamp(props.value.mask.threshold - 0.05, 0, 1) })} />
         </ScrollView>
         <Text style={{ color: '#B8C1CC', fontSize: 11, fontWeight: '800' }}>PERSON SIZE & POSITION</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>

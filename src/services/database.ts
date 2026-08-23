@@ -213,6 +213,8 @@ function hydrateBackgroundReplacement(value: CaptionProject['backgroundReplaceme
     mask: {
       threshold: Math.min(1, Math.max(0, value?.mask?.threshold ?? 0.5)),
       softness: Math.min(1, Math.max(0.001, value?.mask?.softness ?? 0.18)),
+      temporalStability: Math.min(0.92, Math.max(0, value?.mask?.temporalStability ?? 0.55)),
+      edgeFeather: Math.min(1, Math.max(0, value?.mask?.edgeFeather ?? 0.65)),
     },
     personTransform: {
       position: {

@@ -82,13 +82,14 @@ The first time `adb devices` runs, unlock the phone. Tap **Allow** on **Allow US
 - Nondestructive video split, reversible two-sided edge trimming with caption restoration, speed, volume, mute, and audio fades; cropped ranges and their captions hide inside explicit removable black gaps
 - A dedicated audio timeline: import audio from the phone or extract the audio track from a selected video, then trim, restore, move, duplicate, mute, fade, and adjust each audio clip independently
 - 16 data-driven transition treatments with adjustable timing, including dips, wipes, slides, zooms, shutter, spin, flash, and glitch
-- Fully local person-background removal preview using Android's bundled ML Kit segmenter; choose an image or looping video background, resize/move/rotate the person, or add simple timeline path points without needing a green screen
+- Fully local person-background removal preview and native MP4 render using Android's bundled ML Kit segmenter; choose an image or looping video background and resize, move, or rotate the person without needing a green screen
+- Edge-aware matte controls with asymmetric temporal stabilization, uncertain-edge feathering, and continuous-confidence alpha smoothing shared by preview and export
 - Continuous playback across same-source splits and different video files, with an explicit decoder handoff that prevents fast clips from bleeding into the following clip
 - An explicit Save draft / Discard / Keep editing decision whenever the user backs out of the editor
 - Confirmed project deletion from a trash control on every project card; linked source videos are never deleted
 - Local SQLite project snapshots
 
-Styled MP4/SRT/ASS export remains pre-release work. Video cuts and person-background removal are currently represented and previewed nondestructively in the project timeline; final rendered-video export, including the background-removal matte, is not yet available. Production APKs use the dedicated Caption Studio release identity described below. The source video is never rewritten by editing operations.
+The first native rendered-video path is available for a single normal-speed clip with an image or looping-video replacement background. It uses Media3 hardware decoding/encoding, burns the locally generated person matte and replacement background into an H.264/AAC MP4, and publishes the result to `Movies/Caption Studio`. Multi-clip composition, motion-path keyframes, styled captions/overlays, transitions, SRT, and ASS are still pre-release export work; the app refuses unsupported export shapes instead of producing a misleading file. Production APKs use the dedicated Caption Studio release identity described below. The source video is never rewritten by editing operations.
 
 ## Architecture
 

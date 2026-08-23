@@ -254,6 +254,8 @@ export type BackgroundReplacement = {
   mask: {
     threshold: number;
     softness: number;
+    temporalStability: number;
+    edgeFeather: number;
   };
   personTransform: {
     position: { x: number; y: number };

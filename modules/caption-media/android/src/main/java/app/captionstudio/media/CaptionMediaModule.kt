@@ -18,6 +18,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.segmentation.Segmentation
 import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
 import expo.modules.kotlin.exception.Exceptions
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
@@ -34,6 +35,8 @@ class CaptionMediaModule : Module() {
   private var streamSegmenter = createStreamSegmenter()
   private var streamInput: String? = null
   private var streamTimeMs = -1L
+  private var previousPreviewConfidence: FloatArray? = null
+  private val personVideoExporter by lazy { PersonVideoExporter(context) }
 
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
@@ -73,6 +76,8 @@ class CaptionMediaModule : Module() {
         options["timeMs"]?.toLong() ?: 0L,
         options["threshold"]?.toFloat() ?: 0.5f,
         options["softness"]?.toFloat() ?: 0.2f,
+        options["temporalStability"]?.toFloat() ?: 0.55f,
+        options["edgeFeather"]?.toFloat() ?: 0.65f,
         options["positionX"]?.toFloat() ?: 0.5f,
         options["positionY"]?.toFloat() ?: 0.5f,
         options["scale"]?.toFloat() ?: 1f,
@@ -83,6 +88,32 @@ class CaptionMediaModule : Module() {
     AsyncFunction("resetPersonSegmentation") {
       resetStreamSegmenter()
     }
+
+    AsyncFunction("exportPersonVideo") { inputUri: String, backgroundUri: String, outputPath: String, options: Map<String, Any>, promise: Promise ->
+      personVideoExporter.start(
+        inputUri,
+        backgroundUri,
+        outputPath,
+        PersonExportOptions(
+          durationMs = (options["durationMs"] as Number).toLong(),
+          sourceStartMs = (options["sourceStartMs"] as? Number)?.toLong() ?: 0L,
+          backgroundKind = options["backgroundKind"] as? String ?: "image",
+          threshold = (options["threshold"] as? Number)?.toFloat() ?: 0.5f,
+          softness = (options["softness"] as? Number)?.toFloat() ?: 0.2f,
+          temporalStability = (options["temporalStability"] as? Number)?.toFloat() ?: 0.55f,
+          edgeFeather = (options["edgeFeather"] as? Number)?.toFloat() ?: 0.65f,
+          positionX = (options["positionX"] as? Number)?.toFloat() ?: 0.5f,
+          positionY = (options["positionY"] as? Number)?.toFloat() ?: 0.5f,
+          scale = (options["scale"] as? Number)?.toFloat() ?: 1f,
+          rotation = (options["rotation"] as? Number)?.toFloat() ?: 0f,
+        ),
+        promise,
+      )
+    }
+
+    AsyncFunction("cancelPersonVideoExport") {
+      personVideoExporter.cancel()
+    }
   }
 
   private fun renderPersonPreviewFrame(
@@ -92,6 +123,8 @@ class CaptionMediaModule : Module() {
     timeMs: Long,
     threshold: Float,
     softness: Float,
+    temporalStability: Float,
+    edgeFeather: Float,
     positionX: Float,
     positionY: Float,
     scale: Float,
@@ -135,17 +168,39 @@ class CaptionMediaModule : Module() {
         streamTimeMs = timeMs
         Tasks.await(streamSegmenter.process(InputImage.fromBitmap(source, 0)))
       }
-      val mask = result.buffer
+      val mask = result.buffer.apply { rewind() }
       val maskWidth = result.width
       val maskHeight = result.height
       val alphaMask = Bitmap.createBitmap(maskWidth, maskHeight, Bitmap.Config.ALPHA_8)
       val alpha = ByteArray(maskWidth * maskHeight)
+      val rawConfidence = FloatArray(alpha.size) { mask.float.coerceIn(0f, 1f) }
+      val prior = previousPreviewConfidence
+      val stability = temporalStability.coerceIn(0f, 0.92f)
+      val confidence = if (prior != null && prior.size == rawConfidence.size) {
+        FloatArray(rawConfidence.size) { index ->
+          val weight = if (rawConfidence[index] >= prior[index]) stability * 0.55f else stability
+          rawConfidence[index] * (1f - weight) + prior[index] * weight
+        }
+      } else rawConfidence
+      previousPreviewConfidence = confidence.copyOf()
+      val feathered = confidence.copyOf()
+      val featherBlend = edgeFeather.coerceIn(0f, 1f)
+      if (featherBlend > 0f && maskWidth >= 3 && maskHeight >= 3) {
+        for (y in 1 until maskHeight - 1) for (x in 1 until maskWidth - 1) {
+          val index = y * maskWidth + x
+          if (confidence[index] in 0.04f..0.96f) {
+            var sum = 0f
+            for (dy in -1..1) for (dx in -1..1) sum += confidence[(y + dy) * maskWidth + x + dx]
+            feathered[index] = confidence[index] * (1f - featherBlend) + (sum / 9f) * featherBlend
+          }
+        }
+      }
       val edge = softness.coerceIn(0.001f, 1f)
       val cutoff = threshold.coerceIn(0f, 1f)
       for (index in alpha.indices) {
-        val confidence = mask.float
-        val normalized = ((confidence - (cutoff - edge / 2f)) / edge).coerceIn(0f, 1f)
-        alpha[index] = (normalized * 255f).roundToInt().toByte()
+        val normalized = ((feathered[index] - (cutoff - edge / 2f)) / edge).coerceIn(0f, 1f)
+        val smooth = normalized * normalized * (3f - 2f * normalized)
+        alpha[index] = (smooth * 255f).roundToInt().toByte()
       }
       alphaMask.copyPixelsFromBuffer(ByteBuffer.wrap(alpha))
       val scaledMask = Bitmap.createScaledBitmap(alphaMask, source.width, source.height, true)
@@ -206,6 +261,7 @@ class CaptionMediaModule : Module() {
     streamSegmenter = createStreamSegmenter()
     streamInput = null
     streamTimeMs = -1L
+    previousPreviewConfidence = null
   }
 
   private fun readBackground(input: String, timeMs: Long): Bitmap {

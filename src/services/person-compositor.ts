@@ -26,6 +26,8 @@ export async function renderPersonPreview(options: {
       timeMs: options.sourceTimeMs,
       threshold: options.background.mask.threshold,
       softness: options.background.mask.softness,
+      temporalStability: options.background.mask.temporalStability,
+      edgeFeather: options.background.mask.edgeFeather,
       positionX: transform.position.x,
       positionY: transform.position.y,
       scale: transform.scale,

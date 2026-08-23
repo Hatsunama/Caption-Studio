@@ -76,6 +76,7 @@ import {
 } from '@/lib/video-timeline';
 import { pickAndStoreImage, pickBackgroundMedia, type MediaImportProgress } from '@/services/media-import';
 import { renderPersonPreview } from '@/services/person-compositor';
+import { exportBackgroundReplacement } from '@/services/project-export';
 import { validateProjectSources } from '@/services/project-media';
 import {
   appendVideosToProject,
@@ -166,6 +167,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [personPreviewUri, setPersonPreviewUri] = useState<string>();
   const [personPreviewBusy, setPersonPreviewBusy] = useState(false);
   const [activeTool, setActiveTool] = useState<EditorTool>('captions');
+  const [exporting, setExporting] = useState(false);
   const [animationScope, setAnimationScope] = useState<StyleScope>('all');
   const undoStackRef = useRef<CaptionProject[]>([]);
   const redoStackRef = useRef<CaptionProject[]>([]);
@@ -803,6 +805,21 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     void persistProject(next);
   };
 
+  const exportVideo = async () => {
+    if (exporting) return;
+    transport.pause();
+    setError(undefined);
+    setExporting(true);
+    try {
+      const result = await exportBackgroundReplacement(projectRef.current);
+      Alert.alert('Export complete', `Saved to your phone’s media library.\n${result.width} × ${result.height}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The video could not be exported.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const deleteCaption = (captionId: string) => {
     const current = projectRef.current;
     const index = current.captions.findIndex((caption) => caption.id === captionId);
@@ -1277,6 +1294,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           <ToolbarItem label="Animate" active={activeTool === 'animate'} onPress={() => { setSelectedClipId(undefined); setActiveTool('animate'); }} />
           <ToolbarItem label="Video" active={activeTool === 'video'} onPress={() => setActiveTool('video')} />
           <ToolbarItem label="Audio" active={activeTool === 'audio'} onPress={() => { setSelectedClipId(undefined); setActiveTool('audio'); }} />
+          <ToolbarItem label="Export" disabled={exporting} onPress={() => { void exportVideo(); }} />
         </View>
       </View>
 
@@ -1321,6 +1339,17 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       />
       <ProgressOverlay progress={progress} />
       <MediaLoadingOverlay progress={mediaProgress} />
+      {exporting ? (
+        <Modal visible transparent animationType="fade">
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: 'rgba(0,0,0,0.78)' }}>
+            <View style={{ width: '100%', maxWidth: 380, gap: 14, padding: 22, borderRadius: 20, backgroundColor: palette.surfaceRaised }}>
+              <ActivityIndicator color={palette.accent} size="large" />
+              <Text style={{ color: palette.text, textAlign: 'center', fontSize: 18, fontWeight: '900' }}>Rendering on this phone</Text>
+              <Text style={{ color: palette.muted, textAlign: 'center', lineHeight: 20 }}>Removing the background frame by frame, compositing it, and encoding the final MP4. Keep Caption Studio open.</Text>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
     </View>
   );
 }

@@ -111,6 +111,19 @@ test('video acquisition links the selected source without a hidden picker copy',
   assert.match(mediaStorage, /persistReadPermission\(asset\.uri\)/);
 });
 
+test('background export is native, local, version-aligned, and rejects unsupported timeline shapes', () => {
+  const nativeGradle = readFileSync(new URL('../modules/caption-media/android/build.gradle', import.meta.url), 'utf8');
+  const exporter = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/PersonVideoExporter.kt', import.meta.url), 'utf8');
+  const exportService = readFileSync(new URL('../src/services/project-export.ts', import.meta.url), 'utf8');
+  assert.match(nativeGradle, /media3-transformer:1\.9\.0/);
+  assert.match(nativeGradle, /media3-effect:1\.9\.0/);
+  assert.match(exporter, /OverlayEffect/);
+  assert.match(exporter, /MediaStore\.Video\.Media\.EXTERNAL_CONTENT_URI/);
+  assert.match(exporter, /SelfieSegmenterOptions\.STREAM_MODE/);
+  assert.match(exportService, /project\.clips\.length !== 1/);
+  assert.match(exportService, /clip\.playbackRate !== 1/);
+});
+
 test('provider URIs stay in persistence and never cross the navigation URL', () => {
   const projectsScreen = readFileSync(new URL('../src/app/index.tsx', import.meta.url), 'utf8');
   const editorScreen = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
