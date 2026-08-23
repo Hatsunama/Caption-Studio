@@ -202,6 +202,27 @@ function hydrateProject(project: CaptionProject): CaptionProject {
       scale: 1,
       rotation: 0,
     },
+    backgroundReplacement: hydrateBackgroundReplacement(project.backgroundReplacement),
+  };
+}
+
+function hydrateBackgroundReplacement(value: CaptionProject['backgroundReplacement'] | undefined): CaptionProject['backgroundReplacement'] {
+  return {
+    enabled: value?.enabled ?? false,
+    source: value?.source,
+    mask: {
+      threshold: Math.min(1, Math.max(0, value?.mask?.threshold ?? 0.5)),
+      softness: Math.min(1, Math.max(0.001, value?.mask?.softness ?? 0.18)),
+    },
+    personTransform: {
+      position: {
+        x: value?.personTransform?.position?.x ?? 0.5,
+        y: value?.personTransform?.position?.y ?? 0.5,
+      },
+      scale: value?.personTransform?.scale ?? 1,
+      rotation: value?.personTransform?.rotation ?? 0,
+    },
+    keyframes: Array.isArray(value?.keyframes) ? value.keyframes : [],
   };
 }
 

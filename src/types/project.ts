@@ -19,6 +19,18 @@ export type CaptionAnimationId =
   | 'elastic'
   | 'flip'
   | 'stomp'
+  | 'fade-in'
+  | 'drop-in'
+  | 'swing'
+  | 'heartbeat'
+  | 'flicker'
+  | 'tilt-in'
+  | 'squash'
+  | 'stretch'
+  | 'word-spin'
+  | 'word-slide'
+  | 'word-flash'
+  | 'word-jitter'
   | 'emoji-burst'
   | 'emoji-orbit'
   | 'emoji-rain';
@@ -200,11 +212,55 @@ export type VideoClip = {
   transitionAfter: VideoTransition;
 };
 
-export type VideoTransitionType = 'none' | 'dip-black' | 'dip-white' | 'flash';
+export type VideoTransitionType =
+  | 'none'
+  | 'dip-black'
+  | 'dip-white'
+  | 'flash'
+  | 'fade-dark'
+  | 'wipe-left'
+  | 'wipe-right'
+  | 'wipe-up'
+  | 'wipe-down'
+  | 'slide-left'
+  | 'slide-right'
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'spin'
+  | 'shutter'
+  | 'glitch';
 
 export type VideoTransition = {
   type: VideoTransitionType;
   durationMs: number;
+};
+
+export type PersonTransformKeyframe = {
+  id: Identifier;
+  timeMs: number;
+  position: { x: number; y: number };
+  scale: number;
+  rotation: number;
+};
+
+export type BackgroundReplacement = {
+  enabled: boolean;
+  source?: {
+    kind: 'image' | 'video';
+    uri: string;
+    storageMode: 'linked' | 'copied';
+    displayName: string;
+  };
+  mask: {
+    threshold: number;
+    softness: number;
+  };
+  personTransform: {
+    position: { x: number; y: number };
+    scale: number;
+    rotation: number;
+  };
+  keyframes: PersonTransformKeyframe[];
 };
 
 export type ProjectAudioSource = {
@@ -271,6 +327,7 @@ export type CaptionProject = {
     scale: number;
     rotation: number;
   };
+  backgroundReplacement: BackgroundReplacement;
   export: {
     resolution: '720p' | '1080p' | 'original';
     format: 'mp4';

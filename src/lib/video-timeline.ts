@@ -95,8 +95,10 @@ export function videoTransitionOverlay(entries: ClipTimelineEntry[], timelineMs:
       ? Math.sin(normalized * Math.PI / 2) * 0.92
       : normalized;
     return {
+      type: transition.type,
       color: transition.type === 'dip-white' || transition.type === 'flash' ? '#FFFFFF' : '#000000',
       opacity: clamp(opacity, 0, 1),
+      phase: timelineMs < boundaryMs ? normalized : 2 - normalized,
     };
   }
   return undefined;

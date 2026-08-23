@@ -41,6 +41,12 @@ export function createCaptionProject(options: {
       scale: 1,
       rotation: 0,
     },
+    backgroundReplacement: {
+      enabled: false,
+      mask: { threshold: 0.5, softness: 0.18 },
+      personTransform: { position: { x: 0.5, y: 0.5 }, scale: 1, rotation: 0 },
+      keyframes: [],
+    },
     export: {
       resolution: '1080p',
       format: 'mp4',

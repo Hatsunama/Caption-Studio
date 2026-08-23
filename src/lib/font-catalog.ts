@@ -43,6 +43,18 @@ export const FONT_ASSETS: Record<string, FontAsset> = {
   'Caption-Sancreek': require('../../assets/fonts/sancreek.ttf'),
   'Caption-TiltPrism': require('../../assets/fonts/tiltprism.ttf'),
   'Caption-UnifrakturCook': require('../../assets/fonts/unifrakturcook.ttf'),
+  'Caption-BlackOpsOne': require('../../assets/fonts/blackopsone.ttf'),
+  'Caption-BowlbyOneSC': require('../../assets/fonts/bowlbyonesc.ttf'),
+  'Caption-CabinSketch': require('../../assets/fonts/cabinsketch.ttf'),
+  'Caption-Dokdo': require('../../assets/fonts/dokdo.ttf'),
+  'Caption-FontdinerSwanky': require('../../assets/fonts/fontdinerswanky.ttf'),
+  'Caption-GravitasOne': require('../../assets/fonts/gravitasone.ttf'),
+  'Caption-Knewave': require('../../assets/fonts/knewave.ttf'),
+  'Caption-Modak': require('../../assets/fonts/modak.ttf'),
+  'Caption-PermanentMarker': require('../../assets/fonts/permanentmarker.ttf'),
+  'Caption-RubikMicrobe': require('../../assets/fonts/rubikmicrobe.ttf'),
+  'Caption-RubikVinyl': require('../../assets/fonts/rubikvinyl.ttf'),
+  'Caption-Sixtyfour': require('../../assets/fonts/sixtyfour.ttf'),
 };
 
 function choice(
@@ -95,6 +107,18 @@ export const BUILT_IN_FONT_CHOICES: FontChoice[] = [
   choice('sancreek', 'Caption-Sancreek', 'Sancreek', 'Circus slab'),
   choice('tilt-prism', 'Caption-TiltPrism', 'Tilt Prism', 'Variable 3D', 'duotone-neon', { primary: '#FFE74A', secondary: '#8B5CFF' }),
   choice('unifraktur', 'Caption-UnifrakturCook', 'Unifraktur Cook', 'Blackletter drama'),
+  choice('black-ops-one', 'Caption-BlackOpsOne', 'Black Ops One', 'Military stencil'),
+  choice('bowlby-one-sc', 'Caption-BowlbyOneSC', 'Bowlby One SC', 'Chunky retro sign', 'duotone-shadow', { primary: '#FFEF5A', secondary: '#FF477E' }),
+  choice('cabin-sketch', 'Caption-CabinSketch', 'Cabin Sketch', 'Hand-sketched poster'),
+  choice('dokdo', 'Caption-Dokdo', 'Dokdo', 'Loose ink brush'),
+  choice('fontdiner-swanky', 'Caption-FontdinerSwanky', 'Fontdiner Swanky', 'Playful diner'),
+  choice('gravitas-one', 'Caption-GravitasOne', 'Gravitas One', 'Heavy editorial'),
+  choice('knewave', 'Caption-Knewave', 'Knewave', 'Painted surf'),
+  choice('modak', 'Caption-Modak', 'Modak', 'Inflated cartoon', 'duotone-offset', { primary: '#74FFCD', secondary: '#8A4DFF' }),
+  choice('permanent-marker', 'Caption-PermanentMarker', 'Permanent Marker', 'Bold marker note'),
+  choice('rubik-microbe', 'Caption-RubikMicrobe', 'Rubik Microbe', 'Organic science'),
+  choice('rubik-vinyl', 'Caption-RubikVinyl', 'Rubik Vinyl', 'Grooved record', 'duotone-neon', { primary: '#50F6FF', secondary: '#FF40C7' }),
+  choice('sixtyfour', 'Caption-Sixtyfour', 'Sixtyfour', 'Variable sci-fi grid', 'duotone-offset', { primary: '#DFFF35', secondary: '#28A7FF' }),
 ];
 
 export function fontChoicePatch(choice: FontChoice): CaptionStylePatch {

@@ -16,6 +16,21 @@ declare class CaptionMediaModule extends NativeModule<{}> {
     outputUri: string,
     timeMs: number,
   ): Promise<VideoThumbnailResult>;
+  renderPersonPreviewFrame(
+    inputUri: string,
+    backgroundUri: string | null,
+    outputUri: string,
+    options: {
+      timeMs: number;
+      threshold: number;
+      softness: number;
+      positionX: number;
+      positionY: number;
+      scale: number;
+      rotation: number;
+    },
+  ): Promise<VideoThumbnailResult>;
+  resetPersonSegmentation(): Promise<void>;
 }
 
 export default requireNativeModule<CaptionMediaModule>('CaptionMedia');

@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { spokenAnimationClock } from '../src/lib/animation-timing.ts';
-import { reactionEmojis } from '../src/lib/animation-presets.ts';
+import { ANIMATION_PRESETS, reactionEmojis } from '../src/lib/animation-presets.ts';
+import { VIDEO_TRANSITION_PRESETS } from '../src/lib/transition-presets.ts';
+import { resolvePersonTransform, upsertPersonKeyframe } from '../src/lib/person-motion.ts';
 import { groupTimelineWordsByClip, groupWordsIntoCaptions } from '../src/lib/caption-grouping.ts';
 import { alignWordsToSpeech } from '../src/lib/speech-alignment.ts';
 import { coalesceWhisperWords } from '../src/lib/whisper-words.ts';
@@ -48,8 +50,37 @@ test('video transitions are boundary-owned and deterministic', () => {
   const project = { clips: [clip('a', 'one'), clip('b', 'two')], updatedAt: 'before' };
   const transitioned = setVideoTransition(project, 'a', 'dip-white', 500);
   const overlay = videoTransitionOverlay(buildClipTimeline(transitioned.clips), 4_000);
-  assert.deepEqual(overlay, { color: '#FFFFFF', opacity: 1 });
+  assert.deepEqual(overlay, { type: 'dip-white', color: '#FFFFFF', opacity: 1, phase: 1 });
   assert.equal(setVideoTransition(transitioned, 'b', 'flash', 500), transitioned);
+});
+
+test('creative catalogs stay broad, unique, and data-driven', () => {
+  const unique = (values) => new Set(values).size === values.length;
+  assert.ok(ANIMATION_PRESETS.length >= 30);
+  assert.ok(VIDEO_TRANSITION_PRESETS.length >= 15);
+  const fontCatalog = readFileSync(new URL('../src/lib/font-catalog.ts', import.meta.url), 'utf8');
+  const fontFamilies = [...fontCatalog.matchAll(/choice\('[^']+',\s*'([^']+)'/g)].map((match) => match[1]);
+  assert.ok(fontFamilies.length >= 40);
+  assert.ok(unique(ANIMATION_PRESETS.map((preset) => preset.id)));
+  assert.ok(unique(VIDEO_TRANSITION_PRESETS.map((preset) => preset.id)));
+  assert.ok(unique(fontFamilies));
+  assert.equal((fontCatalog.match(/require\('\.\.\/\.\.\/assets\/fonts\//g) ?? []).length, fontFamilies.length);
+});
+
+test('person motion paths interpolate deterministically and rotate by the shortest arc', () => {
+  const base = {
+    enabled: true,
+    mask: { threshold: 0.5, softness: 0.18 },
+    personTransform: { position: { x: 0.5, y: 0.5 }, scale: 1, rotation: 0 },
+    keyframes: [],
+  };
+  const first = { id: 'a', timeMs: 0, position: { x: 0.2, y: 0.3 }, scale: 0.8, rotation: 170 };
+  const second = { id: 'b', timeMs: 1_000, position: { x: 0.8, y: 0.7 }, scale: 1.4, rotation: -170 };
+  const keyframes = upsertPersonKeyframe(upsertPersonKeyframe([], second), first);
+  const middle = resolvePersonTransform({ ...base, keyframes }, 500);
+  assert.deepEqual(middle.position, { x: 0.5, y: 0.5 });
+  assert.equal(middle.scale, 1.1);
+  assert.equal(middle.rotation, -180);
 });
 
 test('audio and transition ownership stays out of the editor screen', () => {

@@ -3,6 +3,8 @@ package app.captionstudio.media
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Matrix
 import android.media.AudioFormat
 import android.media.MediaCodec
@@ -11,6 +13,10 @@ import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.segmentation.Segmentation
+import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -24,6 +30,11 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 class CaptionMediaModule : Module() {
+  private val segmentationLock = Any()
+  private var streamSegmenter = createStreamSegmenter()
+  private var streamInput: String? = null
+  private var streamTimeMs = -1L
+
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
@@ -53,6 +64,181 @@ class CaptionMediaModule : Module() {
     AsyncFunction("generateVideoThumbnail") { inputUri: String, outputUri: String, timeMs: Long ->
       generateVideoThumbnail(inputUri, outputUri, timeMs)
     }
+
+    AsyncFunction("renderPersonPreviewFrame") { inputUri: String, backgroundUri: String?, outputUri: String, options: Map<String, Double> ->
+      renderPersonPreviewFrame(
+        inputUri,
+        backgroundUri,
+        outputUri,
+        options["timeMs"]?.toLong() ?: 0L,
+        options["threshold"]?.toFloat() ?: 0.5f,
+        options["softness"]?.toFloat() ?: 0.2f,
+        options["positionX"]?.toFloat() ?: 0.5f,
+        options["positionY"]?.toFloat() ?: 0.5f,
+        options["scale"]?.toFloat() ?: 1f,
+        options["rotation"]?.toFloat() ?: 0f,
+      )
+    }
+
+    AsyncFunction("resetPersonSegmentation") {
+      resetStreamSegmenter()
+    }
+  }
+
+  private fun renderPersonPreviewFrame(
+    input: String,
+    background: String?,
+    output: String,
+    timeMs: Long,
+    threshold: Float,
+    softness: Float,
+    positionX: Float,
+    positionY: Float,
+    scale: Float,
+    rotation: Float,
+  ): Map<String, Any> {
+    val retriever = MediaMetadataRetriever()
+    var foreground: Bitmap? = null
+    var backgroundBitmap: Bitmap? = null
+    var rendered: Bitmap? = null
+    return try {
+      setRetrieverDataSource(retriever, input)
+      val sourceWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+      val sourceHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+      val previewSize = previewFrameSize(sourceWidth, sourceHeight)
+      val decoded = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 && previewSize.first > 0) {
+        retriever.getScaledFrameAtTime(
+          max(0L, timeMs) * 1_000L,
+          MediaMetadataRetriever.OPTION_CLOSEST,
+          previewSize.first,
+          previewSize.second,
+        )
+      } else {
+        retriever.getFrameAtTime(max(0L, timeMs) * 1_000L, MediaMetadataRetriever.OPTION_CLOSEST)
+      } ?: throw IllegalArgumentException("The requested video frame could not be decoded")
+      val sourceRotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toFloatOrNull() ?: 0f
+      foreground = if (sourceRotation % 360f == 0f) decoded else Bitmap.createBitmap(
+        decoded,
+        0,
+        0,
+        decoded.width,
+        decoded.height,
+        Matrix().apply { postRotate(sourceRotation) },
+        true,
+      ).also { decoded.recycle() }
+      val source = requireNotNull(foreground)
+      val result = synchronized(segmentationLock) {
+        if (streamInput != input || timeMs < streamTimeMs || timeMs - streamTimeMs > STREAM_RESET_GAP_MS) {
+          resetStreamSegmenterLocked()
+        }
+        streamInput = input
+        streamTimeMs = timeMs
+        Tasks.await(streamSegmenter.process(InputImage.fromBitmap(source, 0)))
+      }
+      val mask = result.buffer
+      val maskWidth = result.width
+      val maskHeight = result.height
+      val alphaMask = Bitmap.createBitmap(maskWidth, maskHeight, Bitmap.Config.ALPHA_8)
+      val alpha = ByteArray(maskWidth * maskHeight)
+      val edge = softness.coerceIn(0.001f, 1f)
+      val cutoff = threshold.coerceIn(0f, 1f)
+      for (index in alpha.indices) {
+        val confidence = mask.float
+        val normalized = ((confidence - (cutoff - edge / 2f)) / edge).coerceIn(0f, 1f)
+        alpha[index] = (normalized * 255f).roundToInt().toByte()
+      }
+      alphaMask.copyPixelsFromBuffer(ByteBuffer.wrap(alpha))
+      val scaledMask = Bitmap.createScaledBitmap(alphaMask, source.width, source.height, true)
+      val isolated = source.copy(Bitmap.Config.ARGB_8888, true)
+      val pixels = IntArray(source.width * source.height)
+      val maskPixels = ByteArray(source.width * source.height)
+      isolated.getPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
+      scaledMask.copyPixelsToBuffer(ByteBuffer.wrap(maskPixels))
+      for (index in pixels.indices) {
+        val alphaChannel = (maskPixels[index].toInt() and 0xff) shl 24
+        pixels[index] = alphaChannel or (pixels[index] and 0x00ffffff)
+      }
+      isolated.setPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
+      val composed = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+      rendered = composed
+      val canvas = Canvas(composed)
+      if (background != null) {
+        backgroundBitmap = readBackground(background, timeMs)
+        canvas.drawBitmap(requireNotNull(backgroundBitmap), null, android.graphics.Rect(0, 0, source.width, source.height), null)
+      } else {
+        canvas.drawColor(Color.TRANSPARENT)
+      }
+      val personMatrix = Matrix().apply {
+        postTranslate(-source.width / 2f, -source.height / 2f)
+        postScale(scale.coerceIn(0.05f, 8f), scale.coerceIn(0.05f, 8f))
+        postRotate(rotation)
+        postTranslate(positionX.coerceIn(-1f, 2f) * source.width, positionY.coerceIn(-1f, 2f) * source.height)
+      }
+      canvas.drawBitmap(isolated, personMatrix, null)
+      val target = outputFile(output)
+      target.parentFile?.mkdirs()
+      FileOutputStream(target).use { stream ->
+        check(composed.compress(Bitmap.CompressFormat.PNG, 100, stream)) { "The segmented preview could not be saved" }
+      }
+      isolated.recycle()
+      scaledMask.recycle()
+      alphaMask.recycle()
+      mapOf("outputUri" to Uri.fromFile(target).toString(), "width" to source.width, "height" to source.height, "timeMs" to max(0L, timeMs))
+    } finally {
+      retriever.release()
+      foreground?.recycle()
+      backgroundBitmap?.recycle()
+      rendered?.recycle()
+    }
+  }
+
+  private fun createStreamSegmenter() = Segmentation.getClient(
+    SelfieSegmenterOptions.Builder()
+      .setDetectorMode(SelfieSegmenterOptions.STREAM_MODE)
+      .enableRawSizeMask()
+      .build(),
+  )
+
+  private fun resetStreamSegmenter() = synchronized(segmentationLock) { resetStreamSegmenterLocked() }
+
+  private fun resetStreamSegmenterLocked() {
+    streamSegmenter.close()
+    streamSegmenter = createStreamSegmenter()
+    streamInput = null
+    streamTimeMs = -1L
+  }
+
+  private fun readBackground(input: String, timeMs: Long): Bitmap {
+    val retriever = MediaMetadataRetriever()
+    return try {
+      setRetrieverDataSource(retriever, input)
+      val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+      val loopedTimeMs = if (durationMs > 0) max(0L, timeMs) % durationMs else max(0L, timeMs)
+      retriever.getFrameAtTime(loopedTimeMs * 1_000L, MediaMetadataRetriever.OPTION_CLOSEST)
+        ?: readBitmap(input)
+    } catch (_: Throwable) {
+      readBitmap(input)
+    } finally {
+      retriever.release()
+    }
+  }
+
+  private fun previewFrameSize(width: Int, height: Int): Pair<Int, Int> {
+    if (width <= 0 || height <= 0) return 0 to 0
+    val scale = minOf(1.0, PERSON_PREVIEW_LONG_EDGE / max(width, height).toDouble())
+    return max(1, (width * scale).roundToInt()) to max(1, (height * scale).roundToInt())
+  }
+
+  private fun readBitmap(input: String): Bitmap {
+    val uri = Uri.parse(input)
+    val stream = if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") {
+      File(uri.path ?: input).inputStream()
+    } else {
+      context.contentResolver.openInputStream(uri)
+        ?: throw IllegalArgumentException("The selected background could not be opened")
+    }
+    return stream.use { android.graphics.BitmapFactory.decodeStream(it) }
+      ?: throw IllegalArgumentException("The selected background is not a supported image")
   }
 
   private fun persistReadPermission(input: String): Boolean {
@@ -409,6 +595,8 @@ class CaptionMediaModule : Module() {
   companion object {
     private const val TARGET_SAMPLE_RATE = 16_000
     private const val TIMEOUT_US = 10_000L
+    private const val STREAM_RESET_GAP_MS = 1_500L
+    private const val PERSON_PREVIEW_LONG_EDGE = 720.0
   }
 }
 

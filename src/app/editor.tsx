@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { NavigationAction } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
@@ -16,6 +17,7 @@ import {
 } from 'react-native';
 
 import { AnimationBrowser } from '@/components/editor/animation-browser';
+import { BackgroundTools } from '@/components/editor/background-tools';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { FontBrowser } from '@/components/editor/font-browser';
 import { ImageLayerOverlay } from '@/components/editor/image-layer-overlay';
@@ -25,10 +27,12 @@ import { ScopeSheet } from '@/components/editor/scope-sheet';
 import { ScriptEditor } from '@/components/editor/script-editor';
 import { VideoTools } from '@/components/editor/video-tools';
 import { VideoTransformOverlay } from '@/components/editor/video-transform-overlay';
+import { VideoTransitionOverlay } from '@/components/editor/video-transition-overlay';
 import { useTimelineVideoController } from '@/hooks/use-timeline-video-controller';
 import { useTimelineAudioController } from '@/hooks/use-timeline-audio-controller';
 import { deleteAudioClip, duplicateAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '@/lib/audio-timeline';
 import { findAnimationPreset } from '@/lib/animation-presets';
+import { deletePersonKeyframe, resolvePersonTransform, upsertPersonKeyframe } from '@/lib/person-motion';
 import {
   mergeCaptionScriptBlock,
   splitCaptionScriptBlockAtTime,
@@ -36,6 +40,7 @@ import {
 } from '@/lib/caption-script';
 import { fontChoicePatch, type FontChoice } from '@/lib/font-catalog';
 import { TRANSCRIPTION_MODELS, type TranscriptionModel } from '@/lib/model-catalog';
+import { VIDEO_TRANSITION_PRESETS } from '@/lib/transition-presets';
 import {
   addImageLayer as addImageLayerToProject,
   createTextLayer,
@@ -44,6 +49,7 @@ import {
   deleteVisualLayer,
   moveVisualLayer,
   setCanvasPreset as applyCanvasPreset,
+  setBackgroundReplacement as applyBackgroundReplacement,
   replaceVisibleCaptionScript,
   setCaptionTiming,
   setImageLayer,
@@ -63,11 +69,13 @@ import {
   buildClipTimeline,
   setClipPlaybackRate,
   timelineEntryAt,
+  sourceTimeAt,
   totalClipDuration,
   visibleTimelineCaptions,
   videoTransitionOverlay,
 } from '@/lib/video-timeline';
-import { pickAndStoreImage, type MediaImportProgress } from '@/services/media-import';
+import { pickAndStoreImage, pickBackgroundMedia, type MediaImportProgress } from '@/services/media-import';
+import { renderPersonPreview } from '@/services/person-compositor';
 import { validateProjectSources } from '@/services/project-media';
 import {
   appendVideosToProject,
@@ -155,6 +163,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [editingText, setEditingText] = useState<string>();
   const [editingLayerId, setEditingLayerId] = useState<string>();
   const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
+  const [personPreviewUri, setPersonPreviewUri] = useState<string>();
+  const [personPreviewBusy, setPersonPreviewBusy] = useState(false);
   const [activeTool, setActiveTool] = useState<EditorTool>('captions');
   const [animationScope, setAnimationScope] = useState<StyleScope>('all');
   const undoStackRef = useRef<CaptionProject[]>([]);
@@ -258,6 +268,34 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     previewHeight - 8,
   );
   const transitionOverlay = videoTransitionOverlay(clipTimeline, currentMs);
+  const currentClipEntry = timelineEntryAt(clipTimeline, currentMs);
+  const personPreviewTimeMs = Math.floor(currentMs / 250) * 250;
+
+  useEffect(() => {
+    if (!project.backgroundReplacement.enabled || !currentClipEntry) {
+      return;
+    }
+    const source = project.sources.find((candidate) => candidate.id === currentClipEntry.clip.sourceId);
+    if (!source) return;
+    let active = true;
+    const timer = setTimeout(() => {
+      setPersonPreviewBusy(true);
+      void renderPersonPreview({
+        projectId: project.id,
+        videoUri: source.uri,
+        sourceTimeMs: sourceTimeAt(currentClipEntry, personPreviewTimeMs),
+        timelineTimeMs: personPreviewTimeMs,
+        background: project.backgroundReplacement,
+      }).then((uri) => {
+        if (active) setPersonPreviewUri(uri);
+      }).catch((caught) => {
+        if (active) setError(caught instanceof Error ? caught.message : 'Background preview failed.');
+      }).finally(() => {
+        if (active) setPersonPreviewBusy(false);
+      });
+    }, isPlaying ? 160 : 80);
+    return () => { active = false; clearTimeout(timer); };
+  }, [currentClipEntry, isPlaying, personPreviewTimeMs, project.backgroundReplacement, project.id, project.sources]);
 
   const pushUndo = (snapshot = projectRef.current) => {
     const stack = undoStackRef.current;
@@ -792,6 +830,41 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     await persistProject(next);
   };
 
+  const updateBackgroundReplacement = (backgroundReplacement: CaptionProject['backgroundReplacement']) => {
+    const before = projectRef.current;
+    pushUndo(before);
+    const next = applyBackgroundReplacement(before, backgroundReplacement);
+    projectRef.current = next;
+    setProject(next);
+    void persistProject(next);
+  };
+
+  const chooseBackgroundMedia = async () => {
+    try {
+      const source = await pickBackgroundMedia(projectRef.current.id);
+      if (!source) return;
+      updateBackgroundReplacement({ ...projectRef.current.backgroundReplacement, enabled: true, source });
+    } catch (caught) {
+      Alert.alert('Could not use this background', caught instanceof Error ? caught.message : 'The selected media could not be opened.');
+    }
+  };
+
+  const addPersonPathPoint = () => {
+    const background = projectRef.current.backgroundReplacement;
+    const transform = resolvePersonTransform(background, currentMs);
+    updateBackgroundReplacement({
+      ...background,
+      keyframes: upsertPersonKeyframe(background.keyframes, { id: uniqueId('person-point'), timeMs: currentMs, ...transform }),
+    });
+  };
+
+  const removeNearestPersonPathPoint = () => {
+    const background = projectRef.current.backgroundReplacement;
+    const nearest = background.keyframes.reduce<typeof background.keyframes[number] | undefined>((best, frame) => !best || Math.abs(frame.timeMs - currentMs) < Math.abs(best.timeMs - currentMs) ? frame : best, undefined);
+    if (!nearest) return;
+    updateBackgroundReplacement({ ...background, keyframes: deletePersonKeyframe(background.keyframes, nearest.id) });
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: palette.background }}>
       <View style={{ height: previewHeight, alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
@@ -815,13 +888,22 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               ],
             }}>
             <VideoView
-              style={{ flex: 1 }}
+              style={{ flex: 1, opacity: project.backgroundReplacement.enabled ? 0 : 1 }}
               player={player}
               nativeControls={false}
               contentFit={project.videoTransform.fit === 'fill' ? 'cover' : 'contain'}
               surfaceType="textureView"
               useExoShutter
             />
+            {project.backgroundReplacement.enabled && currentClipEntry && personPreviewUri ? (
+              <Image pointerEvents="none" source={personPreviewUri} cachePolicy="none" contentFit="contain" style={{ position: 'absolute', inset: 0 }} />
+            ) : null}
+            {project.backgroundReplacement.enabled && personPreviewBusy && !personPreviewUri ? (
+              <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }}>
+                <ActivityIndicator color={palette.accent} />
+                <Text style={{ marginTop: 7, color: '#D7DEE7', fontSize: 10, fontWeight: '800' }}>REMOVING BACKGROUND…</Text>
+              </View>
+            ) : null}
             {transport.isGap ? (
               <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
                 <Text style={{ color: '#7F8996', fontSize: 12, fontWeight: '800' }}>EMPTY TIMELINE GAP</Text>
@@ -833,7 +915,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               </View>
             ) : null}
           </View>
-          {transitionOverlay ? <View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: transitionOverlay.color, opacity: transitionOverlay.opacity }} /> : null}
+          <VideoTransitionOverlay overlay={transitionOverlay} />
           {activeTool === 'video' ? (
             <VideoTransformOverlay
               transform={project.videoTransform}
@@ -1048,10 +1130,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   ))}
                 </ScrollView>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                  <Action label="Cut" color={selectedClip.transitionAfter.type === 'none' ? '#DFFF35' : undefined} onPress={() => applyTransition('none')} />
-                  <Action label="Dip black" color={selectedClip.transitionAfter.type === 'dip-black' ? '#DFFF35' : undefined} onPress={() => applyTransition('dip-black')} />
-                  <Action label="Dip white" color={selectedClip.transitionAfter.type === 'dip-white' ? '#DFFF35' : undefined} onPress={() => applyTransition('dip-white')} />
-                  <Action label="Flash" color={selectedClip.transitionAfter.type === 'flash' ? '#DFFF35' : undefined} onPress={() => applyTransition('flash', 350)} />
+                  {VIDEO_TRANSITION_PRESETS.map((preset) => <Action key={preset.id} label={preset.name} color={selectedClip.transitionAfter.type === preset.id ? '#DFFF35' : undefined} onPress={() => applyTransition(preset.id, preset.durationMs)} />)}
                   {[250, 500, 1000].map((duration) => <Action key={duration} label={`${duration} ms transition`} color={selectedClip.transitionAfter.durationMs === duration ? '#64E8FF' : undefined} onPress={() => applyTransition(selectedClip.transitionAfter.type === 'none' ? 'dip-black' : selectedClip.transitionAfter.type, duration)} />)}
                 </ScrollView>
               </View>
@@ -1072,6 +1151,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 queueMicrotask(finishHistoryInteraction);
               }}
               onTransformEnd={finishHistoryInteraction}
+            />
+            <BackgroundTools
+              value={project.backgroundReplacement}
+              currentTimeMs={currentMs}
+              onChooseMedia={() => { void chooseBackgroundMedia(); }}
+              onChange={updateBackgroundReplacement}
+              onAddKeyframe={addPersonPathPoint}
+              onRemoveNearestKeyframe={removeNearestPersonPathPoint}
             />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
               <Action label="Add videos" onPress={() => { void addVideosToTimeline(); }} />

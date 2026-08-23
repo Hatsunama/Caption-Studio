@@ -386,6 +386,22 @@ function captionAnimationStyle(
 ): ViewStyle {
   const eased = 1 - Math.pow(1 - entry, 3);
   switch (id) {
+    case 'fade-in':
+      return { opacity: eased };
+    case 'drop-in':
+      return { opacity: entry, transform: [{ translateY: (1 - eased) * -(45 + intensity * 100) }] };
+    case 'swing':
+      return { opacity: entry, transform: [{ rotate: `${Math.sin((1 - entry) * Math.PI * 3) * (10 + intensity * 30)}deg` }] };
+    case 'heartbeat':
+      return { transform: [{ scale: 1 + Math.pow(Math.max(0, Math.sin(loop * Math.PI * 4)), 4) * (0.08 + intensity * 0.16) }] };
+    case 'flicker':
+      return { opacity: entry < 0.9 ? (Math.sin(entry * Math.PI * 9) > -0.15 ? 1 : 0.18) : 1 };
+    case 'tilt-in':
+      return { opacity: entry, transform: [{ translateX: (1 - eased) * (40 + intensity * 80) }, { rotate: `${(1 - eased) * (20 + intensity * 35)}deg` }] };
+    case 'squash':
+      return { opacity: entry, transform: [{ scaleX: 0.55 + eased * 0.45 }, { scaleY: 1.55 - eased * 0.55 }] };
+    case 'stretch':
+      return { opacity: entry, transform: [{ scaleX: 1.45 - eased * 0.45 }, { scaleY: 0.35 + eased * 0.65 }] };
     case 'slide-up':
       return { opacity: entry, transform: [{ translateY: (1 - eased) * (35 + intensity * 80) }] };
     case 'slide-left':
@@ -424,6 +440,10 @@ function wordAnimationStyle(
   if (id === 'pop') return { transform: [{ scale: 0.65 + pulse * (0.5 + intensity) }, { rotate: `${(1 - pulse) * -5}deg` }] };
   if (id === 'bounce') return { transform: [{ translateY: -Math.abs(Math.sin(loop * Math.PI * 2)) * (8 + intensity * 32) }] };
   if (id === 'punch') return { transform: [{ scale: 1 + pulse * (0.3 + intensity * 0.7) }, { rotate: `${Math.sin(loop * Math.PI * 2) * 3}deg` }] };
+  if (id === 'word-spin') return { transform: [{ rotate: `${(1 - pulse) * -180}deg` }, { scale: 0.7 + pulse * 0.55 }] };
+  if (id === 'word-slide') return { opacity: Math.min(1, pulse * 2), transform: [{ translateX: (1 - pulse) * -(24 + intensity * 70) }] };
+  if (id === 'word-flash') return { opacity: 0.45 + pulse * 0.55, transform: [{ scale: 1 + pulse * (0.12 + intensity * 0.2) }] };
+  if (id === 'word-jitter') return { transform: [{ translateX: Math.sin(loop * Math.PI * 18) * (2 + intensity * 8) }, { translateY: Math.cos(loop * Math.PI * 14) * (1 + intensity * 5) }] };
   return {};
 }
 

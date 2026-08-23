@@ -72,8 +72,8 @@ The first time `adb devices` runs, unlock the phone. Tap **Allow** on **Allow US
 - TikTok-style caption manipulation: drag to move, pinch to resize text, twist to rotate, resize from four large edge bars, or use the corner resize/rotate control
 - Project default → caption override → word override style inheritance
 - An explicit **This subtitle / All subtitles** styling decision
-- One searchable font browser with 32 deliberately varied OFL fonts, favorites, recents, two-color treatments, and unlimited `.ttf`/`.otf` imports
-- 21 data-driven caption animations whose motion restarts from each spoken word's timestamps, including three visibly different emoji-reaction modes
+- One searchable font browser with 44 deliberately varied, license-documented fonts, favorites, recents, two-color treatments, and unlimited `.ttf`/`.otf` imports
+- 33 data-driven caption animations whose motion restarts from each spoken word's timestamps, including three visibly different emoji-reaction modes
 - Word-aware emoji reactions (for example camera, money, music, emotion, warning, food, and movement) instead of a fixed random emoji set
 - Added text and phone images with their own timing, layer order, movement, resizing, rotation, and deletion controls
 - Source, 9:16, 16:9, 1:1, and 4:5 canvases
@@ -81,13 +81,14 @@ The first time `adb devices` runs, unlock the phone. Tap **Allow** on **Allow US
 - Direct video drag, pinch-to-resize, two-finger rotation, size buttons, 90-degree rotation, and a precise free-angle scrubber
 - Nondestructive video split, reversible two-sided edge trimming with caption restoration, speed, volume, mute, and audio fades; cropped ranges and their captions hide inside explicit removable black gaps
 - A dedicated audio timeline: import audio from the phone or extract the audio track from a selected video, then trim, restore, move, duplicate, mute, fade, and adjust each audio clip independently
-- Cut, dip-to-black, dip-to-white, and flash transitions with adjustable timing between clips
+- 16 data-driven transition treatments with adjustable timing, including dips, wipes, slides, zooms, shutter, spin, flash, and glitch
+- Fully local person-background removal preview using Android's bundled ML Kit segmenter; choose an image or looping video background, resize/move/rotate the person, or add simple timeline path points without needing a green screen
 - Continuous playback across same-source splits and different video files, with an explicit decoder handoff that prevents fast clips from bleeding into the following clip
 - An explicit Save draft / Discard / Keep editing decision whenever the user backs out of the editor
 - Confirmed project deletion from a trash control on every project card; linked source videos are never deleted
 - Local SQLite project snapshots
 
-Styled MP4/SRT/ASS export remains pre-release work. Video cuts are currently represented and previewed nondestructively in the project timeline; final rendered-video export is not yet available. Production APKs use the dedicated Caption Studio release identity described below. The source video is never rewritten by editing operations.
+Styled MP4/SRT/ASS export remains pre-release work. Video cuts and person-background removal are currently represented and previewed nondestructively in the project timeline; final rendered-video export, including the background-removal matte, is not yet available. Production APKs use the dedicated Caption Studio release identity described below. The source video is never rewritten by editing operations.
 
 ## Architecture
 
@@ -95,7 +96,7 @@ Styled MP4/SRT/ASS export remains pre-release work. Video cuts are currently rep
 - Custom Android native build; this project does not run in Expo Go
 - `expo-video` for hardware-backed preview
 - `whisper.rn` for local inference
-- Local Expo Kotlin module for Android media metadata, audio decoding, and lossless audio-track extraction
+- Local Expo Kotlin module for Android media metadata, audio decoding, lossless audio-track extraction, temporally smoothed person segmentation, and frame compositing
 - Expo SQLite for nondestructive project state
 
 Caption appearance resolves in this order:

@@ -10,7 +10,7 @@ import {
   storeProjectImage,
 } from '@/services/project-media';
 import { requireFreeSpace } from '@/services/storage-policy';
-import type { ProjectAudioSource, ProjectVideoSource } from '@/types/project';
+import type { BackgroundReplacement, ProjectAudioSource, ProjectVideoSource } from '@/types/project';
 
 const MIN_IMPORT_HEADROOM_BYTES = 32 * 1024 * 1024;
 
@@ -105,6 +105,30 @@ export async function pickAndStoreImage(projectId: string, imageId: string) {
     fileName: asset.name,
   });
   return { uri, name: asset.name };
+}
+
+export async function pickBackgroundMedia(projectId: string): Promise<BackgroundReplacement['source'] | null> {
+  const result = await DocumentPicker.getDocumentAsync({
+    type: ['image/*', 'video/*'],
+    copyToCacheDirectory: false,
+    multiple: false,
+  });
+  if (result.canceled) return null;
+  const asset = result.assets[0];
+  const isVideo = asset.mimeType?.startsWith('video/') ?? false;
+  if (isVideo) {
+    await CaptionMedia.persistReadPermission(asset.uri);
+    const info = await CaptionMedia.getMediaInfo(asset.uri);
+    if (info.durationMs <= 0) throw new Error('The selected background video could not be decoded.');
+    return { kind: 'video', uri: asset.uri, storageMode: 'linked', displayName: asset.name };
+  }
+  const stored = await pickAndStoreSpecificImage(projectId, `background-${Date.now()}`, asset.uri, asset.name);
+  return { kind: 'image', uri: stored.uri, storageMode: 'copied', displayName: stored.name };
+}
+
+async function pickAndStoreSpecificImage(projectId: string, imageId: string, sourceUri: string, name: string) {
+  const uri = await storeProjectImage({ projectId, imageId, sourceUri, fileName: name });
+  return { uri, name };
 }
 
 export async function pickAndStoreAudio(projectId: string, audioId: string): Promise<ProjectAudioSource | null> {

@@ -238,6 +238,10 @@ export async function transcribeVideoLocally(options: {
       tokenTimestamps: true,
       maxLen: 1,
       wordThold: 0.01,
+      temperature: 0,
+      temperatureInc: 0.2,
+      beamSize: modelId === 'fast' ? -1 : 5,
+      bestOf: modelId === 'fast' ? 3 : 5,
       onProgress: (value: number) =>
         onProgress?.({
           stage: 'transcribing',
