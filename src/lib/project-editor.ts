@@ -1,5 +1,6 @@
 import { mergeStyle } from '@/lib/style-resolver';
 import { applyCaptionTextChanges, type CaptionTextChanges } from '@/lib/caption-text-edits';
+import { constrainAudioClips } from '@/lib/audio-timeline';
 import {
   anchorCaptionsToClips,
   buildClipTimeline,
@@ -260,6 +261,36 @@ export function updateVideoClip(
   });
 }
 
+export function setVideoTransition(
+  project: CaptionProject,
+  clipId: string,
+  type: VideoClip['transitionAfter']['type'],
+  requestedDurationMs = 500,
+) {
+  const entries = buildClipTimeline(project.clips);
+  const index = entries.findIndex((entry) => entry.clip.id === clipId);
+  const entry = entries[index];
+  const next = entries[index + 1];
+  if (!entry || !next) return project;
+  const durationMs = type === 'none'
+    ? 0
+    : clamp(requestedDurationMs, 100, Math.min(2_000, entry.endMs - entry.startMs, next.endMs - next.startMs));
+  return updateProject(project, {
+    clips: project.clips.map((clip) => clip.id === clipId
+      ? { ...clip, transitionAfter: { type, durationMs } }
+      : clip),
+  });
+}
+
+export function moveVideoClip(project: CaptionProject, clipId: string, direction: -1 | 1) {
+  const index = project.clips.findIndex((clip) => clip.id === clipId);
+  const destination = index + direction;
+  if (index < 0 || destination < 0 || destination >= project.clips.length) return project;
+  const clips = [...project.clips];
+  [clips[index], clips[destination]] = [clips[destination], clips[index]];
+  return rebuildAfterLayoutEdit(project, clips, project.captions, { atMs: 0, removeMs: 0, insertMs: 0 });
+}
+
 export function deleteVideoClip(project: CaptionProject, clipId: string) {
   if (project.clips.length <= 1) return null;
   const entry = buildClipTimeline(project.clips).find((candidate) => candidate.clip.id === clipId);
@@ -291,6 +322,7 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
     availableSourceEndMs: sourceSplitMs,
     sourceEndMs: sourceSplitMs,
     gapAfterMs: 0,
+    transitionAfter: { type: 'none', durationMs: 0 },
   };
   const right: VideoClip = {
     ...entry.clip,
@@ -485,6 +517,7 @@ function rebuildAfterLayoutEdit(
     transcription: { ...project.transcription, words },
     captions: [...remapped, ...unanchored].sort((left, right) => left.startMs - right.startMs),
     layers,
+    audioClips: constrainAudioClips(project.audioClips, totalClipDuration(clips)),
   });
 }
 

@@ -13,7 +13,8 @@ import { PREPARING_AUDIO_CUES } from '../src/lib/transcription-progress.ts';
 import { humanVideoName, isMachineVideoName } from '../src/lib/project-presentation.ts';
 import { applyCaptionTextChanges } from '../src/lib/caption-text-edits.ts';
 import { mergeCaptionScriptBlock, splitCaptionScriptBlock, splitCaptionScriptBlockAtTime } from '../src/lib/caption-script.ts';
-import { deleteVideoClip, previewVideoClipTrim, setCaptionTiming, setVideoClipGap, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
+import { deleteVideoClip, previewVideoClipTrim, setCaptionTiming, setVideoClipGap, setVideoTransition, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
+import { addAudioSourceToProject, audioClipEnd, audioClipVolume, deleteAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '../src/lib/audio-timeline.ts';
 import {
   buildClipTimeline,
   clipPlaybackVolume,
@@ -22,7 +23,44 @@ import {
   timelineSegmentAt,
   totalClipDuration,
   visibleTimelineCaptions,
+  videoTransitionOverlay,
 } from '../src/lib/video-timeline.ts';
+
+test('inserted audio is persistent, trimmable, movable, and independently mutable', () => {
+  const project = { audioSources: [], audioClips: [], updatedAt: 'before' };
+  const source = { id: 'audio-source', uri: 'file:///audio.m4a', storageMode: 'copied', displayName: 'Interview audio', durationMs: 8_000, origin: 'audio-file' };
+  const inserted = addAudioSourceToProject(project, source, 'audio-clip', 2_000, 12_000);
+  assert.ok(inserted);
+  assert.equal(audioClipEnd(inserted.clip), 10_000);
+  const trimmed = trimAudioClip(inserted.project, 'audio-clip', 'start', 3_000, 12_000);
+  assert.equal(trimmed.audioClips[0].sourceStartMs, 1_000);
+  const restored = trimAudioClip(trimmed, 'audio-clip', 'start', 2_000, 12_000);
+  assert.equal(restored.audioClips[0].sourceStartMs, 0);
+  const moved = moveAudioClip(restored, 'audio-clip', 4_000, 12_000);
+  assert.equal(moved.audioClips[0].startMs, 4_000);
+  const muted = updateAudioClip(moved, 'audio-clip', { muted: true, volume: 0.4, fadeInMs: 500 });
+  assert.equal(audioClipVolume(muted.audioClips[0], 4_250), 0);
+  assert.equal(deleteAudioClip(muted, 'audio-clip').audioClips.length, 0);
+});
+
+test('video transitions are boundary-owned and deterministic', () => {
+  const clip = (id, sourceId) => ({ id, sourceId, sourceStartMs: 0, sourceEndMs: 4_000, availableSourceStartMs: 0, availableSourceEndMs: 4_000, playbackRate: 1, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0, gapBeforeMs: 0, gapAfterMs: 0, transitionAfter: { type: 'none', durationMs: 0 } });
+  const project = { clips: [clip('a', 'one'), clip('b', 'two')], updatedAt: 'before' };
+  const transitioned = setVideoTransition(project, 'a', 'dip-white', 500);
+  const overlay = videoTransitionOverlay(buildClipTimeline(transitioned.clips), 4_000);
+  assert.deepEqual(overlay, { color: '#FFFFFF', opacity: 1 });
+  assert.equal(setVideoTransition(transitioned, 'b', 'flash', 500), transitioned);
+});
+
+test('audio and transition ownership stays out of the editor screen', () => {
+  const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
+  const audioDomain = readFileSync(new URL('../src/lib/audio-timeline.ts', import.meta.url), 'utf8');
+  const nativeMedia = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/CaptionMediaModule.kt', import.meta.url), 'utf8');
+  assert.match(editor, /appendAudioToProject/);
+  assert.match(audioDomain, /export function trimAudioClip/);
+  assert.match(nativeMedia, /MediaMuxer/);
+  assert.doesNotMatch(editor, /MediaExtractor|DocumentPicker/);
+});
 
 test('Caption Studio has an isolated Android identity', () => {
   const appConfig = JSON.parse(readFileSync(new URL('../app.json', import.meta.url), 'utf8'));

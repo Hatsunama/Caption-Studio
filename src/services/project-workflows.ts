@@ -1,8 +1,15 @@
 import { createCaptionProject, createVideoClip } from '@/lib/project-factory';
+import { addAudioSourceToProject } from '@/lib/audio-timeline';
+import { totalClipDuration } from '@/lib/video-timeline';
 import type { TranscriptionModel } from '@/lib/model-catalog';
 import { humanVideoName } from '@/lib/project-presentation';
 import { deleteProjectRecord, getProject, listProjects, saveProject } from '@/services/database';
-import { pickLinkedVideos, type MediaImportProgress } from '@/services/media-import';
+import {
+  pickAndStoreAudio,
+  pickLinkedVideos,
+  pickVideoAndExtractAudio,
+  type MediaImportProgress,
+} from '@/services/media-import';
 import { deleteProjectFiles, deleteProjectOwnedFiles, ensureProjectThumbnail } from '@/services/project-media';
 import { generateProjectCaptions } from '@/services/project-transcription';
 import type { TranscriptionProgress } from '@/services/transcription';
@@ -54,6 +61,32 @@ export async function appendVideosToProject(
   return next;
 }
 
+export async function appendAudioToProject(
+  project: CaptionProject,
+  currentMs: number,
+  origin: 'audio-file' | 'video-audio',
+) {
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const sourceId = `audio-source-${nonce}`;
+  const source = origin === 'audio-file'
+    ? await pickAndStoreAudio(project.id, sourceId)
+    : await pickVideoAndExtractAudio(project.id, sourceId);
+  if (!source) return null;
+  const result = addAudioSourceToProject(
+    project,
+    source,
+    `audio-clip-${nonce}`,
+    currentMs,
+    totalClipDuration(project.clips),
+  );
+  if (!result) {
+    await deleteProjectOwnedFiles(project.id, [source.uri]);
+    throw new Error('Move the playhead earlier so the audio has room on the video timeline.');
+  }
+  await saveProject(result.project);
+  return result;
+}
+
 export async function generateAndSaveProjectCaptions(
   project: CaptionProject,
   modelId: TranscriptionModel['id'],
@@ -74,15 +107,21 @@ export async function saveEditorDraft(project: CaptionProject) {
   const sourceResults = Object.fromEntries(
     Object.entries(project.transcription.sourceResults).filter(([sourceId]) => referencedSourceIds.has(sourceId)),
   );
+  const referencedAudioSourceIds = new Set(project.audioClips.map((clip) => clip.sourceId));
+  const audioSources = project.audioSources.filter((source) => referencedAudioSourceIds.has(source.id));
+  const removedAudioUris = project.audioSources
+    .filter((source) => !referencedAudioSourceIds.has(source.id))
+    .map((source) => source.uri);
   const saved: CaptionProject = {
     ...project,
     updatedAt: new Date().toISOString(),
     lifecycle: { status: 'saved' },
     sources,
+    audioSources,
     transcription: { ...project.transcription, sourceResults },
   };
   await saveProject(saved);
-  await deleteProjectOwnedFiles(project.id, removedThumbnailUris);
+  await deleteProjectOwnedFiles(project.id, [...removedThumbnailUris, ...removedAudioUris]);
   return saved;
 }
 
@@ -109,6 +148,7 @@ export async function deleteProjectCompletely(projectId: string) {
 function projectOwnedUris(project: CaptionProject) {
   return [
     ...project.sources.map((source) => source.thumbnailUri),
+    ...project.audioSources.map((source) => source.uri),
     ...project.layers.map((layer) => layer.kind === 'image' ? layer.uri : undefined),
   ].filter((uri): uri is string => Boolean(uri));
 }

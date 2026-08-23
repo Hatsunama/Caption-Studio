@@ -80,7 +80,9 @@ The first time `adb devices` runs, unlock the phone. Tap **Allow** on **Allow US
 - Fit and Fill framing for making a wide clip fill a TikTok canvas
 - Direct video drag, pinch-to-resize, two-finger rotation, size buttons, 90-degree rotation, and a precise free-angle scrubber
 - Nondestructive video split, reversible two-sided edge trimming with caption restoration, speed, volume, mute, and audio fades; cropped ranges and their captions hide inside explicit removable black gaps
-- Continuous playback across same-source splits and different video files, with a single native preview surface that prevents stale first-frame compositing
+- A dedicated audio timeline: import audio from the phone or extract the audio track from a selected video, then trim, restore, move, duplicate, mute, fade, and adjust each audio clip independently
+- Cut, dip-to-black, dip-to-white, and flash transitions with adjustable timing between clips
+- Continuous playback across same-source splits and different video files, with an explicit decoder handoff that prevents fast clips from bleeding into the following clip
 - An explicit Save draft / Discard / Keep editing decision whenever the user backs out of the editor
 - Confirmed project deletion from a trash control on every project card; linked source videos are never deleted
 - Local SQLite project snapshots
@@ -93,7 +95,7 @@ Styled MP4/SRT/ASS export remains pre-release work. Video cuts are currently rep
 - Custom Android native build; this project does not run in Expo Go
 - `expo-video` for hardware-backed preview
 - `whisper.rn` for local inference
-- Local Expo Kotlin module for Android media metadata and audio decoding
+- Local Expo Kotlin module for Android media metadata, audio decoding, and lossless audio-track extraction
 - Expo SQLite for nondestructive project state
 
 Caption appearance resolves in this order:

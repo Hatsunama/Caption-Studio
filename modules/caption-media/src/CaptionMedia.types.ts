@@ -22,3 +22,9 @@ export type VideoThumbnailResult = {
   height: number;
   timeMs: number;
 };
+
+export type AudioTrackExtractionResult = {
+  outputUri: string;
+  durationMs: number;
+  mimeType: string;
+};

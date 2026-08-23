@@ -27,6 +27,8 @@ export function createCaptionProject(options: {
     projectStyle: DEFAULT_CAPTION_STYLE,
     layers: [{ id: 'captions', kind: 'captions', name: 'Captions', visible: true }],
     clips: options.sources.map((source, index) => createVideoClip(source, index)),
+    audioSources: [],
+    audioClips: [],
     canvas: {
       preset: 'source',
       aspectWidth: displaySize.width,
@@ -62,6 +64,7 @@ export function createVideoClip(source: ProjectVideoSource, index = 0) {
     muted: false,
     fadeInMs: 0,
     fadeOutMs: 0,
+    transitionAfter: { type: 'none' as const, durationMs: 0 },
   };
 }
 

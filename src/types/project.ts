@@ -197,6 +197,36 @@ export type VideoClip = {
   muted: boolean;
   fadeInMs: number;
   fadeOutMs: number;
+  transitionAfter: VideoTransition;
+};
+
+export type VideoTransitionType = 'none' | 'dip-black' | 'dip-white' | 'flash';
+
+export type VideoTransition = {
+  type: VideoTransitionType;
+  durationMs: number;
+};
+
+export type ProjectAudioSource = {
+  id: Identifier;
+  uri: string;
+  storageMode: 'copied';
+  displayName: string;
+  durationMs: number;
+  mimeType?: string;
+  origin: 'audio-file' | 'video-audio';
+};
+
+export type AudioClip = {
+  id: Identifier;
+  sourceId: Identifier;
+  startMs: number;
+  sourceStartMs: number;
+  sourceEndMs: number;
+  volume: number;
+  muted: boolean;
+  fadeInMs: number;
+  fadeOutMs: number;
 };
 
 export type SourceTranscription = {
@@ -227,6 +257,8 @@ export type CaptionProject = {
   projectStyle: CaptionStyle;
   layers: VisualLayer[];
   clips: VideoClip[];
+  audioSources: ProjectAudioSource[];
+  audioClips: AudioClip[];
   canvas: {
     preset: 'source' | '9:16' | '16:9' | '1:1' | '4:5';
     aspectWidth: number;

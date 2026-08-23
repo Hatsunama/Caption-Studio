@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { NavigationAction } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
@@ -25,6 +26,8 @@ import { ScriptEditor } from '@/components/editor/script-editor';
 import { VideoTools } from '@/components/editor/video-tools';
 import { VideoTransformOverlay } from '@/components/editor/video-transform-overlay';
 import { useTimelineVideoController } from '@/hooks/use-timeline-video-controller';
+import { useTimelineAudioController } from '@/hooks/use-timeline-audio-controller';
+import { deleteAudioClip, duplicateAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '@/lib/audio-timeline';
 import { findAnimationPreset } from '@/lib/animation-presets';
 import {
   mergeCaptionScriptBlock,
@@ -49,6 +52,8 @@ import {
   setTextLayerText,
   setVideoClipGap,
   setVideoTransform,
+  setVideoTransition,
+  moveVideoClip,
   splitVideoClip,
   trimVideoClip,
   updateVideoClip,
@@ -60,11 +65,13 @@ import {
   timelineEntryAt,
   totalClipDuration,
   visibleTimelineCaptions,
+  videoTransitionOverlay,
 } from '@/lib/video-timeline';
 import { pickAndStoreImage, type MediaImportProgress } from '@/services/media-import';
 import { validateProjectSources } from '@/services/project-media';
 import {
   appendVideosToProject,
+  appendAudioToProject,
   checkpointEditorProject,
   discardEditorSession,
   generateAndSaveProjectCaptions,
@@ -78,6 +85,7 @@ import {
   type CaptionStylePatch,
   type ImageVisualLayer,
   type VideoClip,
+  type AudioClip,
 } from '@/types/project';
 
 const palette = {
@@ -95,7 +103,7 @@ type PendingStyleChange = {
   patch: CaptionStylePatch;
 };
 
-type EditorTool = 'captions' | 'fonts' | 'animate' | 'video';
+type EditorTool = 'captions' | 'fonts' | 'animate' | 'video' | 'audio';
 
 export default function EditorScreen() {
   const { projectId } = useLocalSearchParams<{ projectId: string }>();
@@ -127,6 +135,7 @@ export default function EditorScreen() {
 
 function EditorWorkspace({ initialProject }: { initialProject: CaptionProject }) {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
   const [project, setProject] = useState(initialProject);
   const projectRef = useRef(project);
@@ -137,6 +146,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [selectedCaptionId, setSelectedCaptionId] = useState<string>();
   const [selectedLayerId, setSelectedLayerId] = useState('captions');
   const [selectedClipId, setSelectedClipId] = useState<string>();
+  const [selectedAudioClipId, setSelectedAudioClipId] = useState<string>();
   const [progress, setProgress] = useState<TranscriptionProgress>();
   const [mediaProgress, setMediaProgress] = useState<MediaImportProgress>();
   const [error, setError] = useState<string>();
@@ -165,6 +175,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const transport = useTimelineVideoController(project, setError);
   const { player, currentMs, isPlaying } = transport;
+  useTimelineAudioController(project, currentMs, isPlaying);
   const pauseTransport = transport.pause;
 
   useEffect(() => navigation.addListener('beforeRemove', (event) => {
@@ -230,6 +241,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   );
   const selectedCaption = timelineCaptions.find((caption) => caption.id === selectedCaptionId);
   const selectedClip = project.clips.find((clip) => clip.id === selectedClipId);
+  const selectedAudioClip = project.audioClips.find((clip) => clip.id === selectedAudioClipId);
   const selectedLayer = project.layers.find((layer) => layer.id === selectedLayerId);
   const selectedTextLayer = selectedLayer?.kind === 'text' ? selectedLayer : undefined;
   const selectedImageLayer = selectedLayer?.kind === 'image' ? selectedLayer : undefined;
@@ -245,6 +257,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     width - 24,
     previewHeight - 8,
   );
+  const transitionOverlay = videoTransitionOverlay(clipTimeline, currentMs);
 
   const pushUndo = (snapshot = projectRef.current) => {
     const stack = undoStackRef.current;
@@ -672,6 +685,86 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     queueMicrotask(() => transport.seek(result.seekMs));
   };
 
+  const addAudio = async (origin: 'audio-file' | 'video-audio') => {
+    transport.pause();
+    setError(undefined);
+    try {
+      const before = projectRef.current;
+      const result = await appendAudioToProject(before, currentMs, origin);
+      if (!result) return;
+      pushUndo(before);
+      projectRef.current = result.project;
+      setProject(result.project);
+      setSelectedAudioClipId(result.clip.id);
+      setSelectedClipId(undefined);
+      setSelectedCaptionId(undefined);
+      setActiveTool('audio');
+    } catch (caught) {
+      Alert.alert('Could not add audio', caught instanceof Error ? caught.message : 'The selected media could not be added.');
+    }
+  };
+
+  const commitAudioProject = (next: CaptionProject) => {
+    projectRef.current = next;
+    setProject(next);
+    void persistProject(next);
+  };
+
+  const updateSelectedAudio = (patch: Partial<Pick<AudioClip, 'volume' | 'muted' | 'fadeInMs' | 'fadeOutMs'>>) => {
+    if (!selectedAudioClipId) return;
+    pushUndo();
+    commitAudioProject(updateAudioClip(projectRef.current, selectedAudioClipId, patch));
+  };
+
+  const changeAudioTiming = (clipId: string, edge: 'start' | 'end', startMs: number, endMs: number) => {
+    const next = edge === 'start'
+      ? trimAudioClip(projectRef.current, clipId, 'start', startMs, timelineDurationMs)
+      : trimAudioClip(projectRef.current, clipId, 'end', endMs, timelineDurationMs);
+    projectRef.current = next;
+    setProject(next);
+  };
+
+  const shiftSelectedAudio = (deltaMs: number) => {
+    if (!selectedAudioClip) return;
+    pushUndo();
+    commitAudioProject(moveAudioClip(projectRef.current, selectedAudioClip.id, selectedAudioClip.startMs + deltaMs, timelineDurationMs));
+  };
+
+  const removeSelectedAudio = () => {
+    if (!selectedAudioClipId) return;
+    pushUndo();
+    commitAudioProject(deleteAudioClip(projectRef.current, selectedAudioClipId));
+    setSelectedAudioClipId(undefined);
+  };
+
+  const copySelectedAudio = () => {
+    if (!selectedAudioClipId) return;
+    const result = duplicateAudioClip(projectRef.current, selectedAudioClipId, uniqueId('audio-clip'), timelineDurationMs);
+    if (!result) return;
+    pushUndo();
+    commitAudioProject(result.project);
+    setSelectedAudioClipId(result.clip.id);
+  };
+
+  const applyTransition = (type: VideoClip['transitionAfter']['type'], durationMs = 500) => {
+    if (!selectedClipId) return;
+    pushUndo();
+    const next = setVideoTransition(projectRef.current, selectedClipId, type, durationMs);
+    projectRef.current = next;
+    setProject(next);
+    void persistProject(next);
+  };
+
+  const reorderSelectedVideo = (direction: -1 | 1) => {
+    if (!selectedClipId) return;
+    pushUndo();
+    const next = moveVideoClip(projectRef.current, selectedClipId, direction);
+    projectRef.current = next;
+    transport.synchronizeProject(next);
+    setProject(next);
+    void persistProject(next);
+  };
+
   const deleteCaption = (captionId: string) => {
     const current = projectRef.current;
     const index = current.captions.findIndex((caption) => caption.id === captionId);
@@ -740,6 +833,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               </View>
             ) : null}
           </View>
+          {transitionOverlay ? <View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: transitionOverlay.color, opacity: transitionOverlay.opacity }} /> : null}
           {activeTool === 'video' ? (
             <VideoTransformOverlay
               transform={project.videoTransform}
@@ -875,6 +969,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           selectedLayerId={selectedLayerId}
           selectedCaptionId={selectedCaptionId}
           selectedClipId={selectedClipId}
+          audioSources={project.audioSources}
+          audioClips={project.audioClips}
+          selectedAudioClipId={selectedAudioClipId}
           currentMs={currentMs}
           onSeek={seekTimeline}
           onScrubStart={transport.pause}
@@ -882,6 +979,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             transport.pause();
             setSelectedLayerId(layerId);
             setSelectedClipId(undefined);
+            setSelectedAudioClipId(undefined);
             setActiveTool('captions');
             if (layerId !== 'captions') setSelectedCaptionId(undefined);
           }}
@@ -890,6 +988,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedLayerId('captions');
             setSelectedCaptionId(caption.id);
             setSelectedClipId(undefined);
+            setSelectedAudioClipId(undefined);
             setActiveTool('captions');
             seekTimeline(caption.startMs);
           }}
@@ -897,6 +996,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             transport.pause();
             setSelectedClipId(clipId);
             setSelectedCaptionId(undefined);
+            setSelectedAudioClipId(undefined);
             setActiveTool('video');
             seekTimeline(startMs);
           }}
@@ -909,6 +1009,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onMoveLayer={moveLayer}
           onDeleteLayer={deleteLayer}
           onAddVideos={() => { void addVideosToTimeline(); }}
+          onSelectAudioClip={(clipId, startMs) => {
+            transport.pause();
+            setSelectedAudioClipId(clipId);
+            setSelectedClipId(undefined);
+            setSelectedCaptionId(undefined);
+            setActiveTool('audio');
+            seekTimeline(startMs);
+          }}
+          onAudioTimingChange={changeAudioTiming}
         />
 
         {activeTool === 'video' ? (
@@ -930,11 +1039,20 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   <Action label="Volume +" disabled={selectedClip.volume >= 1} onPress={() => updateSelectedClip({ volume: clamp(selectedClip.volume + 0.1, 0, 1) })} />
                   <Action label={selectedClip.fadeInMs ? 'Remove fade in' : 'Fade in'} onPress={() => updateSelectedClip({ fadeInMs: selectedClip.fadeInMs ? 0 : 500 })} />
                   <Action label={selectedClip.fadeOutMs ? 'Remove fade out' : 'Fade out'} onPress={() => updateSelectedClip({ fadeOutMs: selectedClip.fadeOutMs ? 0 : 500 })} />
+                  <Action label="Move clip left" onPress={() => reorderSelectedVideo(-1)} />
+                  <Action label="Move clip right" onPress={() => reorderSelectedVideo(1)} />
                 </ScrollView>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                   {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map((rate) => (
                     <Action key={rate} label={`${rate}× speed`} color={selectedClip.playbackRate === rate ? '#DFFF35' : undefined} onPress={() => updateSelectedClipRate(rate)} />
                   ))}
+                </ScrollView>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                  <Action label="Cut" color={selectedClip.transitionAfter.type === 'none' ? '#DFFF35' : undefined} onPress={() => applyTransition('none')} />
+                  <Action label="Dip black" color={selectedClip.transitionAfter.type === 'dip-black' ? '#DFFF35' : undefined} onPress={() => applyTransition('dip-black')} />
+                  <Action label="Dip white" color={selectedClip.transitionAfter.type === 'dip-white' ? '#DFFF35' : undefined} onPress={() => applyTransition('dip-white')} />
+                  <Action label="Flash" color={selectedClip.transitionAfter.type === 'flash' ? '#DFFF35' : undefined} onPress={() => applyTransition('flash', 350)} />
+                  {[250, 500, 1000].map((duration) => <Action key={duration} label={`${duration} ms transition`} color={selectedClip.transitionAfter.durationMs === duration ? '#64E8FF' : undefined} onPress={() => applyTransition(selectedClip.transitionAfter.type === 'none' ? 'dip-black' : selectedClip.transitionAfter.type, duration)} />)}
                 </ScrollView>
               </View>
             ) : <Text style={{ color: palette.muted, fontSize: 12 }}>Tap a video clip in the timeline to edit that clip.</Text>}
@@ -960,6 +1078,28 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               <Action label="Add text layer" onPress={addTextLayer} />
               <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
             </ScrollView>
+          </View>
+        ) : activeTool === 'audio' ? (
+          <View style={{ gap: 8 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              <Action label="Add audio file" onPress={() => void addAudio('audio-file')} />
+              <Action label="Extract from video" onPress={() => void addAudio('video-audio')} />
+            </ScrollView>
+            {selectedAudioClip ? <>
+              <Text numberOfLines={1} style={{ color: '#64E8FF', fontSize: 12, fontWeight: '900' }}>SELECTED AUDIO · {project.audioSources.find((source) => source.id === selectedAudioClip.sourceId)?.displayName ?? 'Audio'}</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                <Action label={selectedAudioClip.muted ? 'Unmute audio' : 'Mute audio'} onPress={() => updateSelectedAudio({ muted: !selectedAudioClip.muted })} />
+                <Action label="Volume −" disabled={selectedAudioClip.volume <= 0} onPress={() => updateSelectedAudio({ volume: clamp(selectedAudioClip.volume - 0.1, 0, 1) })} />
+                <Action label={`${Math.round(selectedAudioClip.volume * 100)}% volume`} color="#64E8FF" onPress={() => updateSelectedAudio({ volume: 1, muted: false })} />
+                <Action label="Volume +" disabled={selectedAudioClip.volume >= 1} onPress={() => updateSelectedAudio({ volume: clamp(selectedAudioClip.volume + 0.1, 0, 1) })} />
+                <Action label="Move −0.5s" onPress={() => shiftSelectedAudio(-500)} />
+                <Action label="Move +0.5s" onPress={() => shiftSelectedAudio(500)} />
+                <Action label={selectedAudioClip.fadeInMs ? 'Remove fade in' : 'Fade in'} onPress={() => updateSelectedAudio({ fadeInMs: selectedAudioClip.fadeInMs ? 0 : 500 })} />
+                <Action label={selectedAudioClip.fadeOutMs ? 'Remove fade out' : 'Fade out'} onPress={() => updateSelectedAudio({ fadeOutMs: selectedAudioClip.fadeOutMs ? 0 : 500 })} />
+                <Action label="Duplicate" onPress={copySelectedAudio} />
+                <Action label="Delete audio" danger onPress={removeSelectedAudio} />
+              </ScrollView>
+            </> : <Text style={{ color: palette.muted, fontSize: 12 }}>Add audio, or tap an audio block in the timeline to edit it.</Text>}
           </View>
         ) : activeTool === 'animate' ? (
           <AnimationBrowser
@@ -1041,7 +1181,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             gap: 6,
             paddingHorizontal: 12,
             paddingVertical: 10,
-            paddingBottom: 14,
+            paddingBottom: Math.max(14, insets.bottom),
             borderTopWidth: 1,
             borderTopColor: '#20262D',
           }}>
@@ -1049,6 +1189,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           <ToolbarItem label="Fonts" active={activeTool === 'fonts'} onPress={() => { setSelectedClipId(undefined); setActiveTool('fonts'); setFontBrowserOpen(true); }} />
           <ToolbarItem label="Animate" active={activeTool === 'animate'} onPress={() => { setSelectedClipId(undefined); setActiveTool('animate'); }} />
           <ToolbarItem label="Video" active={activeTool === 'video'} onPress={() => setActiveTool('video')} />
+          <ToolbarItem label="Audio" active={activeTool === 'audio'} onPress={() => { setSelectedClipId(undefined); setActiveTool('audio'); }} />
         </View>
       </View>
 

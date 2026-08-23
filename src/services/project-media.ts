@@ -81,3 +81,39 @@ export async function storeProjectImage(options: {
   }
   return destinationUri;
 }
+
+export async function storeProjectAudio(options: {
+  projectId: string;
+  audioId: string;
+  sourceUri: string;
+  fileName: string;
+}) {
+  if (!FileSystem.documentDirectory) throw new Error('Permanent app storage is unavailable on this device.');
+  const extension = options.fileName.match(/\.([a-zA-Z0-9]{2,5})$/)?.[1]?.toLowerCase() ?? 'm4a';
+  const directory = `${FileSystem.documentDirectory}projects/${safePathSegment(options.projectId)}/audio/`;
+  const destinationUri = `${directory}${safePathSegment(options.audioId)}.${extension}`;
+  await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+  await FileSystem.copyAsync({ from: options.sourceUri, to: destinationUri });
+  await validateStoredAudio(destinationUri);
+  return destinationUri;
+}
+
+export async function prepareExtractedAudioUri(projectId: string, audioId: string) {
+  if (!FileSystem.documentDirectory) throw new Error('Permanent app storage is unavailable on this device.');
+  const directory = `${FileSystem.documentDirectory}projects/${safePathSegment(projectId)}/audio/`;
+  await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+  return `${directory}${safePathSegment(audioId)}.m4a`;
+}
+
+async function validateStoredAudio(uri: string) {
+  const stored = await FileSystem.getInfoAsync(uri);
+  if (!stored.exists || stored.isDirectory || stored.size <= 0) {
+    throw new Error('The selected audio could not be saved in this project.');
+  }
+  const media = await CaptionMedia.getMediaInfo(uri);
+  if (!media.hasAudio || media.durationMs < 80) {
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+    throw new Error('The selected file does not contain usable audio.');
+  }
+  return media;
+}

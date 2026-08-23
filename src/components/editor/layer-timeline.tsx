@@ -13,7 +13,8 @@ import {
   timelineZoomPercent,
 } from '@/lib/timeline-scale';
 import { buildClipTimeline } from '@/lib/video-timeline';
-import type { CaptionBlock, VideoClip, VisualLayer } from '@/types/project';
+import { audioClipEnd } from '@/lib/audio-timeline';
+import type { AudioClip, CaptionBlock, ProjectAudioSource, VideoClip, VisualLayer } from '@/types/project';
 
 const LABEL_WIDTH = 82;
 const RULER_HEIGHT = 28;
@@ -29,6 +30,9 @@ export function LayerTimeline(props: {
   selectedLayerId: string;
   selectedCaptionId?: string;
   selectedClipId?: string;
+  audioSources: ProjectAudioSource[];
+  audioClips: AudioClip[];
+  selectedAudioClipId?: string;
   onSeek: (timeMs: number) => void;
   onScrubStart: () => void;
   onSelectLayer: (id: string) => void;
@@ -43,6 +47,8 @@ export function LayerTimeline(props: {
   onMoveLayer: (layerId: string, direction: -1 | 1) => void;
   onDeleteLayer: (layerId: string) => void;
   onAddVideos: () => void;
+  onSelectAudioClip: (clipId: string, startMs: number) => void;
+  onAudioTimingChange: (clipId: string, edge: 'start' | 'end', startMs: number, endMs: number) => void;
 }) {
   const horizontalRef = useRef<ScrollView>(null);
   const [viewportWidth, setViewportWidth] = useState(360);
@@ -67,7 +73,9 @@ export function LayerTimeline(props: {
   const pinch = useRef({ distance: 0, scale: effectiveScale });
   const captionLayout = useMemo(() => packTimelineLanes(props.captions), [props.captions]);
   const captionRowHeight = captionLayout.laneCount * LANE_HEIGHT + 10;
-  const totalRowsHeight = 46 + props.layers.reduce(
+  const audioLayout = useMemo(() => packTimelineLanes(props.audioClips.map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [props.audioClips]);
+  const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10;
+  const totalRowsHeight = 46 + audioRowHeight + props.layers.reduce(
     (sum, layer) => sum + (layer.kind === 'captions' ? captionRowHeight : 46),
     0,
   );
@@ -205,6 +213,12 @@ export function LayerTimeline(props: {
                   />
                 </View>
               ))}
+            </TimelineRow>
+            <TimelineRow label="AUDIO" labelColor="#64E8FF" selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => props.onSeek(x / trackWidth * duration)} controls={<Text style={{ color: '#6F7985', fontSize: 8 }}>{props.audioClips.length} TRACK{props.audioClips.length === 1 ? '' : 'S'}</Text>}>
+              {props.audioClips.map((clip) => {
+                const source = props.audioSources.find((candidate) => candidate.id === clip.sourceId);
+                return <TimedBlock key={clip.id} label={`${clip.muted ? 'MUTED · ' : ''}${source?.displayName ?? 'AUDIO'}`} startMs={clip.startMs} endMs={audioClipEnd(clip)} durationMs={duration} trackWidth={trackWidth} lane={audioLayout.laneById.get(clip.id) ?? 0} color={clip.muted ? '#59636F' : '#00B8C7'} selected={props.selectedAudioClipId === clip.id} onPress={() => props.onSelectAudioClip(clip.id, clip.startMs)} onChangeStart={props.onTimingChangeStart} onChange={(edge, startMs, endMs) => props.onAudioTimingChange(clip.id, edge, startMs, endMs)} onEnd={props.onTimingChangeEnd} />;
+              })}
             </TimelineRow>
             {props.layers.map((layer, layerIndex) => {
               const isCaptions = layer.kind === 'captions';

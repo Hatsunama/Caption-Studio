@@ -2,9 +2,15 @@ import * as DocumentPicker from 'expo-document-picker';
 
 import CaptionMedia from '../../modules/caption-media/src/CaptionMediaModule';
 import { MINIMUM_CLIP_TIMELINE_MS } from '@/lib/video-timeline';
-import { deleteProjectOwnedFiles, generateProjectThumbnail, storeProjectImage } from '@/services/project-media';
+import {
+  deleteProjectOwnedFiles,
+  generateProjectThumbnail,
+  prepareExtractedAudioUri,
+  storeProjectAudio,
+  storeProjectImage,
+} from '@/services/project-media';
 import { requireFreeSpace } from '@/services/storage-policy';
-import type { ProjectVideoSource } from '@/types/project';
+import type { ProjectAudioSource, ProjectVideoSource } from '@/types/project';
 
 const MIN_IMPORT_HEADROOM_BYTES = 32 * 1024 * 1024;
 
@@ -99,4 +105,64 @@ export async function pickAndStoreImage(projectId: string, imageId: string) {
     fileName: asset.name,
   });
   return { uri, name: asset.name };
+}
+
+export async function pickAndStoreAudio(projectId: string, audioId: string): Promise<ProjectAudioSource | null> {
+  const result = await DocumentPicker.getDocumentAsync({
+    type: 'audio/*',
+    copyToCacheDirectory: true,
+    multiple: false,
+  });
+  if (result.canceled) return null;
+  const asset = result.assets[0];
+  const uri = await storeProjectAudio({
+    projectId,
+    audioId,
+    sourceUri: asset.uri,
+    fileName: asset.name,
+  });
+  const info = await CaptionMedia.getMediaInfo(uri);
+  return {
+    id: audioId,
+    uri,
+    storageMode: 'copied',
+    displayName: cleanAudioName(asset.name),
+    durationMs: info.durationMs,
+    mimeType: asset.mimeType,
+    origin: 'audio-file',
+  };
+}
+
+export async function pickVideoAndExtractAudio(projectId: string, audioId: string): Promise<ProjectAudioSource | null> {
+  const result = await DocumentPicker.getDocumentAsync({
+    type: 'video/*',
+    copyToCacheDirectory: false,
+    multiple: false,
+  });
+  if (result.canceled) return null;
+  const asset = result.assets[0];
+  await CaptionMedia.persistReadPermission(asset.uri);
+  const sourceInfo = await CaptionMedia.getMediaInfo(asset.uri);
+  if (!sourceInfo.hasAudio) throw new Error(`${asset.name} does not contain an audio track.`);
+  const outputUri = await prepareExtractedAudioUri(projectId, audioId);
+  try {
+    const extraction = await CaptionMedia.extractAudioTrack(asset.uri, outputUri);
+    const storedInfo = await CaptionMedia.getMediaInfo(outputUri);
+    return {
+      id: audioId,
+      uri: outputUri,
+      storageMode: 'copied',
+      displayName: `${cleanAudioName(asset.name)} audio`,
+      durationMs: storedInfo.durationMs || extraction.durationMs,
+      mimeType: extraction.mimeType,
+      origin: 'video-audio',
+    };
+  } catch (error) {
+    await deleteProjectOwnedFiles(projectId, [outputUri]);
+    throw error;
+  }
+}
+
+function cleanAudioName(name: string) {
+  return name.replace(/\.[a-zA-Z0-9]{2,5}$/, '').replace(/[_-]+/g, ' ').trim() || 'Audio';
 }

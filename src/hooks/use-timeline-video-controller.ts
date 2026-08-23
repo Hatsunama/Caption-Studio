@@ -225,18 +225,8 @@ export function useTimelineVideoController(
       setPhase('ended');
       return;
     }
-    if (
-      confirmedSourceIdRef.current === next.clip.sourceId
-      && Math.abs(entry.clip.sourceEndMs - next.clip.sourceStartMs) < 1
-    ) {
-      activeClipIdRef.current = next.clip.id;
-      boundaryClipIdRef.current = undefined;
-      player.playbackRate = next.clip.playbackRate;
-      player.muted = next.clip.muted;
-      player.volume = clipPlaybackVolume(next.clip, 0);
-      setCurrentMs(next.startMs);
-      return;
-    }
+    setPhase('loading');
+    setCurrentMs(next.startMs);
     desiredRef.current = { generation: ++generationRef.current, timelineMs: next.startMs };
     void drainTargetsRef.current();
   };

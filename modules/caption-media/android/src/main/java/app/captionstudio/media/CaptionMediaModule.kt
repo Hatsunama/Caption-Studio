@@ -9,6 +9,7 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
+import android.media.MediaMuxer
 import android.net.Uri
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
@@ -43,6 +44,10 @@ class CaptionMediaModule : Module() {
 
     AsyncFunction("extractAudioToWav") { inputUri: String, outputUri: String ->
       decodeAudioToWav(inputUri, outputUri)
+    }
+
+    AsyncFunction("extractAudioTrack") { inputUri: String, outputUri: String ->
+      extractAudioTrack(inputUri, outputUri)
     }
 
     AsyncFunction("generateVideoThumbnail") { inputUri: String, outputUri: String, timeMs: Long ->
@@ -289,6 +294,76 @@ class CaptionMediaModule : Module() {
       } catch (_: Throwable) {
       }
       decoder?.release()
+      extractor.release()
+      if (!completed) targetFile.delete()
+    }
+  }
+
+  private fun extractAudioTrack(input: String, output: String): Map<String, Any> {
+    val extractor = MediaExtractor()
+    val targetFile = outputFile(output)
+    var muxer: MediaMuxer? = null
+    var completed = false
+    return try {
+      setExtractorDataSource(extractor, input)
+      val audioTrack = (0 until extractor.trackCount).firstOrNull { index ->
+        extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+      } ?: throw IllegalArgumentException("This video does not contain an audio track")
+      val format = extractor.getTrackFormat(audioTrack)
+      val trackMime = format.getString(MediaFormat.KEY_MIME)
+        ?: throw IllegalArgumentException("The video audio format is missing")
+      extractor.selectTrack(audioTrack)
+      targetFile.parentFile?.mkdirs()
+      if (targetFile.exists()) targetFile.delete()
+      muxer = MediaMuxer(targetFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+      val outputTrack = muxer.addTrack(format)
+      muxer.start()
+
+      val maximumInputSize = if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+        max(256 * 1024, format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE))
+      } else {
+        1024 * 1024
+      }
+      val buffer = ByteBuffer.allocateDirect(maximumInputSize)
+      val info = MediaCodec.BufferInfo()
+      var firstPresentationUs = -1L
+      var lastPresentationUs = 0L
+      while (true) {
+        buffer.clear()
+        val sampleSize = extractor.readSampleData(buffer, 0)
+        if (sampleSize < 0) break
+        val presentationUs = extractor.sampleTime
+        if (firstPresentationUs < 0) firstPresentationUs = presentationUs
+        val normalizedPresentationUs = max(0L, presentationUs - firstPresentationUs)
+        info.set(0, sampleSize, normalizedPresentationUs, extractor.sampleFlags)
+        buffer.position(0)
+        buffer.limit(sampleSize)
+        muxer.writeSampleData(outputTrack, buffer, info)
+        lastPresentationUs = normalizedPresentationUs
+        extractor.advance()
+      }
+      require(firstPresentationUs >= 0) { "The video audio track did not contain readable samples" }
+      muxer.stop()
+      muxer.release()
+      muxer = null
+      completed = true
+      mapOf(
+        "outputUri" to output,
+        "durationMs" to max(1L, lastPresentationUs / 1_000L),
+        "mimeType" to "audio/mp4",
+        "sourceCodec" to trackMime,
+      )
+    } catch (error: Throwable) {
+      throw IllegalArgumentException("This audio track could not be imported without losing quality: ${error.message}", error)
+    } finally {
+      try {
+        muxer?.stop()
+      } catch (_: Throwable) {
+      }
+      try {
+        muxer?.release()
+      } catch (_: Throwable) {
+      }
       extractor.release()
       if (!completed) targetFile.delete()
     }

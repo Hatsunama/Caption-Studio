@@ -1,6 +1,6 @@
 import { NativeModule, requireNativeModule } from 'expo';
 
-import type { AudioExtractionResult, MediaInfo, VideoThumbnailResult } from './CaptionMedia.types';
+import type { AudioExtractionResult, AudioTrackExtractionResult, MediaInfo, VideoThumbnailResult } from './CaptionMedia.types';
 
 declare class CaptionMediaModule extends NativeModule<{}> {
   persistReadPermission(inputUri: string): Promise<boolean>;
@@ -10,6 +10,7 @@ declare class CaptionMediaModule extends NativeModule<{}> {
     inputUri: string,
     outputUri: string,
   ): Promise<AudioExtractionResult>;
+  extractAudioTrack(inputUri: string, outputUri: string): Promise<AudioTrackExtractionResult>;
   generateVideoThumbnail(
     inputUri: string,
     outputUri: string,

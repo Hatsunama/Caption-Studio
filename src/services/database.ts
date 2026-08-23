@@ -6,7 +6,14 @@ import {
   MINIMUM_CLIP_TIMELINE_MS,
   recoverCanonicalSourceWords,
 } from '@/lib/video-timeline';
-import { DEFAULT_CAPTION_STYLE, type CaptionProject, type ProjectVideoSource, type VideoClip } from '@/types/project';
+import {
+  DEFAULT_CAPTION_STYLE,
+  type AudioClip,
+  type CaptionProject,
+  type ProjectAudioSource,
+  type ProjectVideoSource,
+  type VideoClip,
+} from '@/types/project';
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | undefined;
 const projectWriteQueues = new Map<string, Promise<void>>();
@@ -139,6 +146,7 @@ function hydrateProject(project: CaptionProject): CaptionProject {
     box: { ...DEFAULT_CAPTION_STYLE.box, ...project.projectStyle?.box },
   };
   const clips = hydrateClips(project.clips, sources);
+  const { audioSources, audioClips } = hydrateAudio(project.audioSources ?? [], project.audioClips ?? []);
   const persistedSourceResults = project.transcription.sourceResults ?? {};
   const recoveredFromTimeline = Object.keys(persistedSourceResults).length === 0;
   const recoveredSourceResults = !recoveredFromTimeline
@@ -180,6 +188,8 @@ function hydrateProject(project: CaptionProject): CaptionProject {
           : layer,
     ),
     clips,
+    audioSources,
+    audioClips,
     canvas: project.canvas ?? {
       preset: 'source',
       aspectWidth: project.sources[0]?.width ?? 9,
@@ -231,6 +241,7 @@ function hydrateClips(clips: VideoClip[], sources: ProjectVideoSource[]): VideoC
       muted: clip.muted ?? false,
       fadeInMs: clip.fadeInMs ?? 0,
       fadeOutMs: clip.fadeOutMs ?? 0,
+      transitionAfter: hydrateTransition(clip.transitionAfter),
     };
   });
 
@@ -258,9 +269,67 @@ function hydrateClips(clips: VideoClip[], sources: ProjectVideoSource[]): VideoC
   });
 }
 
+function hydrateTransition(value: VideoClip['transitionAfter'] | undefined): VideoClip['transitionAfter'] {
+  const type = value?.type ?? 'none';
+  if (!['none', 'dip-black', 'dip-white', 'flash'].includes(type)) {
+    throw new Error('A project video transition is invalid');
+  }
+  const durationMs = type === 'none' ? 0 : finiteNumber(value?.durationMs ?? 500, 'transition duration');
+  if (durationMs < 0 || durationMs > 2_000) throw new Error('A project video transition duration is invalid');
+  return { type, durationMs };
+}
+
+function hydrateAudio(audioSources: ProjectAudioSource[], audioClips: AudioClip[]) {
+  const sourceIds = new Set<string>();
+  const normalizedSources = audioSources.map((source) => {
+    if (!source?.id || sourceIds.has(source.id) || !source.uri || !source.displayName) {
+      throw new Error('Project audio sources have duplicate or missing identifiers');
+    }
+    sourceIds.add(source.id);
+    const durationMs = finiteNumber(source.durationMs, 'audio source duration');
+    if (durationMs < 80) throw new Error('A project audio source is too short');
+    return {
+      ...source,
+      durationMs,
+      storageMode: 'copied' as const,
+      origin: source.origin ?? 'audio-file' as const,
+    };
+  });
+  const sourceById = new Map(normalizedSources.map((source) => [source.id, source]));
+  const clipIds = new Set<string>();
+  const normalizedClips = audioClips.map((clip) => {
+    if (!clip?.id || clipIds.has(clip.id)) throw new Error('Project audio clips have duplicate or missing identifiers');
+    clipIds.add(clip.id);
+    const source = sourceById.get(clip.sourceId);
+    if (!source) throw new Error('A project audio clip has lost its source');
+    const startMs = finiteNumber(clip.startMs, 'audio timeline start');
+    const sourceStartMs = finiteNumber(clip.sourceStartMs, 'audio source start');
+    const sourceEndMs = finiteNumber(clip.sourceEndMs, 'audio source end');
+    if (startMs < 0 || sourceStartMs < 0 || sourceEndMs > source.durationMs + 1 || sourceEndMs - sourceStartMs < 80) {
+      throw new Error('A project audio clip has invalid bounds');
+    }
+    return {
+      ...clip,
+      startMs,
+      sourceStartMs,
+      sourceEndMs,
+      volume: clampNumber(clip.volume ?? 1, 0, 1),
+      muted: clip.muted ?? false,
+      fadeInMs: clampNumber(clip.fadeInMs ?? 0, 0, sourceEndMs - sourceStartMs),
+      fadeOutMs: clampNumber(clip.fadeOutMs ?? 0, 0, sourceEndMs - sourceStartMs),
+    };
+  });
+  return { audioSources: normalizedSources, audioClips: normalizedClips };
+}
+
 function finiteNumber(value: number, label: string) {
   if (!Number.isFinite(value)) throw new Error(`Project ${label} is invalid`);
   return value;
+}
+
+function clampNumber(value: number, minimum: number, maximum: number) {
+  if (!Number.isFinite(value)) return minimum;
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 function recoverCanonicalSourceResults(project: CaptionProject, clips: VideoClip[]) {

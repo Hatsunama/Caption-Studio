@@ -1,4 +1,5 @@
 import type { CaptionBlock, CaptionProject, VideoClip, VisualLayer, WordToken } from '@/types/project';
+import { audioClipEnd, constrainAudioClips } from '@/lib/audio-timeline';
 
 export const MINIMUM_CLIP_TIMELINE_MS = 120;
 
@@ -77,6 +78,28 @@ export function clipPlaybackVolume(clip: VideoClip, timelineOffsetMs: number) {
   const fadeIn = clip.fadeInMs > 0 ? clamp(timelineOffsetMs / clip.fadeInMs, 0, 1) : 1;
   const fadeOut = clip.fadeOutMs > 0 ? clamp((duration - timelineOffsetMs) / clip.fadeOutMs, 0, 1) : 1;
   return clamp(clip.volume * Math.min(fadeIn, fadeOut), 0, 1);
+}
+
+export function videoTransitionOverlay(entries: ClipTimelineEntry[], timelineMs: number) {
+  for (let index = 0; index < entries.length - 1; index += 1) {
+    const entry = entries[index];
+    const next = entries[index + 1];
+    const transition = entry.clip.transitionAfter;
+    if (!transition || transition.type === 'none' || transition.durationMs <= 0) continue;
+    const half = transition.durationMs / 2;
+    const boundaryMs = next.startMs;
+    const distance = Math.abs(timelineMs - boundaryMs);
+    if (distance > half) continue;
+    const normalized = 1 - distance / Math.max(1, half);
+    const opacity = transition.type === 'flash'
+      ? Math.sin(normalized * Math.PI / 2) * 0.92
+      : normalized;
+    return {
+      color: transition.type === 'dip-white' || transition.type === 'flash' ? '#FFFFFF' : '#000000',
+      opacity: clamp(opacity, 0, 1),
+    };
+  }
+  return undefined;
 }
 
 export function mapSourceWordsToTimeline(
@@ -252,12 +275,19 @@ export function rippleTimedContent(project: CaptionProject, cutStartMs: number, 
       return range ? { ...layer, ...range } : undefined;
     })
     .filter((layer): layer is VisualLayer => Boolean(layer));
+  const audioClips = project.audioClips.flatMap((clip) => {
+    const range = rippleRange(clip.startMs, audioClipEnd(clip), cutStartMs, cutEndMs);
+    if (!range) return [];
+    const duration = range.endMs - range.startMs;
+    return [{ ...clip, startMs: range.startMs, sourceEndMs: clip.sourceStartMs + duration }];
+  });
   return {
     ...project,
     updatedAt: new Date().toISOString(),
     transcription: { ...project.transcription, words },
     captions,
     layers,
+    audioClips,
   };
 }
 
@@ -281,6 +311,10 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
   const layers = project.layers.map((layer) => layer.kind === 'captions'
     ? layer
     : { ...layer, startMs: mapTime(layer.startMs), endMs: mapTime(layer.endMs) });
+  const audioClips = constrainAudioClips(
+    project.audioClips.map((clip) => clip.startMs >= entry.endMs ? { ...clip, startMs: clip.startMs + delta } : clip),
+    totalClipDuration(project.clips.map((clip) => clip.id === clipId ? replacement : clip)),
+  );
   return {
     ...project,
     updatedAt: new Date().toISOString(),
@@ -288,6 +322,7 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
     transcription: { ...project.transcription, words },
     captions,
     layers,
+    audioClips,
   };
 }
 
