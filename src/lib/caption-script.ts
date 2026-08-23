@@ -7,6 +7,8 @@ export type CaptionScriptMutation = {
   focusedId: string;
 };
 
+export type CaptionMergeResult = CaptionScriptMutation | { blockedByVideoCut: true } | null;
+
 export function updateCaptionScriptText(captions: CaptionBlock[], captionId: string, requestedText: string) {
   return captions.map((caption) => caption.id === captionId
     ? { ...caption, text: requestedText, textMode: 'manual' as const }
@@ -70,18 +72,66 @@ export function splitCaptionScriptBlock(
   return { captions: next, focusedId: right.id };
 }
 
+export function splitCaptionScriptBlockAtTime(
+  captions: CaptionBlock[],
+  captionId: string,
+  requestedTimeMs: number,
+  words: WordToken[],
+  newCaptionId: string,
+): CaptionScriptMutation | null {
+  const caption = captions.find((candidate) => candidate.id === captionId);
+  if (
+    !caption
+    || !Number.isFinite(requestedTimeMs)
+    || requestedTimeMs <= caption.startMs + MINIMUM_CAPTION_MS
+    || requestedTimeMs >= caption.endMs - MINIMUM_CAPTION_MS
+  ) return null;
+
+  const wordById = new Map(words.map((word) => [word.id, word]));
+  const timedWords = caption.wordIds
+    .map((wordId) => wordById.get(wordId))
+    .filter((word): word is WordToken => Boolean(word));
+  const splitWordIndex = nearestWordBoundary(timedWords, requestedTimeMs);
+  const cursor = textCursorForWordBoundary(caption.text, splitWordIndex, timedWords.length, requestedTimeMs, caption);
+  const result = splitCaptionScriptBlock(captions, captionId, cursor, words, newCaptionId);
+  if (!result) return null;
+
+  const boundaryMs = splitWordIndex > 0 && splitWordIndex < timedWords.length
+    ? clamp(
+        (timedWords[splitWordIndex - 1].endMs + timedWords[splitWordIndex].startMs) / 2,
+        caption.startMs + MINIMUM_CAPTION_MS,
+        caption.endMs - MINIMUM_CAPTION_MS,
+      )
+    : clamp(requestedTimeMs, caption.startMs + MINIMUM_CAPTION_MS, caption.endMs - MINIMUM_CAPTION_MS);
+  const left = result.captions.find((candidate) => candidate.id === captionId);
+  const right = result.captions.find((candidate) => candidate.id === newCaptionId);
+  if (!left || !right) return null;
+  return {
+    captions: result.captions.map((candidate) => {
+      if (candidate.id === left.id) return withCaptionBoundary(candidate, 'end', boundaryMs);
+      if (candidate.id === right.id) return withCaptionBoundary(candidate, 'start', boundaryMs);
+      return candidate;
+    }),
+    focusedId: result.focusedId,
+  };
+}
+
 export function mergeCaptionScriptBlock(
   captions: CaptionBlock[],
   captionId: string,
-): CaptionScriptMutation | { blockedByVideoCut: true } | null {
-  const index = captions.findIndex((caption) => caption.id === captionId);
-  if (index <= 0) return null;
-  const previous = captions[index - 1];
-  const current = captions[index];
+  direction: 'previous' | 'next' = 'previous',
+): CaptionMergeResult {
+  const currentIndex = captions.findIndex((caption) => caption.id === captionId);
+  if (currentIndex < 0) return null;
+  const leftIndex = direction === 'previous' ? currentIndex - 1 : currentIndex;
+  const rightIndex = leftIndex + 1;
+  if (leftIndex < 0 || rightIndex >= captions.length) return null;
+  const previous = captions[leftIndex];
+  const current = captions[rightIndex];
   if (
-    previous.sourceAnchor
-    && current.sourceAnchor
-    && previous.sourceAnchor.clipId !== current.sourceAnchor.clipId
+    !previous.sourceAnchor
+    || !current.sourceAnchor
+    || previous.sourceAnchor.clipId !== current.sourceAnchor.clipId
   ) return { blockedByVideoCut: true };
 
   const wordIds = [...previous.wordIds, ...current.wordIds];
@@ -103,8 +153,59 @@ export function mergeCaptionScriptBlock(
     timelineVisible: true,
   };
   const next = [...captions];
-  next.splice(index - 1, 2, merged);
+  next.splice(leftIndex, 2, merged);
   return { captions: next, focusedId: merged.id };
+}
+
+function nearestWordBoundary(words: WordToken[], requestedTimeMs: number) {
+  if (words.length < 2) return 0;
+  let nearestIndex = 1;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < words.length; index += 1) {
+    const boundary = (words[index - 1].endMs + words[index].startMs) / 2;
+    const distance = Math.abs(boundary - requestedTimeMs);
+    if (distance < nearestDistance) {
+      nearestIndex = index;
+      nearestDistance = distance;
+    }
+  }
+  return nearestIndex;
+}
+
+function textCursorForWordBoundary(
+  text: string,
+  wordBoundary: number,
+  timedWordCount: number,
+  requestedTimeMs: number,
+  caption: CaptionBlock,
+) {
+  const boundaries = [...text.matchAll(/\s+/g)].map((match) => match.index ?? 0);
+  if (!boundaries.length) return Math.round(text.length / 2);
+  if (timedWordCount > 1 && wordBoundary > 0) {
+    const normalizedIndex = Math.round(boundaries.length * wordBoundary / (timedWordCount - 1)) - 1;
+    return boundaries[clamp(normalizedIndex, 0, boundaries.length - 1)];
+  }
+  const ratio = (requestedTimeMs - caption.startMs) / Math.max(1, caption.endMs - caption.startMs);
+  const requestedCursor = text.length * clamp(ratio, 0, 1);
+  return boundaries.reduce((nearest, candidate) => (
+    Math.abs(candidate - requestedCursor) < Math.abs(nearest - requestedCursor) ? candidate : nearest
+  ), boundaries[0]);
+}
+
+function withCaptionBoundary(caption: CaptionBlock, edge: 'start' | 'end', boundaryMs: number): CaptionBlock {
+  if (!caption.sourceAnchor) return { ...caption, [edge === 'start' ? 'startMs' : 'endMs']: boundaryMs };
+  const duration = Math.max(1, caption.endMs - caption.startMs);
+  const sourceBoundary = caption.sourceAnchor.sourceStartMs
+    + (caption.sourceAnchor.sourceEndMs - caption.sourceAnchor.sourceStartMs)
+      * (boundaryMs - caption.startMs) / duration;
+  return {
+    ...caption,
+    [edge === 'start' ? 'startMs' : 'endMs']: boundaryMs,
+    sourceAnchor: {
+      ...caption.sourceAnchor,
+      [edge === 'start' ? 'sourceStartMs' : 'sourceEndMs']: sourceBoundary,
+    },
+  };
 }
 
 function wordSplitIndex(text: string, cursor: number, wordCount: number) {

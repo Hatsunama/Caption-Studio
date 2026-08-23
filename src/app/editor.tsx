@@ -26,6 +26,11 @@ import { VideoTools } from '@/components/editor/video-tools';
 import { VideoTransformOverlay } from '@/components/editor/video-transform-overlay';
 import { useTimelineVideoController } from '@/hooks/use-timeline-video-controller';
 import { findAnimationPreset } from '@/lib/animation-presets';
+import {
+  mergeCaptionScriptBlock,
+  splitCaptionScriptBlockAtTime,
+  type CaptionScriptMutation,
+} from '@/lib/caption-script';
 import { fontChoicePatch, type FontChoice } from '@/lib/font-catalog';
 import { TRANSCRIPTION_MODELS, type TranscriptionModel } from '@/lib/model-catalog';
 import {
@@ -397,6 +402,47 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setScriptEditorOpen(false);
   };
 
+  const commitCaptionStructure = (mutation: CaptionScriptMutation) => {
+    const before = projectRef.current;
+    const next = replaceVisibleCaptionScript(before, mutation.captions);
+    if (next === before) return;
+    pushUndo(before);
+    projectRef.current = next;
+    setProject(next);
+    setSelectedCaptionId(mutation.focusedId);
+    persistProject(next);
+  };
+
+  const splitSelectedCaptionAtPlayhead = () => {
+    if (!selectedCaption) return;
+    const mutation = splitCaptionScriptBlockAtTime(
+      timelineCaptions,
+      selectedCaption.id,
+      currentMs,
+      projectRef.current.transcription.words,
+      uniqueId('caption'),
+    );
+    if (!mutation) {
+      Alert.alert('Move the playhead inside this subtitle', 'A split needs a little room on both sides of the playhead.');
+      return;
+    }
+    commitCaptionStructure(mutation);
+  };
+
+  const joinSelectedCaption = (direction: 'previous' | 'next') => {
+    if (!selectedCaption) return;
+    const mutation = mergeCaptionScriptBlock(timelineCaptions, selectedCaption.id, direction);
+    if (!mutation) {
+      Alert.alert('Nothing to join', `There is no subtitle immediately ${direction === 'previous' ? 'before' : 'after'} this one.`);
+      return;
+    }
+    if ('blockedByVideoCut' in mutation) {
+      Alert.alert('Cannot join across a video cut', 'Subtitles attached to different video clips stay separate so their timing remains correct.');
+      return;
+    }
+    commitCaptionStructure(mutation);
+  };
+
   const updateTextLayerStyle = (layerId: string, patch: CaptionStylePatch, persist = false) => {
     if (persist) pushUndo();
     setProject((current) => {
@@ -424,9 +470,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
-  const updateCaptionTiming = (captionId: string, startMs: number, endMs: number) => {
+  const updateCaptionTiming = (captionId: string, edge: 'start' | 'end', startMs: number, endMs: number) => {
     setProject((current) => {
-      const next = setCaptionTiming(current, captionId, startMs, endMs);
+      const next = setCaptionTiming(current, captionId, edge, startMs, endMs);
       projectRef.current = next;
       return next;
     });
@@ -939,6 +985,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           </ScrollView>
         ) : selectedCaption ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            <Action label="Split at playhead" onPress={splitSelectedCaptionAtPlayhead} />
+            <Action label="Join previous" onPress={() => joinSelectedCaption('previous')} />
+            <Action label="Join next" onPress={() => joinSelectedCaption('next')} />
             <Action label="Edit captions" onPress={beginEditCaption} />
             <Action label="Delete subtitle" danger onPress={() => confirmDeleteCaption(selectedCaption.id)} />
             <Action label="Add text layer" onPress={addTextLayer} />

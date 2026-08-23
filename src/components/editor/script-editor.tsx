@@ -67,6 +67,7 @@ export function ScriptEditor(props: {
   }, [initialIndex, props.visible, sourceCaptions]);
 
   const selectForEditing = (caption: CaptionBlock) => {
+    selectionRef.current[caption.id] ??= { start: caption.text.length, end: caption.text.length };
     setSelectedCaptionId(caption.id);
     setEditingCaptionId(caption.id);
     setEmptyCaptionId(undefined);
@@ -108,13 +109,48 @@ export function ScriptEditor(props: {
     if (text.trim()) setEmptyCaptionId(undefined);
   };
 
-  const mergeWithPrevious = (caption: CaptionBlock) => {
+  const mergeWithPrevious = (caption: CaptionBlock, requireCursorAtStart = true) => {
     const selection = selectionRef.current[caption.id];
-    if (!selection || selection.start !== 0 || selection.end !== 0) return;
+    if (requireCursorAtStart && (!selection || selection.start !== 0 || selection.end !== 0)) return;
     const result = mergeCaptionScriptBlock(draftCaptions, caption.id);
     if (!result) return;
     if ('blockedByVideoCut' in result) {
       setBoundaryMessage('Subtitles on opposite sides of a video cut cannot be merged.');
+      return;
+    }
+    setBoundaryMessage(undefined);
+    focusCaption(result.focusedId, result.captions);
+  };
+
+  const mergeWithNext = (caption: CaptionBlock) => {
+    const result = mergeCaptionScriptBlock(draftCaptions, caption.id, 'next');
+    if (!result) {
+      setBoundaryMessage('There is no subtitle below this one to join.');
+      return;
+    }
+    if ('blockedByVideoCut' in result) {
+      setBoundaryMessage('Subtitles on opposite sides of a video cut cannot be joined.');
+      return;
+    }
+    setBoundaryMessage(undefined);
+    focusCaption(result.focusedId, result.captions);
+  };
+
+  const splitAtCursor = (caption: CaptionBlock) => {
+    const selection = selectionRef.current[caption.id];
+    if (!selection || selection.start !== selection.end) {
+      setBoundaryMessage('Tap between two words, then choose Split here.');
+      return;
+    }
+    const result = splitCaptionScriptBlock(
+      draftCaptions,
+      caption.id,
+      selection.start,
+      props.words,
+      nextSplitCaptionId(caption.id, draftCaptions, splitCounterRef),
+    );
+    if (!result) {
+      setBoundaryMessage('Place the cursor between two words to split this subtitle.');
       return;
     }
     setBoundaryMessage(undefined);
@@ -172,7 +208,7 @@ export function ScriptEditor(props: {
           ListHeaderComponent={(
             <View style={{ marginBottom: 6, gap: 5 }}>
               <Text style={{ color: '#8E98A5', fontSize: 12, lineHeight: 17 }}>
-                Tap a subtitle to edit it. Press Enter between words to create a new timed subtitle. Press Backspace at the beginning to merge it with the subtitle above.
+                Tap a subtitle to edit it. Use the visible Split and Join controls. Enter and Backspace remain available as keyboard shortcuts.
               </Text>
               {boundaryMessage ? <Text style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{boundaryMessage}</Text> : null}
             </View>
@@ -199,17 +235,24 @@ export function ScriptEditor(props: {
                 </View>
                 <View style={{ flex: 1, justifyContent: 'center' }}>
                   {editing ? (
-                    <TextInput
-                      autoFocus
-                      multiline
-                      maxLength={500}
-                      value={item.text}
-                      onChangeText={(text) => updateText(item, text)}
-                      onSelectionChange={(event) => { selectionRef.current[item.id] = event.nativeEvent.selection; }}
-                      onKeyPress={(event) => { if (event.nativeEvent.key === 'Backspace') mergeWithPrevious(item); }}
-                      selectionColor="#DFFF35"
-                      style={{ minHeight: 44, padding: 0, color: '#F7F8FA', fontSize: 16, lineHeight: 22, fontWeight: '600', textAlignVertical: 'center' }}
-                    />
+                    <View style={{ gap: 9 }}>
+                      <TextInput
+                        autoFocus
+                        multiline
+                        maxLength={500}
+                        value={item.text}
+                        onChangeText={(text) => updateText(item, text)}
+                        onSelectionChange={(event) => { selectionRef.current[item.id] = event.nativeEvent.selection; }}
+                        onKeyPress={(event) => { if (event.nativeEvent.key === 'Backspace') mergeWithPrevious(item); }}
+                        selectionColor="#DFFF35"
+                        style={{ minHeight: 44, padding: 0, color: '#F7F8FA', fontSize: 16, lineHeight: 22, fontWeight: '600', textAlignVertical: 'center' }}
+                      />
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+                        <ScriptAction label="Split here" onPress={() => splitAtCursor(item)} />
+                        <ScriptAction label="Join previous" onPress={() => mergeWithPrevious(item, false)} />
+                        <ScriptAction label="Join next" onPress={() => mergeWithNext(item)} />
+                      </View>
+                    </View>
                   ) : (
                     <Text style={{ color: '#F7F8FA', fontSize: 16, lineHeight: 22, fontWeight: '600' }}>{item.text}</Text>
                   )}
@@ -221,6 +264,19 @@ export function ScriptEditor(props: {
         />
       </KeyboardAvoidingView>
     </Modal>
+  );
+}
+
+function ScriptAction(props: { label: string; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={props.label}
+      hitSlop={4}
+      onPress={props.onPress}
+      style={{ minHeight: 36, justifyContent: 'center', paddingHorizontal: 11, borderRadius: 10, borderWidth: 1, borderColor: '#46515E', backgroundColor: '#222933' }}>
+      <Text style={{ color: '#E9EDF2', fontSize: 12, fontWeight: '800' }}>{props.label}</Text>
+    </Pressable>
   );
 }
 

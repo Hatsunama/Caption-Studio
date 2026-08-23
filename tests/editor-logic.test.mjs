@@ -12,8 +12,8 @@ import { minimumTimelineScale, timelineScrollOffset, timelineTickInterval, timel
 import { PREPARING_AUDIO_CUES } from '../src/lib/transcription-progress.ts';
 import { humanVideoName, isMachineVideoName } from '../src/lib/project-presentation.ts';
 import { applyCaptionTextChanges } from '../src/lib/caption-text-edits.ts';
-import { mergeCaptionScriptBlock, splitCaptionScriptBlock } from '../src/lib/caption-script.ts';
-import { deleteVideoClip, previewVideoClipTrim, setVideoClipGap, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
+import { mergeCaptionScriptBlock, splitCaptionScriptBlock, splitCaptionScriptBlockAtTime } from '../src/lib/caption-script.ts';
+import { deleteVideoClip, previewVideoClipTrim, setCaptionTiming, setVideoClipGap, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
 import {
   buildClipTimeline,
   clipPlaybackVolume,
@@ -597,6 +597,52 @@ test('Enter splits a script caption at a spoken-word boundary and Backspace merg
   ]);
 });
 
+test('timeline split and join are explicit, word-aware, and reversible', () => {
+  const words = [
+    { id: 'clip-one', text: 'one', startMs: 0, endMs: 400 },
+    { id: 'clip-two', text: 'two', startMs: 500, endMs: 900 },
+    { id: 'clip-three', text: 'three', startMs: 1_000, endMs: 1_400 },
+    { id: 'clip-four', text: 'four', startMs: 1_500, endMs: 1_900 },
+  ];
+  const captions = [{
+    id: 'sentence',
+    text: 'one two three four',
+    textMode: 'automatic',
+    startMs: 0,
+    endMs: 2_000,
+    wordIds: words.map((word) => word.id),
+    timelineVisible: true,
+    sourceAnchor: { clipId: 'clip', sourceStartMs: 0, sourceEndMs: 2_000, wordIds: words.map((word) => word.id) },
+  }];
+
+  const split = splitCaptionScriptBlockAtTime(captions, 'sentence', 1_100, words, 'right');
+  assert.ok(split);
+  assert.deepEqual(split.captions.map(({ id, text, startMs, endMs, wordIds }) => ({ id, text, startMs, endMs, wordIds })), [
+    { id: 'sentence', text: 'one two', startMs: 0, endMs: 950, wordIds: ['clip-one', 'clip-two'] },
+    { id: 'right', text: 'three four', startMs: 950, endMs: 2_000, wordIds: ['clip-three', 'clip-four'] },
+  ]);
+  const joined = mergeCaptionScriptBlock(split.captions, 'sentence', 'next');
+  assert.ok(joined && !('blockedByVideoCut' in joined));
+  assert.deepEqual(joined.captions.map(({ id, text, startMs, endMs }) => ({ id, text, startMs, endMs })), [
+    { id: 'sentence', text: 'one two three four', startMs: 0, endMs: 2_000 },
+  ]);
+});
+
+test('dragging a shared subtitle boundary keeps adjacent blocks end to end', () => {
+  const project = projectFixture({
+    clips: [clip({ id: 'clip', sourceEndMs: 3_000, availableSourceEndMs: 3_000 })],
+    captions: [
+      { id: 'left', text: 'left', startMs: 0, endMs: 1_000, wordIds: [], timelineVisible: true, sourceAnchor: { clipId: 'clip', sourceStartMs: 0, sourceEndMs: 1_000, wordIds: [] } },
+      { id: 'right', text: 'right', startMs: 1_000, endMs: 2_000, wordIds: [], timelineVisible: true, sourceAnchor: { clipId: 'clip', sourceStartMs: 1_000, sourceEndMs: 2_000, wordIds: [] } },
+    ],
+  });
+  const movedRight = setCaptionTiming(project, 'left', 'end', 0, 1_250);
+  assert.deepEqual(movedRight.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_250], [1_250, 2_000]]);
+  const movedLeft = setCaptionTiming(movedRight, 'right', 'start', 900, 2_000);
+  assert.deepEqual(movedLeft.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 900], [900, 2_000]]);
+  assert.equal(packTimelineLanes(movedLeft.captions).laneCount, 1);
+});
+
 test('script captions never merge across a hard video cut', () => {
   const captions = [
     { id: 'left', text: 'left', startMs: 0, endMs: 500, wordIds: [], sourceAnchor: { clipId: 'a', sourceStartMs: 0, sourceEndMs: 500, wordIds: [] } },
@@ -613,9 +659,20 @@ test('caption editing opens the full timestamped script and keeps text-layer edi
   assert.match(editor, /<EditTextLayerModal/);
   assert.match(scriptEditor, /<FlatList/);
   assert.match(scriptEditor, /formatTimestamp\(item\.startMs\)/);
-  assert.match(scriptEditor, /Press Enter between words/);
+  assert.match(scriptEditor, /Enter and Backspace/);
   assert.match(scriptEditor, /Backspace/);
+  assert.match(scriptEditor, /Split here/);
+  assert.match(scriptEditor, /Join previous/);
+  assert.match(scriptEditor, /Join next/);
   assert.match(scriptEditor, /onSave\(draftCaptions\)/);
+});
+
+test('selected captions expose direct timeline split and join commands', () => {
+  const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
+  assert.match(editor, /splitCaptionScriptBlockAtTime/);
+  assert.match(editor, /Split at playhead/);
+  assert.match(editor, /Join previous/);
+  assert.match(editor, /Join next/);
 });
 
 test('timeline keeps a fixed playhead, scrubs its content, renders a ruler, and offers an append-video control', () => {
