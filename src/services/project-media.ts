@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-import CaptionMedia from '../../modules/caption-media/src/CaptionMediaModule';
+import CaptionMedia from 'caption-media';
 
 export async function ensureProjectThumbnail(options: {
   projectId: string;

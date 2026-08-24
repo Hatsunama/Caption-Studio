@@ -15,6 +15,7 @@ import android.provider.MediaStore
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.VideoFrameProcessingException
+import androidx.media3.common.util.Size
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.transformer.Composition
@@ -30,14 +31,14 @@ import com.google.mlkit.vision.segmentation.Segmentation
 import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
 import expo.modules.kotlin.Promise
 import java.io.File
-import java.nio.ByteBuffer
+import java.util.concurrent.Executors
 import kotlin.math.max
-import kotlin.math.roundToInt
 
 internal data class PersonExportOptions(
   val durationMs: Long,
   val sourceStartMs: Long,
   val backgroundKind: String,
+  val qualityPreset: String,
   val threshold: Float,
   val softness: Float,
   val temporalStability: Float,
@@ -46,12 +47,14 @@ internal data class PersonExportOptions(
   val positionY: Float,
   val scale: Float,
   val rotation: Float,
+  val keyframes: List<PersonTransformFrame>,
 )
 
 internal class PersonVideoExporter(private val context: Context) {
   private val mainHandler = Handler(Looper.getMainLooper())
-  private var activeTransformer: Transformer? = null
-  private var activeOverlay: PersonForegroundOverlay? = null
+  private val stateLock = Any()
+  private val publishingExecutor = Executors.newSingleThreadExecutor()
+  private var activeExport: ActiveExport? = null
 
   fun start(
     inputUri: String,
@@ -60,94 +63,144 @@ internal class PersonVideoExporter(private val context: Context) {
     options: PersonExportOptions,
     promise: Promise,
   ) {
-    check(activeTransformer == null) { "An export is already running" }
     val output = File(outputPath)
-    output.parentFile?.mkdirs()
-    if (output.exists()) check(output.delete()) { "The previous export could not be replaced" }
+    val task = try {
+      synchronized(stateLock) {
+        check(activeExport == null) { "An export is already running" }
+        output.parentFile?.mkdirs()
+        if (output.exists()) check(output.delete()) { "The previous export could not be replaced" }
+        ActiveExport(
+          output,
+          promise,
+          PersonForegroundOverlay(
+            context,
+            inputUri,
+            options,
+            outputRotationDegrees = mediaRotationDegrees(backgroundUri, options.backgroundKind),
+          ),
+        ).also { activeExport = it }
+      }
+    } catch (error: Throwable) {
+      promise.reject("E_VIDEO_EXPORT", error.message ?: "Video export could not be prepared", error)
+      return
+    }
+    try {
+      val overlay = task.overlay
+      val overlayEffect = OverlayEffect(listOf(overlay))
+      val backgroundItem = MediaItem.Builder()
+        .setUri(Uri.parse(backgroundUri))
+        .apply {
+          if (options.backgroundKind == "image") {
+            setImageDurationMs(options.durationMs)
+            setMimeType(imageMimeType(backgroundUri))
+          }
+        }
+        .build()
+      val backgroundEdited = EditedMediaItem.Builder(backgroundItem)
+        .apply {
+          if (options.backgroundKind == "image") setFrameRate(IMAGE_BACKGROUND_FRAME_RATE)
+        }
+        .setRemoveAudio(true)
+        .setEffects(Effects(emptyList(), listOf(overlayEffect)))
+        .build()
+      val backgroundSequence = EditedMediaItemSequence.withVideoFrom(listOf(backgroundEdited)).buildUpon()
+        .setIsLooping(options.backgroundKind == "video")
+        .build()
 
-    val overlay = PersonForegroundOverlay(context, inputUri, options)
-    activeOverlay = overlay
-    val overlayEffect = OverlayEffect(listOf(overlay))
-    val backgroundItem = MediaItem.Builder()
-      .setUri(Uri.parse(backgroundUri))
-      .apply {
-        if (options.backgroundKind == "image") {
-          setImageDurationMs(options.durationMs)
-          setMimeType(imageMimeType(backgroundUri))
+      val audioItem = MediaItem.Builder()
+        .setUri(Uri.parse(inputUri))
+        .setClippingConfiguration(
+          MediaItem.ClippingConfiguration.Builder()
+            .setStartPositionMs(options.sourceStartMs)
+            .setEndPositionMs(options.sourceStartMs + options.durationMs)
+            .build(),
+        )
+        .build()
+      val audioEdited = EditedMediaItem.Builder(audioItem)
+        .setRemoveVideo(true)
+        .build()
+      val audioSequence = EditedMediaItemSequence.withAudioFrom(listOf(audioEdited))
+      val composition = Composition.Builder(listOf(backgroundSequence, audioSequence)).build()
+
+      mainHandler.post {
+        if (!isActive(task)) return@post
+        try {
+          val transformer = Transformer.Builder(context)
+            .setVideoMimeType(MimeTypes.VIDEO_H264)
+            .setAudioMimeType(MimeTypes.AUDIO_AAC)
+            .addListener(object : Transformer.Listener {
+              override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                if (!claim(task)) return
+                task.overlay.release()
+                publishingExecutor.execute {
+                  try {
+                    val mediaUri = publishToMediaLibrary(output)
+                    promise.resolve(
+                      mapOf(
+                        "outputUri" to Uri.fromFile(output).toString(),
+                        "durationMs" to exportResult.approximateDurationMs,
+                        "width" to exportResult.width,
+                        "height" to exportResult.height,
+                        "sizeBytes" to exportResult.fileSizeBytes,
+                        "mediaUri" to (mediaUri?.toString() ?: Uri.fromFile(output).toString()),
+                      ),
+                    )
+                  } catch (error: Throwable) {
+                    output.delete()
+                    promise.reject("E_MEDIA_LIBRARY", error.message ?: "The export could not be saved", error)
+                  }
+                }
+              }
+
+              override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
+                fail(task, "E_VIDEO_EXPORT", exportException.message ?: "Video export failed", exportException)
+              }
+            })
+            .build()
+          task.transformer = transformer
+          transformer.start(composition, output.absolutePath)
+        } catch (error: Throwable) {
+          fail(task, "E_VIDEO_EXPORT", error.message ?: "Video export failed", error)
         }
       }
-      .build()
-    val backgroundEdited = EditedMediaItem.Builder(backgroundItem)
-      .setRemoveAudio(true)
-      .setEffects(Effects(emptyList(), listOf(overlayEffect)))
-      .build()
-    val backgroundSequence = EditedMediaItemSequence.withVideoFrom(listOf(backgroundEdited)).buildUpon()
-      .setIsLooping(options.backgroundKind == "video")
-      .build()
-
-    val audioItem = MediaItem.Builder()
-      .setUri(Uri.parse(inputUri))
-      .setClippingConfiguration(
-        MediaItem.ClippingConfiguration.Builder()
-          .setStartPositionMs(options.sourceStartMs)
-          .setEndPositionMs(options.sourceStartMs + options.durationMs)
-          .build(),
-      )
-      .build()
-    val audioEdited = EditedMediaItem.Builder(audioItem)
-      .setRemoveVideo(true)
-      .build()
-    val audioSequence = EditedMediaItemSequence.withAudioFrom(listOf(audioEdited))
-    val composition = Composition.Builder(listOf(backgroundSequence, audioSequence)).build()
-
-    mainHandler.post {
-      val transformer = Transformer.Builder(context)
-        .setVideoMimeType(MimeTypes.VIDEO_H264)
-        .setAudioMimeType(MimeTypes.AUDIO_AAC)
-        .addListener(object : Transformer.Listener {
-          override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-            try {
-              val mediaUri = publishToMediaLibrary(output)
-              promise.resolve(
-                mapOf(
-                  "outputUri" to Uri.fromFile(output).toString(),
-                  "durationMs" to exportResult.approximateDurationMs,
-                  "width" to exportResult.width,
-                  "height" to exportResult.height,
-                  "sizeBytes" to exportResult.fileSizeBytes,
-                  "mediaUri" to (mediaUri?.toString() ?: Uri.fromFile(output).toString()),
-                ),
-              )
-            } catch (error: Throwable) {
-              promise.reject("E_MEDIA_LIBRARY", error.message ?: "The export could not be saved", error)
-            } finally {
-              finish()
-            }
-          }
-
-          override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
-            finish()
-            output.delete()
-            promise.reject("E_VIDEO_EXPORT", exportException.message ?: "Video export failed", exportException)
-          }
-        })
-        .build()
-      activeTransformer = transformer
-      transformer.start(composition, output.absolutePath)
+    } catch (error: Throwable) {
+      fail(task, "E_VIDEO_EXPORT", error.message ?: "Video export could not be prepared", error)
     }
   }
 
   fun cancel() {
+    mainHandler.post { cancelActive() }
+  }
+
+  fun close() {
     mainHandler.post {
-      activeTransformer?.cancel()
-      finish()
+      cancelActive()
+      publishingExecutor.shutdown()
     }
   }
 
-  private fun finish() {
-    activeTransformer = null
-    activeOverlay?.release()
-    activeOverlay = null
+  private fun cancelActive() {
+    val task = synchronized(stateLock) { activeExport.also { activeExport = null } } ?: return
+    task.transformer?.cancel()
+    task.overlay.release()
+    task.output.delete()
+    task.promise.reject("E_EXPORT_CANCELLED", "Video export was cancelled", null)
+  }
+
+  private fun isActive(task: ActiveExport) = synchronized(stateLock) { activeExport === task }
+
+  private fun claim(task: ActiveExport) = synchronized(stateLock) {
+    if (activeExport !== task) false else {
+      activeExport = null
+      true
+    }
+  }
+
+  private fun fail(task: ActiveExport, code: String, message: String, error: Throwable) {
+    if (!claim(task)) return
+    task.overlay.release()
+    task.output.delete()
+    task.promise.reject(code, message, error)
   }
 
   private fun imageMimeType(uri: String): String = when (uri.substringBefore('?').substringAfterLast('.').lowercase()) {
@@ -155,6 +208,20 @@ internal class PersonVideoExporter(private val context: Context) {
     "webp" -> MimeTypes.IMAGE_WEBP
     "bmp" -> MimeTypes.IMAGE_BMP
     else -> MimeTypes.IMAGE_PNG
+  }
+
+  private fun mediaRotationDegrees(uri: String, kind: String): Int {
+    if (kind != "video") return 0
+    val retriever = MediaMetadataRetriever()
+    return try {
+      retriever.setDataSource(context, Uri.parse(uri))
+      retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+        ?.toIntOrNull()
+        ?.mod(360)
+        ?: 0
+    } finally {
+      retriever.release()
+    }
   }
 
   private fun publishToMediaLibrary(output: File): Uri? {
@@ -180,12 +247,24 @@ internal class PersonVideoExporter(private val context: Context) {
       throw error
     }
   }
+
+  private data class ActiveExport(
+    val output: File,
+    val promise: Promise,
+    val overlay: PersonForegroundOverlay,
+    var transformer: Transformer? = null,
+  )
+
+  private companion object {
+    const val IMAGE_BACKGROUND_FRAME_RATE = 30
+  }
 }
 
 private class PersonForegroundOverlay(
   private val context: Context,
   private val inputUri: String,
   private val options: PersonExportOptions,
+  private val outputRotationDegrees: Int,
 ) : BitmapOverlay() {
   private val retriever = MediaMetadataRetriever().apply { setDataSource(context, Uri.parse(inputUri)) }
   private val segmenter = Segmentation.getClient(
@@ -194,104 +273,134 @@ private class PersonForegroundOverlay(
       .enableRawSizeMask()
       .build(),
   )
-  private var previousConfidence: FloatArray? = null
+  private val matteProcessor = PersonMatteProcessor()
+  private val motionPath = PersonMotionPath(
+    PersonTransform(options.positionX, options.positionY, options.scale, options.rotation),
+    options.keyframes,
+  )
+  private val sourceWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+  private val sourceHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
   private var lastBitmap: Bitmap? = null
+  private var outputSize: Size? = null
+  private var released = false
+
+  override fun configure(videoSize: Size) {
+    outputSize = videoSize
+  }
 
   @Synchronized
   override fun getBitmap(presentationTimeUs: Long): Bitmap {
+    var decoded: Bitmap? = null
+    var source: Bitmap? = null
+    var isolated: Bitmap? = null
+    var upright: Bitmap? = null
+    var output: Bitmap? = null
+    var completed = false
     try {
-      val decoded = retriever.getFrameAtTime(max(0L, presentationTimeUs + options.sourceStartMs * 1_000L), MediaMetadataRetriever.OPTION_CLOSEST)
+      val sourceTimeUs = max(0L, presentationTimeUs + options.sourceStartMs * 1_000L)
+      decoded = decodeSourceFrame(sourceTimeUs)
         ?: throw VideoFrameProcessingException(IllegalStateException("A source frame could not be decoded"))
-      val source = orient(decoded)
-      val result = Tasks.await(segmenter.process(InputImage.fromBitmap(source, 0)))
-      val confidence = stabilizeAndFeather(result.buffer, result.width, result.height)
-      val isolated = applyAlpha(source, confidence, result.width, result.height)
-      val canvasBitmap = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
-      val canvas = Canvas(canvasBitmap)
-      canvas.drawColor(Color.TRANSPARENT)
-      val matrix = Matrix().apply {
-        postTranslate(-source.width / 2f, -source.height / 2f)
-        postScale(options.scale.coerceIn(0.05f, 8f), options.scale.coerceIn(0.05f, 8f))
-        postRotate(options.rotation)
-        postTranslate(options.positionX.coerceIn(-1f, 2f) * source.width, options.positionY.coerceIn(-1f, 2f) * source.height)
+      source = decoded
+      val frame = requireNotNull(source)
+      val result = Tasks.await(segmenter.process(InputImage.fromBitmap(frame, 0)))
+      val alpha = matteProcessor.process(
+        result.buffer,
+        result.width,
+        result.height,
+        frame,
+        PersonMatteSettings(options.qualityPreset, options.threshold, options.softness, options.temporalStability, options.edgeFeather),
+      )
+      isolated = applyAlphaMask(frame, alpha, result.width, result.height)
+      upright = Bitmap.createBitmap(frame.width, frame.height, Bitmap.Config.ARGB_8888).apply {
+        setHasAlpha(true)
+        eraseColor(Color.TRANSPARENT)
       }
-      canvas.drawBitmap(isolated, matrix, null)
-      isolated.recycle()
-      if (source !== decoded) source.recycle()
-      decoded.recycle()
+      val canvas = Canvas(requireNotNull(upright))
+      canvas.drawColor(Color.TRANSPARENT)
+      val transform = motionPath.resolve(max(0L, presentationTimeUs / 1_000L))
+      val matrix = Matrix().apply {
+        postTranslate(-frame.width / 2f, -frame.height / 2f)
+        postScale(transform.scale, transform.scale)
+        postRotate(transform.rotation)
+        postTranslate(transform.positionX * frame.width, transform.positionY * frame.height)
+      }
+      canvas.drawBitmap(requireNotNull(isolated), matrix, null)
+      output = matchVideoFrame(requireNotNull(upright))
+      if (output !== upright) {
+        upright.recycle()
+        upright = null
+      }
       lastBitmap?.recycle()
-      lastBitmap = canvasBitmap
-      return canvasBitmap
+      lastBitmap = output
+      completed = true
+      return requireNotNull(output)
     } catch (error: VideoFrameProcessingException) {
       throw error
     } catch (error: Throwable) {
       throw VideoFrameProcessingException(error)
+    } finally {
+      isolated?.recycle()
+      if (source !== decoded) source?.recycle()
+      decoded?.recycle()
+      if (!completed) {
+        if (output !== upright) output?.recycle()
+        upright?.recycle()
+      }
     }
   }
 
-  private fun orient(source: Bitmap): Bitmap {
-    val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toFloatOrNull() ?: 0f
-    return if (rotation % 360f == 0f) source else Bitmap.createBitmap(
-      source, 0, 0, source.width, source.height, Matrix().apply { postRotate(rotation) }, true,
+  private fun matchVideoFrame(upright: Bitmap): Bitmap {
+    val target = outputSize ?: return upright
+    if (upright.width == target.width && upright.height == target.height) return upright
+
+    val oriented = if (upright.width == target.height && upright.height == target.width) {
+      val inverseDisplayRotation = when (outputRotationDegrees) {
+        90 -> -90f
+        270 -> 90f
+        else -> -90f
+      }
+      Bitmap.createBitmap(
+        upright,
+        0,
+        0,
+        upright.width,
+        upright.height,
+        Matrix().apply { postRotate(inverseDisplayRotation) },
+        true,
+      )
+    } else {
+      upright
+    }
+    if (oriented.width == target.width && oriented.height == target.height) return oriented
+
+    val scaled = Bitmap.createScaledBitmap(oriented, target.width, target.height, true)
+    if (oriented !== upright) oriented.recycle()
+    return scaled
+  }
+
+  private fun decodeSourceFrame(timeUs: Long): Bitmap? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1 || sourceWidth <= 0 || sourceHeight <= 0) {
+      return retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+    }
+    val scale = minOf(1.0, EXPORT_LONG_EDGE / max(sourceWidth, sourceHeight).toDouble())
+    return retriever.getScaledFrameAtTime(
+      timeUs,
+      MediaMetadataRetriever.OPTION_CLOSEST,
+      max(1, (sourceWidth * scale).toInt()),
+      max(1, (sourceHeight * scale).toInt()),
     )
   }
 
-  private fun stabilizeAndFeather(buffer: ByteBuffer, width: Int, height: Int): FloatArray {
-    buffer.rewind()
-    val raw = FloatArray(width * height) { buffer.float.coerceIn(0f, 1f) }
-    val prior = previousConfidence
-    val stability = options.temporalStability.coerceIn(0f, 0.92f)
-    val stable = if (prior != null && prior.size == raw.size) {
-      FloatArray(raw.size) { index ->
-        val weight = if (raw[index] >= prior[index]) stability * 0.55f else stability
-        raw[index] * (1f - weight) + prior[index] * weight
-      }
-    } else raw
-    previousConfidence = stable.copyOf()
-    if (options.edgeFeather <= 0f || width < 3 || height < 3) return stable
-    val feathered = stable.copyOf()
-    val blend = options.edgeFeather.coerceIn(0f, 1f)
-    for (y in 1 until height - 1) for (x in 1 until width - 1) {
-      val index = y * width + x
-      val value = stable[index]
-      if (value in 0.04f..0.96f) {
-        var sum = 0f
-        for (dy in -1..1) for (dx in -1..1) sum += stable[(y + dy) * width + x + dx]
-        feathered[index] = value * (1f - blend) + (sum / 9f) * blend
-      }
-    }
-    return feathered
-  }
-
-  private fun applyAlpha(source: Bitmap, confidence: FloatArray, maskWidth: Int, maskHeight: Int): Bitmap {
-    val alphaMask = Bitmap.createBitmap(maskWidth, maskHeight, Bitmap.Config.ALPHA_8)
-    val edge = options.softness.coerceIn(0.001f, 1f)
-    val low = options.threshold.coerceIn(0f, 1f) - edge / 2f
-    val alpha = ByteArray(confidence.size) { index ->
-      val linear = ((confidence[index] - low) / edge).coerceIn(0f, 1f)
-      val smooth = linear * linear * (3f - 2f * linear)
-      (smooth * 255f).roundToInt().toByte()
-    }
-    alphaMask.copyPixelsFromBuffer(ByteBuffer.wrap(alpha))
-    val scaledMask = Bitmap.createScaledBitmap(alphaMask, source.width, source.height, true)
-    val pixels = IntArray(source.width * source.height)
-    val maskPixels = ByteArray(pixels.size)
-    source.getPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
-    scaledMask.copyPixelsToBuffer(ByteBuffer.wrap(maskPixels))
-    for (index in pixels.indices) pixels[index] = ((maskPixels[index].toInt() and 0xff) shl 24) or (pixels[index] and 0x00ffffff)
-    val output = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
-    output.setPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
-    scaledMask.recycle()
-    alphaMask.recycle()
-    return output
-  }
-
   override fun release() {
+    if (released) return
+    released = true
     lastBitmap?.recycle()
     lastBitmap = null
-    previousConfidence = null
+    matteProcessor.close()
     segmenter.close()
     retriever.release()
     super.release()
   }
 }
+
+private const val EXPORT_LONG_EDGE = 1920

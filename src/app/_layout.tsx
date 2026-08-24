@@ -32,6 +32,7 @@ export default function RootLayout() {
         contentStyle: { backgroundColor: '#090B0E' },
       }}>
       <Stack.Screen name="index" options={{ title: 'Caption Studio' }} />
+      <Stack.Screen name="privacy" options={{ title: 'Privacy policy' }} />
       <Stack.Screen
         name="editor"
         options={{

@@ -4,6 +4,9 @@ const os = require('node:os');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
+if (!process.argv.includes('--migration')) {
+  throw new Error('This signer is only for the one-time debug-to-production migration APK. Pass --migration.');
+}
 const propertiesFile = path.join(os.homedir(), '.gradle', 'gradle.properties');
 const properties = readProperties(propertiesFile);
 const required = [
@@ -27,12 +30,11 @@ const javaHome = process.env.JAVA_HOME;
 if (!javaHome) throw new Error('JAVA_HOME is required');
 const java = path.join(javaHome, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
 const apk = path.join(root, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk');
-const migration = process.argv.includes('--migration');
-const signedApk = path.join(path.dirname(apk), migration ? 'app-release-migration.apk' : 'app-release-production.apk');
+const signedApk = path.join(path.dirname(apk), 'app-release-migration.apk');
 const lineage = path.join(root, 'signing', 'caption-studio-lineage.bin');
 const previousKeystore = path.join(root, 'android', 'app', 'debug.keystore');
 if (!fs.existsSync(apk)) throw new Error(`Release APK not found: ${apk}`);
-if (migration && !fs.existsSync(lineage)) throw new Error(`Signing lineage not found: ${lineage}`);
+if (!fs.existsSync(lineage)) throw new Error(`Signing lineage not found: ${lineage}`);
 
 const environment = {
   ...process.env,
@@ -40,13 +42,13 @@ const environment = {
   CAPTION_STUDIO_STORE_PASSWORD: properties.CAPTION_STUDIO_RELEASE_STORE_PASSWORD,
   CAPTION_STUDIO_KEY_PASSWORD: properties.CAPTION_STUDIO_RELEASE_KEY_PASSWORD,
 };
-const signerArguments = migration ? [
+const signerArguments = [
   '--ks', previousKeystore,
   '--ks-key-alias', 'androiddebugkey',
   '--ks-pass', 'env:CAPTION_STUDIO_PREVIOUS_PASSWORD',
   '--key-pass', 'env:CAPTION_STUDIO_PREVIOUS_PASSWORD',
   '--next-signer',
-] : [];
+];
 run(java, [
   '-jar', apksigner,
   'sign',
@@ -55,15 +57,12 @@ run(java, [
   '--ks-key-alias', properties.CAPTION_STUDIO_RELEASE_KEY_ALIAS,
   '--ks-pass', 'env:CAPTION_STUDIO_STORE_PASSWORD',
   '--key-pass', 'env:CAPTION_STUDIO_KEY_PASSWORD',
-  ...(migration ? ['--lineage', lineage, '--rotation-min-sdk-version', '28'] : []),
+  '--lineage', lineage,
+  '--rotation-min-sdk-version', '28',
   '--out', signedApk,
   apk,
 ], environment);
 run(java, ['-jar', apksigner, 'verify', '--verbose', '--print-certs', signedApk], environment);
-if (!migration) {
-  fs.copyFileSync(signedApk, apk);
-  fs.rmSync(signedApk);
-}
 
 function readProperties(file) {
   if (!fs.existsSync(file)) throw new Error(`Signing properties not found: ${file}`);

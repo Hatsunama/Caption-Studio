@@ -75,7 +75,7 @@ import {
   videoTransitionOverlay,
 } from '@/lib/video-timeline';
 import { pickAndStoreImage, pickBackgroundMedia, type MediaImportProgress } from '@/services/media-import';
-import { renderPersonPreview } from '@/services/person-compositor';
+import { releasePersonPreview, renderPersonPreview } from '@/services/person-compositor';
 import { exportBackgroundReplacement } from '@/services/project-export';
 import { validateProjectSources } from '@/services/project-media';
 import {
@@ -298,6 +298,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }, isPlaying ? 160 : 80);
     return () => { active = false; clearTimeout(timer); };
   }, [currentClipEntry, isPlaying, personPreviewTimeMs, project.backgroundReplacement, project.id, project.sources]);
+
+  useEffect(() => () => {
+    void releasePersonPreview(project.id).catch(() => undefined);
+  }, [project.id]);
 
   const pushUndo = (snapshot = projectRef.current) => {
     const stack = undoStackRef.current;

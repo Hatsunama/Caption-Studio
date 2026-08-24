@@ -252,6 +252,7 @@ export type BackgroundReplacement = {
     displayName: string;
   };
   mask: {
+    qualityPreset: 'stable' | 'balanced' | 'detailed' | 'custom';
     threshold: number;
     softness: number;
     temporalStability: number;

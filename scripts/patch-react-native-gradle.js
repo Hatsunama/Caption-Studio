@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const buildFile = path.join(root, 'node_modules', '@react-native', 'gradle-plugin', 'build.gradle.kts');
+const rootBuildFile = path.join(root, 'android', 'build.gradle');
 const appBuildFile = path.join(root, 'android', 'app', 'build.gradle');
 
 function replaceInFile(file, from, to) {
@@ -18,6 +19,12 @@ function appendLineIfMissing(file, line) {
   if (!source.split(/\r?\n/).includes(line)) {
     fs.writeFileSync(file, `${source.trimEnd()}\n\n${line}\n`);
   }
+}
+
+function insertAfterIfMissing(file, anchor, line) {
+  if (!fs.existsSync(file)) return;
+  const source = fs.readFileSync(file, 'utf8');
+  if (!source.includes(line)) fs.writeFileSync(file, source.replace(anchor, `${anchor}\n${line}`));
 }
 
 const fragileLine =
@@ -62,6 +69,11 @@ replaceInFile(
   'gradle-9.3.1-bin.zip',
   'gradle-9.4.0-bin.zip',
 );
+insertAfterIfMissing(
+  rootBuildFile,
+  "    classpath('com.android.tools.build:gradle')",
+  "    classpath('com.android.tools:r8:8.13.19')",
+);
 replaceInFile(
   path.join(root, 'android', 'gradle.properties'),
   'org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m',
@@ -72,6 +84,14 @@ replaceInFile(
 appendLineIfMissing(
   path.join(root, 'android', 'gradle.properties'),
   'org.gradle.vfs.watch=false',
+);
+appendLineIfMissing(
+  path.join(root, 'android', 'gradle.properties'),
+  'android.enableMinifyInReleaseBuilds=true',
+);
+appendLineIfMissing(
+  path.join(root, 'android', 'gradle.properties'),
+  'android.enableShrinkResourcesInReleaseBuilds=true',
 );
 
 const signingProperties = `def captionStudioReleaseStoreFile = findProperty('CAPTION_STUDIO_RELEASE_STORE_FILE')

@@ -1,3 +1,4 @@
+import { PERSON_MATTE_PRESETS } from '@/lib/person-matte-presets';
 import { DEFAULT_CAPTION_STYLE, type CaptionProject, type ProjectVideoSource } from '@/types/project';
 
 export function createCaptionProject(options: {
@@ -43,7 +44,7 @@ export function createCaptionProject(options: {
     },
     backgroundReplacement: {
       enabled: false,
-      mask: { threshold: 0.5, softness: 0.18, temporalStability: 0.55, edgeFeather: 0.65 },
+      mask: { ...PERSON_MATTE_PRESETS.stable },
       personTransform: { position: { x: 0.5, y: 0.5 }, scale: 1, rotation: 0 },
       keyframes: [],
     },

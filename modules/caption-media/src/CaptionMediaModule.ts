@@ -22,6 +22,7 @@ declare class CaptionMediaModule extends NativeModule<{}> {
     outputUri: string,
     options: {
       timeMs: number;
+      qualityPreset: 'stable' | 'balanced' | 'detailed' | 'custom';
       threshold: number;
       softness: number;
       temporalStability: number;
@@ -41,6 +42,7 @@ declare class CaptionMediaModule extends NativeModule<{}> {
       durationMs: number;
       sourceStartMs: number;
       backgroundKind: 'image' | 'video';
+      qualityPreset: 'stable' | 'balanced' | 'detailed' | 'custom';
       threshold: number;
       softness: number;
       temporalStability: number;
@@ -49,6 +51,13 @@ declare class CaptionMediaModule extends NativeModule<{}> {
       positionY: number;
       scale: number;
       rotation: number;
+      keyframes: Array<{
+        timeMs: number;
+        positionX: number;
+        positionY: number;
+        scale: number;
+        rotation: number;
+      }>;
     },
   ): Promise<{ outputUri: string; mediaUri: string; durationMs: number; width: number; height: number; sizeBytes: number }>;
   cancelPersonVideoExport(): Promise<void>;

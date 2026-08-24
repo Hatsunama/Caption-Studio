@@ -174,6 +174,15 @@ export default function ProjectsScreen() {
           )}
         </View>
       }
+      ListFooterComponent={
+        <Pressable
+          accessibilityRole="link"
+          accessibilityLabel="Open Caption Studio privacy policy"
+          onPress={() => router.push('/privacy')}
+          style={{ alignSelf: 'center', minHeight: 48, justifyContent: 'center', paddingHorizontal: 18 }}>
+          <Text style={{ color: palette.muted, fontSize: 13, fontWeight: '700' }}>Privacy policy</Text>
+        </Pressable>
+      }
       renderItem={({ item }) => (
         <Pressable
           onPress={() =>

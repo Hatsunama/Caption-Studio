@@ -1,7 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { initWhisper, initWhisperVad } from 'whisper.rn/index';
 
-import CaptionMedia from '../../modules/caption-media/src/CaptionMediaModule';
+import CaptionMedia from 'caption-media';
 import { groupWordsIntoCaptions } from '@/lib/caption-grouping';
 import { getModel, type TranscriptionModel } from '@/lib/model-catalog';
 import { alignWordsToSpeech } from '@/lib/speech-alignment';

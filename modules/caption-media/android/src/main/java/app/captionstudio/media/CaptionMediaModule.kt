@@ -35,8 +35,8 @@ class CaptionMediaModule : Module() {
   private var streamSegmenter = createStreamSegmenter()
   private var streamInput: String? = null
   private var streamTimeMs = -1L
-  private var previousPreviewConfidence: FloatArray? = null
-  private val personVideoExporter by lazy { PersonVideoExporter(context) }
+  private var previewMatteProcessor = PersonMatteProcessor()
+  private val personVideoExporter = lazy { PersonVideoExporter(context) }
 
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
@@ -68,20 +68,21 @@ class CaptionMediaModule : Module() {
       generateVideoThumbnail(inputUri, outputUri, timeMs)
     }
 
-    AsyncFunction("renderPersonPreviewFrame") { inputUri: String, backgroundUri: String?, outputUri: String, options: Map<String, Double> ->
+    AsyncFunction("renderPersonPreviewFrame") { inputUri: String, backgroundUri: String?, outputUri: String, options: Map<String, Any> ->
       renderPersonPreviewFrame(
         inputUri,
         backgroundUri,
         outputUri,
-        options["timeMs"]?.toLong() ?: 0L,
-        options["threshold"]?.toFloat() ?: 0.5f,
-        options["softness"]?.toFloat() ?: 0.2f,
-        options["temporalStability"]?.toFloat() ?: 0.55f,
-        options["edgeFeather"]?.toFloat() ?: 0.65f,
-        options["positionX"]?.toFloat() ?: 0.5f,
-        options["positionY"]?.toFloat() ?: 0.5f,
-        options["scale"]?.toFloat() ?: 1f,
-        options["rotation"]?.toFloat() ?: 0f,
+        (options["timeMs"] as? Number)?.toLong() ?: 0L,
+        (options["threshold"] as? Number)?.toFloat() ?: 0.46f,
+        (options["softness"] as? Number)?.toFloat() ?: 0.14f,
+        options["qualityPreset"] as? String ?: "stable",
+        (options["temporalStability"] as? Number)?.toFloat() ?: 0.78f,
+        (options["edgeFeather"] as? Number)?.toFloat() ?: 0.45f,
+        (options["positionX"] as? Number)?.toFloat() ?: 0.5f,
+        (options["positionY"] as? Number)?.toFloat() ?: 0.5f,
+        (options["scale"] as? Number)?.toFloat() ?: 1f,
+        (options["rotation"] as? Number)?.toFloat() ?: 0f,
       )
     }
 
@@ -90,29 +91,41 @@ class CaptionMediaModule : Module() {
     }
 
     AsyncFunction("exportPersonVideo") { inputUri: String, backgroundUri: String, outputPath: String, options: Map<String, Any>, promise: Promise ->
-      personVideoExporter.start(
+      personVideoExporter.value.start(
         inputUri,
         backgroundUri,
-        outputPath,
+        outputFile(outputPath).absolutePath,
         PersonExportOptions(
           durationMs = (options["durationMs"] as Number).toLong(),
           sourceStartMs = (options["sourceStartMs"] as? Number)?.toLong() ?: 0L,
           backgroundKind = options["backgroundKind"] as? String ?: "image",
-          threshold = (options["threshold"] as? Number)?.toFloat() ?: 0.5f,
-          softness = (options["softness"] as? Number)?.toFloat() ?: 0.2f,
-          temporalStability = (options["temporalStability"] as? Number)?.toFloat() ?: 0.55f,
-          edgeFeather = (options["edgeFeather"] as? Number)?.toFloat() ?: 0.65f,
+          qualityPreset = options["qualityPreset"] as? String ?: "stable",
+          threshold = (options["threshold"] as? Number)?.toFloat() ?: 0.46f,
+          softness = (options["softness"] as? Number)?.toFloat() ?: 0.14f,
+          temporalStability = (options["temporalStability"] as? Number)?.toFloat() ?: 0.78f,
+          edgeFeather = (options["edgeFeather"] as? Number)?.toFloat() ?: 0.45f,
           positionX = (options["positionX"] as? Number)?.toFloat() ?: 0.5f,
           positionY = (options["positionY"] as? Number)?.toFloat() ?: 0.5f,
           scale = (options["scale"] as? Number)?.toFloat() ?: 1f,
           rotation = (options["rotation"] as? Number)?.toFloat() ?: 0f,
+          keyframes = (options["keyframes"] as? List<*>)
+            .orEmpty()
+            .mapNotNull { parsePersonTransformFrame(it) },
         ),
         promise,
       )
     }
 
     AsyncFunction("cancelPersonVideoExport") {
-      personVideoExporter.cancel()
+      if (personVideoExporter.isInitialized()) personVideoExporter.value.cancel()
+    }
+
+    OnDestroy {
+      synchronized(segmentationLock) {
+        streamSegmenter.close()
+        previewMatteProcessor.close()
+      }
+      if (personVideoExporter.isInitialized()) personVideoExporter.value.close()
     }
   }
 
@@ -123,6 +136,7 @@ class CaptionMediaModule : Module() {
     timeMs: Long,
     threshold: Float,
     softness: Float,
+    qualityPreset: String,
     temporalStability: Float,
     edgeFeather: Float,
     positionX: Float,
@@ -134,6 +148,7 @@ class CaptionMediaModule : Module() {
     var foreground: Bitmap? = null
     var backgroundBitmap: Bitmap? = null
     var rendered: Bitmap? = null
+    var isolated: Bitmap? = null
     return try {
       setRetrieverDataSource(retriever, input)
       val sourceWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
@@ -149,76 +164,33 @@ class CaptionMediaModule : Module() {
       } else {
         retriever.getFrameAtTime(max(0L, timeMs) * 1_000L, MediaMetadataRetriever.OPTION_CLOSEST)
       } ?: throw IllegalArgumentException("The requested video frame could not be decoded")
-      val sourceRotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toFloatOrNull() ?: 0f
-      foreground = if (sourceRotation % 360f == 0f) decoded else Bitmap.createBitmap(
-        decoded,
-        0,
-        0,
-        decoded.width,
-        decoded.height,
-        Matrix().apply { postRotate(sourceRotation) },
-        true,
-      ).also { decoded.recycle() }
+      foreground = decoded
       val source = requireNotNull(foreground)
-      val result = synchronized(segmentationLock) {
+      val matte = synchronized(segmentationLock) {
         if (streamInput != input || timeMs < streamTimeMs || timeMs - streamTimeMs > STREAM_RESET_GAP_MS) {
           resetStreamSegmenterLocked()
         }
         streamInput = input
         streamTimeMs = timeMs
-        Tasks.await(streamSegmenter.process(InputImage.fromBitmap(source, 0)))
+        val result = Tasks.await(streamSegmenter.process(InputImage.fromBitmap(source, 0)))
+        PreviewMatte(
+          result.width,
+          result.height,
+          previewMatteProcessor.process(
+            result.buffer,
+            result.width,
+            result.height,
+            source,
+            PersonMatteSettings(qualityPreset, threshold, softness, temporalStability, edgeFeather),
+          ),
+        )
       }
-      val mask = result.buffer.apply { rewind() }
-      val maskWidth = result.width
-      val maskHeight = result.height
-      val alphaMask = Bitmap.createBitmap(maskWidth, maskHeight, Bitmap.Config.ALPHA_8)
-      val alpha = ByteArray(maskWidth * maskHeight)
-      val rawConfidence = FloatArray(alpha.size) { mask.float.coerceIn(0f, 1f) }
-      val prior = previousPreviewConfidence
-      val stability = temporalStability.coerceIn(0f, 0.92f)
-      val confidence = if (prior != null && prior.size == rawConfidence.size) {
-        FloatArray(rawConfidence.size) { index ->
-          val weight = if (rawConfidence[index] >= prior[index]) stability * 0.55f else stability
-          rawConfidence[index] * (1f - weight) + prior[index] * weight
-        }
-      } else rawConfidence
-      previousPreviewConfidence = confidence.copyOf()
-      val feathered = confidence.copyOf()
-      val featherBlend = edgeFeather.coerceIn(0f, 1f)
-      if (featherBlend > 0f && maskWidth >= 3 && maskHeight >= 3) {
-        for (y in 1 until maskHeight - 1) for (x in 1 until maskWidth - 1) {
-          val index = y * maskWidth + x
-          if (confidence[index] in 0.04f..0.96f) {
-            var sum = 0f
-            for (dy in -1..1) for (dx in -1..1) sum += confidence[(y + dy) * maskWidth + x + dx]
-            feathered[index] = confidence[index] * (1f - featherBlend) + (sum / 9f) * featherBlend
-          }
-        }
-      }
-      val edge = softness.coerceIn(0.001f, 1f)
-      val cutoff = threshold.coerceIn(0f, 1f)
-      for (index in alpha.indices) {
-        val normalized = ((feathered[index] - (cutoff - edge / 2f)) / edge).coerceIn(0f, 1f)
-        val smooth = normalized * normalized * (3f - 2f * normalized)
-        alpha[index] = (smooth * 255f).roundToInt().toByte()
-      }
-      alphaMask.copyPixelsFromBuffer(ByteBuffer.wrap(alpha))
-      val scaledMask = Bitmap.createScaledBitmap(alphaMask, source.width, source.height, true)
-      val isolated = source.copy(Bitmap.Config.ARGB_8888, true)
-      val pixels = IntArray(source.width * source.height)
-      val maskPixels = ByteArray(source.width * source.height)
-      isolated.getPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
-      scaledMask.copyPixelsToBuffer(ByteBuffer.wrap(maskPixels))
-      for (index in pixels.indices) {
-        val alphaChannel = (maskPixels[index].toInt() and 0xff) shl 24
-        pixels[index] = alphaChannel or (pixels[index] and 0x00ffffff)
-      }
-      isolated.setPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
+      isolated = applyAlphaMask(source, matte.alpha, matte.width, matte.height)
       val composed = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
       rendered = composed
       val canvas = Canvas(composed)
       if (background != null) {
-        backgroundBitmap = readBackground(background, timeMs)
+        backgroundBitmap = readBackground(background, timeMs, source.width, source.height)
         canvas.drawBitmap(requireNotNull(backgroundBitmap), null, android.graphics.Rect(0, 0, source.width, source.height), null)
       } else {
         canvas.drawColor(Color.TRANSPARENT)
@@ -229,22 +201,33 @@ class CaptionMediaModule : Module() {
         postRotate(rotation)
         postTranslate(positionX.coerceIn(-1f, 2f) * source.width, positionY.coerceIn(-1f, 2f) * source.height)
       }
-      canvas.drawBitmap(isolated, personMatrix, null)
+      canvas.drawBitmap(requireNotNull(isolated), personMatrix, null)
       val target = outputFile(output)
       target.parentFile?.mkdirs()
       FileOutputStream(target).use { stream ->
         check(composed.compress(Bitmap.CompressFormat.PNG, 100, stream)) { "The segmented preview could not be saved" }
       }
-      isolated.recycle()
-      scaledMask.recycle()
-      alphaMask.recycle()
       mapOf("outputUri" to Uri.fromFile(target).toString(), "width" to source.width, "height" to source.height, "timeMs" to max(0L, timeMs))
     } finally {
       retriever.release()
       foreground?.recycle()
       backgroundBitmap?.recycle()
       rendered?.recycle()
+      isolated?.recycle()
     }
+  }
+
+  private fun parsePersonTransformFrame(value: Any?): PersonTransformFrame? {
+    val frame = value as? Map<*, *> ?: return null
+    return PersonTransformFrame(
+      timeMs = (frame["timeMs"] as? Number)?.toLong() ?: return null,
+      transform = PersonTransform(
+        positionX = (frame["positionX"] as? Number)?.toFloat() ?: 0.5f,
+        positionY = (frame["positionY"] as? Number)?.toFloat() ?: 0.5f,
+        scale = (frame["scale"] as? Number)?.toFloat() ?: 1f,
+        rotation = (frame["rotation"] as? Number)?.toFloat() ?: 0f,
+      ),
+    )
   }
 
   private fun createStreamSegmenter() = Segmentation.getClient(
@@ -261,17 +244,26 @@ class CaptionMediaModule : Module() {
     streamSegmenter = createStreamSegmenter()
     streamInput = null
     streamTimeMs = -1L
-    previousPreviewConfidence = null
+    previewMatteProcessor.reset()
   }
 
-  private fun readBackground(input: String, timeMs: Long): Bitmap {
+  private fun readBackground(input: String, timeMs: Long, targetWidth: Int, targetHeight: Int): Bitmap {
     val retriever = MediaMetadataRetriever()
     return try {
       setRetrieverDataSource(retriever, input)
       val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
       val loopedTimeMs = if (durationMs > 0) max(0L, timeMs) % durationMs else max(0L, timeMs)
-      retriever.getFrameAtTime(loopedTimeMs * 1_000L, MediaMetadataRetriever.OPTION_CLOSEST)
-        ?: readBitmap(input)
+      val decoded = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+        retriever.getScaledFrameAtTime(
+          loopedTimeMs * 1_000L,
+          MediaMetadataRetriever.OPTION_CLOSEST,
+          max(1, targetWidth),
+          max(1, targetHeight),
+        )
+      } else {
+        retriever.getFrameAtTime(loopedTimeMs * 1_000L, MediaMetadataRetriever.OPTION_CLOSEST)
+      } ?: return readBitmap(input)
+      decoded
     } catch (_: Throwable) {
       readBitmap(input)
     } finally {
@@ -328,13 +320,11 @@ class CaptionMediaModule : Module() {
     val retriever = MediaMetadataRetriever()
     val targetFile = outputFile(output)
     var frame: Bitmap? = null
-    var orientedFrame: Bitmap? = null
     var completed = false
     return try {
       setRetrieverDataSource(retriever, input)
       val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
       val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
-      val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
       val target = thumbnailSize(width, height)
       frame = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 && target.first > 0 && target.second > 0) {
         retriever.getScaledFrameAtTime(
@@ -346,16 +336,9 @@ class CaptionMediaModule : Module() {
       } else {
         retriever.getFrameAtTime(max(0L, timeMs) * 1_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
       }
-      val decoded = frame ?: retriever.frameAtTime
-        ?: throw IllegalArgumentException("The first video frame could not be decoded")
-      orientedFrame = if (rotation % 360 == 0) {
-        decoded
-      } else {
-        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-        Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
-      }
+      if (frame == null) frame = retriever.frameAtTime
 
-      val renderedFrame = requireNotNull(orientedFrame)
+      val renderedFrame = frame ?: throw IllegalArgumentException("The first video frame could not be decoded")
       targetFile.parentFile?.mkdirs()
       FileOutputStream(targetFile).use { stream ->
         check(renderedFrame.compress(Bitmap.CompressFormat.JPEG, 88, stream)) {
@@ -370,7 +353,6 @@ class CaptionMediaModule : Module() {
         "timeMs" to max(0L, timeMs),
       )
     } finally {
-      if (orientedFrame !== frame) orientedFrame?.recycle()
       frame?.recycle()
       retriever.release()
       if (!completed) targetFile.delete()
@@ -645,7 +627,12 @@ class CaptionMediaModule : Module() {
   private fun outputFile(output: String): File {
     val uri = Uri.parse(output)
     require(uri.scheme.isNullOrEmpty() || uri.scheme == "file") { "Output must be an app-local file URI" }
-    return File(uri.path ?: output)
+    val target = File(uri.path ?: output).canonicalFile
+    val allowedRoots = listOf(context.filesDir, context.cacheDir, context.noBackupFilesDir).map(File::getCanonicalFile)
+    require(allowedRoots.any { root -> target == root || target.path.startsWith(root.path + File.separator) }) {
+      "Output must stay inside Caption Studio storage"
+    }
+    return target
   }
 
   companion object {
@@ -655,6 +642,8 @@ class CaptionMediaModule : Module() {
     private const val PERSON_PREVIEW_LONG_EDGE = 720.0
   }
 }
+
+private data class PreviewMatte(val width: Int, val height: Int, val alpha: ByteArray)
 
 private class WavWriter(file: File, private val sampleRate: Int, private val channels: Int) {
   private val stream = RandomAccessFile(file, "rw")

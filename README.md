@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Media/releases/latest) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/latest) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Media/releases/latest/download/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/latest/download/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone and choose **File transfer** if Android shows a USB-mode prompt.
-5. Download **caption-studio-android.apk** from the [latest release](https://github.com/Hatsunama/Caption-Media/releases/latest) to the PC.
+5. Download **caption-studio-android.apk** from the [latest release](https://github.com/Hatsunama/Caption-Studio/releases/latest) to the PC.
 6. Open PowerShell in the folder containing the APK and run:
 
 ```powershell
@@ -83,13 +83,14 @@ The first time `adb devices` runs, unlock the phone. Tap **Allow** on **Allow US
 - A dedicated audio timeline: import audio from the phone or extract the audio track from a selected video, then trim, restore, move, duplicate, mute, fade, and adjust each audio clip independently
 - 16 data-driven transition treatments with adjustable timing, including dips, wipes, slides, zooms, shutter, spin, flash, and glitch
 - Fully local person-background removal preview and native MP4 render using Android's bundled ML Kit segmenter; choose an image or looping video background and resize, move, or rotate the person without needing a green screen
-- Edge-aware matte controls with asymmetric temporal stabilization, uncertain-edge feathering, and continuous-confidence alpha smoothing shared by preview and export
+- Stable, Balanced, and Detailed person-edge modes shared by preview and export, with motion-aware temporal smoothing, face protection, bad-frame rejection, hole/speck cleanup, hysteresis, and edge-aware feathering
+- Exported person motion paths use the same eased position, scale, and shortest-arc rotation behavior shown in preview
 - Continuous playback across same-source splits and different video files, with an explicit decoder handoff that prevents fast clips from bleeding into the following clip
 - An explicit Save draft / Discard / Keep editing decision whenever the user backs out of the editor
 - Confirmed project deletion from a trash control on every project card; linked source videos are never deleted
 - Local SQLite project snapshots
 
-The first native rendered-video path is available for a single normal-speed clip with an image or looping-video replacement background. It uses Media3 hardware decoding/encoding, burns the locally generated person matte and replacement background into an H.264/AAC MP4, and publishes the result to `Movies/Caption Studio`. Multi-clip composition, motion-path keyframes, styled captions/overlays, transitions, SRT, and ASS are still pre-release export work; the app refuses unsupported export shapes instead of producing a misleading file. Production APKs use the dedicated Caption Studio release identity described below. The source video is never rewritten by editing operations.
+The first native rendered-video path is available for a single normal-speed clip with an image or looping-video replacement background. It uses Media3 hardware decoding/encoding, burns the locally generated person matte, replacement background, and person motion path into an H.264/AAC MP4, and publishes the result to `Movies/Caption Studio` on Android 10 and newer. Multi-clip composition, styled captions/overlays, transitions, SRT, and ASS are still pre-release export work; the app refuses unsupported export shapes instead of producing a misleading file. Android 7–9 can run and edit in the app, but this first background-render path leaves its result in app storage until the legacy media-library flow is completed. Production APKs use the dedicated Caption Studio release identity described below. The source video is never rewritten by editing operations.
 
 ## Architecture
 
@@ -114,18 +115,18 @@ Video and text transforms use normalized coordinates so projects remain portable
 
 Requirements: Node.js 20+, Android SDK 36, JDK 17, and an Android device with USB debugging enabled.
 
-Clone to a short path such as `C:\Caption-Media`. Android's native CMake build can exceed Windows' object-file path limit when the repository is nested deeply under Documents.
+Clone to a short path such as `C:\Caption-Studio`. Android's native CMake build can exceed Windows' object-file path limit when the repository is nested deeply under Documents.
 
 ```powershell
-git clone https://github.com/Hatsunama/Caption-Media.git C:\Caption-Media
-cd C:\Caption-Media
+git clone https://github.com/Hatsunama/Caption-Studio.git C:\Caption-Studio
+cd C:\Caption-Studio
 npm install
 npm run android
 ```
 
 `npm run android` generates the native Android project, applies the repository's Windows/Gradle compatibility patch, builds the app, installs it on the connected device, and launches it.
 
-Official release builds use a dedicated Caption Studio signing key, never Expo's checked-in debug key. The private keystore and `CAPTION_STUDIO_RELEASE_*` Gradle properties stay outside the repository. Maintainers build and verify the production-key APK with `npm run release:android`. The checked-in certificate lineage exists only to make a one-time local migration build for devices that previously received the old beta; it is not applied to public production APKs.
+Official release builds use a dedicated Caption Studio signing key, never Expo's checked-in debug key. The private keystore and `CAPTION_STUDIO_RELEASE_*` Gradle properties stay outside the repository. Maintainers build and verify the production-key APK with `npm run release:android`. The checked-in certificate lineage exists only for `npm run release:android:migration`, which creates a one-time local migration APK for devices that previously received the old beta; it is never applied to public production APKs.
 
 The release keystore and its private Gradle properties are the permanent Android update identity. Maintainers must keep an encrypted backup outside the repository; losing that key prevents future APK updates under the same package identity.
 
@@ -141,10 +142,13 @@ After installing an update that improves transcription timing, open an existing 
 
 ## Privacy and product principles
 
+- Caption Studio's [privacy policy](PRIVACY.md) is also available from the Projects screen inside the app.
 - Ordinary caption generation does not require an OpenAI API key.
 - Source videos and transcription stay on the device during the normal workflow.
 - No watermark, transcription credits, font packs, export quota, or per-style paywall is part of the product design.
 - Imported fonts remain the user's responsibility to license for their intended use.
+
+For a production submission, use `npm run release:play` to produce the signed Android App Bundle required by Google Play. The prepared [Play submission checklist](play-store/submission-checklist.md) and [Data Safety notes](play-store/data-safety-notes.md) record the audited release assumptions.
 
 ## License
 

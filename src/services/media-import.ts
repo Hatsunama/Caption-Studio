@@ -1,6 +1,6 @@
 import * as DocumentPicker from 'expo-document-picker';
 
-import CaptionMedia from '../../modules/caption-media/src/CaptionMediaModule';
+import CaptionMedia from 'caption-media';
 import { MINIMUM_CLIP_TIMELINE_MS } from '@/lib/video-timeline';
 import {
   deleteProjectOwnedFiles,

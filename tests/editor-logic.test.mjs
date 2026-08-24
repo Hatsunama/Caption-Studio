@@ -6,6 +6,7 @@ import { spokenAnimationClock } from '../src/lib/animation-timing.ts';
 import { ANIMATION_PRESETS, reactionEmojis } from '../src/lib/animation-presets.ts';
 import { VIDEO_TRANSITION_PRESETS } from '../src/lib/transition-presets.ts';
 import { resolvePersonTransform, upsertPersonKeyframe } from '../src/lib/person-motion.ts';
+import { PERSON_MATTE_PRESETS } from '../src/lib/person-matte-presets.ts';
 import { groupTimelineWordsByClip, groupWordsIntoCaptions } from '../src/lib/caption-grouping.ts';
 import { alignWordsToSpeech } from '../src/lib/speech-alignment.ts';
 import { coalesceWhisperWords } from '../src/lib/whisper-words.ts';
@@ -83,6 +84,20 @@ test('person motion paths interpolate deterministically and rotate by the shorte
   assert.equal(middle.rotation, -180);
 });
 
+test('person matte quality presets are distinct and shared by preview and export', () => {
+  assert.deepEqual(Object.keys(PERSON_MATTE_PRESETS), ['stable', 'balanced', 'detailed']);
+  assert.ok(PERSON_MATTE_PRESETS.stable.temporalStability > PERSON_MATTE_PRESETS.balanced.temporalStability);
+  assert.ok(PERSON_MATTE_PRESETS.balanced.temporalStability > PERSON_MATTE_PRESETS.detailed.temporalStability);
+  const preview = readFileSync(new URL('../src/services/person-compositor.ts', import.meta.url), 'utf8');
+  const exporter = readFileSync(new URL('../src/services/project-export.ts', import.meta.url), 'utf8');
+  const nativeMatte = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/PersonMatteProcessor.kt', import.meta.url), 'utf8');
+  assert.match(preview, /qualityPreset: options\.background\.mask\.qualityPreset/);
+  assert.match(exporter, /qualityPreset: background\.mask\.qualityPreset/);
+  assert.match(nativeMatte, /protectFaces/);
+  assert.match(nativeMatte, /maximumHoldFrames/);
+  assert.match(nativeMatte, /cleanupMask/);
+});
+
 test('audio and transition ownership stays out of the editor screen', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   const audioDomain = readFileSync(new URL('../src/lib/audio-timeline.ts', import.meta.url), 'utf8');
@@ -114,6 +129,9 @@ test('video acquisition links the selected source without a hidden picker copy',
 test('background export is native, local, version-aligned, and rejects unsupported timeline shapes', () => {
   const nativeGradle = readFileSync(new URL('../modules/caption-media/android/build.gradle', import.meta.url), 'utf8');
   const exporter = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/PersonVideoExporter.kt', import.meta.url), 'utf8');
+  const nativeModule = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/CaptionMediaModule.kt', import.meta.url), 'utf8');
+  const motionPath = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/PersonMotionPath.kt', import.meta.url), 'utf8');
+  const bitmapMatte = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/BitmapMatte.kt', import.meta.url), 'utf8');
   const exportService = readFileSync(new URL('../src/services/project-export.ts', import.meta.url), 'utf8');
   assert.match(nativeGradle, /media3-transformer:1\.9\.0/);
   assert.match(nativeGradle, /media3-effect:1\.9\.0/);
@@ -122,6 +140,36 @@ test('background export is native, local, version-aligned, and rejects unsupport
   assert.match(exporter, /SelfieSegmenterOptions\.STREAM_MODE/);
   assert.match(exportService, /project\.clips\.length !== 1/);
   assert.match(exportService, /clip\.playbackRate !== 1/);
+  assert.match(exportService, /keyframes: background\.keyframes\.map/);
+  assert.match(exporter, /motionPath\.resolve/);
+  assert.match(motionPath, /shortestAngle/);
+  assert.match(bitmapMatte, /PorterDuff\.Mode\.DST_IN/);
+  assert.doesNotMatch(exporter, /IntArray\(source\.width \* source\.height\)/);
+  assert.match(exporter, /override fun configure\(videoSize: Size\)/);
+  assert.match(exporter, /matchVideoFrame/);
+  assert.match(exporter, /outputRotationDegrees = mediaRotationDegrees/);
+  assert.match(exporter, /METADATA_KEY_VIDEO_ROTATION/);
+  assert.match(exporter, /if \(options\.backgroundKind == "image"\) setFrameRate\(IMAGE_BACKGROUND_FRAME_RATE\)/);
+  assert.match(exporter, /const val IMAGE_BACKGROUND_FRAME_RATE = 30/);
+  assert.equal((nativeModule.match(/METADATA_KEY_VIDEO_ROTATION/g) ?? []).length, 1);
+});
+
+test('native person mattes preserve the generated alpha channel during composition', () => {
+  const matte = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/BitmapMatte.kt', import.meta.url), 'utf8');
+  const processor = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/PersonMatteProcessor.kt', import.meta.url), 'utf8');
+  assert.match(matte, /Bitmap\.createBitmap\(source\.width, source\.height, Bitmap\.Config\.ARGB_8888\)/);
+  assert.match(matte, /setHasAlpha\(true\)/);
+  assert.match(matte, /eraseColor\(Color\.TRANSPARENT\)/);
+  assert.match(matte, /Bitmap\.createBitmap\(maskPixels, maskWidth, maskHeight, Bitmap\.Config\.ARGB_8888\)/);
+  assert.doesNotMatch(matte, /Bitmap\.Config\.ALPHA_8/);
+  assert.doesNotMatch(matte, /source\.copy\(Bitmap\.Config\.ARGB_8888/);
+  assert.match(processor, /val evidence = max\(confidence\[index\], prior\?\.get\(index\) \?: 0f\)/);
+  assert.match(processor, /face\.width\(\) \* 0\.42f/);
+  assert.match(processor, /face\.height\(\) \* 0\.52f/);
+  assert.match(processor, /evidence >= 0\.24f/);
+  assert.match(processor, /prior\[index\]\.toInt\(\) and 0xff\) >= 128/);
+  assert.doesNotMatch(processor, /centerWeight > 0\.42f/);
+  assert.doesNotMatch(processor, /face\.width\(\) \* 0\.72f|face\.height\(\) \* 0\.92f/);
 });
 
 test('provider URIs stay in persistence and never cross the navigation URL', () => {
@@ -192,17 +240,42 @@ test('Expo owns video-player release and editor teardown never commands a releas
 
 test('production builds cannot use the debug signing config', () => {
   const appConfig = JSON.parse(readFileSync(new URL('../app.json', import.meta.url), 'utf8'));
+  const packageConfig = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const patchScript = readFileSync(new URL('../scripts/patch-react-native-gradle.js', import.meta.url), 'utf8');
   const signingScript = readFileSync(new URL('../scripts/sign-android-release.js', import.meta.url), 'utf8');
   assert.match(patchScript, /hasCaptionStudioReleaseSigning/);
   assert.match(patchScript, /signingConfig signingConfigs\.release/);
+  assert.match(patchScript, /com\.android\.tools:r8:8\.13\.19/);
   assert.match(signingScript, /CAPTION_STUDIO_RELEASE_STORE_FILE/);
-  assert.match(signingScript, /migration \? \['--lineage'/);
+  assert.match(signingScript, /only for the one-time debug-to-production migration APK/);
+  assert.match(signingScript, /'--lineage', lineage/);
+  assert.doesNotMatch(packageConfig.scripts['release:android'], /sign-android-release/);
+  assert.match(packageConfig.scripts['release:android:migration'], /sign-android-release\.js --migration/);
   assert.deepEqual(appConfig.expo.android.blockedPermissions.sort(), [
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
     'android.permission.READ_EXTERNAL_STORAGE',
+    'android.permission.RECORD_AUDIO',
     'android.permission.SYSTEM_ALERT_WINDOW',
     'android.permission.WRITE_EXTERNAL_STORAGE',
   ]);
+});
+
+test('Play releases use a signed app bundle and expose an in-app privacy policy', () => {
+  const appConfig = JSON.parse(readFileSync(new URL('../app.json', import.meta.url), 'utf8'));
+  const androidManifest = readFileSync(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
+  const packageConfig = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const homeScreen = readFileSync(new URL('../src/app/index.tsx', import.meta.url), 'utf8');
+  const privacyScreen = readFileSync(new URL('../src/app/privacy.tsx', import.meta.url), 'utf8');
+  const privacyPolicy = readFileSync(new URL('../PRIVACY.md', import.meta.url), 'utf8');
+  assert.match(packageConfig.scripts['release:play'], /bundleRelease/);
+  assert.equal(appConfig.expo.android.allowBackup, false);
+  assert.match(androidManifest, /android:allowBackup="false"/);
+  assert.match(homeScreen, /router\.push\('\/privacy'\)/);
+  assert.match(privacyScreen, /Caption Studio privacy policy/);
+  assert.match(privacyPolicy, /does not include advertising, first-party analytics, tracking, or cloud-transcription SDKs/);
+  assert.match(privacyPolicy, /ML Kit may send encrypted operational metrics to Google/);
+  assert.match(privacyPolicy, /does not send feature inputs or outputs, such as video frames or masks/);
 });
 
 test('clips magnetically pack by default while intentional gaps remain explicit and removable', () => {

@@ -23,6 +23,7 @@ export async function exportBackgroundReplacement(project: CaptionProject) {
     durationMs: totalClipDuration(project.clips),
     sourceStartMs: clip.sourceStartMs,
     backgroundKind: background.source.kind,
+    qualityPreset: background.mask.qualityPreset,
     threshold: background.mask.threshold,
     softness: background.mask.softness,
     temporalStability: background.mask.temporalStability,
@@ -31,6 +32,13 @@ export async function exportBackgroundReplacement(project: CaptionProject) {
     positionY: transform.position.y,
     scale: transform.scale,
     rotation: transform.rotation,
+    keyframes: background.keyframes.map((frame) => ({
+      timeMs: frame.timeMs,
+      positionX: frame.position.x,
+      positionY: frame.position.y,
+      scale: frame.scale,
+      rotation: frame.rotation,
+    })),
   });
   return result;
 }

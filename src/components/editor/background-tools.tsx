@@ -1,5 +1,6 @@
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
+import { PERSON_MATTE_PRESETS, type PersonMattePreset } from '@/lib/person-matte-presets';
 import type { BackgroundReplacement } from '@/types/project';
 
 export function BackgroundTools(props: {
@@ -15,8 +16,12 @@ export function BackgroundTools(props: {
   };
   const transform = props.value.personTransform;
   const updateMask = (patch: Partial<BackgroundReplacement['mask']>) => {
-    props.onChange({ ...props.value, mask: { ...props.value.mask, ...patch } });
+    props.onChange({ ...props.value, mask: { ...props.value.mask, ...patch, qualityPreset: 'custom' } });
   };
+  const applyPreset = (preset: PersonMattePreset) => props.onChange({
+    ...props.value,
+    mask: { ...PERSON_MATTE_PRESETS[preset] },
+  });
   return (
     <View style={{ gap: 9, padding: 12, borderRadius: 16, backgroundColor: '#151A20' }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -33,8 +38,20 @@ export function BackgroundTools(props: {
         </ScrollView>
         <Text style={{ color: '#B8C1CC', fontSize: 11, fontWeight: '800' }}>HUMAN EDGE QUALITY</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-          <Chip label={`Edge hold ${Math.round(props.value.mask.temporalStability * 100)}%`} active onPress={() => updateMask({ temporalStability: props.value.mask.temporalStability >= 0.85 ? 0.35 : props.value.mask.temporalStability + 0.1 })} />
-          <Chip label={`Feather ${Math.round(props.value.mask.edgeFeather * 100)}%`} active onPress={() => updateMask({ edgeFeather: props.value.mask.edgeFeather >= 0.9 ? 0.3 : props.value.mask.edgeFeather + 0.1 })} />
+          <Chip label="Stable" active={props.value.mask.qualityPreset === 'stable'} onPress={() => applyPreset('stable')} />
+          <Chip label="Balanced" active={props.value.mask.qualityPreset === 'balanced'} onPress={() => applyPreset('balanced')} />
+          <Chip label="Detailed" active={props.value.mask.qualityPreset === 'detailed'} onPress={() => applyPreset('detailed')} />
+        </ScrollView>
+        <Text style={{ color: '#939EAB', fontSize: 11 }}>
+          Stable reduces flicker around fast hands and hair. Detailed preserves more fine edges. Balanced sits between them.
+        </Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          <Chip label="Hold −" onPress={() => updateMask({ temporalStability: clamp(props.value.mask.temporalStability - 0.05, 0, 0.92) })} />
+          <Chip label={`Hold ${Math.round(props.value.mask.temporalStability * 100)}%`} active />
+          <Chip label="Hold +" onPress={() => updateMask({ temporalStability: clamp(props.value.mask.temporalStability + 0.05, 0, 0.92) })} />
+          <Chip label="Feather −" onPress={() => updateMask({ edgeFeather: clamp(props.value.mask.edgeFeather - 0.05, 0, 1) })} />
+          <Chip label={`Feather ${Math.round(props.value.mask.edgeFeather * 100)}%`} active />
+          <Chip label="Feather +" onPress={() => updateMask({ edgeFeather: clamp(props.value.mask.edgeFeather + 0.05, 0, 1) })} />
           <Chip label="Less subject" onPress={() => updateMask({ threshold: clamp(props.value.mask.threshold + 0.05, 0, 1) })} />
           <Chip label="More subject" onPress={() => updateMask({ threshold: clamp(props.value.mask.threshold - 0.05, 0, 1) })} />
         </ScrollView>
@@ -54,7 +71,7 @@ export function BackgroundTools(props: {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           <Chip label="Add path point here" active onPress={props.onAddKeyframe} />
           <Chip label="Remove nearest point" onPress={props.onRemoveNearestKeyframe} />
-          <Chip label={`${props.value.keyframes.length} path points`} onPress={() => {}} />
+          <Chip label={`${props.value.keyframes.length} path points`} />
         </ScrollView>
         <Text style={{ color: '#939EAB', fontSize: 11 }}>
           With no path points, the person stays put. Add points at different timeline positions to animate between them automatically.
@@ -64,8 +81,8 @@ export function BackgroundTools(props: {
   );
 }
 
-function Chip(props: { label: string; active?: boolean; onPress: () => void }) {
-  return <Pressable onPress={props.onPress} style={{ minHeight: 42, justifyContent: 'center', paddingHorizontal: 13, borderRadius: 12, borderWidth: 1, borderColor: props.active ? '#DFFF35' : '#303842', backgroundColor: props.active ? '#29331D' : '#20262E' }}>
+function Chip(props: { label: string; active?: boolean; onPress?: () => void }) {
+  return <Pressable disabled={!props.onPress} onPress={props.onPress} style={{ minHeight: 42, justifyContent: 'center', paddingHorizontal: 13, borderRadius: 12, borderWidth: 1, borderColor: props.active ? '#DFFF35' : '#303842', backgroundColor: props.active ? '#29331D' : '#20262E' }}>
     <Text numberOfLines={1} style={{ maxWidth: 220, color: props.active ? '#DFFF35' : '#F7F8FA', fontSize: 12, fontWeight: '800' }}>{props.label}</Text>
   </Pressable>;
 }
