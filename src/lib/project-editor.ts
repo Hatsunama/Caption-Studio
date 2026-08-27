@@ -1,6 +1,18 @@
 import { mergeStyle } from '@/lib/style-resolver';
+import { synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { applyCaptionTextChanges, type CaptionTextChanges } from '@/lib/caption-text-edits';
 import { constrainAudioClips } from '@/lib/audio-timeline';
+import { captionSpokenTokenSpans } from '@/lib/caption-text-breaks';
+import {
+  canApplyVideoTransition,
+  isVideoTransitionType,
+  normalizeVideoTransitionBoundaries,
+} from '@/lib/video-transitions';
+import {
+  mergeVideoTransform,
+  resolveVideoTransform,
+  sameVideoTransform,
+} from '@/lib/video-transform';
 import {
   anchorCaptionsToClips,
   buildClipTimeline,
@@ -20,6 +32,7 @@ import {
   type ImageVisualLayer,
   type TextVisualLayer,
   type VideoClip,
+  type VideoTransformPatch,
 } from '@/types/project';
 
 export function setBackgroundReplacement(project: CaptionProject, value: BackgroundReplacement) {
@@ -53,8 +66,21 @@ export function setTextLayerStyle(project: CaptionProject, layerId: string, patc
   });
 }
 
-export function setVideoTransform(project: CaptionProject, patch: Partial<CaptionProject['videoTransform']>) {
-  return updateProject(project, { videoTransform: { ...project.videoTransform, ...patch } });
+export function setVideoClipTransform(
+  project: CaptionProject,
+  clipId: string,
+  patch: VideoTransformPatch,
+) {
+  let changed = false;
+  const clips = project.clips.map((clip) => {
+    if (clip.id !== clipId) return clip;
+    const current = resolveVideoTransform(clip.transform, project.videoTransform);
+    const transform = mergeVideoTransform(current, patch);
+    if (sameVideoTransform(current, transform)) return clip;
+    changed = true;
+    return { ...clip, transform };
+  });
+  return changed ? updateProject(project, { clips }) : project;
 }
 
 export function setCaptionTiming(
@@ -277,10 +303,12 @@ export function setVideoTransition(
   const index = entries.findIndex((entry) => entry.clip.id === clipId);
   const entry = entries[index];
   const next = entries[index + 1];
-  if (!entry || !next) return project;
+  if (!entry || !isVideoTransitionType(type) || !Number.isFinite(requestedDurationMs)) return project;
+  if (type !== 'none' && (!next || !canApplyVideoTransition(project.clips, index))) return project;
   const durationMs = type === 'none'
     ? 0
     : clamp(requestedDurationMs, 100, Math.min(2_000, entry.endMs - entry.startMs, next.endMs - next.startMs));
+  if (entry.clip.transitionAfter?.type === type && entry.clip.transitionAfter.durationMs === durationMs) return project;
   return updateProject(project, {
     clips: project.clips.map((clip) => clip.id === clipId
       ? { ...clip, transitionAfter: { type, durationMs } }
@@ -324,16 +352,16 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
   ) return null;
   const left: VideoClip = {
     ...entry.clip,
+    transform: resolveVideoTransform(entry.clip.transform, project.videoTransform),
     id: leftId,
-    availableSourceEndMs: sourceSplitMs,
     sourceEndMs: sourceSplitMs,
     gapAfterMs: 0,
     transitionAfter: { type: 'none', durationMs: 0 },
   };
   const right: VideoClip = {
     ...entry.clip,
+    transform: resolveVideoTransform(entry.clip.transform, project.videoTransform),
     id: rightId,
-    availableSourceStartMs: sourceSplitMs,
     sourceStartMs: sourceSplitMs,
     gapBeforeMs: 0,
   };
@@ -483,7 +511,9 @@ function canvasPresetSize(preset: CaptionProject['canvas']['preset'], project: C
 }
 
 function updateProject<T extends Partial<CaptionProject>>(project: CaptionProject, update: T) {
-  return { ...project, ...update, updatedAt: new Date().toISOString() } as CaptionProject;
+  const next = { ...project, ...update, updatedAt: new Date().toISOString() } as CaptionProject;
+  if (!Object.prototype.hasOwnProperty.call(update, 'captions')) return next;
+  return { ...next, captionTracks: synchronizeCaptionTracks(next, next.captions) };
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -497,6 +527,7 @@ function rebuildAfterLayoutEdit(
   splice: { atMs: number; removeMs: number; insertMs: number },
   sourceLayers: CaptionProject['layers'] = project.layers,
 ) {
+  clips = normalizeVideoTransitionBoundaries(clips);
   const sourceWords = Object.fromEntries(
     Object.entries(project.transcription.sourceResults).map(([sourceId, result]) => [sourceId, result.words]),
   );
@@ -588,10 +619,11 @@ function retargetCaptionAnchor(
 }
 
 function splitCaptionText(text: string, leftRatio: number) {
-  const tokens = text.trim().split(/\s+/).filter(Boolean);
+  const tokens = captionSpokenTokenSpans(text);
   if (tokens.length < 2) return [text, text] as const;
   const leftCount = clamp(Math.round(tokens.length * clamp(leftRatio, 0, 1)), 1, tokens.length - 1);
-  return [tokens.slice(0, leftCount).join(' '), tokens.slice(leftCount).join(' ')] as const;
+  const boundary = tokens[leftCount - 1].end;
+  return [text.slice(0, boundary).trim(), text.slice(boundary).trim()] as const;
 }
 
 function anchorVisualLayers(layers: CaptionProject['layers'], clips: VideoClip[]) {

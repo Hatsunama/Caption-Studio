@@ -1,0 +1,12 @@
+{
+  "name": "caption-translation",
+  "version": "1.0.0",
+  "description": "Fully local Android caption translation for Caption Studio",
+  "license": "MIT",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true,
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

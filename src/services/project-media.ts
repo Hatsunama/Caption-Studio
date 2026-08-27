@@ -1,6 +1,11 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 import CaptionMedia from 'caption-media';
+import { assertSupportedVideo } from '@/lib/media-validation';
+
+const MAX_STORED_IMAGE_BYTES = 50 * 1024 * 1024;
+
+const ORPHAN_DIRECTORY_GRACE_SECONDS = 24 * 60 * 60;
 
 export async function ensureProjectThumbnail(options: {
   projectId: string;
@@ -23,6 +28,7 @@ export async function generateProjectThumbnail(projectId: string, sourceId: stri
     const generated = await FileSystem.getInfoAsync(outputUri);
     return generated.exists && !generated.isDirectory ? outputUri : undefined;
   } catch {
+    await FileSystem.deleteAsync(outputUri, { idempotent: true }).catch(() => undefined);
     return undefined;
   }
 }
@@ -44,9 +50,53 @@ export async function deleteProjectOwnedFiles(projectId: string, uris: string[])
   }
 }
 
+export async function reconcileProjectOwnedFiles(projectId: string, retainedUris: Iterable<string>) {
+  if (!FileSystem.documentDirectory) return;
+  const projectUri = `${FileSystem.documentDirectory}projects/${safePathSegment(projectId)}/`;
+  const projectInfo = await FileSystem.getInfoAsync(projectUri);
+  if (!projectInfo.exists || !projectInfo.isDirectory) return;
+  const retained = new Set([...retainedUris].filter((uri) => uri.startsWith(projectUri)));
+  await removeUnreferencedFiles(projectUri, retained);
+}
+
+export async function reconcileOrphanedProjectDirectories(retainedProjectIds: Iterable<string>) {
+  if (!FileSystem.documentDirectory) return;
+  const projectsUri = `${FileSystem.documentDirectory}projects/`;
+  const projectsInfo = await FileSystem.getInfoAsync(projectsUri);
+  if (!projectsInfo.exists || !projectsInfo.isDirectory) return;
+  const retainedDirectories = new Set([...retainedProjectIds].map(safePathSegment));
+  const entries = await FileSystem.readDirectoryAsync(projectsUri);
+  for (const name of entries) {
+    if (retainedDirectories.has(name) || !/^project-[a-zA-Z0-9._-]+$/.test(name)) continue;
+    const uri = `${projectsUri}${name}`;
+    const info = await FileSystem.getInfoAsync(uri);
+    if (
+      info.exists
+      && info.isDirectory
+      && Date.now() / 1000 - info.modificationTime >= ORPHAN_DIRECTORY_GRACE_SECONDS
+    ) {
+      await FileSystem.deleteAsync(uri, { idempotent: true });
+    }
+  }
+}
+
+async function removeUnreferencedFiles(directoryUri: string, retained: ReadonlySet<string>) {
+  const entries = await FileSystem.readDirectoryAsync(directoryUri);
+  for (const name of entries) {
+    const uri = `${directoryUri}${name}`;
+    const info = await FileSystem.getInfoAsync(uri);
+    if (!info.exists) continue;
+    if (info.isDirectory) {
+      await removeUnreferencedFiles(`${uri}/`, retained);
+    } else if (!retained.has(uri)) {
+      await FileSystem.deleteAsync(uri, { idempotent: true });
+    }
+  }
+}
+
 export async function validateProjectSource(videoUri: string) {
   const info = await CaptionMedia.getMediaInfo(videoUri);
-  if (info.durationMs <= 0) throw new Error('The source is not a readable video.');
+  assertSupportedVideo(info, 'The source');
 }
 
 export async function validateProjectSources(sources: { uri: string; displayName: string }[]) {
@@ -70,16 +120,57 @@ export async function storeProjectImage(options: {
   fileName: string;
 }) {
   if (!FileSystem.documentDirectory) throw new Error('Permanent app storage is unavailable on this device.');
-  const extension = options.fileName.match(/\.([a-zA-Z0-9]{2,5})$/)?.[1]?.toLowerCase() ?? 'jpg';
-  const directory = `${FileSystem.documentDirectory}projects/${options.projectId}/overlays/`;
-  const destinationUri = `${directory}${options.imageId}.${extension}`;
-  await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
-  await FileSystem.copyAsync({ from: options.sourceUri, to: destinationUri });
-  const stored = await FileSystem.getInfoAsync(destinationUri);
-  if (!stored.exists || stored.isDirectory || stored.size <= 0) {
-    throw new Error('The selected image could not be saved in this project.');
+  const directory = `${FileSystem.documentDirectory}projects/${safePathSegment(options.projectId)}/overlays/`;
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const stagingUri = `${directory}.staging-${safePathSegment(options.imageId)}-${nonce}`;
+  let destinationUri: string | undefined;
+  let committed = false;
+  try {
+    const source = await FileSystem.getInfoAsync(options.sourceUri);
+    if (source.exists && !source.isDirectory && source.size > MAX_STORED_IMAGE_BYTES) {
+      throw new Error('This image is larger than the 50 MB import limit. Choose an optimized image.');
+    }
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+    await FileSystem.copyAsync({ from: options.sourceUri, to: stagingUri });
+    const staged = await FileSystem.getInfoAsync(stagingUri);
+    if (!staged.exists || staged.isDirectory || staged.size <= 0) {
+      throw new Error('The selected image could not be saved in this project.');
+    }
+    if (staged.size > MAX_STORED_IMAGE_BYTES) {
+      throw new Error('This image is larger than the 50 MB import limit. Choose an optimized image.');
+    }
+    const validation = await CaptionMedia.validateImageFile(stagingUri);
+    const extension = imageExtension(validation.mimeType);
+    destinationUri = `${directory}${safePathSegment(options.imageId)}-${nonce}.${extension}`;
+    const existing = await FileSystem.getInfoAsync(destinationUri);
+    if (existing.exists) throw new Error('Caption Studio could not allocate a unique image file. Try again.');
+    await FileSystem.moveAsync({ from: stagingUri, to: destinationUri });
+    committed = true;
+    return destinationUri;
+  } catch (error) {
+    throw error;
+  } finally {
+    await FileSystem.deleteAsync(stagingUri, { idempotent: true }).catch(() => undefined);
+    if (!committed && destinationUri) {
+      await FileSystem.deleteAsync(destinationUri, { idempotent: true }).catch(() => undefined);
+    }
   }
-  return destinationUri;
+}
+
+function imageExtension(mimeType: string) {
+  const extensions: Record<string, string> = {
+    'image/avif': 'avif',
+    'image/bmp': 'bmp',
+    'image/gif': 'gif',
+    'image/heic': 'heic',
+    'image/heif': 'heif',
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  };
+  const extension = extensions[mimeType.toLowerCase()];
+  if (!extension) throw new Error('The selected image format is not supported.');
+  return extension;
 }
 
 export async function storeProjectAudio(options: {
@@ -92,10 +183,15 @@ export async function storeProjectAudio(options: {
   const extension = options.fileName.match(/\.([a-zA-Z0-9]{2,5})$/)?.[1]?.toLowerCase() ?? 'm4a';
   const directory = `${FileSystem.documentDirectory}projects/${safePathSegment(options.projectId)}/audio/`;
   const destinationUri = `${directory}${safePathSegment(options.audioId)}.${extension}`;
-  await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
-  await FileSystem.copyAsync({ from: options.sourceUri, to: destinationUri });
-  await validateStoredAudio(destinationUri);
-  return destinationUri;
+  try {
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+    await FileSystem.copyAsync({ from: options.sourceUri, to: destinationUri });
+    await validateStoredAudio(destinationUri);
+    return destinationUri;
+  } catch (error) {
+    await FileSystem.deleteAsync(destinationUri, { idempotent: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function prepareExtractedAudioUri(projectId: string, audioId: string) {

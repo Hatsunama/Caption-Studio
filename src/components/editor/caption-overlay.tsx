@@ -10,7 +10,20 @@ import {
 } from 'react-native';
 
 import { reactionEmojis } from '@/lib/animation-presets';
-import { spokenAnimationClock } from '@/lib/animation-timing';
+import {
+  captionAnimationClock,
+  captionAnimationState,
+  isActiveWordHighlightAnimation,
+  isWordTimedAnimation,
+  realWordAnimationProgress,
+  type CaptionAnimationState,
+} from '@/lib/animation-timing';
+import {
+  alignCaptionTimedWords,
+  captionLayoutText,
+  captionTextTokens,
+  compactCaptionToken,
+} from '@/lib/caption-text-breaks';
 import { resolveCaptionStyle } from '@/lib/style-resolver';
 import type { CaptionAnimationId, CaptionBlock, CaptionStyle, CaptionStylePatch, WordToken } from '@/types/project';
 
@@ -127,23 +140,22 @@ export function CaptionOverlay(props: {
 
   if (!caption) return null;
 
-  const timedWords = caption.wordIds
+  const candidateTimedWords = caption.wordIds
     .map((id) => props.words.find((word) => word.id === id))
     .filter((word): word is WordToken => Boolean(word));
-  const renderedWords = wordsMatchCaption(timedWords, caption.text) ? timedWords : fallbackWords(caption);
-  const activeIndex = renderedWords.findIndex((word) => props.currentMs >= word.startMs && props.currentMs < word.endMs);
-  const visibleWords = wordsForAnimation(renderedWords, activeIndex, style.animation.id);
-  const activeWord = renderedWords[activeIndex];
-  // Every effect restarts on the word's real speech window instead of looping
-  // independently of the voice track.
-  const { entryProgress, wordProgress } = spokenAnimationClock({
+  const timedWords = alignCaptionTimedWords(candidateTimedWords, caption.text);
+  const renderedWords = timedWords.length > 0 ? timedWords : fallbackWords(caption);
+  const activeIndex = timedWords.findIndex((word) => props.currentMs >= word.startMs && props.currentMs < word.endMs);
+  const visibleWords = wordsForAnimation(renderedWords, activeIndex, style.animation.id, props.currentMs, timedWords.length > 0);
+  const activeWord = timedWords[activeIndex];
+  const captionClock = captionAnimationClock({
     currentMs: props.currentMs,
     captionStartMs: caption.startMs,
     captionEndMs: caption.endMs,
     animationDurationMs: style.animation.durationMs,
-    activeWord,
   });
-  const loopProgress = wordProgress;
+  const phraseState = captionAnimationState(style.animation.id, captionClock, style.animation.intensity);
+  const wordProgress = realWordAnimationProgress(props.currentMs, activeWord);
   const fittedFontSize = fitCaptionFont(style, renderedWords, canvasLayout);
   const backgroundAlpha = Math.round(style.background.opacity * 255).toString(16).padStart(2, '0');
   const transformed = (text: string) => {
@@ -201,7 +213,7 @@ export function CaptionOverlay(props: {
               paddingVertical: style.background.paddingY,
               backgroundColor: `${style.background.color}${backgroundAlpha}`,
             },
-            captionAnimationStyle(style.animation.id, entryProgress, loopProgress, style.animation.intensity),
+            captionAnimationViewStyle(phraseState, canvasLayout.width),
           ]}>
           {style.textTreatment !== 'solid' ? (
             <WordLayer
@@ -215,7 +227,8 @@ export function CaptionOverlay(props: {
               projectStyle={props.projectStyle}
               currentMs={props.currentMs}
               animationId={style.animation.id}
-              loopProgress={loopProgress}
+              captionGlow={phraseState.glow}
+              wordProgress={wordProgress}
               fittedFontSize={fittedFontSize}
               transformed={transformed}
             />
@@ -228,15 +241,19 @@ export function CaptionOverlay(props: {
             projectStyle={props.projectStyle}
             currentMs={props.currentMs}
             animationId={style.animation.id}
-            loopProgress={loopProgress}
+            captionGlow={phraseState.glow}
+            wordProgress={wordProgress}
             fittedFontSize={fittedFontSize}
             transformed={transformed}
           />
-          {style.animation.id.startsWith('emoji-') ? (
+          {style.animation.id.startsWith('emoji-') && activeWord && wordProgress !== undefined ? (
             <EmojiEffects
               mode={style.animation.id}
-              emojis={reactionEmojis(activeWord?.text ?? '', caption.text)}
-              progress={loopProgress}
+              emojis={reactionEmojis(activeWord.text, caption.text, {
+                words: timedWords.map((word) => word.text),
+                activeIndex,
+              })}
+              progress={wordProgress}
             />
           ) : null}
         </View>
@@ -299,7 +316,8 @@ function WordLayer(props: {
   projectStyle: CaptionStyle;
   currentMs: number;
   animationId: CaptionAnimationId;
-  loopProgress: number;
+  captionGlow: number;
+  wordProgress?: number;
   fittedFontSize: number;
   transformed: (text: string) => string;
   absolute?: boolean;
@@ -320,16 +338,18 @@ function WordLayer(props: {
       }}>
       {props.words.map((word) => {
         const originalIndex = props.allWords.findIndex((candidate) => candidate.id === word.id);
-        const isActive = originalIndex === props.activeIndex;
+        const isActive = props.wordProgress !== undefined && originalIndex === props.activeIndex;
         const isKaraokeActive = props.animationId === 'karaoke' && props.activeIndex >= 0 && originalIndex <= props.activeIndex;
         const wordStyle = resolveCaptionStyle(props.projectStyle, props.caption, word);
         return (
-          <View key={`${props.absolute ? 'back' : 'front'}-${word.id}`} style={wordAnimationStyle(props.animationId, isActive, originalIndex, props.loopProgress, style.animation.intensity)}>
+          <View key={`${props.absolute ? 'back' : 'front'}-${word.id}`} style={wordAnimationStyle(props.animationId, isActive, originalIndex, props.wordProgress, style.animation.intensity)}>
             <Text
               allowFontScaling={false}
               style={{
-                marginHorizontal: Math.max(1.5, props.fittedFontSize * 0.08),
-                color: props.colorOverride ?? (isActive || isKaraokeActive ? wordStyle.activeWordColor : wordStyle.textColor),
+                marginHorizontal: compactCaptionToken(word.text)
+                  ? 0
+                  : Math.max(1.5, props.fittedFontSize * 0.08),
+                color: props.colorOverride ?? ((isActive && isActiveWordHighlightAnimation(props.animationId)) || isKaraokeActive ? wordStyle.activeWordColor : wordStyle.textColor),
                 fontFamily: wordStyle.font.family,
                 fontSize: props.fittedFontSize,
                 fontWeight: wordStyle.font.family.startsWith('Caption-') ? '400' : wordStyle.fontWeight,
@@ -341,7 +361,7 @@ function WordLayer(props: {
                 textShadowOffset: { width: wordStyle.shadow.offsetX, height: wordStyle.shadow.offsetY },
                 textShadowRadius:
                   props.animationId === 'glow-pulse'
-                    ? 7 + 8 * Math.abs(Math.sin(props.loopProgress * Math.PI * 2))
+                    ? 7 + 8 * props.captionGlow
                     : Math.max(wordStyle.shadow.blur, wordStyle.stroke.width),
               }}>
               {props.transformed(word.text)}
@@ -353,24 +373,25 @@ function WordLayer(props: {
   );
 }
 
-function wordsForAnimation(words: WordToken[], activeIndex: number, animationId: CaptionAnimationId) {
-  if (animationId === 'single-word') return [words[Math.max(0, activeIndex)]].filter(Boolean);
-  if (animationId === 'typewriter') return words.slice(0, Math.max(1, activeIndex + 1));
+function wordsForAnimation(
+  words: WordToken[],
+  activeIndex: number,
+  animationId: CaptionAnimationId,
+  currentMs: number,
+  hasRealTiming: boolean,
+) {
+  if (!hasRealTiming || !isWordTimedAnimation(animationId)) return words;
+  if (animationId === 'single-word') return activeIndex >= 0 ? [words[activeIndex]] : [];
+  if (animationId === 'typewriter') return words.filter((word) => word.startMs <= currentMs);
   return words;
-}
-
-function wordsMatchCaption(words: WordToken[], captionText: string) {
-  if (words.length === 0) return false;
-  const normalize = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-  return normalize(words.map((word) => word.text).join(' ')) === normalize(captionText);
 }
 
 function fitCaptionFont(style: CaptionStyle, words: WordToken[], canvas: { width: number; height: number }) {
   const availableWidth = Math.max(24, style.box.width * canvas.width - style.background.paddingX * 2);
   const availableHeight = Math.max(18, style.box.height * canvas.height - style.background.paddingY * 2);
   const maxLines = Math.max(1, style.maxLines);
-  const text = words.map((word) => word.text).join(' ');
-  const longestWord = Math.max(1, ...words.map((word) => word.text.length));
+  const text = captionLayoutText(words.map((word) => word.text));
+  const longestWord = Math.max(1, ...words.map((word) => Array.from(word.text).length));
   const targetCharactersPerLine = Math.max(longestWord, Math.ceil((text.length + words.length * 0.8) / maxLines));
   const widthCap = availableWidth / Math.max(1, targetCharactersPerLine * 0.68);
   const longestWordCap = availableWidth / Math.max(1, longestWord * 0.72);
@@ -378,72 +399,40 @@ function fitCaptionFont(style: CaptionStyle, words: WordToken[], canvas: { width
   return clamp(Math.min(style.fontSize, widthCap, longestWordCap, heightCap), 9, style.fontSize);
 }
 
-function captionAnimationStyle(
-  id: CaptionAnimationId,
-  entry: number,
-  loop: number,
-  intensity: number,
+function captionAnimationViewStyle(
+  state: CaptionAnimationState,
+  canvasWidth: number,
 ): ViewStyle {
-  const eased = 1 - Math.pow(1 - entry, 3);
-  switch (id) {
-    case 'fade-in':
-      return { opacity: eased };
-    case 'drop-in':
-      return { opacity: entry, transform: [{ translateY: (1 - eased) * -(45 + intensity * 100) }] };
-    case 'swing':
-      return { opacity: entry, transform: [{ rotate: `${Math.sin((1 - entry) * Math.PI * 3) * (10 + intensity * 30)}deg` }] };
-    case 'heartbeat':
-      return { transform: [{ scale: 1 + Math.pow(Math.max(0, Math.sin(loop * Math.PI * 4)), 4) * (0.08 + intensity * 0.16) }] };
-    case 'flicker':
-      return { opacity: entry < 0.9 ? (Math.sin(entry * Math.PI * 9) > -0.15 ? 1 : 0.18) : 1 };
-    case 'tilt-in':
-      return { opacity: entry, transform: [{ translateX: (1 - eased) * (40 + intensity * 80) }, { rotate: `${(1 - eased) * (20 + intensity * 35)}deg` }] };
-    case 'squash':
-      return { opacity: entry, transform: [{ scaleX: 0.55 + eased * 0.45 }, { scaleY: 1.55 - eased * 0.55 }] };
-    case 'stretch':
-      return { opacity: entry, transform: [{ scaleX: 1.45 - eased * 0.45 }, { scaleY: 0.35 + eased * 0.65 }] };
-    case 'slide-up':
-      return { opacity: entry, transform: [{ translateY: (1 - eased) * (35 + intensity * 80) }] };
-    case 'slide-left':
-      return { opacity: entry, transform: [{ translateX: (1 - eased) * -(55 + intensity * 120) }] };
-    case 'zoom-in':
-      return { opacity: entry, transform: [{ scale: 0.15 + eased * 0.85 }] };
-    case 'spin-in':
-      return { opacity: entry, transform: [{ rotate: `${(1 - eased) * -270}deg` }, { scale: 0.5 + eased * 0.5 }] };
-    case 'shake':
-      return { transform: [{ translateX: Math.sin(loop * Math.PI * 12) * (4 + intensity * 16) }, { rotate: `${Math.sin(loop * Math.PI * 9) * 2}deg` }] };
-    case 'glow-pulse':
-      return { transform: [{ scale: 1 + Math.sin(loop * Math.PI * 2) * (0.02 + intensity * 0.06) }] };
-    case 'elastic': {
-      const wobble = Math.sin(entry * Math.PI * 5) * (1 - entry);
-      return { opacity: Math.min(1, entry * 2.5), transform: [{ scaleX: 1 + wobble * (0.35 + intensity) }, { scaleY: 1 - wobble * 0.18 }] };
-    }
-    case 'flip':
-      return { opacity: entry, transform: [{ perspective: 900 }, { rotateY: `${(1 - eased) * 95}deg` }] };
-    case 'stomp':
-      return { opacity: entry, transform: [{ translateY: (1 - eased) * -(50 + intensity * 100) }, { scale: 1 + Math.sin(entry * Math.PI) * intensity * 0.35 }] };
-    default:
-      return {};
-  }
+  const scale = Math.max(1, canvasWidth) / 360;
+  return {
+    opacity: state.opacity,
+    transform: [
+      { translateX: state.translateX * scale },
+      { translateY: state.translateY * scale },
+      { rotate: `${state.rotation}deg` },
+      { scaleX: state.scaleX },
+      { scaleY: state.scaleY },
+    ],
+  };
 }
 
 function wordAnimationStyle(
   id: CaptionAnimationId,
   active: boolean,
   index: number,
-  loop: number,
+  progress: number | undefined,
   intensity: number,
 ): ViewStyle {
-  if (id === 'wave') return { transform: [{ translateY: Math.sin(loop * Math.PI * 2 + index * 0.85) * (4 + intensity * 18) }] };
-  if (!active) return {};
-  const pulse = Math.sin(loop * Math.PI);
+  if (progress === undefined || !active) return {};
+  if (id === 'wave') return { transform: [{ translateY: Math.sin(progress * Math.PI * 2 + index * 0.85) * (4 + intensity * 18) }] };
+  const pulse = Math.sin(progress * Math.PI);
   if (id === 'pop') return { transform: [{ scale: 0.65 + pulse * (0.5 + intensity) }, { rotate: `${(1 - pulse) * -5}deg` }] };
-  if (id === 'bounce') return { transform: [{ translateY: -Math.abs(Math.sin(loop * Math.PI * 2)) * (8 + intensity * 32) }] };
-  if (id === 'punch') return { transform: [{ scale: 1 + pulse * (0.3 + intensity * 0.7) }, { rotate: `${Math.sin(loop * Math.PI * 2) * 3}deg` }] };
+  if (id === 'bounce') return { transform: [{ translateY: -Math.abs(Math.sin(progress * Math.PI * 2)) * (8 + intensity * 32) }] };
+  if (id === 'punch') return { transform: [{ scale: 1 + pulse * (0.3 + intensity * 0.7) }, { rotate: `${Math.sin(progress * Math.PI * 2) * 3}deg` }] };
   if (id === 'word-spin') return { transform: [{ rotate: `${(1 - pulse) * -180}deg` }, { scale: 0.7 + pulse * 0.55 }] };
   if (id === 'word-slide') return { opacity: Math.min(1, pulse * 2), transform: [{ translateX: (1 - pulse) * -(24 + intensity * 70) }] };
   if (id === 'word-flash') return { opacity: 0.45 + pulse * 0.55, transform: [{ scale: 1 + pulse * (0.12 + intensity * 0.2) }] };
-  if (id === 'word-jitter') return { transform: [{ translateX: Math.sin(loop * Math.PI * 18) * (2 + intensity * 8) }, { translateY: Math.cos(loop * Math.PI * 14) * (1 + intensity * 5) }] };
+  if (id === 'word-jitter') return { transform: [{ translateX: Math.sin(progress * Math.PI * 18) * (2 + intensity * 8) }, { translateY: Math.cos(progress * Math.PI * 14) * (1 + intensity * 5) }] };
   return {};
 }
 
@@ -723,12 +712,11 @@ function normalizeDegrees(value: number) {
 }
 
 function fallbackWords(caption: CaptionBlock): WordToken[] {
-  const parts = caption.text.split(/\s+/).filter(Boolean);
-  const duration = Math.max(1, caption.endMs - caption.startMs);
+  const parts = captionTextTokens(caption.text);
   return parts.map((text, index) => ({
     id: `${caption.id}-fallback-${index}`,
     text,
-    startMs: caption.startMs + (duration * index) / parts.length,
-    endMs: caption.startMs + (duration * (index + 1)) / parts.length,
+    startMs: caption.startMs,
+    endMs: caption.startMs,
   }));
 }

@@ -75,6 +75,12 @@ function choice(
 }
 
 export const BUILT_IN_FONT_CHOICES: FontChoice[] = [
+  {
+    font: { id: 'system-sans', family: 'sans-serif', source: 'system', postScriptName: 'System Sans' },
+    name: 'System Sans',
+    mood: 'Clean device sans',
+    treatment: 'solid',
+  },
   choice('anton', 'Caption-Anton', 'Anton', 'Tall blockbuster'),
   choice('bebas-neue', 'Caption-BebasNeue', 'Bebas Neue', 'Clean poster'),
   choice('bungee', 'Caption-Bungee', 'Bungee', 'Arcade headline', 'duotone-offset', { primary: '#FFF45C', secondary: '#FF3D9A' }),

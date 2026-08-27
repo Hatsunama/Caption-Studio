@@ -1,3 +1,12 @@
+import {
+  captionLayoutText,
+  captionSpokenTokenSpans,
+  captionSplitBoundaryAtCursor,
+  captionTextLength,
+  captionTextNearestSpokenBoundary,
+  captionTextOffsetForSpokenBoundary,
+  captionTextPrefixLength,
+} from '@/lib/caption-text-breaks';
 import type { CaptionBlock, WordToken } from '@/types/project';
 
 const MINIMUM_CAPTION_MS = 80;
@@ -25,19 +34,22 @@ export function splitCaptionScriptBlock(
   const index = captions.findIndex((caption) => caption.id === captionId);
   if (index < 0 || captions.some((caption) => caption.id === newCaptionId)) return null;
   const caption = captions[index];
-  const beforeText = normalizeText(caption.text.slice(0, cursor));
-  const afterText = normalizeText(caption.text.slice(cursor));
+  const splitBoundary = captionSplitBoundaryAtCursor(caption.text, cursor);
+  if (!splitBoundary) return null;
+  const beforeText = normalizeText(caption.text.slice(0, splitBoundary.offset));
+  const afterText = normalizeText(caption.text.slice(splitBoundary.offset));
   if (!beforeText || !afterText || caption.endMs - caption.startMs < MINIMUM_CAPTION_MS * 2) return null;
 
   const wordById = new Map(words.map((word) => [word.id, word]));
   const timedWordIds = caption.wordIds.filter((wordId) => wordById.has(wordId));
-  const splitIndex = wordSplitIndex(caption.text, cursor, timedWordIds.length);
+  const splitIndex = wordSplitIndex(caption.text, splitBoundary.offset, splitBoundary.tokenIndex, timedWordIds.length);
   const leftWordIds = timedWordIds.slice(0, splitIndex);
   const rightWordIds = timedWordIds.slice(splitIndex);
   const leftWord = wordById.get(leftWordIds.at(-1) ?? '');
   const rightWord = wordById.get(rightWordIds[0] ?? '');
   const proportionalTime = caption.startMs
-    + (caption.endMs - caption.startMs) * clamp(cursor / Math.max(1, caption.text.length), 0, 1);
+    + (caption.endMs - caption.startMs)
+      * clamp(captionTextPrefixLength(caption.text, splitBoundary.offset) / Math.max(1, captionTextLength(caption.text)), 0, 1);
   const timedBoundary = leftWord && rightWord ? (leftWord.endMs + rightWord.startMs) / 2 : proportionalTime;
   const splitMs = clamp(timedBoundary, caption.startMs + MINIMUM_CAPTION_MS, caption.endMs - MINIMUM_CAPTION_MS);
   const sourceSplitMs = caption.sourceAnchor
@@ -145,7 +157,7 @@ export function mergeCaptionScriptBlock(
     : undefined;
   const merged: CaptionBlock = {
     ...previous,
-    text: normalizeText(`${previous.text} ${current.text}`),
+    text: normalizeText(captionLayoutText([previous.text.trim(), current.text.trim()])),
     textMode: 'manual',
     endMs: Math.max(previous.endMs, current.endMs),
     wordIds,
@@ -179,17 +191,17 @@ function textCursorForWordBoundary(
   requestedTimeMs: number,
   caption: CaptionBlock,
 ) {
-  const boundaries = [...text.matchAll(/\s+/g)].map((match) => match.index ?? 0);
-  if (!boundaries.length) return Math.round(text.length / 2);
   if (timedWordCount > 1 && wordBoundary > 0) {
-    const normalizedIndex = Math.round(boundaries.length * wordBoundary / (timedWordCount - 1)) - 1;
-    return boundaries[clamp(normalizedIndex, 0, boundaries.length - 1)];
+    const exact = captionTextOffsetForSpokenBoundary(text, wordBoundary);
+    if (exact != null && captionSpokenTokenSpans(text).length === timedWordCount) return exact;
   }
   const ratio = (requestedTimeMs - caption.startMs) / Math.max(1, caption.endMs - caption.startMs);
-  const requestedCursor = text.length * clamp(ratio, 0, 1);
-  return boundaries.reduce((nearest, candidate) => (
-    Math.abs(candidate - requestedCursor) < Math.abs(nearest - requestedCursor) ? candidate : nearest
-  ), boundaries[0]);
+  const requestedGrapheme = captionTextLength(text) * clamp(ratio, 0, 1);
+  const spans = captionSpokenTokenSpans(text);
+  const requestedCursor = spans.find((span) => captionTextPrefixLength(text, span.end) >= requestedGrapheme)?.end
+    ?? spans.at(-1)?.end
+    ?? 0;
+  return captionTextNearestSpokenBoundary(text, requestedCursor)?.offset ?? 0;
 }
 
 function withCaptionBoundary(caption: CaptionBlock, edge: 'start' | 'end', boundaryMs: number): CaptionBlock {
@@ -208,12 +220,12 @@ function withCaptionBoundary(caption: CaptionBlock, edge: 'start' | 'end', bound
   };
 }
 
-function wordSplitIndex(text: string, cursor: number, wordCount: number) {
+function wordSplitIndex(text: string, cursor: number, tokenBoundary: number, wordCount: number) {
   if (wordCount < 2) return 0;
-  const beforeCount = normalizeText(text.slice(0, cursor)).split(/\s+/).filter(Boolean).length;
-  const totalCount = normalizeText(text).split(/\s+/).filter(Boolean).length;
-  if (totalCount === wordCount && beforeCount > 0 && beforeCount < wordCount) return beforeCount;
-  return clamp(Math.round(wordCount * cursor / Math.max(1, text.length)), 1, wordCount - 1);
+  const tokenCount = captionSpokenTokenSpans(text).length;
+  if (tokenCount === wordCount && tokenBoundary > 0 && tokenBoundary < wordCount) return tokenBoundary;
+  const prefixLength = captionTextPrefixLength(text, cursor);
+  return clamp(Math.round(wordCount * prefixLength / Math.max(1, captionTextLength(text))), 1, wordCount - 1);
 }
 
 function normalizeText(text: string) {

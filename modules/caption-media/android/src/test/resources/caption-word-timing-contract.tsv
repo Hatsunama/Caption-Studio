@@ -1,0 +1,8 @@
+valid	caption	timed	rendered
+true	你好，世界！	你␞好␞世␞界	你␞好，␞世␞界！
+true	「繁體字幕」，真的很好！	「繁␞體␞字␞幕␞真␞的␞很␞好	「繁␞體␞字␞幕」，␞真␞的␞很␞好！
+true	AI字幕，很自然。	AI␞字␞幕␞很␞自␞然	AI␞字␞幕，␞很␞自␞然。
+true	𠮷好 Café！	𠮷好␞Café	𠮷␞好␞Café！
+true	太棒了👍！	太␞棒␞了	太␞棒␞了👍！
+false	icecream很好	ice␞cream␞很␞好	<empty>
+false	你好，世界！	你␞壞␞世␞界	<empty>

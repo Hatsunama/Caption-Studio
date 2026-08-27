@@ -1,6 +1,13 @@
 import * as SQLite from 'expo-sqlite';
 
 import {
+  createRetryableAsyncInitializer,
+  decodeEveryPersistedRow,
+  extractPersistedContentUris,
+} from '@/lib/persistence-boundaries';
+import { decodeVersionTwoProject } from '@/lib/project-schema';
+import { synchronizeCaptionTracks } from '@/lib/caption-tracks';
+import {
   anchorCaptionsToClips,
   mapSourceWordsToTimeline,
   MINIMUM_CLIP_TIMELINE_MS,
@@ -8,6 +15,7 @@ import {
 } from '@/lib/video-timeline';
 import { normalizedPersonKeyframes } from '@/lib/person-motion';
 import { PERSON_MATTE_PRESETS } from '@/lib/person-matte-presets';
+import { hydrateVideoTransitionBoundaries } from '@/lib/video-transitions';
 import {
   DEFAULT_CAPTION_STYLE,
   type AudioClip,
@@ -16,36 +24,46 @@ import {
   type ProjectVideoSource,
   type VideoClip,
 } from '@/types/project';
+import type { ProjectRecordSummary } from '@/types/project-library';
 
-let databasePromise: Promise<SQLite.SQLiteDatabase> | undefined;
 const projectWriteQueues = new Map<string, Promise<void>>();
 const deletedProjectIds = new Set<string>();
 
-export async function getDatabase() {
-  databasePromise ??= SQLite.openDatabaseAsync('caption-studio.db');
-  const database = await databasePromise;
-  await database.execAsync(`
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY NOT NULL,
-      name TEXT NOT NULL,
-      source_uri TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      project_json TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS projects_updated_at
-      ON projects(updated_at DESC);
-    CREATE TABLE IF NOT EXISTS imported_fonts (
-      id TEXT PRIMARY KEY NOT NULL,
-      font_json TEXT NOT NULL,
-      imported_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS preferences (
-      key TEXT PRIMARY KEY NOT NULL,
-      value_json TEXT NOT NULL
-    );
-  `);
-  return database;
+const initializeDatabaseOnce = createRetryableAsyncInitializer(initializeDatabase);
+
+export function getDatabase() {
+  return initializeDatabaseOnce();
+}
+
+async function initializeDatabase() {
+  const database = await SQLite.openDatabaseAsync('caption-studio.db');
+  try {
+    await database.execAsync(`
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        source_uri TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        project_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS projects_updated_at
+        ON projects(updated_at DESC);
+      CREATE TABLE IF NOT EXISTS imported_fonts (
+        id TEXT PRIMARY KEY NOT NULL,
+        font_json TEXT NOT NULL,
+        imported_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS preferences (
+        key TEXT PRIMARY KEY NOT NULL,
+        value_json TEXT NOT NULL
+      );
+    `);
+    return database;
+  } catch (error) {
+    await database.closeAsync().catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function saveProject(project: CaptionProject) {
@@ -77,32 +95,95 @@ export async function saveProject(project: CaptionProject) {
   }
 }
 
-export async function deleteProjectRecord(projectId: string) {
+export async function deleteProjectRecord(projectId: string): Promise<CaptionProject | null> {
   deletedProjectIds.add(projectId);
   await projectWriteQueues.get(projectId)?.catch(() => undefined);
   try {
     const database = await getDatabase();
-    await database.runAsync('DELETE FROM projects WHERE id = ?', projectId);
+    let deletedProject: CaptionProject | null = null;
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      const row = await transaction.getFirstAsync<{ project_json: string }>(
+        'SELECT project_json FROM projects WHERE id = ?',
+        projectId,
+      );
+      deletedProject = row ? hydrateProject(parseProject(row.project_json)) : null;
+      await transaction.runAsync('DELETE FROM projects WHERE id = ?', projectId);
+    });
+    return deletedProject;
   } catch (error) {
     deletedProjectIds.delete(projectId);
     throw error;
   }
 }
 
-export async function listProjects(): Promise<CaptionProject[]> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<{ project_json: string }>(
-    'SELECT project_json FROM projects ORDER BY updated_at DESC',
-  );
-  const projects: CaptionProject[] = [];
+export async function listProjectRecords(): Promise<ProjectRecordSummary[]> {
+  const rows = await readProjectRows();
+  const records: ProjectRecordSummary[] = [];
   for (const row of rows) {
     try {
-      projects.push(hydrateProject(parseProject(row.project_json)));
+      records.push({ kind: 'project', project: hydrateProject(parseProject(row.project_json)) });
     } catch (error) {
-      console.error('Skipped an unreadable Caption Studio project', error);
+      records.push({
+        kind: 'unreadable',
+        id: row.id,
+        name: row.name || 'Unreadable project',
+        updatedAt: row.updated_at,
+        reason: error instanceof Error ? error.message : 'The saved project data could not be read.',
+      });
     }
   }
-  return projects;
+  return records;
+}
+
+export async function listProjectsStrict(): Promise<CaptionProject[]> {
+  return decodeEveryPersistedRow(await readProjectRows(), decodeProjectRow);
+}
+
+export async function listProjectRecordIds(): Promise<string[]> {
+  const database = await getDatabase();
+  const rows = await database.getAllAsync<{ id: string }>('SELECT id FROM projects');
+  return rows.map((row) => row.id);
+}
+
+async function readProjectRows() {
+  const database = await getDatabase();
+  return database.getAllAsync<{ id: string; name: string; updated_at: string; project_json: string }>(
+    'SELECT id, name, updated_at, project_json FROM projects ORDER BY updated_at DESC',
+  );
+}
+
+function decodeProjectRow(row: { project_json: string }) {
+  return hydrateProject(parseProject(row.project_json));
+}
+
+export async function getRawProjectRecord(projectId: string): Promise<string | null> {
+  const database = await getDatabase();
+  const row = await database.getFirstAsync<{ project_json: string }>(
+    'SELECT project_json FROM projects WHERE id = ?',
+    projectId,
+  );
+  return row?.project_json ?? null;
+}
+
+export async function deleteUnreadableProjectRecord(projectId: string) {
+  deletedProjectIds.add(projectId);
+  await projectWriteQueues.get(projectId)?.catch(() => undefined);
+  try {
+    const database = await getDatabase();
+    let raw: string | null = null;
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      const row = await transaction.getFirstAsync<{ project_json: string }>(
+        'SELECT project_json FROM projects WHERE id = ?',
+        projectId,
+      );
+      raw = row?.project_json ?? null;
+      await transaction.runAsync('DELETE FROM projects WHERE id = ?', projectId);
+    });
+    return extractPersistedContentUris(raw);
+  } catch (error) {
+    deletedProjectIds.delete(projectId);
+    throw error;
+  }
 }
 
 export async function getProject(projectId: string): Promise<CaptionProject | null> {
@@ -116,21 +197,13 @@ export async function getProject(projectId: string): Promise<CaptionProject | nu
 }
 
 function parseProject(value: string): CaptionProject {
+  if (value.length > 64 * 1024 * 1024) throw new Error('Project data exceeds the supported size limit');
   const parsed: unknown = JSON.parse(value);
   if (!parsed || typeof parsed !== 'object') throw new Error('Project data is not an object');
   const candidate = parsed as Record<string, unknown>;
-  if (candidate.schemaVersion === 1) return migrateVersionOne(candidate);
+  if (candidate.schemaVersion === 1) return decodeVersionTwoProject(migrateVersionOne(candidate));
   if (candidate.schemaVersion !== 2) throw new Error('Project data uses an unsupported version');
-  if (
-    typeof candidate.id !== 'string'
-    || typeof candidate.name !== 'string'
-    || !Array.isArray(candidate.sources)
-    || candidate.sources.length === 0
-    || !Array.isArray(candidate.clips)
-    || !Array.isArray(candidate.captions)
-    || !candidate.transcription
-  ) throw new Error('Project data is incomplete');
-  return candidate as unknown as CaptionProject;
+  return decodeVersionTwoProject(candidate);
 }
 
 function hydrateProject(project: CaptionProject): CaptionProject {
@@ -165,13 +238,15 @@ function hydrateProject(project: CaptionProject): CaptionProject {
     words: recoveredFromTimeline ? wordsForAnchoring : project.transcription.words,
     sourceResults: recoveredSourceResults,
   };
+  const captions = anchorCaptionsToClips(project.captions, clips, wordsForAnchoring);
   return {
     ...project,
     schemaVersion: 2,
     lifecycle: project.lifecycle ?? { status: 'saved' },
     sources,
     transcription,
-    captions: anchorCaptionsToClips(project.captions, clips, wordsForAnchoring),
+    captions,
+    captionTracks: synchronizeCaptionTracks(project, captions),
     projectStyle: hydratedProjectStyle,
     layers: (project.layers ?? [{ id: 'captions', kind: 'captions', name: 'Captions', visible: true }]).map((layer) =>
       layer.kind === 'text'
@@ -283,11 +358,11 @@ function hydrateClips(clips: VideoClip[], sources: ProjectVideoSource[]): VideoC
       muted: clip.muted ?? false,
       fadeInMs: clip.fadeInMs ?? 0,
       fadeOutMs: clip.fadeOutMs ?? 0,
-      transitionAfter: hydrateTransition(clip.transitionAfter),
+      transitionAfter: clip.transitionAfter,
     };
   });
 
-  return normalized.map((clip, index) => {
+  const clipsWithHandles = normalized.map((clip, index) => {
     const source = sourceById.get(clip.sourceId)!;
     const previous = normalized[index - 1];
     const next = normalized[index + 1];
@@ -309,16 +384,7 @@ function hydrateClips(clips: VideoClip[], sources: ProjectVideoSource[]): VideoC
     ) throw new Error('A project video clip has invalid recoverable handles');
     return { ...clip, availableSourceStartMs, availableSourceEndMs };
   });
-}
-
-function hydrateTransition(value: VideoClip['transitionAfter'] | undefined): VideoClip['transitionAfter'] {
-  const type = value?.type ?? 'none';
-  if (!['none', 'dip-black', 'dip-white', 'flash'].includes(type)) {
-    throw new Error('A project video transition is invalid');
-  }
-  const durationMs = type === 'none' ? 0 : finiteNumber(value?.durationMs ?? 500, 'transition duration');
-  if (durationMs < 0 || durationMs > 2_000) throw new Error('A project video transition duration is invalid');
-  return { type, durationMs };
+  return hydrateVideoTransitionBoundaries(clipsWithHandles);
 }
 
 function hydrateAudio(audioSources: ProjectAudioSource[], audioClips: AudioClip[]) {
@@ -352,6 +418,7 @@ function hydrateAudio(audioSources: ProjectAudioSource[], audioClips: AudioClip[
     }
     return {
       ...clip,
+      anchor: 'timeline' as const,
       startMs,
       sourceStartMs,
       sourceEndMs,
@@ -384,7 +451,7 @@ function recoverCanonicalSourceResults(project: CaptionProject, clips: VideoClip
   }]));
 }
 
-function migrateVersionOne(candidate: Record<string, unknown>): CaptionProject {
+function migrateVersionOne(candidate: Record<string, unknown>): Record<string, unknown> {
   const legacy = candidate as {
     id?: unknown;
     name?: unknown;
@@ -416,6 +483,8 @@ function migrateVersionOne(candidate: Record<string, unknown>): CaptionProject {
   const migrated: Record<string, unknown> = {
     ...candidate,
     schemaVersion: 2,
+    createdAt: typeof candidate.createdAt === 'string' ? candidate.createdAt : new Date().toISOString(),
+    updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : new Date().toISOString(),
     lifecycle: { status: 'saved' },
     sources: [source],
     clips: (legacy.clips?.length ? legacy.clips : [{ id: 'source-clip', sourceStartMs: 0, sourceEndMs: source.durationMs }])
@@ -424,5 +493,5 @@ function migrateVersionOne(candidate: Record<string, unknown>): CaptionProject {
   };
   delete migrated.source;
   delete migrated.videoEdits;
-  return migrated as unknown as CaptionProject;
+  return migrated;
 }

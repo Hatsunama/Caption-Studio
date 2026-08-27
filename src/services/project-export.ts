@@ -1,44 +1,87 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import CaptionMedia from 'caption-media';
+import type { TimelineVideoExportProgress } from 'caption-media';
 
-import { totalClipDuration } from '@/lib/video-timeline';
+import { buildTimelineRenderPlan, collectUnresolvedFontFamilies } from '@/lib/export-render-plan';
+import { serializeAss, serializeSrt, visibleCaptions } from '@/lib/subtitle-export';
+import { requireBackgroundProcessingConsent } from '@/services/background-processing-consent';
+import {
+  createExportCacheFileName,
+  estimateVideoExportStorageBytes,
+  prepareCaptionStudioExportCache,
+  protectTemporaryVideoExportArtifacts,
+  removeFailedSubtitleExportArtifact,
+  removeTemporaryVideoExportArtifacts,
+} from '@/services/export-storage';
+import { resolveExportFontUris } from '@/services/export-font-assets';
+import { requireFreeSpace } from '@/services/storage-policy';
+import { createVideoExportSession } from '@/services/video-export-session';
 import type { CaptionProject } from '@/types/project';
 
-export async function exportBackgroundReplacement(project: CaptionProject) {
-  const background = project.backgroundReplacement;
-  if (!background.enabled || !background.source) throw new Error('Choose a replacement background before exporting.');
-  if (project.clips.length !== 1) throw new Error('Background export currently requires one video clip. Multi-clip native composition is still being completed.');
-  const clip = project.clips[0];
-  if (clip.gapBeforeMs || clip.gapAfterMs || clip.playbackRate !== 1) {
-    throw new Error('Background export currently requires a normal-speed clip without timeline gaps.');
-  }
-  const source = project.sources.find((candidate) => candidate.id === clip.sourceId);
-  if (!source) throw new Error('The video source for this clip is unavailable.');
-  if (!FileSystem.cacheDirectory) throw new Error('Export storage is unavailable on this device.');
-  const directory = `${FileSystem.cacheDirectory}exports/`;
-  await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
-  const outputUri = `${directory}caption-studio-${Date.now()}.mp4`;
-  const transform = background.personTransform;
-  const result = await CaptionMedia.exportPersonVideo(source.uri, background.source.uri, outputUri.replace(/^file:\/\//, ''), {
-    durationMs: totalClipDuration(project.clips),
-    sourceStartMs: clip.sourceStartMs,
-    backgroundKind: background.source.kind,
-    qualityPreset: background.mask.qualityPreset,
-    threshold: background.mask.threshold,
-    softness: background.mask.softness,
-    temporalStability: background.mask.temporalStability,
-    edgeFeather: background.mask.edgeFeather,
-    positionX: transform.position.x,
-    positionY: transform.position.y,
-    scale: transform.scale,
-    rotation: transform.rotation,
-    keyframes: background.keyframes.map((frame) => ({
-      timeMs: frame.timeMs,
-      positionX: frame.position.x,
-      positionY: frame.position.y,
-      scale: frame.scale,
-      rotation: frame.rotation,
-    })),
+const videoExportSession = createVideoExportSession(() => CaptionMedia.cancelTimelineVideoExport());
+
+export async function exportProjectVideo(project: CaptionProject) {
+  return videoExportSession.run(async (session) => {
+    if (!FileSystem.cacheDirectory) throw new Error('Export storage is unavailable on this device.');
+    const unresolvedPlan = buildTimelineRenderPlan(project);
+    const directory = await session.waitFor(prepareCaptionStudioExportCache());
+    await session.waitFor(requireFreeSpace(
+      estimateVideoExportStorageBytes(unresolvedPlan),
+      'export this video',
+    ));
+    if (project.backgroundReplacement.enabled && project.backgroundReplacement.source) {
+      await session.waitFor(requireBackgroundProcessingConsent());
+    }
+    const canPublish = await session.waitFor(CaptionMedia.requestLegacyMediaWritePermission());
+    if (!canPublish) throw new Error('Allow storage access so Caption Studio can save the export to your media library.');
+
+    const fontUris = await session.waitFor(resolveExportFontUris(collectUnresolvedFontFamilies(unresolvedPlan)));
+    const renderPlan = fontUris.size > 0 ? buildTimelineRenderPlan(project, fontUris) : unresolvedPlan;
+    const outputUri = `${directory}${createExportCacheFileName(project.name, 'mp4')}`;
+    const releaseArtifactProtection = protectTemporaryVideoExportArtifacts(outputUri);
+    try {
+      session.throwIfCancelled();
+      return await session.startNative(() => CaptionMedia.exportTimelineVideo(
+        outputUri.replace(/^file:\/\//, ''),
+        renderPlan as unknown as Record<string, unknown>,
+      ));
+    } finally {
+      try {
+        await removeTemporaryVideoExportArtifacts(outputUri);
+      } finally {
+        releaseArtifactProtection();
+      }
+    }
   });
-  return result;
+}
+
+export function cancelProjectVideoExport() {
+  return videoExportSession.cancel();
+}
+
+export function getProjectVideoExportProgress(): Promise<TimelineVideoExportProgress> {
+  return CaptionMedia.getTimelineVideoExportProgress();
+}
+
+export async function exportSubtitleFile(project: CaptionProject, format: 'srt' | 'ass') {
+  if (!FileSystem.cacheDirectory) throw new Error('Export storage is unavailable on this device.');
+  if (visibleCaptions(project).length === 0) throw new Error('Generate or add a visible caption before exporting subtitles.');
+  const directory = await prepareCaptionStudioExportCache();
+  const uri = `${directory}${createExportCacheFileName(project.name, format)}`;
+  const content = format === 'srt' ? serializeSrt(project) : serializeAss(project);
+  await requireFreeSpace(Math.max(1 * 1024 * 1024, content.length * 8), 'export these subtitles');
+  try {
+    await FileSystem.writeAsStringAsync(uri, content, { encoding: FileSystem.EncodingType.UTF8 });
+    if (!await Sharing.isAvailableAsync()) throw new Error('Android file sharing is unavailable on this device.');
+    await Sharing.shareAsync(uri, {
+      mimeType: format === 'srt' ? 'application/x-subrip' : 'text/x-ssa',
+      dialogTitle: `Save ${format.toUpperCase()} subtitles`,
+      UTI: format === 'srt' ? 'public.text' : 'public.plain-text',
+    });
+    return uri;
+  } catch (error) {
+    await removeFailedSubtitleExportArtifact(uri);
+    throw error;
+  }
 }

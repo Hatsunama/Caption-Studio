@@ -7,16 +7,23 @@ group = 'app.captionstudio'
 version = '1.0.0'
 
 android {
-  namespace 'app.captionstudio.media'
+  namespace = 'app.captionstudio.media'
   defaultConfig {
     versionCode 1
     versionName '1.0.0'
+    consumerProguardFiles 'consumer-rules.pro'
+  }
+  testOptions {
+    unitTests.includeAndroidResources = true
   }
 }
 
 dependencies {
-  implementation 'com.google.mlkit:segmentation-selfie:16.0.0-beta6'
+  implementation 'androidx.exifinterface:exifinterface:1.4.2'
   implementation 'com.google.mlkit:face-detection:16.1.7'
-  implementation 'androidx.media3:media3-transformer:1.9.0'
-  implementation 'androidx.media3:media3-effect:1.9.0'
+  implementation 'com.google.mediapipe:tasks-vision:0.10.32'
+  implementation 'androidx.media3:media3-transformer:1.10.1'
+  implementation 'androidx.media3:media3-effect:1.10.1'
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.16.1'
 }

@@ -1,5 +1,8 @@
 import type { CaptionBlock, CaptionProject, VideoClip, VisualLayer, WordToken } from '@/types/project';
 import { audioClipEnd, constrainAudioClips } from '@/lib/audio-timeline';
+import { synchronizeCaptionTracks } from '@/lib/caption-tracks';
+import { captionLayoutText } from '@/lib/caption-text-breaks';
+import { effectiveVideoTransition } from '@/lib/video-transitions';
 
 export const MINIMUM_CLIP_TIMELINE_MS = 120;
 
@@ -84,21 +87,25 @@ export function videoTransitionOverlay(entries: ClipTimelineEntry[], timelineMs:
   for (let index = 0; index < entries.length - 1; index += 1) {
     const entry = entries[index];
     const next = entries[index + 1];
-    const transition = entry.clip.transitionAfter;
-    if (!transition || transition.type === 'none' || transition.durationMs <= 0) continue;
-    const half = transition.durationMs / 2;
+    const transition = effectiveVideoTransition(entry.clip, next.clip);
+    if (transition.type === 'none') continue;
+    const duration = Math.min(transition.durationMs, entry.endMs - entry.startMs, next.endMs - next.startMs);
+    const half = duration / 2;
     const boundaryMs = next.startMs;
-    const distance = Math.abs(timelineMs - boundaryMs);
-    if (distance > half) continue;
-    const normalized = 1 - distance / Math.max(1, half);
+    const startMs = boundaryMs - half;
+    const endMs = startMs + duration;
+    if (timelineMs < startMs || timelineMs >= endMs) continue;
+    const phase = clamp((timelineMs - startMs) / Math.max(1, duration), 0, 1);
+    const peak = 1 - Math.abs(phase * 2 - 1);
     const opacity = transition.type === 'flash'
-      ? Math.sin(normalized * Math.PI / 2) * 0.92
-      : normalized;
+      ? peak * peak * 0.92
+      : peak;
     return {
       type: transition.type,
       color: transition.type === 'dip-white' || transition.type === 'flash' ? '#FFFFFF' : '#000000',
       opacity: clamp(opacity, 0, 1),
-      phase: timelineMs < boundaryMs ? normalized : 2 - normalized,
+      phase,
+      peak,
     };
   }
   return undefined;
@@ -244,10 +251,12 @@ export function visibleTimelineCaptions(captions: CaptionBlock[]) {
 
 export function rippleDelete(project: CaptionProject, cutStartMs: number, cutEndMs: number, clipId: string): CaptionProject {
   const rippled = rippleTimedContent(project, cutStartMs, cutEndMs);
+  const captions = rippled.captions.filter((caption) => caption.sourceAnchor?.clipId !== clipId);
   return {
     ...rippled,
     clips: project.clips.filter((clip) => clip.id !== clipId),
-    captions: rippled.captions.filter((caption) => caption.sourceAnchor?.clipId !== clipId),
+    captions,
+    captionTracks: synchronizeCaptionTracks(rippled, captions),
   };
 }
 
@@ -288,6 +297,7 @@ export function rippleTimedContent(project: CaptionProject, cutStartMs: number, 
     updatedAt: new Date().toISOString(),
     transcription: { ...project.transcription, words },
     captions,
+    captionTracks: synchronizeCaptionTracks(project, captions),
     layers,
     audioClips,
   };
@@ -323,6 +333,7 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
     clips: project.clips.map((clip) => clip.id === clipId ? replacement : clip),
     transcription: { ...project.transcription, words },
     captions,
+    captionTracks: synchronizeCaptionTracks(project, captions),
     layers,
     audioClips,
   };
@@ -353,12 +364,9 @@ function validGap(gapMs: number) {
 }
 
 function joinTimelineWords(words: WordToken[]) {
-  return words
+  return captionLayoutText(words
     .map((word) => word.text.trim())
-    .filter(Boolean)
-    .join(' ')
-    .replace(/\s+([,.;:!?])/g, '$1')
-    .replace(/([([{])\s+/g, '$1')
+    .filter(Boolean))
     .trim();
 }
 

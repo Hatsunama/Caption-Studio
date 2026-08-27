@@ -32,6 +32,7 @@ export function addAudioSourceToProject(
   const clip: AudioClip = {
     id: clipId,
     sourceId: source.id,
+    anchor: 'timeline',
     startMs: safeStartMs,
     sourceStartMs: 0,
     sourceEndMs: visibleDuration,

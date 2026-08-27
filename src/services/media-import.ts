@@ -1,6 +1,8 @@
 import * as DocumentPicker from 'expo-document-picker';
 
 import CaptionMedia from 'caption-media';
+import { assertSupportedVideo } from '@/lib/media-validation';
+import { classifyPickedMedia } from '@/lib/picked-media-kind';
 import { MINIMUM_CLIP_TIMELINE_MS } from '@/lib/video-timeline';
 import {
   deleteProjectOwnedFiles,
@@ -9,6 +11,7 @@ import {
   storeProjectAudio,
   storeProjectImage,
 } from '@/services/project-media';
+import { releaseReadPermissions } from '@/services/media-permissions';
 import { requireFreeSpace } from '@/services/storage-policy';
 import type { BackgroundReplacement, ProjectAudioSource, ProjectVideoSource } from '@/types/project';
 
@@ -41,6 +44,7 @@ export async function pickLinkedVideos(
   });
   await requireFreeSpace(MIN_IMPORT_HEADROOM_BYTES, 'import a video');
   const sources: ProjectVideoSource[] = [];
+  const persistedUris: string[] = [];
   try {
     for (let index = 0; index < result.assets.length; index += 1) {
       const asset = result.assets[index];
@@ -51,14 +55,15 @@ export async function pickLinkedVideos(
         total: result.assets.length,
         detail: `Loading video ${index + 1} of ${result.assets.length}`,
       });
-      try {
-        await CaptionMedia.persistReadPermission(asset.uri);
-      } catch {
-        throw new Error(`Android did not grant lasting access to ${asset.name}. Select it from Files or Photos and try again.`);
-      }
-      const info = await CaptionMedia.getMediaInfo(asset.uri);
+      const info = await probeVideoForImport(asset.uri, asset.name);
       if (info.durationMs < MINIMUM_CLIP_TIMELINE_MS) {
         throw new Error(`${asset.name} is shorter than ${MINIMUM_CLIP_TIMELINE_MS / 1000} seconds and cannot be edited reliably.`);
+      }
+      try {
+        await CaptionMedia.persistReadPermission(asset.uri);
+        persistedUris.push(asset.uri);
+      } catch {
+        throw new Error(`Android did not grant lasting access to ${asset.name}. Select it from Files or Photos and try again.`);
       }
       sources.push({
         id: sourceId,
@@ -72,6 +77,7 @@ export async function pickLinkedVideos(
         width: info.width,
         height: info.height,
         rotation: info.rotation,
+        frameRate: info.frameRate,
       });
       onProgress?.({
         stage: 'loading',
@@ -81,10 +87,13 @@ export async function pickLinkedVideos(
       });
     }
   } catch (error) {
-    await deleteProjectOwnedFiles(
-      projectId,
-      sources.map((source) => source.thumbnailUri).filter((uri): uri is string => Boolean(uri)),
-    );
+    await Promise.allSettled([
+      deleteProjectOwnedFiles(
+        projectId,
+        sources.map((source) => source.thumbnailUri).filter((uri): uri is string => Boolean(uri)),
+      ),
+      releaseReadPermissions(persistedUris),
+    ]);
     throw error;
   }
   return sources;
@@ -98,6 +107,7 @@ export async function pickAndStoreImage(projectId: string, imageId: string) {
   });
   if (result.canceled) return null;
   const asset = result.assets[0];
+  await requireFreeSpace((asset.size ?? MIN_IMPORT_HEADROOM_BYTES) + MIN_IMPORT_HEADROOM_BYTES, 'add this image');
   const uri = await storeProjectImage({
     projectId,
     imageId,
@@ -115,13 +125,32 @@ export async function pickBackgroundMedia(projectId: string): Promise<Background
   });
   if (result.canceled) return null;
   const asset = result.assets[0];
-  const isVideo = asset.mimeType?.startsWith('video/') ?? false;
-  if (isVideo) {
-    await CaptionMedia.persistReadPermission(asset.uri);
-    const info = await CaptionMedia.getMediaInfo(asset.uri);
-    if (info.durationMs <= 0) throw new Error('The selected background video could not be decoded.');
-    return { kind: 'video', uri: asset.uri, storageMode: 'linked', displayName: asset.name };
+  const declaredKind = classifyPickedMedia(asset.mimeType, asset.name);
+  let probedVideoInfo;
+  if (declaredKind === 'video' || declaredKind === 'unknown') {
+    try {
+      const info = await probeVideoForImport(asset.uri, asset.name);
+      probedVideoInfo = info;
+    } catch (error) {
+      if (declaredKind === 'video') throw error;
+      throw new Error(`Caption Studio could not identify ${asset.name} as an image or video. Choose a supported image or video file.`);
+    }
   }
+  const isVideo = Boolean(probedVideoInfo);
+  if (isVideo) {
+    try {
+      await CaptionMedia.persistReadPermission(asset.uri);
+    } catch {
+      throw new Error(`Android did not grant lasting access to ${asset.name}. Select it from Files or Photos and try again.`);
+    }
+    try {
+      return { kind: 'video', uri: asset.uri, storageMode: 'linked', displayName: asset.name };
+    } catch (error) {
+      await releaseReadPermissions([asset.uri]);
+      throw error;
+    }
+  }
+  await requireFreeSpace((asset.size ?? MIN_IMPORT_HEADROOM_BYTES) + MIN_IMPORT_HEADROOM_BYTES, 'add this background image');
   const stored = await pickAndStoreSpecificImage(projectId, `background-${Date.now()}`, asset.uri, asset.name);
   return { kind: 'image', uri: stored.uri, storageMode: 'copied', displayName: stored.name };
 }
@@ -134,27 +163,34 @@ async function pickAndStoreSpecificImage(projectId: string, imageId: string, sou
 export async function pickAndStoreAudio(projectId: string, audioId: string): Promise<ProjectAudioSource | null> {
   const result = await DocumentPicker.getDocumentAsync({
     type: 'audio/*',
-    copyToCacheDirectory: true,
+    copyToCacheDirectory: false,
     multiple: false,
   });
   if (result.canceled) return null;
   const asset = result.assets[0];
-  const uri = await storeProjectAudio({
-    projectId,
-    audioId,
-    sourceUri: asset.uri,
-    fileName: asset.name,
-  });
-  const info = await CaptionMedia.getMediaInfo(uri);
-  return {
-    id: audioId,
-    uri,
-    storageMode: 'copied',
-    displayName: cleanAudioName(asset.name),
-    durationMs: info.durationMs,
-    mimeType: asset.mimeType,
-    origin: 'audio-file',
-  };
+  await requireFreeSpace((asset.size ?? MIN_IMPORT_HEADROOM_BYTES) + MIN_IMPORT_HEADROOM_BYTES, 'add this audio');
+  let uri: string | undefined;
+  try {
+    uri = await storeProjectAudio({
+      projectId,
+      audioId,
+      sourceUri: asset.uri,
+      fileName: asset.name,
+    });
+    const info = await CaptionMedia.getMediaInfo(uri);
+    return {
+      id: audioId,
+      uri,
+      storageMode: 'copied',
+      displayName: cleanAudioName(asset.name),
+      durationMs: info.durationMs,
+      mimeType: asset.mimeType,
+      origin: 'audio-file',
+    };
+  } catch (error) {
+    if (uri) await deleteProjectOwnedFiles(projectId, [uri]).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function pickVideoAndExtractAudio(projectId: string, audioId: string): Promise<ProjectAudioSource | null> {
@@ -165,11 +201,14 @@ export async function pickVideoAndExtractAudio(projectId: string, audioId: strin
   });
   if (result.canceled) return null;
   const asset = result.assets[0];
+  const sourceInfo = await probeVideoForImport(asset.uri, asset.name);
   await CaptionMedia.persistReadPermission(asset.uri);
-  const sourceInfo = await CaptionMedia.getMediaInfo(asset.uri);
-  if (!sourceInfo.hasAudio) throw new Error(`${asset.name} does not contain an audio track.`);
-  const outputUri = await prepareExtractedAudioUri(projectId, audioId);
+  let outputUri: string | undefined;
   try {
+    if (!sourceInfo.hasAudio) throw new Error(`${asset.name} does not contain an audio track.`);
+    const estimatedAudioBytes = Math.ceil(sourceInfo.durationMs / 1000) * 64 * 1024;
+    await requireFreeSpace(estimatedAudioBytes + MIN_IMPORT_HEADROOM_BYTES, 'extract this audio');
+    outputUri = await prepareExtractedAudioUri(projectId, audioId);
     const extraction = await CaptionMedia.extractAudioTrack(asset.uri, outputUri);
     const storedInfo = await CaptionMedia.getMediaInfo(outputUri);
     return {
@@ -182,11 +221,24 @@ export async function pickVideoAndExtractAudio(projectId: string, audioId: strin
       origin: 'video-audio',
     };
   } catch (error) {
-    await deleteProjectOwnedFiles(projectId, [outputUri]);
+    if (outputUri) await deleteProjectOwnedFiles(projectId, [outputUri]).catch(() => undefined);
     throw error;
+  } finally {
+    await releaseReadPermissions([asset.uri]);
   }
 }
 
 function cleanAudioName(name: string) {
   return name.replace(/\.[a-zA-Z0-9]{2,5}$/, '').replace(/[_-]+/g, ' ').trim() || 'Audio';
+}
+
+async function probeVideoForImport(uri: string, displayName: string) {
+  try {
+    const info = await CaptionMedia.getMediaInfo(uri);
+    assertSupportedVideo(info, displayName);
+    return info;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith(displayName)) throw error;
+    throw new Error(`${displayName} could not be opened as a supported video on this phone.`);
+  }
 }

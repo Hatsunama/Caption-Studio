@@ -1,4 +1,5 @@
 import type { CaptionAnimationId } from '@/types/project';
+export { reactionEmojis } from '@/lib/emoji-reactions';
 
 export type AnimationPreset = {
   id: CaptionAnimationId;
@@ -48,40 +49,4 @@ export const ANIMATION_PRESETS: AnimationPreset[] = [
 
 export function findAnimationPreset(id: CaptionAnimationId) {
   return ANIMATION_PRESETS.find((preset) => preset.id === id) ?? ANIMATION_PRESETS[0];
-}
-
-export function reactionEmojis(activeWord: string, captionText = ''): string[] {
-  const word = activeWord.toLowerCase().replace(/[^a-z0-9'$-]/g, '');
-  const phrase = `${word} ${captionText.toLowerCase()}`;
-  const matches = (pattern: RegExp) => pattern.test(word) || (!word && pattern.test(phrase));
-
-  if (matches(/^(love|heart|beautiful|cute|kiss|romance|wife|husband)$/)) return ['❤️', '😍', '💖', '🥰'];
-  if (matches(/^(laugh|funny|lol|haha|joke|comedy|hilarious)$/)) return ['😂', '🤣', '😆', '💀'];
-  if (matches(/^([$€£]?\d+|money|cash|dollars?|paid|rich|price|free|buy|sell)$/)) return ['💸', '🤑', '💰', '🪙'];
-  if (matches(/^(wow|amazing|wild|crazy|shock|shocked|what|unbelievable)$/)) return ['🤯', '😱', '👀', '⚡'];
-  if (matches(/^(sad|cry|crying|hurt|miss|sorry|alone|lost)$/)) return ['😢', '😭', '💔', '🥺'];
-  if (matches(/^(angry|mad|hate|rage|fight|fighting|furious)$/)) return ['😡', '🤬', '💢', '👊'];
-  if (matches(/^(win|winner|best|great|yes|power|strong|champion|success)$/)) return ['🏆', '💪', '🥇', '🔥'];
-  if (matches(/^(fire|hot|burn|burning|lit|flame)$/)) return ['🔥', '♨️', '🚒', '💥'];
-  if (matches(/^(music|song|sing|singing|sound|audio|beat|dance)$/)) return ['🎵', '🎤', '🎧', '💃'];
-  if (matches(/^(video|camera|film|record|recording|photo|picture)$/)) return ['🎥', '📸', '🎬', '📱'];
-  if (matches(/^(phone|call|text|message|app|android|iphone)$/)) return ['📱', '☎️', '💬', '📲'];
-  if (matches(/^(idea|think|thought|brain|learn|know|remember)$/)) return ['💡', '🧠', '🤔', '📚'];
-  if (matches(/^(fast|speed|quick|run|running|race|launch|start)$/)) return ['⚡', '🚀', '🏃', '💨'];
-  if (matches(/^(food|eat|eating|pizza|burger|coffee|drink|hungry)$/)) return ['🍕', '🍔', '☕', '😋'];
-  if (matches(/^(party|celebrate|birthday|congratulations|congrats)$/)) return ['🎉', '🥳', '🎊', '🪩'];
-  if (matches(/^(stop|no|never|wrong|fail|failed|danger)$/)) return ['🛑', '❌', '⚠️', '🚫'];
-  if (matches(/^(yes|okay|ok|right|correct|done)$/)) return ['✅', '👍', '💯', '🙌'];
-  if (matches(/^(home|house|room|door|bed)$/)) return ['🏠', '🚪', '🛏️', '🔑'];
-  if (matches(/^(work|job|build|make|create|tool)$/)) return ['🛠️', '⚙️', '💼', '✨'];
-
-  const fallbackSets = [
-    ['💬', '✨', '👀'],
-    ['⚡', '🎯', '💫'],
-    ['👏', '🙌', '✨'],
-    ['🔊', '💥', '👂'],
-    ['🌈', '⭐', '✨'],
-  ];
-  const hash = [...(word || captionText)].reduce((value, character) => (value * 31 + character.charCodeAt(0)) >>> 0, 7);
-  return fallbackSets[hash % fallbackSets.length];
 }

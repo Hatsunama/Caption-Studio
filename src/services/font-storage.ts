@@ -2,11 +2,15 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Font from 'expo-font';
 
+import CaptionMedia from 'caption-media';
 import type { FontChoice } from '@/lib/font-catalog';
 import { getDatabase } from '@/services/database';
+import { readPreference, writePreference } from '@/services/preferences';
+import { requireFreeSpace } from '@/services/storage-policy';
 
 const FAVORITES_KEY = 'font-favorites';
 const RECENT_KEY = 'font-recent';
+const MAX_IMPORTED_FONT_BYTES = 25 * 1024 * 1024;
 
 const FONT_MIME_TYPES = [
   'font/ttf',
@@ -64,14 +68,34 @@ export async function importFontFromDevice(): Promise<FontChoice | null> {
     throw new Error('Permanent app storage is unavailable on this device.');
   }
 
-  const extension = asset.name.toLowerCase().endsWith('.otf') ? '.otf' : '.ttf';
-  const family = `imported-${Date.now()}`;
+  const extensionMatch = asset.name.toLowerCase().match(/\.(ttf|otf)$/);
+  if (!extensionMatch) throw new Error('Choose a TTF or OTF font file.');
+  if (asset.size != null && asset.size > MAX_IMPORTED_FONT_BYTES) {
+    throw new Error('This font is larger than the 25 MB import limit. Choose an optimized TTF or OTF file.');
+  }
+  await requireFreeSpace((asset.size ?? MAX_IMPORTED_FONT_BYTES) + 16 * 1024 * 1024, 'import this font');
+  const extension = `.${extensionMatch[1]}`;
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const family = `imported-${nonce}`;
   const directory = `${FileSystem.documentDirectory}fonts/`;
   const destinationUri = `${directory}${family}${extension}`;
+  const stagingUri = `${directory}.staging-${nonce}${extension}`;
+  let committed = false;
   await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
 
   try {
-    await FileSystem.copyAsync({ from: asset.uri, to: destinationUri });
+    await FileSystem.copyAsync({ from: asset.uri, to: stagingUri });
+    const staged = await FileSystem.getInfoAsync(stagingUri);
+    if (!staged.exists || staged.isDirectory || staged.size < 1_024) {
+      throw new Error('The selected font file is incomplete.');
+    }
+    if (staged.size > MAX_IMPORTED_FONT_BYTES) {
+      throw new Error('This font is larger than the 25 MB import limit. Choose an optimized TTF or OTF file.');
+    }
+    await CaptionMedia.validateFontFile(stagingUri);
+    const existing = await FileSystem.getInfoAsync(destinationUri);
+    if (existing.exists) throw new Error('Caption Studio could not allocate a unique font file. Try again.');
+    await FileSystem.moveAsync({ from: stagingUri, to: destinationUri });
     await Font.loadAsync({ [family]: destinationUri });
     const name = asset.name.replace(/\.(ttf|otf)$/i, '');
     const choice: FontChoice = {
@@ -87,10 +111,15 @@ export async function importFontFromDevice(): Promise<FontChoice | null> {
       treatment: 'solid',
     };
     await saveImportedFont(choice);
+    committed = true;
     return choice;
   } catch (error) {
-    await FileSystem.deleteAsync(destinationUri, { idempotent: true }).catch(() => undefined);
     throw error;
+  } finally {
+    await FileSystem.deleteAsync(stagingUri, { idempotent: true }).catch(() => undefined);
+    if (!committed) {
+      await FileSystem.deleteAsync(destinationUri, { idempotent: true }).catch(() => undefined);
+    }
   }
 }
 
@@ -103,26 +132,10 @@ export async function saveRecentFonts(ids: string[]) {
 }
 
 async function readStringList(key: string, fallback: string[]) {
-  const database = await getDatabase();
-  const row = await database.getFirstAsync<{ value_json: string }>(
-    'SELECT value_json FROM preferences WHERE key = ?',
-    key,
-  );
-  if (!row) return fallback;
-  try {
-    const value: unknown = JSON.parse(row.value_json);
-    return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : fallback;
-  } catch {
-    return fallback;
-  }
+  const value: unknown = await readPreference(key, fallback);
+  return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : fallback;
 }
 
 async function writeStringList(key: string, value: string[]) {
-  const database = await getDatabase();
-  await database.runAsync(
-    `INSERT INTO preferences (key, value_json) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json`,
-    key,
-    JSON.stringify(value),
-  );
+  await writePreference(key, value);
 }

@@ -1,3 +1,7 @@
+import type { VideoTransition } from '@/lib/video-transitions';
+
+export type { VideoTransition, VideoTransitionType } from '@/lib/video-transitions';
+
 export type Identifier = string;
 
 export type CaptionAnimationId =
@@ -40,7 +44,7 @@ export type TextTreatment = 'solid' | 'duotone-offset' | 'duotone-shadow' | 'duo
 export type FontReference = {
   id: Identifier;
   family: string;
-  source: 'built-in' | 'imported';
+  source: 'system' | 'built-in' | 'imported';
   uri?: string;
   postScriptName?: string;
 };
@@ -137,6 +141,43 @@ export type CaptionBlock = {
   styleOverride?: CaptionStylePatch;
 };
 
+export type TranslationCaptionStatus = 'pending' | 'translated' | 'reviewed' | 'stale';
+
+export type TranslationCaptionCue = {
+  id: Identifier;
+  sourceCaptionId: Identifier;
+  sourceTextSnapshot: string;
+  text: string;
+  status: TranslationCaptionStatus;
+  reviewed: boolean;
+  styleOverride?: CaptionStylePatch;
+};
+
+export type TranslationCaptionTrack = {
+  id: Identifier;
+  kind: 'translation';
+  sourceTrackId: 'captions';
+  sourceLanguageTag: string;
+  languageTag: string;
+  displayName: string;
+  visible: boolean;
+  origin: 'manual' | 'automatic';
+  provider: {
+    id: 'manual' | 'litertlm';
+    modelId?: string;
+    modelRevision?: string;
+    promptVersion?: number;
+  };
+  styleOverride?: CaptionStylePatch;
+  cues: TranslationCaptionCue[];
+};
+
+export type CaptionTrackCollection = {
+  schemaVersion: 1;
+  primaryTrackId: 'captions';
+  translations: TranslationCaptionTrack[];
+};
+
 export type CaptionsVisualLayer = {
   id: 'captions';
   kind: 'captions';
@@ -193,6 +234,18 @@ export type ProjectVideoSource = {
   width: number;
   height: number;
   rotation: number;
+  frameRate?: number;
+};
+
+export type VideoTransform = {
+  fit: 'fit' | 'fill';
+  position: { x: number; y: number };
+  scale: number;
+  rotation: number;
+};
+
+export type VideoTransformPatch = Partial<Omit<VideoTransform, 'position'>> & {
+  position?: Partial<VideoTransform['position']>;
 };
 
 export type VideoClip = {
@@ -210,29 +263,7 @@ export type VideoClip = {
   fadeInMs: number;
   fadeOutMs: number;
   transitionAfter: VideoTransition;
-};
-
-export type VideoTransitionType =
-  | 'none'
-  | 'dip-black'
-  | 'dip-white'
-  | 'flash'
-  | 'fade-dark'
-  | 'wipe-left'
-  | 'wipe-right'
-  | 'wipe-up'
-  | 'wipe-down'
-  | 'slide-left'
-  | 'slide-right'
-  | 'zoom-in'
-  | 'zoom-out'
-  | 'spin'
-  | 'shutter'
-  | 'glitch';
-
-export type VideoTransition = {
-  type: VideoTransitionType;
-  durationMs: number;
+  transform: VideoTransform;
 };
 
 export type PersonTransformKeyframe = {
@@ -279,6 +310,7 @@ export type ProjectAudioSource = {
 export type AudioClip = {
   id: Identifier;
   sourceId: Identifier;
+  anchor: 'timeline';
   startMs: number;
   sourceStartMs: number;
   sourceEndMs: number;
@@ -292,6 +324,10 @@ export type SourceTranscription = {
   language: string;
   modelId: string;
   generatedAt: string;
+  sourceFingerprint?: {
+    algorithm: 'sha256';
+    digest: string;
+  };
   words: WordToken[];
 };
 
@@ -313,6 +349,7 @@ export type CaptionProject = {
     sourceResults: Record<Identifier, SourceTranscription>;
   };
   captions: CaptionBlock[];
+  captionTracks: CaptionTrackCollection;
   projectStyle: CaptionStyle;
   layers: VisualLayer[];
   clips: VideoClip[];
@@ -324,12 +361,7 @@ export type CaptionProject = {
     aspectHeight: number;
     backgroundColor: string;
   };
-  videoTransform: {
-    fit: 'fit' | 'fill';
-    position: { x: number; y: number };
-    scale: number;
-    rotation: number;
-  };
+  videoTransform: VideoTransform;
   backgroundReplacement: BackgroundReplacement;
   export: {
     resolution: '720p' | '1080p' | 'original';
@@ -338,11 +370,18 @@ export type CaptionProject = {
   };
 };
 
+export const DEFAULT_VIDEO_TRANSFORM: VideoTransform = {
+  fit: 'fit',
+  position: { x: 0.5, y: 0.5 },
+  scale: 1,
+  rotation: 0,
+};
+
 export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   font: {
     id: 'inter-bold',
     family: 'sans-serif',
-    source: 'built-in',
+    source: 'system',
   },
   fontSize: 48,
   fontWeight: '800',

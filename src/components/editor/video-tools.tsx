@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { type GestureResponderEvent, Modal, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 
-import type { CaptionProject } from '@/types/project';
+import type { CaptionProject, VideoTransform } from '@/types/project';
 
 const presets: { id: CaptionProject['canvas']['preset']; label: string }[] = [
   { id: 'source', label: 'Original' },
@@ -12,7 +12,8 @@ const presets: { id: CaptionProject['canvas']['preset']; label: string }[] = [
 ];
 
 export function VideoTools(props: {
-  project: CaptionProject;
+  canvas: CaptionProject['canvas'];
+  transform: VideoTransform;
   onCanvasPreset: (preset: CaptionProject['canvas']['preset']) => void;
   onFit: (fit: CaptionProject['videoTransform']['fit']) => void;
   onScale: (scale: number) => void;
@@ -21,7 +22,7 @@ export function VideoTools(props: {
   onTransformEnd: () => void;
 }) {
   const [rotationOpen, setRotationOpen] = useState(false);
-  const scalePercent = Math.round(props.project.videoTransform.scale * 100);
+  const scalePercent = Math.round(props.transform.scale * 100);
 
   return (
     <View style={{ gap: 8 }}>
@@ -30,19 +31,19 @@ export function VideoTools(props: {
           <ToolChip
             key={preset.id}
             label={preset.label}
-            active={props.project.canvas.preset === preset.id}
+            active={props.canvas.preset === preset.id}
             onPress={() => props.onCanvasPreset(preset.id)}
           />
         ))}
       </ScrollView>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-        <ToolChip label="Fit" active={props.project.videoTransform.fit === 'fit'} onPress={() => props.onFit('fit')} />
-        <ToolChip label="Fill screen" active={props.project.videoTransform.fit === 'fill'} onPress={() => props.onFit('fill')} />
+        <ToolChip label="Fit" active={props.transform.fit === 'fit'} onPress={() => props.onFit('fit')} />
+        <ToolChip label="Fill screen" active={props.transform.fit === 'fill'} onPress={() => props.onFit('fill')} />
         <ToolChip
           label="− Size"
           onPress={() => {
-            props.onScale(clamp(props.project.videoTransform.scale - 0.1, 0.2, 5));
+            props.onScale(clamp(props.transform.scale - 0.1, 0.2, 5));
             props.onTransformEnd();
           }}
         />
@@ -50,18 +51,18 @@ export function VideoTools(props: {
         <ToolChip
           label="+ Size"
           onPress={() => {
-            props.onScale(clamp(props.project.videoTransform.scale + 0.1, 0.2, 5));
+            props.onScale(clamp(props.transform.scale + 0.1, 0.2, 5));
             props.onTransformEnd();
           }}
         />
         <ToolChip
           label="Rotate 90°"
           onPress={() => {
-            props.onRotation(normalizeDegrees(props.project.videoTransform.rotation + 90));
+            props.onRotation(normalizeDegrees(props.transform.rotation + 90));
             props.onTransformEnd();
           }}
         />
-        <ToolChip label={`Angle ${Math.round(props.project.videoTransform.rotation)}°`} onPress={() => setRotationOpen(true)} />
+        <ToolChip label={`Angle ${Math.round(props.transform.rotation)}°`} onPress={() => setRotationOpen(true)} />
         <ToolChip label="Reset video" onPress={props.onReset} />
       </ScrollView>
 
@@ -71,7 +72,7 @@ export function VideoTools(props: {
 
       <RotationModal
         visible={rotationOpen}
-        value={props.project.videoTransform.rotation}
+        value={props.transform.rotation}
         onChange={props.onRotation}
         onChangeEnd={props.onTransformEnd}
         onClose={() => {

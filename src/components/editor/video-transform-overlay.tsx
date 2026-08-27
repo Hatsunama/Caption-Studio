@@ -1,15 +1,14 @@
 import { useMemo, useRef } from 'react';
 import { type GestureResponderEvent, PanResponder, Text, View } from 'react-native';
 
-import type { CaptionProject } from '@/types/project';
+import type { VideoTransform, VideoTransformPatch } from '@/types/project';
 
 type TouchPoint = { pageX: number; pageY: number };
-type VideoTransform = CaptionProject['videoTransform'];
 
 export function VideoTransformOverlay(props: {
   transform: VideoTransform;
   onInteractionStart?: () => void;
-  onChange: (patch: Partial<VideoTransform>) => void;
+  onChange: (patch: VideoTransformPatch) => void;
   onEnd: () => void;
 }) {
   const rootRef = useRef<View>(null);

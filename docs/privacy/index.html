@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Caption Studio Privacy Policy</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #090b0e; color: #f7f8fa; }
+    body { margin: 0 auto; max-width: 760px; padding: 32px 20px 64px; line-height: 1.6; }
+    h1, h2 { line-height: 1.2; }
+    h1 { color: #dfff35; }
+    h2 { margin-top: 2rem; }
+    p { color: #c4ccd6; }
+    a { color: #dfff35; }
+    .effective { color: #939eab; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Caption Studio Privacy Policy</h1>
+    <p class="effective">Effective August 27, 2026</p>
+    <p>Caption Studio is a local-first Android video and caption editor provided by Hatsunama. It does not require an account.</p>
+
+    <h2>Content processed on your phone</h2>
+    <p>Videos, audio, images, imported fonts, transcripts, person masks, projects, and exports are processed and stored locally. Caption Studio does not upload this content to Hatsunama and does not include advertising, first-party analytics, tracking, or cloud transcription.</p>
+
+    <h2>Optional background removal</h2>
+    <p>Background removal uses Google MediaPipe for on-device person segmentation and Google ML Kit for on-device face detection. Before first use, Caption Studio presents a disclosure and asks for consent. Video frames and generated masks stay on the device. When this feature is enabled and used, Google's ML Kit disclosure states that ML Kit collects device and app information, a per-installation identifier, performance measurements, API configuration and input/output sizes, feature versions, event types, and error codes. Google's MediaPipe terms state that its APIs contact Google for bug fixes, updated models, and hardware-accelerator compatibility and send utilization and performance metrics. Google states that ML Kit encrypts collected data in transit and does not transfer it to third parties. You can turn future background-removal processing off from the in-app Privacy policy screen.</p>
+
+    <h2>Optional model downloads</h2>
+    <p>When you first choose a transcription model, the app downloads the selected multilingual Whisper model and speech detector from Hugging Face. Dual-language subtitles are off by default. If you request natural English–Chinese translation, Caption Studio downloads one optional Qwen model of approximately 1.6 GB; that same model handles both directions and both Chinese scripts. Network requests reveal ordinary connection information, including your IP address, to Hugging Face, but do not contain your media, transcript, or translation. Caption Studio verifies downloaded files by exact size and SHA-256 before use, and all inference runs locally. AI translation can be inaccurate and remains editable.</p>
+
+    <h2>Media access and sharing</h2>
+    <p>Caption Studio receives only media you select through Android system pickers. It keeps read access to linked source videos so saved projects can reopen. Finished videos are saved to the Android media library. Sharing or uploading an export is a separate action you control outside Caption Studio.</p>
+
+    <h2>Retention and deletion</h2>
+    <p>Project data stays on the device until you delete the project, clear app storage, or uninstall the app. Downloaded transcription and translation models can also be removed from the in-app Privacy screen without deleting saved captions. Deleting a project removes Caption Studio-managed project files but never deletes selected original media. A requested project-recovery copy is staged in private cache only while Android's share sheet is open and is deleted when that sheet closes; interrupted stale staging files are removed after 24 hours when the project library next opens. Exported files stay in the media library until you delete them there.</p>
+
+    <h2>Security and children</h2>
+    <p>Caption Studio restricts generated files to app-controlled storage, verifies downloaded model files, uses Android system media access, and disables Android cloud backup for private app data. On Android 12 and newer, some device manufacturers can still include app data in a direct device-to-device migration even when cloud backup is disabled. Caption Studio is a general-purpose creator tool and is not designed for children under 13.</p>
+
+    <h2>Changes and contact</h2>
+    <p>Material changes will be published on this page with a revised effective date. Submit a confidential privacy or security concern through <a href="https://github.com/Hatsunama/Caption-Studio/security/advisories/new">GitHub's private security-advisory form</a>, which requires a GitHub account. General questions can use the <a href="https://github.com/Hatsunama/Caption-Studio/issues/new">public Caption Studio issue tracker</a>, but do not post personal information, private media, transcripts, project files, or device logs there.</p>
+  </main>
+</body>
+</html>

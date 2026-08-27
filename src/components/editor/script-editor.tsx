@@ -34,6 +34,7 @@ export function ScriptEditor(props: {
   const [selectedCaptionId, setSelectedCaptionId] = useState<string>();
   const [emptyCaptionId, setEmptyCaptionId] = useState<string>();
   const [boundaryMessage, setBoundaryMessage] = useState<string>();
+  const [saveError, setSaveError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const wasVisibleRef = useRef(false);
 
@@ -55,6 +56,7 @@ export function ScriptEditor(props: {
     setEditingCaptionId(undefined);
     setEmptyCaptionId(undefined);
     setBoundaryMessage(undefined);
+    setSaveError(undefined);
     setSaving(false);
     selectionRef.current = {};
     splitCounterRef.current = 0;
@@ -169,8 +171,11 @@ export function ScriptEditor(props: {
       return;
     }
     setSaving(true);
+    setSaveError(undefined);
     try {
       await props.onSave(draftCaptions);
+    } catch (caught) {
+      setSaveError(caught instanceof Error ? caught.message : 'Caption changes were not saved. Try again.');
     } finally {
       setSaving(false);
     }
@@ -211,6 +216,7 @@ export function ScriptEditor(props: {
                 Tap a subtitle to edit it. Use the visible Split and Join controls. Enter and Backspace remain available as keyboard shortcuts.
               </Text>
               {boundaryMessage ? <Text style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{boundaryMessage}</Text> : null}
+              {saveError ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{saveError}</Text> : null}
             </View>
           )}
           ListEmptyComponent={(

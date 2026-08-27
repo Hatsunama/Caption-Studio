@@ -34,6 +34,9 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
+.env.*
+!.env.example
 .env*.local
 
 # typescript
@@ -49,6 +52,7 @@ yarn-error.*
 *.mkv
 *.wav
 *.bin
+!/signing/caption-studio-lineage.bin
 research-private/
 /test-media/
 /.gh*/

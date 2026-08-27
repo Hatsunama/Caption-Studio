@@ -6,6 +6,8 @@ import type { BackgroundReplacement } from '@/types/project';
 export function BackgroundTools(props: {
   value: BackgroundReplacement;
   currentTimeMs: number;
+  processingAllowed: boolean;
+  onRequestProcessing: () => void;
   onChooseMedia: () => void;
   onChange: (next: BackgroundReplacement) => void;
   onAddKeyframe: () => void;
@@ -29,9 +31,27 @@ export function BackgroundTools(props: {
           <Text style={{ color: '#F7F8FA', fontSize: 14, fontWeight: '900' }}>Remove video background</Text>
           <Text style={{ color: '#939EAB', fontSize: 11, marginTop: 2 }}>Runs privately on this phone. No green screen required.</Text>
         </View>
-        <Chip label={props.value.enabled ? 'On' : 'Off'} active={props.value.enabled} onPress={() => props.onChange({ ...props.value, enabled: !props.value.enabled })} />
+        <Chip
+          label={props.value.enabled && props.processingAllowed ? 'On' : 'Off'}
+          active={props.value.enabled && props.processingAllowed}
+          onPress={() => {
+            if (props.value.enabled && props.processingAllowed) {
+              props.onChange({ ...props.value, enabled: false });
+            } else {
+              props.onRequestProcessing();
+            }
+          }}
+        />
       </View>
-      {props.value.enabled ? <>
+      {props.value.enabled && !props.processingAllowed ? (
+        <View style={{ gap: 7, padding: 11, borderRadius: 12, backgroundColor: '#28221B' }}>
+          <Text style={{ color: '#FFE0A6', fontSize: 12, lineHeight: 17 }}>
+            Background removal is paused until you review its on-device AI metrics disclosure.
+          </Text>
+          <Chip label="Review and enable" active onPress={props.onRequestProcessing} />
+        </View>
+      ) : null}
+      {props.value.enabled && props.processingAllowed ? <>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           <Chip label={props.value.source ? `Background: ${props.value.source.displayName}` : 'Choose background'} active={Boolean(props.value.source)} onPress={props.onChooseMedia} />
           <Chip label="Clear background" onPress={() => props.onChange({ ...props.value, source: undefined })} />

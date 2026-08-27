@@ -4,6 +4,7 @@ import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { TimelineVideoExportProgress } from 'caption-media';
 import {
   ActivityIndicator,
   Alert,
@@ -19,6 +20,7 @@ import {
 import { AnimationBrowser } from '@/components/editor/animation-browser';
 import { BackgroundTools } from '@/components/editor/background-tools';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
+import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
 import { FontBrowser } from '@/components/editor/font-browser';
 import { ImageLayerOverlay } from '@/components/editor/image-layer-overlay';
 import { LayerTimeline } from '@/components/editor/layer-timeline';
@@ -30,9 +32,27 @@ import { VideoTransformOverlay } from '@/components/editor/video-transform-overl
 import { VideoTransitionOverlay } from '@/components/editor/video-transition-overlay';
 import { useTimelineVideoController } from '@/hooks/use-timeline-video-controller';
 import { useTimelineAudioController } from '@/hooks/use-timeline-audio-controller';
+import { useProjectCaptionTranslation } from '@/hooks/use-project-caption-translation';
 import { deleteAudioClip, duplicateAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '@/lib/audio-timeline';
 import { findAnimationPreset } from '@/lib/animation-presets';
+import { normalizeEnglishChineseCaptionLanguage } from '@/lib/caption-languages';
+import {
+  projectEnglishChineseCaptionLanguage,
+  removeTranslationCaptionTrack,
+  resolveCaptionPairs,
+  setTranslationCueStyle,
+  setTranslationTrackStyle,
+  setTranslationTrackVisibility,
+} from '@/lib/caption-tracks';
 import { deletePersonKeyframe, resolvePersonTransform, upsertPersonKeyframe } from '@/lib/person-motion';
+import {
+  collectLinkedMediaUris,
+  collectProjectOwnedUris,
+  createLinkedMediaPermissionLedger,
+  createProjectOwnedAssetLedger,
+  trackLinkedMediaPermissions,
+  trackProjectOwnedAssets,
+} from '@/lib/media-lifecycle';
 import {
   mergeCaptionScriptBlock,
   splitCaptionScriptBlockAtTime,
@@ -40,7 +60,7 @@ import {
 } from '@/lib/caption-script';
 import { fontChoicePatch, type FontChoice } from '@/lib/font-catalog';
 import { TRANSCRIPTION_MODELS, type TranscriptionModel } from '@/lib/model-catalog';
-import { VIDEO_TRANSITION_PRESETS } from '@/lib/transition-presets';
+import { canApplyVideoTransition, VIDEO_TRANSITION_PRESETS } from '@/lib/video-transitions';
 import {
   addImageLayer as addImageLayerToProject,
   createTextLayer,
@@ -57,7 +77,7 @@ import {
   setTextLayerStyle,
   setTextLayerText,
   setVideoClipGap,
-  setVideoTransform,
+  setVideoClipTransform,
   setVideoTransition,
   moveVideoClip,
   splitVideoClip,
@@ -72,21 +92,40 @@ import {
   sourceTimeAt,
   totalClipDuration,
   visibleTimelineCaptions,
-  videoTransitionOverlay,
 } from '@/lib/video-timeline';
+import {
+  hasBackgroundProcessingConsent,
+  setBackgroundProcessingConsent,
+} from '@/services/background-processing-consent';
 import { pickAndStoreImage, pickBackgroundMedia, type MediaImportProgress } from '@/services/media-import';
 import { releasePersonPreview, renderPersonPreview } from '@/services/person-compositor';
-import { exportBackgroundReplacement } from '@/services/project-export';
+import { cancelProjectVideoExport, exportProjectVideo, exportSubtitleFile, getProjectVideoExportProgress } from '@/services/project-export';
 import { validateProjectSources } from '@/services/project-media';
 import {
   appendVideosToProject,
   appendAudioToProject,
+  cancelProjectCaptionGeneration,
   checkpointEditorProject,
   discardEditorSession,
   generateAndSaveProjectCaptions,
   loadProjectForEditing,
   saveEditorDraft,
 } from '@/services/project-workflows';
+import { CaptionGenerationCancelledError } from '@/services/caption-generation-session';
+import {
+  NATURAL_TRANSLATION_MODEL,
+  type CaptionTranslationProgress,
+} from '@/services/caption-translation';
+import {
+  changedPrimaryCaptionTextIds,
+  prepareOptionalDualCaptionTrack,
+  type DualCaptionTextEdit,
+} from '@/services/project-caption-translation';
+import {
+  ProjectPersistenceError,
+  publishProjectAfterDurableSave,
+} from '@/services/project-persistence';
+import { VideoExportCancelledError } from '@/services/video-export-session';
 import type { TranscriptionProgress } from '@/services/transcription';
 import {
   type CaptionAnimationId,
@@ -94,6 +133,7 @@ import {
   type CaptionStylePatch,
   type ImageVisualLayer,
   type VideoClip,
+  type VideoTransformPatch,
   type AudioClip,
 } from '@/types/project';
 
@@ -110,6 +150,7 @@ const palette = {
 type PendingStyleChange = {
   label: string;
   patch: CaptionStylePatch;
+  translationTrackId?: string;
 };
 
 type EditorTool = 'captions' | 'fonts' | 'animate' | 'video' | 'audio';
@@ -148,6 +189,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const { height, width } = useWindowDimensions();
   const [project, setProject] = useState(initialProject);
   const projectRef = useRef(project);
+  const ownedAssetLedgerRef = useRef(createProjectOwnedAssetLedger(initialProject));
+  const linkedPermissionLedgerRef = useRef(createLinkedMediaPermissionLedger(initialProject));
 
   useEffect(() => {
     projectRef.current = project;
@@ -157,31 +200,110 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [selectedClipId, setSelectedClipId] = useState<string>();
   const [selectedAudioClipId, setSelectedAudioClipId] = useState<string>();
   const [progress, setProgress] = useState<TranscriptionProgress>();
+  const [transcriptionCancelling, setTranscriptionCancelling] = useState(false);
   const [mediaProgress, setMediaProgress] = useState<MediaImportProgress>();
   const [error, setError] = useState<string>();
+  const [persistenceError, setPersistenceError] = useState<string>();
   const [fontBrowserOpen, setFontBrowserOpen] = useState(false);
   const [pendingChange, setPendingChange] = useState<PendingStyleChange>();
   const [editingText, setEditingText] = useState<string>();
   const [editingLayerId, setEditingLayerId] = useState<string>();
   const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
+  const [dualCaptionEditorOpen, setDualCaptionEditorOpen] = useState(false);
+  const [selectedTranslationTrackId, setSelectedTranslationTrackId] = useState<string>();
   const [personPreviewUri, setPersonPreviewUri] = useState<string>();
   const [personPreviewBusy, setPersonPreviewBusy] = useState(false);
+  const [backgroundProcessingAllowed, setBackgroundProcessingAllowed] = useState<boolean>();
   const [activeTool, setActiveTool] = useState<EditorTool>('captions');
   const [exporting, setExporting] = useState(false);
+  const [exportKind, setExportKind] = useState<'video' | 'subtitle'>('video');
+  const [exportProgress, setExportProgress] = useState<TimelineVideoExportProgress>();
   const [animationScope, setAnimationScope] = useState<StyleScope>('all');
   const undoStackRef = useRef<CaptionProject[]>([]);
   const redoStackRef = useRef<CaptionProject[]>([]);
   const interactionStartRef = useRef<CaptionProject | undefined>(undefined);
   const [historyVersion, setHistoryVersion] = useState(0);
+  const workspaceMountedRef = useRef(true);
   const exitApprovedRef = useRef(false);
   const exitPromptOpenRef = useRef(false);
   const pendingExitActionRef = useRef<NavigationAction | undefined>(undefined);
+  const backgroundConsentRequestRef = useRef<Promise<boolean> | undefined>(undefined);
+
+  useEffect(() => {
+    let active = true;
+    void hasBackgroundProcessingConsent()
+      .then((granted) => { if (active) setBackgroundProcessingAllowed(granted); })
+      .catch((caught) => {
+        if (active) setError(caught instanceof Error ? caught.message : 'The background-removal privacy choice could not be loaded.');
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!exporting || exportKind !== 'video') return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const next = await getProjectVideoExportProgress();
+        if (active) setExportProgress(next);
+      } catch {
+        if (active) setExportProgress({ stage: 'rendering', percent: null });
+      } finally {
+        if (active) timer = setTimeout(poll, 500);
+      }
+    };
+    void poll();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [exportKind, exporting]);
+
+  const trackSessionMedia = (next: CaptionProject) => {
+    ownedAssetLedgerRef.current = trackProjectOwnedAssets(
+      ownedAssetLedgerRef.current,
+      collectProjectOwnedUris(next),
+    );
+    linkedPermissionLedgerRef.current = trackLinkedMediaPermissions(
+      linkedPermissionLedgerRef.current,
+      collectLinkedMediaUris(next),
+    );
+  };
 
   const persistProject = async (next: CaptionProject) => {
     try {
-      await checkpointEditorProject(next);
+      const persisted = await checkpointEditorProject(next);
+      setPersistenceError(undefined);
+      return persisted;
     } catch (caught) {
-      setError(caught instanceof Error ? `Project could not be saved: ${caught.message}` : 'Project could not be saved.');
+      const message = caught instanceof ProjectPersistenceError
+        ? caught.message
+        : 'Project changes were not saved. Check available storage and try again.';
+      setPersistenceError(message);
+      throw caught;
+    }
+  };
+
+  const persistProjectInBackground = (next: CaptionProject) => {
+    void persistProject(next).catch(() => undefined);
+  };
+
+  const commitPersistedProject = async (
+    next: CaptionProject,
+    publish: (persisted: CaptionProject) => void,
+  ) => {
+    try {
+      const persisted = await publishProjectAfterDurableSave(next, publish);
+      setPersistenceError(undefined);
+      return persisted;
+    } catch (caught) {
+      if (caught instanceof ProjectPersistenceError) {
+        setPersistenceError(caught.message);
+      } else {
+        setError(caught instanceof Error ? caught.message : 'The project view could not be updated after saving.');
+      }
+      throw caught;
     }
   };
 
@@ -200,11 +322,17 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     const finishExit = async (decision: 'save' | 'discard') => {
       try {
         if (decision === 'save') {
-          const saved = await saveEditorDraft(projectRef.current);
+          const saved = await saveEditorDraft(projectRef.current, {
+            owned: ownedAssetLedgerRef.current,
+            linked: linkedPermissionLedgerRef.current,
+          });
           projectRef.current = saved;
           setProject(saved);
         } else {
-          await discardEditorSession(initialProject, projectRef.current);
+          await discardEditorSession(initialProject, projectRef.current, {
+            owned: ownedAssetLedgerRef.current,
+            linked: linkedPermissionLedgerRef.current,
+          });
         }
         exitApprovedRef.current = true;
         const action = pendingExitActionRef.current;
@@ -247,34 +375,71 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     () => project.layers.filter((layer) => layer.kind === 'captions' || layer.timelineVisible !== false),
     [project.layers],
   );
+  const translationTimelineTracks = useMemo(
+    () => (project.captionTracks?.translations ?? []).map((track) => ({
+      id: track.id,
+      name: track.displayName,
+      visible: track.visible,
+      pairs: resolveCaptionPairs(project, track.id).filter((pair) => pair.timelineVisible),
+    })),
+    [project],
+  );
+  const selectedTranslationTrack = project.captionTracks?.translations.find((track) => track.id === selectedTranslationTrackId)
+    ?? project.captionTracks?.translations.find((track) => track.visible)
+    ?? project.captionTracks?.translations[0];
+  const selectedTranslationPairs = useMemo(
+    () => selectedTranslationTrack ? resolveCaptionPairs(project, selectedTranslationTrack.id).filter((pair) => pair.timelineVisible) : [],
+    [project, selectedTranslationTrack],
+  );
   const activeCaption = useMemo(
     () => timelineCaptions.find((caption) => currentMs >= caption.startMs && currentMs < caption.endMs),
     [currentMs, timelineCaptions],
   );
   const selectedCaption = timelineCaptions.find((caption) => caption.id === selectedCaptionId);
   const selectedClip = project.clips.find((clip) => clip.id === selectedClipId);
+  const selectedClipIndex = project.clips.findIndex((clip) => clip.id === selectedClipId);
+  const transitionBoundaryAvailable = canApplyVideoTransition(project.clips, selectedClipIndex);
   const selectedAudioClip = project.audioClips.find((clip) => clip.id === selectedAudioClipId);
   const selectedLayer = project.layers.find((layer) => layer.id === selectedLayerId);
   const selectedTextLayer = selectedLayer?.kind === 'text' ? selectedLayer : undefined;
   const selectedImageLayer = selectedLayer?.kind === 'image' ? selectedLayer : undefined;
+  const translationTrackSelected = selectedTranslationTrack?.id === selectedLayerId;
+  const selectedTranslationPair = translationTrackSelected
+    ? selectedTranslationPairs.find((pair) => pair.source.id === selectedCaptionId)
+    : undefined;
   const selectedAnimationId = selectedTextLayer
     ? selectedTextLayer.style.animation.id
+    : selectedTranslationPair
+      ? selectedTranslationPair.style.animation.id
     : selectedCaption
       ? resolveCaptionStyle(project.projectStyle, selectedCaption).animation.id
       : project.projectStyle.animation.id;
   const displayCaption = isPlaying ? activeCaption : selectedCaption ?? activeCaption;
+  const displayTranslationPairs = useMemo(
+    () => displayCaption
+      ? translationTimelineTracks.flatMap((track) => track.visible
+        ? track.pairs.filter((pair) => pair.source.id === displayCaption.id && pair.translation.text.trim())
+        : [])
+      : [],
+    [displayCaption, translationTimelineTracks],
+  );
   const previewHeight = Math.min(Math.max(280, height * 0.43), 500);
   const canvasSize = fitRect(
     Math.max(1, project.canvas.aspectWidth / project.canvas.aspectHeight),
     width - 24,
     previewHeight - 8,
   );
-  const transitionOverlay = videoTransitionOverlay(clipTimeline, currentMs);
+  const canvasWidth = canvasSize.width;
+  const canvasHeight = canvasSize.height;
   const currentClipEntry = timelineEntryAt(clipTimeline, currentMs);
+  const currentVideoTransform = currentClipEntry?.clip.transform ?? project.videoTransform;
+  const editableVideoClip = currentClipEntry?.clip ?? selectedClip;
+  const editableVideoTransform = editableVideoClip?.transform ?? project.videoTransform;
   const personPreviewTimeMs = Math.floor(currentMs / 250) * 250;
+  const personProcessingActive = project.backgroundReplacement.enabled && backgroundProcessingAllowed === true;
 
   useEffect(() => {
-    if (!project.backgroundReplacement.enabled || !currentClipEntry) {
+    if (!personProcessingActive || !currentClipEntry) {
       return;
     }
     const source = project.sources.find((candidate) => candidate.id === currentClipEntry.clip.sourceId);
@@ -288,6 +453,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         sourceTimeMs: sourceTimeAt(currentClipEntry, personPreviewTimeMs),
         timelineTimeMs: personPreviewTimeMs,
         background: project.backgroundReplacement,
+        outputSize: { width: canvasWidth, height: canvasHeight },
+        videoTransform: currentVideoTransform,
       }).then((uri) => {
         if (active) setPersonPreviewUri(uri);
       }).catch((caught) => {
@@ -297,19 +464,44 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       });
     }, isPlaying ? 160 : 80);
     return () => { active = false; clearTimeout(timer); };
-  }, [currentClipEntry, isPlaying, personPreviewTimeMs, project.backgroundReplacement, project.id, project.sources]);
+  }, [canvasHeight, canvasWidth, currentClipEntry, currentVideoTransform, isPlaying, personPreviewTimeMs, personProcessingActive, project.backgroundReplacement, project.id, project.sources]);
 
   useEffect(() => () => {
     void releasePersonPreview(project.id).catch(() => undefined);
   }, [project.id]);
 
+  useEffect(() => {
+    workspaceMountedRef.current = true;
+    return () => {
+      workspaceMountedRef.current = false;
+      void cancelProjectCaptionGeneration();
+      void cancelProjectVideoExport();
+    };
+  }, []);
+
   const pushUndo = (snapshot = projectRef.current) => {
     const stack = undoStackRef.current;
     if (stack.at(-1) !== snapshot) stack.push(snapshot);
-    if (stack.length > 50) stack.shift();
+    trimHistoryStack(stack);
     redoStackRef.current = [];
     setHistoryVersion((value) => value + 1);
   };
+
+  const translationController = useProjectCaptionTranslation({
+    getCurrentProject: () => projectRef.current,
+    commitProject: async (baseline, next) => {
+      if (projectRef.current !== baseline) {
+        throw new Error('The project changed while both languages were synchronizing. Save again to avoid overwriting newer edits.');
+      }
+      await commitPersistedProject(next, (persisted) => {
+        pushUndo(baseline);
+        projectRef.current = persisted;
+        setProject(persisted);
+      });
+    },
+  });
+  const translationProgress = translationController.progress;
+  const translationCancelling = translationController.cancelling;
 
   const beginHistoryInteraction = () => {
     interactionStartRef.current ??= projectRef.current;
@@ -319,13 +511,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     const snapshot = interactionStartRef.current;
     interactionStartRef.current = undefined;
     if (snapshot && snapshot !== projectRef.current) pushUndo(snapshot);
-    persistProject(projectRef.current);
+    persistProjectInBackground(projectRef.current);
   };
 
   const undo = () => {
     const previous = undoStackRef.current.pop();
     if (!previous) return;
     redoStackRef.current.push(projectRef.current);
+    trimHistoryStack(redoStackRef.current);
     interactionStartRef.current = undefined;
     projectRef.current = previous;
     transport.synchronizeProject(previous);
@@ -333,13 +526,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setSelectedCaptionId((id) => previous.captions.some((caption) => caption.id === id) ? id : previous.captions[0]?.id);
     setSelectedLayerId((id) => previous.layers.some((layer) => layer.id === id) ? id : 'captions');
     setHistoryVersion((value) => value + 1);
-    persistProject(previous);
+    persistProjectInBackground(previous);
   };
 
   const redo = () => {
     const next = redoStackRef.current.pop();
     if (!next) return;
     undoStackRef.current.push(projectRef.current);
+    trimHistoryStack(undoStackRef.current);
     interactionStartRef.current = undefined;
     projectRef.current = next;
     transport.synchronizeProject(next);
@@ -347,27 +541,59 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setSelectedCaptionId((id) => next.captions.some((caption) => caption.id === id) ? id : next.captions[0]?.id);
     setSelectedLayerId((id) => next.layers.some((layer) => layer.id === id) ? id : 'captions');
     setHistoryVersion((value) => value + 1);
-    persistProject(next);
+    persistProjectInBackground(next);
   };
 
   const generateCaptions = async (modelId: TranscriptionModel['id']) => {
     setError(undefined);
+    setTranscriptionCancelling(false);
     try {
-      const next = await generateAndSaveProjectCaptions(projectRef.current, modelId, setProgress);
-      pushUndo();
+      const before = projectRef.current;
+      const next = await generateAndSaveProjectCaptions(
+        before,
+        modelId,
+        (nextProgress) => { if (workspaceMountedRef.current) setProgress(nextProgress); },
+      );
+      if (!workspaceMountedRef.current) return;
+      pushUndo(before);
       projectRef.current = next;
       setProject(next);
       setSelectedCaptionId(next.captions[0]?.id);
+      if (before.captionTracks.translations.length > 0 && next.captionTracks.translations.length === 0) {
+        Alert.alert(
+          'Second language reset',
+          'The detected source language changed or the timeline mixes English and Chinese clips. Caption Studio removed the incompatible second-language track so it cannot show or export incorrect translations. Undo restores the previous caption script and track.',
+        );
+      } else {
+        const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
+        const refreshIds = visibleTranslation?.cues
+          .filter((cue) => cue.status === 'pending' || cue.status === 'stale')
+          .map((cue) => cue.sourceCaptionId) ?? [];
+        if (visibleTranslation && refreshIds.length > 0) {
+          requestTranslationRefresh(refreshIds, visibleTranslation);
+        }
+      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Caption generation failed');
+      if (workspaceMountedRef.current && !(caught instanceof CaptionGenerationCancelledError)) {
+        setError(caught instanceof Error ? caught.message : 'Caption generation failed');
+      }
     } finally {
-      setProgress(undefined);
+      if (workspaceMountedRef.current) {
+        setTranscriptionCancelling(false);
+        setProgress(undefined);
+      }
     }
+  };
+
+  const cancelCaptionGeneration = async () => {
+    setTranscriptionCancelling(true);
+    const cancelled = await cancelProjectCaptionGeneration();
+    if (!cancelled) setTranscriptionCancelling(false);
   };
 
   const chooseCaptionQuality = (replacingExisting: boolean) => {
     const modelDescription = TRANSCRIPTION_MODELS
-      .map((model) => `${model.label}: ${model.description}`)
+      .map((model) => `${model.label} · ${formatMegabytes(model.downloadBytes)} download\n${model.description}`)
       .join('\n\n');
     Alert.alert(
       replacingExisting ? 'Replace captions with which quality?' : 'Choose caption quality',
@@ -382,17 +608,22 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const chooseStyleScope = async (scope: StyleScope) => {
     if (!pendingChange) return;
-    pushUndo();
-    const next = applyStylePatch(
-      projectRef.current,
-      selectedCaptionId ?? '',
-      scope,
-      pendingChange.patch,
-    );
-    projectRef.current = next;
-    setProject(next);
-    setPendingChange(undefined);
-    await persistProject(next);
+    const before = projectRef.current;
+    const next = pendingChange.translationTrackId
+      ? scope === 'caption' && selectedCaptionId
+        ? setTranslationCueStyle(before, pendingChange.translationTrackId, selectedCaptionId, pendingChange.patch, new Date().toISOString())
+        : setTranslationTrackStyle(before, pendingChange.translationTrackId, pendingChange.patch, new Date().toISOString())
+      : applyStylePatch(before, selectedCaptionId ?? '', scope, pendingChange.patch);
+    try {
+      await commitPersistedProject(next, (persisted) => {
+        pushUndo(before);
+        projectRef.current = persisted;
+        setProject(persisted);
+        setPendingChange(undefined);
+      });
+    } catch {
+      return;
+    }
   };
 
   const chooseFont = (choice: FontChoice) => {
@@ -401,9 +632,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       updateTextLayerStyle(selectedTextLayer.id, fontChoicePatch(choice), true);
       return;
     }
+    queueCaptionStyleChange(`Font: ${choice.name}`, fontChoicePatch(choice));
+  };
+
+  const queueCaptionStyleChange = (label: string, patch: CaptionStylePatch) => {
     setPendingChange({
-      label: `Font: ${choice.name}`,
-      patch: fontChoicePatch(choice),
+      label,
+      patch,
+      translationTrackId: translationTrackSelected ? selectedTranslationTrack?.id : undefined,
     });
   };
 
@@ -416,13 +652,23 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       return;
     }
     const scope = animationScope === 'caption' && selectedCaptionId ? 'caption' : 'all';
+    if (translationTrackSelected && !TRANSLATION_PHRASE_ANIMATIONS.has(id)) {
+      Alert.alert(
+        'Choose a phrase animation',
+        'Translated words do not have reliable word-by-word timing. Phrase animations stay synchronized to the primary subtitle without inventing word timing.',
+      );
+      return;
+    }
     pushUndo();
     setProject((current) => {
-      const next = applyStylePatch(current, selectedCaptionId ?? '', scope, {
-        animation: { id, intensity: preset.intensity, durationMs: preset.durationMs },
-      });
+      const patch = { animation: { id, intensity: preset.intensity, durationMs: preset.durationMs } };
+      const next = translationTrackSelected && selectedTranslationTrack
+        ? scope === 'caption' && selectedCaptionId
+          ? setTranslationCueStyle(current, selectedTranslationTrack.id, selectedCaptionId, patch, new Date().toISOString())
+          : setTranslationTrackStyle(current, selectedTranslationTrack.id, patch, new Date().toISOString())
+        : applyStylePatch(current, selectedCaptionId ?? '', scope, patch);
       projectRef.current = next;
-      persistProject(next);
+      persistProjectInBackground(next);
       return next;
     });
   };
@@ -435,39 +681,207 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const commitTextLayerText = async () => {
     if (editingText == null || !editingLayerId) return;
-    pushUndo();
-    const next = setTextLayerText(projectRef.current, editingLayerId, editingText);
-    projectRef.current = next;
-    setProject(next);
-    setEditingLayerId(undefined);
-    setEditingText(undefined);
-    await persistProject(next);
+    const before = projectRef.current;
+    const next = setTextLayerText(before, editingLayerId, editingText);
+    try {
+      await commitPersistedProject(next, (persisted) => {
+        pushUndo(before);
+        projectRef.current = persisted;
+        setProject(persisted);
+        setEditingLayerId(undefined);
+        setEditingText(undefined);
+      });
+    } catch {
+      return;
+    }
   };
 
   const commitCaptionScript = async (captions: CaptionProject['captions']) => {
     const before = projectRef.current;
     const next = replaceVisibleCaptionScript(before, captions);
     if (next !== before) {
-      pushUndo(before);
-      projectRef.current = next;
-      setProject(next);
-      if (!next.captions.some((caption) => caption.id === selectedCaptionId && caption.timelineVisible !== false)) {
-        setSelectedCaptionId(captions[0]?.id);
+      const changedCaptionIds = changedPrimaryCaptionTextIds(before, next);
+      await commitPersistedProject(next, (persisted) => {
+        pushUndo(before);
+        projectRef.current = persisted;
+        setProject(persisted);
+        if (!persisted.captions.some((caption) => caption.id === selectedCaptionId && caption.timelineVisible !== false)) {
+          setSelectedCaptionId(captions[0]?.id);
+        }
+      });
+      const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
+      if (visibleTranslation && changedCaptionIds.length > 0) {
+        requestTranslationRefresh(changedCaptionIds, visibleTranslation);
       }
-      await persistProject(next);
     }
     setScriptEditorOpen(false);
   };
 
-  const commitCaptionStructure = (mutation: CaptionScriptMutation) => {
+  const openDualCaptionEditor = () => {
+    if (timelineCaptions.length === 0) {
+      Alert.alert('Generate captions first', 'Dual subtitles need a primary caption script to translate.');
+      return;
+    }
+    let sourceLanguage;
+    try {
+      sourceLanguage = projectEnglishChineseCaptionLanguage(projectRef.current);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'This caption language is not supported for dual subtitles.');
+      return;
+    }
+    const existing = projectRef.current.captionTracks.translations.find((track) => track.visible)
+      ?? projectRef.current.captionTracks.translations[0];
+    if (existing) {
+      setSelectedTranslationTrackId(existing.id);
+      setDualCaptionEditorOpen(true);
+      return;
+    }
+    const downloadSize = formatMegabytes(NATURAL_TRANSLATION_MODEL.downloadBytes);
+    const message = `Dual subtitles are optional. Natural translation runs on this phone after a one-time ${downloadSize} model download. Use clips spoken mainly in one language; code-switching inside one clip can need manual correction. AI translation can still need human review.`;
+    if (sourceLanguage === 'en') {
+      Alert.alert('Add English + Chinese', message, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Traditional Chinese', onPress: () => { void enableDualCaptions('zh-Hant'); } },
+        { text: 'Simplified Chinese', onPress: () => { void enableDualCaptions('zh-Hans'); } },
+      ]);
+      return;
+    }
+    Alert.alert('Add Chinese + English', message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Add English', onPress: () => { void enableDualCaptions('en'); } },
+    ]);
+  };
+
+  const enableDualCaptions = async (targetLanguage: 'en' | 'zh-Hans' | 'zh-Hant') => {
+    const before = projectRef.current;
+    try {
+      const prepared = prepareOptionalDualCaptionTrack(before, targetLanguage);
+      await commitPersistedProject(prepared.project, (persisted) => {
+        pushUndo(before);
+        projectRef.current = persisted;
+        setProject(persisted);
+        setSelectedTranslationTrackId(prepared.trackId);
+        setDualCaptionEditorOpen(true);
+      });
+      void translationController.refresh(
+        prepared.trackId,
+        visibleTimelineCaptions(prepared.project.captions).map((caption) => caption.id),
+        prepared.project,
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Dual subtitles could not be enabled.');
+    }
+  };
+
+  const requestTranslationRefresh = (
+    sourceCaptionIds: string[],
+    requestedTrack = selectedTranslationTrack,
+  ) => {
+    const track = requestedTrack;
+    if (!track) return;
+    const reviewed = track.cues.filter((cue) => sourceCaptionIds.includes(cue.sourceCaptionId) && cue.reviewed);
+    if (reviewed.length > 0) {
+      Alert.alert(
+        'Replace reviewed translation?',
+        `${reviewed.length} selected subtitle${reviewed.length === 1 ? ' was' : 's were'} edited by a person. Refresh will replace the second-language text, and Undo can restore it.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Replace + refresh', style: 'destructive', onPress: () => { void translationController.refresh(track.id, sourceCaptionIds); } },
+        ],
+      );
+      return;
+    }
+    void translationController.refresh(track.id, sourceCaptionIds);
+  };
+
+  const saveDualCaptionEdits = (edits: DualCaptionTextEdit[]) => {
+    const track = selectedTranslationTrack;
+    if (!track || edits.length === 0) return;
+    if (edits.some((edit) => !edit.primaryText.trim() || !edit.translatedText.trim())) {
+      Alert.alert('Both lines need text', 'Enter both the primary and translated subtitle before saving this row.');
+      return;
+    }
+    const reviewedById = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue.reviewed]));
+    const overwritesReviewed = edits.some((edit) => edit.primaryChanged && !edit.translatedChanged && reviewedById.get(edit.sourceCaptionId));
+    if (overwritesReviewed) {
+      Alert.alert(
+        'Replace reviewed translation?',
+        `At least one ${track.displayName} line was edited by a person. Automatic sync will replace it; Undo can restore both languages.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Replace + sync', style: 'destructive', onPress: () => { void translationController.synchronize(track.id, edits); } },
+        ],
+      );
+      return;
+    }
+    void translationController.synchronize(track.id, edits);
+  };
+
+  const toggleSelectedTranslationTrack = async () => {
+    const track = selectedTranslationTrack;
+    if (!track) return;
+    const before = projectRef.current;
+    const updatedAt = new Date().toISOString();
+    let next = before;
+    if (!track.visible) {
+      for (const candidate of before.captionTracks.translations) {
+        if (candidate.visible) next = setTranslationTrackVisibility(next, candidate.id, false, updatedAt);
+      }
+    }
+    next = setTranslationTrackVisibility(next, track.id, !track.visible, updatedAt);
+    try {
+      await commitPersistedProject(next, (persisted) => {
+        pushUndo(before);
+        projectRef.current = persisted;
+        setProject(persisted);
+      });
+    } catch {
+      return;
+    }
+  };
+
+  const confirmRemoveSelectedTranslationTrack = () => {
+    const track = selectedTranslationTrack;
+    if (!track) return;
+    Alert.alert('Remove second language?', `${track.displayName} text will be removed from this project. The primary captions stay unchanged.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () => {
+          const before = projectRef.current;
+          const next = removeTranslationCaptionTrack(before, track.id, new Date().toISOString());
+          void commitPersistedProject(next, (persisted) => {
+            pushUndo(before);
+            projectRef.current = persisted;
+            setProject(persisted);
+            setSelectedTranslationTrackId(undefined);
+            setDualCaptionEditorOpen(false);
+          }).catch(() => undefined);
+        },
+      },
+    ]);
+  };
+
+  const cancelDualCaptionTranslation = async () => {
+    await translationController.cancel();
+  };
+
+  const commitCaptionStructure = async (mutation: CaptionScriptMutation) => {
     const before = projectRef.current;
     const next = replaceVisibleCaptionScript(before, mutation.captions);
     if (next === before) return;
-    pushUndo(before);
-    projectRef.current = next;
-    setProject(next);
-    setSelectedCaptionId(mutation.focusedId);
-    persistProject(next);
+    const changedCaptionIds = changedPrimaryCaptionTextIds(before, next);
+    await commitPersistedProject(next, (persisted) => {
+      pushUndo(before);
+      projectRef.current = persisted;
+      setProject(persisted);
+      setSelectedCaptionId(mutation.focusedId);
+    });
+    const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
+    if (visibleTranslation && changedCaptionIds.length > 0) {
+      requestTranslationRefresh(changedCaptionIds, visibleTranslation);
+    }
   };
 
   const splitSelectedCaptionAtPlayhead = () => {
@@ -483,7 +897,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       Alert.alert('Move the playhead inside this subtitle', 'A split needs a little room on both sides of the playhead.');
       return;
     }
-    commitCaptionStructure(mutation);
+    void commitCaptionStructure(mutation).catch(() => undefined);
   };
 
   const joinSelectedCaption = (direction: 'previous' | 'next') => {
@@ -497,7 +911,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       Alert.alert('Cannot join across a video cut', 'Subtitles attached to different video clips stay separate so their timing remains correct.');
       return;
     }
-    commitCaptionStructure(mutation);
+    void commitCaptionStructure(mutation).catch(() => undefined);
   };
 
   const updateTextLayerStyle = (layerId: string, patch: CaptionStylePatch, persist = false) => {
@@ -505,7 +919,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject((current) => {
       const next = setTextLayerStyle(current, layerId, patch);
       projectRef.current = next;
-      if (persist) persistProject(next);
+      if (persist) persistProjectInBackground(next);
       return next;
     });
   };
@@ -519,9 +933,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
-  const updateVideoTransform = (patch: Partial<CaptionProject['videoTransform']>) => {
+  const updateVideoTransform = (patch: VideoTransformPatch) => {
+    const clipId = editableVideoClip?.id;
+    if (!clipId) return;
     setProject((current) => {
-      const next = setVideoTransform(current, patch);
+      const next = setVideoClipTransform(current, clipId, patch);
       projectRef.current = next;
       return next;
     });
@@ -559,7 +975,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject((current) => {
       const next = current === projectRef.current ? result.project : createTextLayer(current, id, currentMs, duration).project;
       projectRef.current = next;
-      persistProject(next);
+      persistProjectInBackground(next);
       return next;
     });
     transport.pause();
@@ -579,6 +995,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       return;
     }
     if (!stored) return;
+    ownedAssetLedgerRef.current = trackProjectOwnedAssets(ownedAssetLedgerRef.current, [stored.uri]);
     pushUndo();
     const duration = Math.max(500, timelineDurationMs);
     const result = addImageLayerToProject(projectRef.current, {
@@ -591,7 +1008,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject((current) => {
       const next = current === projectRef.current ? result.project : addImageLayerToProject(current, { id, name: stored.name, uri: stored.uri, currentMs, durationMs: duration }).project;
       projectRef.current = next;
-      persistProject(next);
+      persistProjectInBackground(next);
       return next;
     });
     transport.pause();
@@ -604,7 +1021,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject((current) => {
       const next = moveVisualLayer(current, layerId, direction);
       projectRef.current = next;
-      persistProject(next);
+      persistProjectInBackground(next);
       return next;
     });
   };
@@ -615,7 +1032,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject((current) => {
       const next = deleteVisualLayer(current, layerId);
       projectRef.current = next;
-      persistProject(next);
+      persistProjectInBackground(next);
       return next;
     });
     setSelectedLayerId('captions');
@@ -628,6 +1045,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       const beforeDuration = totalClipDuration(before.clips);
       const next = await appendVideosToProject(before, setMediaProgress);
       if (!next) return;
+      trackSessionMedia(next);
       pushUndo(before);
       projectRef.current = next;
       transport.synchronizeProject(next);
@@ -652,7 +1070,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     projectRef.current = next;
     transport.synchronizeProject(next);
     setProject(next);
-    persistProject(next);
+    persistProjectInBackground(next);
     const entry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === selectedClipId);
     if (entry) transport.seek(clamp(currentMs, entry.startMs, entry.endMs));
   };
@@ -667,7 +1085,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     projectRef.current = next;
     transport.synchronizeProject(next);
     setProject(next);
-    persistProject(next);
+    persistProjectInBackground(next);
     const entry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === selectedClipId);
     if (entry) {
       const relativeProgress = clamp((currentMs - oldEntry.startMs) / Math.max(1, oldEntry.endMs - oldEntry.startMs), 0, 1);
@@ -685,7 +1103,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     projectRef.current = result.project;
     transport.synchronizeProject(result.project);
     setProject(result.project);
-    persistProject(result.project);
+    persistProjectInBackground(result.project);
     setSelectedClipId(result.rightClipId);
   };
 
@@ -699,7 +1117,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     transport.synchronizeProject(next);
     setProject(next);
     setSelectedClipId(next.clips[0]?.id);
-    persistProject(next);
+    persistProjectInBackground(next);
     queueMicrotask(() => seekTimeline(result.seekMs));
   };
 
@@ -712,7 +1130,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     projectRef.current = next;
     transport.synchronizeProject(next);
     setProject(next);
-    persistProject(next);
+    persistProjectInBackground(next);
     transport.pause();
     queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, totalClipDuration(next.clips) - 1))));
   };
@@ -724,7 +1142,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     projectRef.current = result.project;
     transport.synchronizeProject(result.project);
     setProject(result.project);
-    persistProject(result.project);
+    persistProjectInBackground(result.project);
     transport.pause();
     queueMicrotask(() => transport.seek(result.seekMs));
   };
@@ -736,6 +1154,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       const before = projectRef.current;
       const result = await appendAudioToProject(before, currentMs, origin);
       if (!result) return;
+      trackSessionMedia(result.project);
       pushUndo(before);
       projectRef.current = result.project;
       setProject(result.project);
@@ -751,7 +1170,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const commitAudioProject = (next: CaptionProject) => {
     projectRef.current = next;
     setProject(next);
-    void persistProject(next);
+    persistProjectInBackground(next);
   };
 
   const updateSelectedAudio = (patch: Partial<Pick<AudioClip, 'volume' | 'muted' | 'fadeInMs' | 'fadeOutMs'>>) => {
@@ -796,7 +1215,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     const next = setVideoTransition(projectRef.current, selectedClipId, type, durationMs);
     projectRef.current = next;
     setProject(next);
-    void persistProject(next);
+    persistProjectInBackground(next);
   };
 
   const reorderSelectedVideo = (direction: -1 | 1) => {
@@ -806,22 +1225,64 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     projectRef.current = next;
     transport.synchronizeProject(next);
     setProject(next);
-    void persistProject(next);
+    persistProjectInBackground(next);
   };
 
   const exportVideo = async () => {
     if (exporting) return;
+    if (
+      projectRef.current.backgroundReplacement.enabled
+      && projectRef.current.backgroundReplacement.source
+      && !await requestBackgroundProcessing()
+    ) return;
     transport.pause();
     setError(undefined);
+    setExportKind('video');
+    setExportProgress({ stage: 'preparing', percent: 0 });
     setExporting(true);
     try {
-      const result = await exportBackgroundReplacement(projectRef.current);
+      const result = await exportProjectVideo(projectRef.current);
       Alert.alert('Export complete', `Saved to your phone’s media library.\n${result.width} × ${result.height}`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The video could not be exported.');
+      if (!(caught instanceof VideoExportCancelledError)) {
+        setError(caught instanceof Error ? caught.message : 'The video could not be exported.');
+      }
     } finally {
       setExporting(false);
     }
+  };
+
+  const exportSubtitles = async (format: 'srt' | 'ass') => {
+    if (exporting) return;
+    transport.pause();
+    setError(undefined);
+    setExportKind('subtitle');
+    setExportProgress(undefined);
+    setExporting(true);
+    try {
+      await exportSubtitleFile(projectRef.current, format);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The subtitle file could not be exported.');
+    } finally {
+      setExporting(false);
+      setExportProgress(undefined);
+    }
+  };
+
+  const showExportMenu = () => {
+    if (exporting) return;
+    Alert.alert('Export project', 'Choose what to create.', [
+      { text: 'Rendered MP4', onPress: () => { void exportVideo(); } },
+      {
+        text: 'Subtitle file',
+        onPress: () => Alert.alert('Subtitle format', 'SRT works almost everywhere. ASS preserves advanced styling.', [
+          { text: 'SRT', onPress: () => { void exportSubtitles('srt'); } },
+          { text: 'ASS', onPress: () => { void exportSubtitles('ass'); } },
+          { text: 'Cancel', style: 'cancel' },
+        ]),
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const deleteCaption = (captionId: string) => {
@@ -833,7 +1294,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     projectRef.current = next;
     setProject(next);
     setSelectedCaptionId(next.captions[Math.min(index, next.captions.length - 1)]?.id);
-    persistProject(next);
+    persistProjectInBackground(next);
   };
 
   const confirmDeleteCaption = (captionId: string) => {
@@ -843,12 +1304,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     ]);
   };
 
-  const setCanvasPreset = async (preset: CaptionProject['canvas']['preset']) => {
-    pushUndo();
-    const next = applyCanvasPreset(projectRef.current, preset);
-    projectRef.current = next;
-    setProject(next);
-    await persistProject(next);
+  const setCanvasPreset = (preset: CaptionProject['canvas']['preset']) => {
+    const before = projectRef.current;
+    const next = applyCanvasPreset(before, preset);
+    void commitPersistedProject(next, (persisted) => {
+      pushUndo(before);
+      projectRef.current = persisted;
+      setProject(persisted);
+    }).catch(() => undefined);
   };
 
   const updateBackgroundReplacement = (backgroundReplacement: CaptionProject['backgroundReplacement']) => {
@@ -857,14 +1320,71 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     const next = applyBackgroundReplacement(before, backgroundReplacement);
     projectRef.current = next;
     setProject(next);
-    void persistProject(next);
+    persistProjectInBackground(next);
+  };
+
+  const requestBackgroundProcessing = async () => {
+    if (backgroundProcessingAllowed === true || await hasBackgroundProcessingConsent()) {
+      setBackgroundProcessingAllowed(true);
+      return true;
+    }
+    if (backgroundConsentRequestRef.current) return backgroundConsentRequestRef.current;
+    const request = new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (granted: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(granted);
+      };
+      Alert.alert(
+        'Enable on-device background removal?',
+        'Your video frames and masks stay on this phone. Google MediaPipe and ML Kit can send encrypted engagement, device/app, performance, configuration, input/output-size, event, and error metrics to Google. Caption Studio does not receive those metrics. You can turn future background-removal processing off in Privacy.',
+        [
+          { text: 'Not now', style: 'cancel', onPress: () => finish(false) },
+          {
+            text: 'Allow and enable',
+            onPress: () => {
+              void setBackgroundProcessingConsent(true)
+                .then(() => {
+                  setBackgroundProcessingAllowed(true);
+                  finish(true);
+                })
+                .catch(() => {
+                  Alert.alert('Could not save privacy choice', 'Background removal remains off. Try again.');
+                  finish(false);
+                });
+            },
+          },
+        ],
+        { cancelable: true, onDismiss: () => finish(false) },
+      );
+    });
+    backgroundConsentRequestRef.current = request;
+    try {
+      return await request;
+    } finally {
+      if (backgroundConsentRequestRef.current === request) backgroundConsentRequestRef.current = undefined;
+    }
+  };
+
+  const enableBackgroundProcessing = async () => {
+    try {
+      if (!await requestBackgroundProcessing()) return;
+      updateBackgroundReplacement({ ...projectRef.current.backgroundReplacement, enabled: true });
+    } catch (caught) {
+      Alert.alert('Could not enable background removal', caught instanceof Error ? caught.message : 'Try again.');
+    }
   };
 
   const chooseBackgroundMedia = async () => {
     try {
+      if (!await requestBackgroundProcessing()) return;
       const source = await pickBackgroundMedia(projectRef.current.id);
       if (!source) return;
-      updateBackgroundReplacement({ ...projectRef.current.backgroundReplacement, enabled: true, source });
+      const nextBackground = { ...projectRef.current.backgroundReplacement, enabled: true, source };
+      const nextProject = applyBackgroundReplacement(projectRef.current, nextBackground);
+      trackSessionMedia(nextProject);
+      updateBackgroundReplacement(nextBackground);
     } catch (caught) {
       Alert.alert('Could not use this background', caught instanceof Error ? caught.message : 'The selected media could not be opened.');
     }
@@ -902,44 +1422,60 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               position: 'absolute',
               inset: 0,
               transform: [
-                { translateX: (project.videoTransform.position.x - 0.5) * canvasSize.width },
-                { translateY: (project.videoTransform.position.y - 0.5) * canvasSize.height },
-                { scale: project.videoTransform.scale },
-                { rotate: `${project.videoTransform.rotation}deg` },
+                { translateX: (currentVideoTransform.position.x - 0.5) * canvasSize.width },
+                { translateY: (currentVideoTransform.position.y - 0.5) * canvasSize.height },
+                { scale: currentVideoTransform.scale },
+                { rotate: `${currentVideoTransform.rotation}deg` },
               ],
             }}>
             <VideoView
-              style={{ flex: 1, opacity: project.backgroundReplacement.enabled ? 0 : 1 }}
+              style={{ flex: 1, opacity: personProcessingActive ? 0 : 1 }}
               player={player}
               nativeControls={false}
-              contentFit={project.videoTransform.fit === 'fill' ? 'cover' : 'contain'}
+              contentFit={currentVideoTransform.fit === 'fill' ? 'cover' : 'contain'}
               surfaceType="textureView"
               useExoShutter
             />
-            {project.backgroundReplacement.enabled && currentClipEntry && personPreviewUri ? (
-              <Image pointerEvents="none" source={personPreviewUri} cachePolicy="none" contentFit="contain" style={{ position: 'absolute', inset: 0 }} />
-            ) : null}
-            {project.backgroundReplacement.enabled && personPreviewBusy && !personPreviewUri ? (
-              <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }}>
-                <ActivityIndicator color={palette.accent} />
-                <Text style={{ marginTop: 7, color: '#D7DEE7', fontSize: 10, fontWeight: '800' }}>REMOVING BACKGROUND…</Text>
-              </View>
-            ) : null}
-            {transport.isGap ? (
-              <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
-                <Text style={{ color: '#7F8996', fontSize: 12, fontWeight: '800' }}>EMPTY TIMELINE GAP</Text>
-              </View>
-            ) : transport.phase === 'loading' ? (
-              <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
-                <ActivityIndicator color={palette.accent} />
-                <Text style={{ marginTop: 8, color: '#A8B1BC', fontSize: 10, fontWeight: '800' }}>LOADING CLIP…</Text>
-              </View>
-            ) : null}
           </View>
-          <VideoTransitionOverlay overlay={transitionOverlay} />
-          {activeTool === 'video' ? (
+          {personProcessingActive && currentClipEntry && personPreviewUri ? (
+            <Image
+              pointerEvents="none"
+              source={{ uri: personPreviewUri }}
+              cachePolicy="none"
+              contentFit="fill"
+              style={{ position: 'absolute', inset: 0 }}
+            />
+          ) : null}
+          {personProcessingActive && personPreviewBusy && !personPreviewUri ? (
+            <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }}>
+              <ActivityIndicator color={palette.accent} />
+              <Text style={{ marginTop: 7, color: '#D7DEE7', fontSize: 10, fontWeight: '800' }}>REMOVING BACKGROUND…</Text>
+            </View>
+          ) : null}
+          {transport.isGap ? (
+            <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
+              <Text style={{ color: '#7F8996', fontSize: 12, fontWeight: '800' }}>EMPTY TIMELINE GAP</Text>
+            </View>
+          ) : transport.phase === 'loading' ? (
+            <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
+              <ActivityIndicator color={palette.accent} />
+              <Text style={{ marginTop: 8, color: '#A8B1BC', fontSize: 10, fontWeight: '800' }}>LOADING CLIP…</Text>
+            </View>
+          ) : null}
+          <VideoTransitionOverlay
+            entries={clipTimeline}
+            sources={project.sources}
+            timelineMs={currentMs}
+            isPlaying={isPlaying}
+            transportReady={transport.phase === 'ready'}
+            width={canvasWidth}
+            height={canvasHeight}
+            backgroundColor={project.canvas.backgroundColor}
+            backgroundProcessingActive={personProcessingActive}
+          />
+          {activeTool === 'video' && currentClipEntry ? (
             <VideoTransformOverlay
-              transform={project.videoTransform}
+              transform={currentVideoTransform}
               onInteractionStart={beginHistoryInteraction}
               onChange={updateVideoTransform}
               onEnd={finishHistoryInteraction}
@@ -949,18 +1485,34 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             if (!layer.visible) return null;
             if (layer.kind === 'captions') {
               return (
-                <CaptionOverlay
-                  key={layer.id}
-                  caption={displayCaption}
-                  words={project.transcription.words}
-                  projectStyle={project.projectStyle}
-                  currentMs={currentMs}
-                  interactive={activeTool !== 'video' && selectedLayerId === 'captions' && Boolean(selectedCaptionId) && displayCaption?.id === selectedCaptionId}
-                  onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
-                  onTransform={updateSharedCaptionTransform}
-                  onTransformEnd={finishHistoryInteraction}
-                  onDelete={selectedCaptionId ? () => confirmDeleteCaption(selectedCaptionId) : undefined}
-                />
+                <View key={layer.id} pointerEvents="box-none" style={{ position: 'absolute', inset: 0 }}>
+                  <CaptionOverlay
+                    caption={displayCaption}
+                    words={project.transcription.words}
+                    projectStyle={project.projectStyle}
+                    currentMs={currentMs}
+                    interactive={activeTool !== 'video' && selectedLayerId === 'captions' && Boolean(selectedCaptionId) && displayCaption?.id === selectedCaptionId}
+                    onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
+                    onTransform={updateSharedCaptionTransform}
+                    onTransformEnd={finishHistoryInteraction}
+                    onDelete={selectedCaptionId ? () => confirmDeleteCaption(selectedCaptionId) : undefined}
+                  />
+                  {displayTranslationPairs.map((pair) => (
+                    <CaptionOverlay
+                      key={pair.translation.id}
+                      caption={{
+                        id: pair.translation.id,
+                        text: pair.translation.text,
+                        startMs: pair.startMs,
+                        endMs: pair.endMs,
+                        wordIds: [],
+                      }}
+                      words={[]}
+                      projectStyle={pair.style}
+                      currentMs={currentMs}
+                    />
+                  ))}
+                </View>
               );
             }
             const visibleNow = currentMs >= layer.startMs && currentMs < layer.endMs;
@@ -1060,6 +1612,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   Generate again
                 </Text>
               </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open optional dual subtitles"
+                onPress={openDualCaptionEditor}
+                hitSlop={8}>
+                <Text style={{ color: '#64E8FF', fontSize: 11, fontWeight: '800', textDecorationLine: 'underline' }}>
+                  {project.captionTracks.translations.length > 0 ? 'Dual subtitles' : 'Add dual subtitles'}
+                </Text>
+              </Pressable>
             </View>
           )}
         </View>
@@ -1069,6 +1630,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           clips={project.clips}
           layers={timelineLayers}
           captions={timelineCaptions}
+          translationTracks={translationTimelineTracks}
           selectedLayerId={selectedLayerId}
           selectedCaptionId={selectedCaptionId}
           selectedClipId={selectedClipId}
@@ -1094,6 +1656,17 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedAudioClipId(undefined);
             setActiveTool('captions');
             seekTimeline(caption.startMs);
+          }}
+          onSelectTranslationCaption={(trackId, pair) => {
+            transport.pause();
+            setSelectedLayerId(trackId);
+            setSelectedTranslationTrackId(trackId);
+            setSelectedCaptionId(pair.source.id);
+            setSelectedClipId(undefined);
+            setSelectedAudioClipId(undefined);
+            setActiveTool('captions');
+            seekTimeline(pair.startMs);
+            setDualCaptionEditorOpen(true);
           }}
           onSelectClip={(clipId, startMs) => {
             transport.pause();
@@ -1151,13 +1724,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   ))}
                 </ScrollView>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                  {VIDEO_TRANSITION_PRESETS.map((preset) => <Action key={preset.id} label={preset.name} color={selectedClip.transitionAfter.type === preset.id ? '#DFFF35' : undefined} onPress={() => applyTransition(preset.id, preset.durationMs)} />)}
-                  {[250, 500, 1000].map((duration) => <Action key={duration} label={`${duration} ms transition`} color={selectedClip.transitionAfter.durationMs === duration ? '#64E8FF' : undefined} onPress={() => applyTransition(selectedClip.transitionAfter.type === 'none' ? 'dip-black' : selectedClip.transitionAfter.type, duration)} />)}
+                  {VIDEO_TRANSITION_PRESETS.map((preset) => <Action key={preset.id} label={preset.name} color={selectedClip.transitionAfter.type === preset.id ? '#DFFF35' : undefined} disabled={preset.id !== 'none' && !transitionBoundaryAvailable} onPress={() => applyTransition(preset.id, preset.durationMs)} />)}
+                  {[250, 500, 1000].map((duration) => <Action key={duration} label={`${duration} ms transition`} color={selectedClip.transitionAfter.durationMs === duration ? '#64E8FF' : undefined} disabled={!transitionBoundaryAvailable} onPress={() => applyTransition(selectedClip.transitionAfter.type === 'none' ? 'dip-black' : selectedClip.transitionAfter.type, duration)} />)}
                 </ScrollView>
+                {!transitionBoundaryAvailable ? <Text style={{ color: palette.muted, fontSize: 11 }}>Transitions need another clip touching this clip with no empty gap.</Text> : null}
               </View>
             ) : <Text style={{ color: palette.muted, fontSize: 12 }}>Tap a video clip in the timeline to edit that clip.</Text>}
             <VideoTools
-              project={project}
+              canvas={project.canvas}
+              transform={editableVideoTransform}
               onCanvasPreset={setCanvasPreset}
               onFit={(fit) => {
                 beginHistoryInteraction();
@@ -1176,6 +1751,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             <BackgroundTools
               value={project.backgroundReplacement}
               currentTimeMs={currentMs}
+              processingAllowed={backgroundProcessingAllowed === true}
+              onRequestProcessing={() => { void enableBackgroundProcessing(); }}
               onChooseMedia={() => { void chooseBackgroundMedia(); }}
               onChange={updateBackgroundReplacement}
               onAddKeyframe={addPersonPathPoint}
@@ -1231,33 +1808,44 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             <Action label="Add text layer" onPress={addTextLayer} />
             <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
           </ScrollView>
+        ) : translationTrackSelected && selectedTranslationPair ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            <Action label="Edit both languages" color="#64E8FF" onPress={() => setDualCaptionEditorOpen(true)} />
+            <Action label="Refresh this translation" onPress={() => requestTranslationRefresh([selectedTranslationPair.source.id])} />
+            <Action label={selectedTranslationTrack?.visible ? 'Hide second language' : 'Show second language'} onPress={() => { void toggleSelectedTranslationTrack(); }} />
+            <Action label="Remove second language" danger onPress={confirmRemoveSelectedTranslationTrack} />
+            <Action label="White" color="#FFFFFF" onPress={() => queueCaptionStyleChange('Translated text color: white', { textColor: '#FFFFFF' })} />
+            <Action label="Lime" color="#DFFF35" onPress={() => queueCaptionStyleChange('Translated text color: lime', { textColor: '#DFFF35' })} />
+            <Action label="Uppercase" onPress={() => queueCaptionStyleChange('Uppercase translated captions', { textTransform: 'uppercase' })} />
+          </ScrollView>
         ) : selectedCaption ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
             <Action label="Split at playhead" onPress={splitSelectedCaptionAtPlayhead} />
             <Action label="Join previous" onPress={() => joinSelectedCaption('previous')} />
             <Action label="Join next" onPress={() => joinSelectedCaption('next')} />
             <Action label="Edit captions" onPress={beginEditCaption} />
+            <Action label="Dual subtitles" color="#64E8FF" onPress={openDualCaptionEditor} />
             <Action label="Delete subtitle" danger onPress={() => confirmDeleteCaption(selectedCaption.id)} />
             <Action label="Add text layer" onPress={addTextLayer} />
             <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
             <Action
               label="White"
               color="#FFFFFF"
-              onPress={() => setPendingChange({ label: 'Text color: white', patch: { textColor: '#FFFFFF' } })}
+              onPress={() => queueCaptionStyleChange('Text color: white', { textColor: '#FFFFFF' })}
             />
             <Action
               label="Lime"
               color="#DFFF35"
-              onPress={() => setPendingChange({ label: 'Text color: lime', patch: { textColor: '#DFFF35' } })}
+              onPress={() => queueCaptionStyleChange('Text color: lime', { textColor: '#DFFF35' })}
             />
             <Action
               label="Active word"
               color="#FFC247"
-              onPress={() => setPendingChange({ label: 'Active-word color: amber', patch: { activeWordColor: '#FFC247' } })}
+              onPress={() => queueCaptionStyleChange('Active-word color: amber', { activeWordColor: '#FFC247' })}
             />
             <Action
               label="Uppercase"
-              onPress={() => setPendingChange({ label: 'Uppercase captions', patch: { textTransform: 'uppercase' } })}
+              onPress={() => queueCaptionStyleChange('Uppercase captions', { textTransform: 'uppercase' })}
             />
             <Action
               label="Reset all caption boxes"
@@ -1275,9 +1863,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           </ScrollView>
         )}
 
-        {error ? (
+        {error || persistenceError || translationController.error ? (
           <View style={{ padding: 12, borderRadius: 13, backgroundColor: '#351D24' }}>
-            <Text selectable style={{ color: '#FFBBC8', fontSize: 13 }}>{error}</Text>
+            <Text selectable accessibilityRole="alert" style={{ color: '#FFBBC8', fontSize: 13 }}>{error ?? persistenceError ?? translationController.error}</Text>
           </View>
         ) : null}
 
@@ -1298,7 +1886,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           <ToolbarItem label="Animate" active={activeTool === 'animate'} onPress={() => { setSelectedClipId(undefined); setActiveTool('animate'); }} />
           <ToolbarItem label="Video" active={activeTool === 'video'} onPress={() => setActiveTool('video')} />
           <ToolbarItem label="Audio" active={activeTool === 'audio'} onPress={() => { setSelectedClipId(undefined); setActiveTool('audio'); }} />
-          <ToolbarItem label="Export" disabled={exporting} onPress={() => { void exportVideo(); }} />
+          <ToolbarItem label="Export" disabled={exporting} onPress={showExportMenu} />
         </View>
       </View>
 
@@ -1331,6 +1919,25 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         onCancel={() => setScriptEditorOpen(false)}
         onSave={commitCaptionScript}
       />
+      <DualCaptionEditor
+        key={`${selectedTranslationTrack?.id ?? 'none'}:${project.updatedAt}:${dualCaptionEditorOpen ? 'open' : 'closed'}`}
+        visible={dualCaptionEditorOpen && Boolean(selectedTranslationTrack)}
+        sourceLanguageLabel={captionLanguageLabel(project.transcription.language)}
+        targetLanguageLabel={selectedTranslationTrack?.displayName ?? 'Second language'}
+        pairs={selectedTranslationPairs}
+        trackVisible={selectedTranslationTrack?.visible ?? false}
+        busy={Boolean(translationProgress) || translationCancelling}
+        progressLabel={translationCancelling ? 'Cancelling local translation…' : translationProgressLabel(translationProgress)}
+        errorMessage={translationController.error}
+        onClose={() => {
+          if (!translationProgress && !translationCancelling) setDualCaptionEditorOpen(false);
+        }}
+        onSave={saveDualCaptionEdits}
+        onRefresh={requestTranslationRefresh}
+        onToggleVisibility={() => { void toggleSelectedTranslationTrack(); }}
+        onRemove={confirmRemoveSelectedTranslationTrack}
+        onCancelBusy={() => { void cancelDualCaptionTranslation(); }}
+      />
       <EditTextLayerModal
         visible={Boolean(editingLayerId)}
         value={editingText ?? ''}
@@ -1341,15 +1948,44 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         }}
         onSave={commitTextLayerText}
       />
-      <ProgressOverlay progress={progress} />
+      <ProgressOverlay
+        progress={progress}
+        cancelling={transcriptionCancelling}
+        onCancel={() => { void cancelCaptionGeneration(); }}
+      />
       <MediaLoadingOverlay progress={mediaProgress} />
       {exporting ? (
         <Modal visible transparent animationType="fade">
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: 'rgba(0,0,0,0.78)' }}>
             <View style={{ width: '100%', maxWidth: 380, gap: 14, padding: 22, borderRadius: 20, backgroundColor: palette.surfaceRaised }}>
               <ActivityIndicator color={palette.accent} size="large" />
-              <Text style={{ color: palette.text, textAlign: 'center', fontSize: 18, fontWeight: '900' }}>Rendering on this phone</Text>
-              <Text style={{ color: palette.muted, textAlign: 'center', lineHeight: 20 }}>Removing the background frame by frame, compositing it, and encoding the final MP4. Keep Caption Studio open.</Text>
+              <Text style={{ color: palette.text, textAlign: 'center', fontSize: 18, fontWeight: '900' }}>
+                {exportKind === 'video' ? 'Rendering on this phone' : 'Preparing subtitle file'}
+              </Text>
+              <Text style={{ color: palette.muted, textAlign: 'center', lineHeight: 20 }}>
+                {exportKind === 'video'
+                  ? 'Compositing clips, captions, layers, transitions, audio, and any replacement background into the final MP4. Keep Caption Studio open.'
+                  : 'Creating the subtitle file and opening Android’s save or share choices.'}
+              </Text>
+              {exportKind === 'video' && exportProgress ? (
+                <View style={{ gap: 7 }}>
+                  <View style={{ height: 8, overflow: 'hidden', borderRadius: 4, backgroundColor: '#303640' }}>
+                    <View style={{ width: `${exportProgress.percent ?? 0}%`, height: '100%', backgroundColor: palette.accent }} />
+                  </View>
+                  <Text style={{ color: palette.text, textAlign: 'center', fontVariant: ['tabular-nums'] }}>
+                    {exportProgressLabel(exportProgress)}
+                  </Text>
+                </View>
+              ) : null}
+              {exportKind === 'video' ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel video export"
+                  onPress={() => { void cancelProjectVideoExport(); }}
+                  style={{ minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#2A3038' }}>
+                  <Text style={{ color: '#FFBBC8', fontWeight: '800' }}>Cancel export</Text>
+                </Pressable>
+              ) : null}
             </View>
           </View>
         </Modal>
@@ -1406,11 +2042,15 @@ function ToolbarItem(props: { label: string; active?: boolean; disabled?: boolea
   );
 }
 
-function ProgressOverlay(props: { progress?: TranscriptionProgress }) {
+function ProgressOverlay(props: {
+  progress?: TranscriptionProgress;
+  cancelling: boolean;
+  onCancel: () => void;
+}) {
   if (!props.progress) return null;
   const percent = Math.round(props.progress.progress * 100);
   return (
-    <Modal visible transparent animationType="fade">
+    <Modal visible transparent animationType="fade" onRequestClose={props.onCancel}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 26, backgroundColor: 'rgba(0,0,0,0.82)' }}>
         <View style={{ width: '100%', maxWidth: 380, gap: 16, padding: 22, borderRadius: 24, backgroundColor: '#171C22' }}>
           <ActivityIndicator color={palette.accent} size="large" />
@@ -1422,9 +2062,16 @@ function ProgressOverlay(props: { progress?: TranscriptionProgress }) {
             <View style={{ width: `${percent}%`, height: '100%', backgroundColor: palette.accent }} />
           </View>
           <Text style={{ color: palette.text, textAlign: 'center', fontVariant: ['tabular-nums'] }}>{percent}%</Text>
-          <Text style={{ color: '#6F7985', textAlign: 'center', fontSize: 11 }}>
-            Keep the app open during this first device milestone.
-          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Cancel caption generation"
+            disabled={props.cancelling}
+            onPress={props.onCancel}
+            style={{ minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#2A3038', opacity: props.cancelling ? 0.55 : 1 }}>
+            <Text style={{ color: '#FFBBC8', fontWeight: '800' }}>
+              {props.cancelling ? 'Stopping…' : 'Cancel'}
+            </Text>
+          </Pressable>
         </View>
       </View>
     </Modal>
@@ -1481,6 +2128,75 @@ function formatTime(ms: number) {
 
 function formatSeconds(ms: number) {
   return `${(Math.max(0, ms) / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+}
+
+function formatMegabytes(bytes: number) {
+  return `${Math.ceil(bytes / (1024 * 1024))} MB`;
+}
+
+function captionLanguageLabel(languageTag: string) {
+  try {
+    const language = normalizeEnglishChineseCaptionLanguage(languageTag);
+    if (language === 'en') return 'English';
+    return language === 'zh-Hant' ? 'Chinese (Traditional)' : 'Chinese (Simplified)';
+  } catch {
+    return languageTag;
+  }
+}
+
+function translationProgressLabel(progress?: CaptionTranslationProgress) {
+  if (!progress) return undefined;
+  if (progress.progress == null) return progress.detail;
+  return `${progress.detail} · ${Math.round(progress.progress * 100)}%`;
+}
+
+function exportProgressLabel(progress: TimelineVideoExportProgress) {
+  if (progress.stage === 'publishing') return 'Saving to media library · 99%';
+  if (progress.stage === 'preparing') return 'Preparing renderer';
+  if (progress.percent == null) return 'Rendering video';
+  return `Rendering video · ${progress.percent}%`;
+}
+
+const HISTORY_MAX_ENTRIES = 24;
+const HISTORY_MAX_ESTIMATED_BYTES = 16 * 1024 * 1024;
+const TRANSLATION_PHRASE_ANIMATIONS = new Set<CaptionAnimationId>([
+  'none',
+  'fade-in',
+  'slide-up',
+  'slide-left',
+  'zoom-in',
+  'spin-in',
+  'elastic',
+  'flip',
+  'stomp',
+  'drop-in',
+  'swing',
+  'heartbeat',
+  'flicker',
+  'tilt-in',
+  'squash',
+  'stretch',
+]);
+const historySizeCache = new WeakMap<CaptionProject, number>();
+
+function estimatedHistoryBytes(project: CaptionProject) {
+  const cached = historySizeCache.get(project);
+  if (cached != null) return cached;
+  const size = JSON.stringify(project).length * 2;
+  historySizeCache.set(project, size);
+  return size;
+}
+
+function trimHistoryStack(stack: CaptionProject[]) {
+  if (stack.length > HISTORY_MAX_ENTRIES) stack.splice(0, stack.length - HISTORY_MAX_ENTRIES);
+  let total = 0;
+  for (let index = stack.length - 1; index >= 0; index -= 1) {
+    total += estimatedHistoryBytes(stack[index]);
+    if (total > HISTORY_MAX_ESTIMATED_BYTES) {
+      stack.splice(0, index + 1);
+      break;
+    }
+  }
 }
 
 function fitRect(aspect: number, maxWidth: number, maxHeight: number) {

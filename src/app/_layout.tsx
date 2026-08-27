@@ -8,7 +8,7 @@ import { loadFontLibrary } from '@/services/font-storage';
 import { cleanupObsoletePickerCache } from '@/services/storage-policy';
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts(FONT_ASSETS);
+  const [fontsLoaded, fontError] = useFonts(FONT_ASSETS);
   const [importedFontsLoaded, setImportedFontsLoaded] = useState(false);
 
   useEffect(() => {
@@ -21,7 +21,7 @@ export default function RootLayout() {
       .finally(() => setImportedFontsLoaded(true));
   }, []);
 
-  if (!fontsLoaded || !importedFontsLoaded) return null;
+  if ((!fontsLoaded && !fontError) || !importedFontsLoaded) return null;
 
   return (
     <Stack
@@ -33,6 +33,7 @@ export default function RootLayout() {
       }}>
       <Stack.Screen name="index" options={{ title: 'Caption Studio' }} />
       <Stack.Screen name="privacy" options={{ title: 'Privacy policy' }} />
+      <Stack.Screen name="notices" options={{ title: 'Open-source notices' }} />
       <Stack.Screen
         name="editor"
         options={{

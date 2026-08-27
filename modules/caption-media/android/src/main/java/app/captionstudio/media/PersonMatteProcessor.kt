@@ -6,8 +6,6 @@ import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -21,13 +19,13 @@ internal data class PersonMatteSettings(
 )
 
 internal class PersonMatteProcessor {
-  private val faceDetector = FaceDetection.getClient(
+  private val faceDetector = lazy { FaceDetection.getClient(
     FaceDetectorOptions.Builder()
       .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
       .setMinFaceSize(0.08f)
       .enableTracking()
       .build(),
-  )
+  ) }
   private var previousConfidence: FloatArray? = null
   private var previousAlpha: ByteArray? = null
   private var previousArea = 0f
@@ -38,19 +36,18 @@ internal class PersonMatteProcessor {
   private var closed = false
 
   fun process(
-    buffer: ByteBuffer,
+    confidence: FloatArray,
     maskWidth: Int,
     maskHeight: Int,
     source: Bitmap,
     settings: PersonMatteSettings,
   ): ByteArray {
     check(!closed) { "The person matte processor has been released" }
+    require(confidence.size == maskWidth * maskHeight) { "The person confidence mask dimensions are inconsistent" }
     val safeSettings = settings.sanitized()
     val profile = MatteProfile.forName(safeSettings.preset)
     updateFaces(source, profile)
-    buffer.order(ByteOrder.nativeOrder())
-    buffer.rewind()
-    val raw = FloatArray(maskWidth * maskHeight) { buffer.float.coerceIn(0f, 1f) }
+    val raw = confidence.copyOf()
     protectFaces(raw, maskWidth, maskHeight, source.width, source.height, profile.faceProtection)
 
     val currentArea = raw.count { it >= safeSettings.threshold }.toFloat() / raw.size.coerceAtLeast(1)
@@ -87,7 +84,7 @@ internal class PersonMatteProcessor {
     if (closed) return
     closed = true
     reset()
-    faceDetector.close()
+    if (faceDetector.isInitialized()) faceDetector.value.close()
   }
 
   private fun updateFaces(source: Bitmap, profile: MatteProfile) {
@@ -99,7 +96,7 @@ internal class PersonMatteProcessor {
       return
     }
     runCatching {
-      Tasks.await(faceDetector.process(InputImage.fromBitmap(source, 0)))
+      Tasks.await(faceDetector.value.process(InputImage.fromBitmap(source, 0)))
         .map { Rect(it.boundingBox) }
     }.onSuccess { detected ->
       if (detected.isNotEmpty()) {

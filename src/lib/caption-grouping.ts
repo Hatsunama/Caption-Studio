@@ -1,8 +1,15 @@
+import {
+  captionCjkCharacterCount,
+  captionLayoutText,
+  captionTextLength,
+  containsCaptionCjk,
+} from '@/lib/caption-text-breaks';
 import type { CaptionBlock, WordToken } from '@/types/project';
 
 export type CaptionGroupingOptions = {
   maxWords: number;
   maxCharacters: number;
+  maxCjkCharacters: number;
   maxDurationMs: number;
   pauseBreakMs: number;
 };
@@ -10,11 +17,12 @@ export type CaptionGroupingOptions = {
 export const DEFAULT_GROUPING_OPTIONS: CaptionGroupingOptions = {
   maxWords: 7,
   maxCharacters: 34,
+  maxCjkCharacters: 16,
   maxDurationMs: 3_200,
   pauseBreakMs: 650,
 };
 
-const HARD_BREAK = /[.!?][\]"')]*$/;
+const HARD_BREAK = /[.!?\u3002\uFF01\uFF1F][\]"')\u2019\u201D\u300D\u300F\u3011]*$/u;
 
 export function groupWordsIntoCaptions(
   words: WordToken[],
@@ -34,11 +42,13 @@ export function groupWordsIntoCaptions(
     const duration = candidate.at(-1)!.endMs - candidate[0]!.startMs;
     const previous = current.at(-1);
     const pause = previous ? word.startMs - previous.endMs : 0;
+    const lexicalWordCount = candidate.filter((item) => !containsCaptionCjk(item.text)).length;
 
     const mustBreakBefore =
       current.length > 0 &&
-      (candidate.length > options.maxWords ||
-        candidateText.length > options.maxCharacters ||
+      (lexicalWordCount > options.maxWords ||
+        captionTextLength(candidateText) > options.maxCharacters ||
+        captionCjkCharacterCount(candidateText) > options.maxCjkCharacters ||
         duration > options.maxDurationMs ||
         pause >= options.pauseBreakMs);
 
@@ -73,11 +83,8 @@ export function groupTimelineWordsByClip(
 }
 
 export function joinWords(words: WordToken[]): string {
-  return words
+  return captionLayoutText(words
     .map((word) => word.text.trim())
-    .filter(Boolean)
-    .join(' ')
-    .replace(/\s+([,.;:!?])/g, '$1')
-    .replace(/([([{])\s+/g, '$1')
+    .filter(Boolean))
     .trim();
 }

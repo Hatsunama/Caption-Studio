@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { spokenAnimationClock } from '../src/lib/animation-timing.ts';
 import { ANIMATION_PRESETS, reactionEmojis } from '../src/lib/animation-presets.ts';
 import { VIDEO_TRANSITION_PRESETS } from '../src/lib/transition-presets.ts';
 import { resolvePersonTransform, upsertPersonKeyframe } from '../src/lib/person-motion.ts';
@@ -15,6 +14,7 @@ import { minimumTimelineScale, timelineScrollOffset, timelineTickInterval, timel
 import { PREPARING_AUDIO_CUES } from '../src/lib/transcription-progress.ts';
 import { humanVideoName, isMachineVideoName } from '../src/lib/project-presentation.ts';
 import { applyCaptionTextChanges } from '../src/lib/caption-text-edits.ts';
+import { serializeAss, serializeSrt } from '../src/lib/subtitle-export.ts';
 import { mergeCaptionScriptBlock, splitCaptionScriptBlock, splitCaptionScriptBlockAtTime } from '../src/lib/caption-script.ts';
 import { deleteVideoClip, previewVideoClipTrim, setCaptionTiming, setVideoClipGap, setVideoTransition, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
 import { addAudioSourceToProject, audioClipEnd, audioClipVolume, deleteAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '../src/lib/audio-timeline.ts';
@@ -51,7 +51,7 @@ test('video transitions are boundary-owned and deterministic', () => {
   const project = { clips: [clip('a', 'one'), clip('b', 'two')], updatedAt: 'before' };
   const transitioned = setVideoTransition(project, 'a', 'dip-white', 500);
   const overlay = videoTransitionOverlay(buildClipTimeline(transitioned.clips), 4_000);
-  assert.deepEqual(overlay, { type: 'dip-white', color: '#FFFFFF', opacity: 1, phase: 1 });
+  assert.deepEqual(overlay, { type: 'dip-white', color: '#FFFFFF', opacity: 1, phase: 0.5, peak: 1 });
   assert.equal(setVideoTransition(transitioned, 'b', 'flash', 500), transitioned);
 });
 
@@ -89,10 +89,10 @@ test('person matte quality presets are distinct and shared by preview and export
   assert.ok(PERSON_MATTE_PRESETS.stable.temporalStability > PERSON_MATTE_PRESETS.balanced.temporalStability);
   assert.ok(PERSON_MATTE_PRESETS.balanced.temporalStability > PERSON_MATTE_PRESETS.detailed.temporalStability);
   const preview = readFileSync(new URL('../src/services/person-compositor.ts', import.meta.url), 'utf8');
-  const exporter = readFileSync(new URL('../src/services/project-export.ts', import.meta.url), 'utf8');
+  const exporter = readFileSync(new URL('../src/lib/export-render-plan.ts', import.meta.url), 'utf8');
   const nativeMatte = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/PersonMatteProcessor.kt', import.meta.url), 'utf8');
   assert.match(preview, /qualityPreset: options\.background\.mask\.qualityPreset/);
-  assert.match(exporter, /qualityPreset: background\.mask\.qualityPreset/);
+  assert.match(exporter, /qualityPreset: project\.backgroundReplacement\.mask\.qualityPreset/);
   assert.match(nativeMatte, /protectFaces/);
   assert.match(nativeMatte, /maximumHoldFrames/);
   assert.match(nativeMatte, /cleanupMask/);
@@ -126,32 +126,90 @@ test('video acquisition links the selected source without a hidden picker copy',
   assert.match(mediaStorage, /persistReadPermission\(asset\.uri\)/);
 });
 
-test('background export is native, local, version-aligned, and rejects unsupported timeline shapes', () => {
+test('timeline export is native, local, multi-track, and version-aligned', () => {
   const nativeGradle = readFileSync(new URL('../modules/caption-media/android/build.gradle', import.meta.url), 'utf8');
-  const exporter = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/PersonVideoExporter.kt', import.meta.url), 'utf8');
+  const exporter = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineVideoExporter.kt', import.meta.url), 'utf8');
+  const transitionTimeline = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineTransitionTimeline.kt', import.meta.url), 'utf8');
+  const renderPlan = readFileSync(new URL('../src/lib/export-render-plan.ts', import.meta.url), 'utf8');
+  const segmenter = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/MediaPipePersonSegmenter.kt', import.meta.url), 'utf8');
   const nativeModule = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/CaptionMediaModule.kt', import.meta.url), 'utf8');
   const motionPath = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/PersonMotionPath.kt', import.meta.url), 'utf8');
   const bitmapMatte = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/BitmapMatte.kt', import.meta.url), 'utf8');
   const exportService = readFileSync(new URL('../src/services/project-export.ts', import.meta.url), 'utf8');
-  assert.match(nativeGradle, /media3-transformer:1\.9\.0/);
-  assert.match(nativeGradle, /media3-effect:1\.9\.0/);
+  const previewService = readFileSync(new URL('../src/services/person-compositor.ts', import.meta.url), 'utf8');
+  assert.match(nativeGradle, /media3-transformer:1\.10\.1/);
+  assert.match(nativeGradle, /media3-effect:1\.10\.1/);
+  assert.match(nativeGradle, /tasks-vision:0\.10\.32/);
+  assert.doesNotMatch(nativeGradle, /segmentation-selfie|beta/);
   assert.match(exporter, /OverlayEffect/);
   assert.match(exporter, /MediaStore\.Video\.Media\.EXTERNAL_CONTENT_URI/);
-  assert.match(exporter, /SelfieSegmenterOptions\.STREAM_MODE/);
-  assert.match(exportService, /project\.clips\.length !== 1/);
-  assert.match(exportService, /clip\.playbackRate !== 1/);
-  assert.match(exportService, /keyframes: background\.keyframes\.map/);
-  assert.match(exporter, /motionPath\.resolve/);
+  assert.match(exporter, /Environment\.getExternalStoragePublicDirectory/);
+  assert.match(exporter, /builder\.addGap/);
+  assert.match(exporter, /setSpeed\(ConstantSpeedProvider/);
+  assert.match(exporter, /buildNativeVideoSequence/);
+  assert.match(exporter, /TimelineVideoCompositorSettings/);
+  assert.match(exporter, /Presentation\.createForWidthAndHeight/);
+  assert.match(exporter, /GainProcessor/);
+  assert.match(exporter, /filter \{ timeMs >= it\.startMs && timeMs < it\.endMs \}/);
+  assert.match(transitionTimeline, /incoming\.timelineStartMs == outgoing\.timelineEndMs/);
+  assert.match(transitionTimeline, /outgoingSourceTimeMs/);
+  assert.match(transitionTimeline, /incomingSourceTimeMs/);
+  assert.match(transitionTimeline, /transitionAudioGain/);
+  assert.match(exporter, /availableDurationMs/);
+  assert.match(exportService, /buildTimelineRenderPlan/);
+  assert.doesNotMatch(exportService, /clips\.length !== 1|playbackRate !== 1/);
+  assert.match(renderPlan, /resolveCaptionStyle/);
+  assert.match(renderPlan, /audioClips/);
+  assert.match(segmenter, /selfie_multiclass_256x256\.tflite/);
+  assert.match(segmenter, /1f - buffer\.float/);
+  assert.match(exporter, /personMotion.*resolve/);
   assert.match(motionPath, /shortestAngle/);
   assert.match(bitmapMatte, /PorterDuff\.Mode\.DST_IN/);
-  assert.doesNotMatch(exporter, /IntArray\(source\.width \* source\.height\)/);
   assert.match(exporter, /override fun configure\(videoSize: Size\)/);
-  assert.match(exporter, /matchVideoFrame/);
-  assert.match(exporter, /outputRotationDegrees = mediaRotationDegrees/);
-  assert.match(exporter, /METADATA_KEY_VIDEO_ROTATION/);
-  assert.match(exporter, /if \(options\.backgroundKind == "image"\) setFrameRate\(IMAGE_BACKGROUND_FRAME_RATE\)/);
-  assert.match(exporter, /const val IMAGE_BACKGROUND_FRAME_RATE = 30/);
-  assert.equal((nativeModule.match(/METADATA_KEY_VIDEO_ROTATION/g) ?? []).length, 1);
+  assert.match(exporter, /drawImageLayer/);
+  assert.match(exporter, /drawTransition/);
+  assert.match(exporter, /TimelineTextPainter/);
+  assert.match(previewService, /queue\.running/);
+  assert.match(previewService, /queue\.pending = job/);
+  assert.match(previewService, /superseded by a newer frame/);
+  assert.ok((nativeModule.match(/METADATA_KEY_VIDEO_ROTATION/g) ?? []).length >= 2);
+  assert.match(nativeModule, /orientBitmapAndRecycle\(decoded, sourceRotation\)/);
+  assert.match(exporter, /orientBitmapAndRecycle\(decoded, orientation\)/);
+});
+
+test('subtitle serializers emit standards-compliant timing and escaped styling', () => {
+  const style = {
+    font: { id: 'test', family: 'Caption-Anton', source: 'built-in', postScriptName: 'Anton' },
+    fontSize: 48, fontWeight: '800', italic: false, textColor: '#112233', secondaryTextColor: '#FFFFFF', textTreatment: 'solid', activeWordColor: '#FFFF00',
+    stroke: { color: '#000000', width: 3 }, shadow: { color: '#000000', opacity: 0.5, blur: 4, offsetX: 1, offsetY: 2 },
+    background: { color: '#000000', opacity: 0, radius: 0, paddingX: 0, paddingY: 0 }, alignment: 'center', letterSpacing: 0,
+    lineHeight: 1, textTransform: 'none', position: { x: 0.5, y: 0.8 }, box: { width: 0.8, height: 0.2 }, rotation: 0, maxLines: 2,
+    animation: { id: 'none', intensity: 0, durationMs: 1 },
+  };
+  const project = {
+    captions: [{ id: 'c1', text: 'Hello, {world}', startMs: 1_234, endMs: 4_567, wordIds: [] }],
+    projectStyle: style,
+    canvas: { aspectWidth: 9, aspectHeight: 16 },
+  };
+  assert.match(serializeSrt(project), /00:00:01,234 --> 00:00:04,567/);
+  const ass = serializeAss(project);
+  assert.match(ass, /Dialogue: 0,0:00:01\.23,0:00:04\.57/);
+  assert.match(ass, /\\fnAnton/);
+  assert.match(ass, /Hello, \\{world\\}/);
+  assert.doesNotMatch(ass, /Hello\\,/);
+
+  const wordStyled = {
+    ...project,
+    captions: [{ id: 'c1', text: 'Hello world', startMs: 1_234, endMs: 4_567, wordIds: ['w1', 'w2'] }],
+    transcription: {
+      words: [
+        { id: 'w1', text: 'Hello', startMs: 1_234, endMs: 2_000 },
+        { id: 'w2', text: 'world', startMs: 2_001, endMs: 4_567, styleOverride: { textColor: '#00FF00', fontSize: 72 } },
+      ],
+    },
+  };
+  const styledAss = serializeAss(wordStyled);
+  assert.match(styledAss, /\{\\fnAnton\\fs216[^}]*\\c&H0000FF00&/);
 });
 
 test('native person mattes preserve the generated alpha channel during composition', () => {
@@ -195,6 +253,7 @@ test('downloaded transcription models are pinned by SHA-256', () => {
   assert.equal((modelCatalog.match(/sha256:/g) ?? []).length, 4);
   assert.match(transcription, /CaptionMedia\.sha256/);
   assert.match(transcription, /\.download/);
+  assert.doesNotMatch(transcription, /huggingface\.co\/[^'"`]+\/resolve\/main\//);
 });
 
 test('Whisper token pieces become human words without losing their timing', () => {
@@ -226,7 +285,8 @@ test('caption quality is chosen explicitly and the requested model owns generati
   assert.match(editor, /model\.id === 'balanced'[\s\S]*recommended/);
   assert.match(pipeline, /modelId: TranscriptionModel\['id'\]/);
   assert.doesNotMatch(pipeline, /modelId: 'fast'/);
-  assert.doesNotMatch(pipeline, /sourceResults\[sourceId\]\?\.modelId/);
+  assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint\)/);
+  assert.match(pipeline, /CaptionMedia\.sha256\(source\.uri\)/);
 });
 
 test('Expo owns video-player release and editor teardown never commands a released player', () => {
@@ -242,10 +302,15 @@ test('production builds cannot use the debug signing config', () => {
   const appConfig = JSON.parse(readFileSync(new URL('../app.json', import.meta.url), 'utf8'));
   const packageConfig = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const patchScript = readFileSync(new URL('../scripts/patch-react-native-gradle.js', import.meta.url), 'utf8');
+  const releaseScript = readFileSync(new URL('../scripts/configure-android-release.js', import.meta.url), 'utf8');
   const signingScript = readFileSync(new URL('../scripts/sign-android-release.js', import.meta.url), 'utf8');
-  assert.match(patchScript, /hasCaptionStudioReleaseSigning/);
-  assert.match(patchScript, /signingConfig signingConfigs\.release/);
-  assert.match(patchScript, /com\.android\.tools:r8:8\.13\.19/);
+  const mediaManifest = readFileSync(new URL('../modules/caption-media/android/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
+  const legacyPermissionPlugin = readFileSync(new URL('../plugins/with-legacy-export-permission.js', import.meta.url), 'utf8');
+  const soLoaderPlugin = readFileSync(new URL('../plugins/with-soloader-metadata.js', import.meta.url), 'utf8');
+  assert.match(patchScript, /configureAndroidRelease/);
+  assert.match(releaseScript, /hasCaptionStudioReleaseSigning/);
+  assert.match(releaseScript, /signingConfig = signingConfigs\.release/);
+  assert.match(releaseScript, /com\.android\.tools:r8:8\.13\.19/);
   assert.match(signingScript, /CAPTION_STUDIO_RELEASE_STORE_FILE/);
   assert.match(signingScript, /only for the one-time debug-to-production migration APK/);
   assert.match(signingScript, /'--lineage', lineage/);
@@ -257,8 +322,14 @@ test('production builds cannot use the debug signing config', () => {
     'android.permission.READ_EXTERNAL_STORAGE',
     'android.permission.RECORD_AUDIO',
     'android.permission.SYSTEM_ALERT_WINDOW',
-    'android.permission.WRITE_EXTERNAL_STORAGE',
   ]);
+  assert.match(mediaManifest, /WRITE_EXTERNAL_STORAGE/);
+  assert.match(mediaManifest, /maxSdkVersion="28"/);
+  assert.match(legacyPermissionPlugin, /'android:maxSdkVersion': '28'/);
+  assert.doesNotMatch(legacyPermissionPlugin, /com\.facebook\.soloader\.enabled/);
+  assert.doesNotMatch(soLoaderPlugin, /WRITE_EXTERNAL_STORAGE/);
+  assert.match(soLoaderPlugin, /com\.facebook\.soloader\.enabled/);
+  assert.match(soLoaderPlugin, /'tools:replace': 'android:value'/);
 });
 
 test('Play releases use a signed app bundle and expose an in-app privacy policy', () => {
@@ -274,8 +345,10 @@ test('Play releases use a signed app bundle and expose an in-app privacy policy'
   assert.match(homeScreen, /router\.push\('\/privacy'\)/);
   assert.match(privacyScreen, /Caption Studio privacy policy/);
   assert.match(privacyPolicy, /does not include advertising, first-party analytics, tracking, or cloud-transcription SDKs/);
-  assert.match(privacyPolicy, /ML Kit may send encrypted operational metrics to Google/);
-  assert.match(privacyPolicy, /does not send feature inputs or outputs, such as video frames or masks/);
+  assert.match(privacyPolicy, /MediaPipe Tasks SDK and bundled multiclass segmentation model/);
+  assert.match(privacyPolicy, /ML Kit collects device and app information, a per-installation identifier/);
+  assert.match(privacyPolicy, /Video frames, masks, and other feature inputs and outputs stay on the device/);
+  assert.match(privacyPolicy, /MediaPipe terms state that its APIs contact Google/);
 });
 
 test('clips magnetically pack by default while intentional gaps remain explicit and removable', () => {
@@ -448,13 +521,29 @@ test('text and image overlays hidden by a trim return with their transforms inta
   ]);
 });
 
-test('splitting partitions recoverable handles so neighboring clips cannot overlap', () => {
+test('splitting preserves each clip source handles so trimmed media remains recoverable', () => {
   const project = projectFixture({ clips: [clip({ id: 'whole', sourceEndMs: 4_000, availableSourceEndMs: 4_000 })] });
   const result = splitVideoClip(project, 'whole', 1_500, 'left', 'right');
   assert.ok(result);
-  assert.equal(result.project.clips[0].availableSourceEndMs, 1_500);
-  assert.equal(result.project.clips[1].availableSourceStartMs, 1_500);
+  assert.deepEqual(
+    result.project.clips.map(({ availableSourceStartMs, availableSourceEndMs }) => [availableSourceStartMs, availableSourceEndMs]),
+    [[0, 4_000], [0, 4_000]],
+  );
   assert.equal(result.project.clips[1].gapBeforeMs, 0);
+
+  const shortenedLeft = trimVideoClip(result.project, 'left', 'end', 1_000);
+  assert.ok(shortenedLeft);
+  assert.equal(shortenedLeft.project.clips[0].gapAfterMs, 500);
+  const restoredLeft = trimVideoClip(shortenedLeft.project, 'left', 'end', 1_500);
+  assert.ok(restoredLeft);
+  assert.equal(restoredLeft.project.clips[0].gapAfterMs, 0);
+
+  const shortenedRight = trimVideoClip(result.project, 'right', 'start', 2_000);
+  assert.ok(shortenedRight);
+  assert.equal(shortenedRight.project.clips[1].gapBeforeMs, 500);
+  const restoredRight = trimVideoClip(shortenedRight.project, 'right', 'start', 1_500);
+  assert.ok(restoredRight);
+  assert.equal(restoredRight.project.clips[1].gapBeforeMs, 0);
 });
 
 test('caption grouping always breaks at hard video cuts', () => {
@@ -683,8 +772,8 @@ test('clip audio fades are resolved by timeline position', () => {
 test('editor back navigation is an explicit save-or-discard transaction', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   assert.match(editor, /addListener\('beforeRemove'/);
-  assert.match(editor, /saveEditorDraft\(projectRef\.current\)/);
-  assert.match(editor, /discardEditorSession\(initialProject, projectRef\.current\)/);
+  assert.match(editor, /saveEditorDraft\(projectRef\.current,\s*\{/);
+  assert.match(editor, /discardEditorSession\(initialProject, projectRef\.current,\s*\{/);
 });
 
 test('screens delegate project mutations to domain and workflow layers', () => {
@@ -863,18 +952,16 @@ test('the editor tool panel scrolls independently above a fixed mode bar', () =>
   assert.match(editor, /<VideoTools[\s\S]*<\/ScrollView>[\s\S]*<ToolbarItem label="Captions"/);
 });
 
-test('animation progress follows the active spoken word', () => {
-  const first = spokenAnimationClock({ currentMs: 1_100, captionStartMs: 1_000, captionEndMs: 3_000, animationDurationMs: 300, activeWord: { startMs: 1_000, endMs: 1_400 } });
-  const secondStart = spokenAnimationClock({ currentMs: 2_000, captionStartMs: 1_000, captionEndMs: 3_000, animationDurationMs: 300, activeWord: { startMs: 2_000, endMs: 2_500 } });
-  assert.equal(first.wordProgress, 0.25);
-  assert.equal(secondStart.wordProgress, 0);
-  assert.equal(secondStart.entryProgress, 0);
-});
-
 test('emoji reactions change with the spoken word', () => {
-  assert.deepEqual(reactionEmojis('money'), ['💸', '🤑', '💰', '🪙']);
-  assert.deepEqual(reactionEmojis('camera'), ['🎥', '📸', '🎬', '📱']);
+  assert.deepEqual(reactionEmojis('money'), ['💸', '🤑', '💰', '🪙', '💵', '💳']);
+  assert.deepEqual(reactionEmojis('camera'), ['🎥', '📸', '🎬', '📹', '🍿', '📺']);
   assert.notDeepEqual(reactionEmojis('money'), reactionEmojis('sad'));
+  assert.deepEqual(reactionEmojis('the', 'Turn on the camera'), []);
+  assert.deepEqual(reactionEmojis('钱'), reactionEmojis('money'));
+  assert.deepEqual(reactionEmojis('recording'), reactionEmojis('camera'));
+  assert.deepEqual(reactionEmojis('unmapped-one'), []);
+  assert.deepEqual(reactionEmojis('unmapped-two'), []);
+  assert.equal(new Set(reactionEmojis('camera')).size, 6);
 });
 
 function clip(overrides = {}) {

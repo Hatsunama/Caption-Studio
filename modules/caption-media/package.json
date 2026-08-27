@@ -2,6 +2,7 @@
   "name": "caption-media",
   "version": "1.0.0",
   "description": "Local Android media decoding for Caption Studio",
+  "license": "MIT",
   "main": "src/CaptionMediaModule.ts",
   "types": "src/CaptionMediaModule.ts",
   "private": true,
