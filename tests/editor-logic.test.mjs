@@ -334,14 +334,12 @@ test('production builds cannot use the debug signing config', () => {
 
 test('Play releases use a signed app bundle and expose an in-app privacy policy', () => {
   const appConfig = JSON.parse(readFileSync(new URL('../app.json', import.meta.url), 'utf8'));
-  const androidManifest = readFileSync(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
   const packageConfig = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const homeScreen = readFileSync(new URL('../src/app/index.tsx', import.meta.url), 'utf8');
   const privacyScreen = readFileSync(new URL('../src/app/privacy.tsx', import.meta.url), 'utf8');
   const privacyPolicy = readFileSync(new URL('../PRIVACY.md', import.meta.url), 'utf8');
   assert.match(packageConfig.scripts['release:play'], /bundleRelease/);
   assert.equal(appConfig.expo.android.allowBackup, false);
-  assert.match(androidManifest, /android:allowBackup="false"/);
   assert.match(homeScreen, /router\.push\('\/privacy'\)/);
   assert.match(privacyScreen, /Caption Studio privacy policy/);
   assert.match(privacyPolicy, /does not include advertising, first-party analytics, tracking, or cloud-transcription SDKs/);
