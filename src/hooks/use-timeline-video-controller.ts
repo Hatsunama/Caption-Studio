@@ -10,6 +10,7 @@ import {
   timelineTimeAt,
   type ClipTimelineEntry,
 } from '@/lib/video-timeline';
+import { configureTimelinePlayer } from '@/lib/video-playback-policy';
 import type { CaptionProject } from '@/types/project';
 
 type Target = {
@@ -27,7 +28,7 @@ export function useTimelineVideoController(
     project.sources.find((source) => source.id === initialEntryRef.current?.clip.sourceId) ?? project.sources[0],
   );
   const player = useVideoPlayer(initialSourceRef.current?.uri ?? null, (instance) => {
-    instance.timeUpdateEventInterval = 0.05;
+    configureTimelinePlayer(instance);
     if (initialEntryRef.current) instance.currentTime = initialEntryRef.current.clip.sourceStartMs / 1000;
   });
 

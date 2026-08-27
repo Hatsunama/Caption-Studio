@@ -60,6 +60,8 @@ const APPROXIMATE_MASK_TYPES = new Set<VideoTransitionType>([
   'slice-shuffle',
 ]);
 
+export const VIDEO_TRANSITION_PRELOAD_LEAD_MS = 750;
+
 export function buildVideoTransitionPreviewWindows(
   entries: readonly ClipTimelineEntry[],
   sources: readonly ProjectVideoSource[],
@@ -200,7 +202,7 @@ export function videoTransitionPreviewFrameAt(
 export function videoTransitionPreloadWindow(
   windows: readonly VideoTransitionPreviewWindow[],
   timelineMs: number,
-  leadMs = 1_500,
+  leadMs = VIDEO_TRANSITION_PRELOAD_LEAD_MS,
 ) {
   return windows.find((window) => (
     !window.unavailableReason

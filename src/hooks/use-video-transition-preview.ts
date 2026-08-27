@@ -7,11 +7,12 @@ import {
   videoTransitionPreviewFrameAt,
 } from '@/lib/video-transition-preview';
 import type { ClipTimelineEntry } from '@/lib/video-timeline';
+import { configureTransitionPlayer } from '@/lib/video-playback-policy';
 import type { ProjectVideoSource } from '@/types/project';
 
 type PreviewPlayerLoad = {
   key?: string;
-  state: 'ready' | 'error';
+  state: 'idle' | 'ready' | 'error';
   error?: string;
 };
 
@@ -36,10 +37,11 @@ export function useVideoTransitionPreview(options: {
     },
     [options.timelineMs, windows],
   );
-  const outgoingPlayer = useVideoPlayer(null, configurePreviewPlayer);
-  const incomingPlayer = useVideoPlayer(null, configurePreviewPlayer);
-  const [load, setLoad] = useState<PreviewPlayerLoad>({ state: 'error' });
+  const outgoingPlayer = useVideoPlayer(null, configureTransitionPlayer);
+  const incomingPlayer = useVideoPlayer(null, configureTransitionPlayer);
+  const [load, setLoad] = useState<PreviewPlayerLoad>({ state: 'idle' });
   const loadedUrisRef = useRef<{ outgoing?: string; incoming?: string }>({});
+  const loadingKeyRef = useRef<string | undefined>(undefined);
   const generationRef = useRef(0);
 
   useEffect(() => {
@@ -48,26 +50,26 @@ export function useVideoTransitionPreview(options: {
       incomingPlayer.pause();
       return;
     }
-    if (load.key === preload.key) return;
+    if (load.key === preload.key || loadingKeyRef.current === preload.key) return;
     const generation = ++generationRef.current;
     let cancelled = false;
+    loadingKeyRef.current = preload.key;
     outgoingPlayer.pause();
     incomingPlayer.pause();
-    const loadOutgoing = loadedUrisRef.current.outgoing === preload.outgoing.uri
-      ? Promise.resolve()
-      : outgoingPlayer.replaceAsync(preload.outgoing.uri).then(() => {
-        loadedUrisRef.current.outgoing = preload.outgoing?.uri;
-      });
-    const loadIncoming = loadedUrisRef.current.incoming === preload.incoming.uri
-      ? Promise.resolve()
-      : incomingPlayer.replaceAsync(preload.incoming.uri).then(() => {
-        loadedUrisRef.current.incoming = preload.incoming?.uri;
-      });
-    void Promise.all([loadOutgoing, loadIncoming]).then(() => {
+    void loadPreviewPair({
+      outgoingPlayer,
+      incomingPlayer,
+      outgoingUri: preload.outgoing.uri,
+      incomingUri: preload.incoming.uri,
+      loadedUris: loadedUrisRef.current,
+      shouldContinue: () => !cancelled && generation === generationRef.current,
+    }).then(() => {
       if (cancelled || generation !== generationRef.current) return;
+      loadingKeyRef.current = undefined;
       setLoad({ key: preload.key, state: 'ready' });
     }).catch((caught) => {
       if (cancelled || generation !== generationRef.current) return;
+      loadingKeyRef.current = undefined;
       setLoad({
         key: preload.key,
         state: 'error',
@@ -113,9 +115,9 @@ export function useVideoTransitionPreview(options: {
 
   useEffect(() => () => {
     generationRef.current += 1;
-    outgoingPlayer.pause();
-    incomingPlayer.pause();
-  }, [incomingPlayer, outgoingPlayer]);
+    loadingKeyRef.current = undefined;
+    loadedUrisRef.current = {};
+  }, []);
 
   return {
     frame,
@@ -127,11 +129,25 @@ export function useVideoTransitionPreview(options: {
   };
 }
 
-function configurePreviewPlayer(player: ReturnType<typeof useVideoPlayer>) {
-  player.loop = false;
-  player.muted = true;
-  player.volume = 0;
-  player.timeUpdateEventInterval = 0.05;
+async function loadPreviewPair(options: {
+  outgoingPlayer: ReturnType<typeof useVideoPlayer>;
+  incomingPlayer: ReturnType<typeof useVideoPlayer>;
+  outgoingUri: string;
+  incomingUri: string;
+  loadedUris: { outgoing?: string; incoming?: string };
+  shouldContinue: () => boolean;
+}) {
+  if (options.loadedUris.outgoing !== options.outgoingUri) {
+    await options.outgoingPlayer.replaceAsync(options.outgoingUri);
+    if (!options.shouldContinue()) return;
+    options.loadedUris.outgoing = options.outgoingUri;
+  }
+  if (!options.shouldContinue()) return;
+  if (options.loadedUris.incoming !== options.incomingUri) {
+    await options.incomingPlayer.replaceAsync(options.incomingUri);
+    if (!options.shouldContinue()) return;
+    options.loadedUris.incoming = options.incomingUri;
+  }
 }
 
 function synchronizePreviewPlayer(

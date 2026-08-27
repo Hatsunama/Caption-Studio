@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildVideoTransitionPreviewWindows,
+  VIDEO_TRANSITION_PRELOAD_LEAD_MS,
   videoTransitionPreloadWindow,
   videoTransitionPreviewFrameAt,
 } from '../src/lib/video-transition-preview.ts';
@@ -165,7 +166,8 @@ test('auxiliary decoders preload near a valid transition only', () => {
     [source('out-source'), source('in-source')],
   );
 
-  assert.equal(videoTransitionPreloadWindow(windows, 2_199), undefined);
-  assert.equal(videoTransitionPreloadWindow(windows, 2_200)?.key, windows[0].key);
+  const preloadStartMs = windows[0].startMs - VIDEO_TRANSITION_PRELOAD_LEAD_MS;
+  assert.equal(videoTransitionPreloadWindow(windows, preloadStartMs - 1), undefined);
+  assert.equal(videoTransitionPreloadWindow(windows, preloadStartMs)?.key, windows[0].key);
   assert.equal(videoTransitionPreloadWindow(windows, 4_300), undefined);
 });

@@ -1,8 +1,15 @@
 import { VideoView, type VideoPlayer } from 'expo-video';
+import { useMemo } from 'react';
 import { Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { useVideoTransitionPreview } from '@/hooks/use-video-transition-preview';
-import { transitionPreviewKind, type VideoTransitionPreviewFrame } from '@/lib/video-transition-preview';
+import {
+  buildVideoTransitionPreviewWindows,
+  transitionPreviewKind,
+  videoTransitionPreloadWindow,
+  videoTransitionPreviewFrameAt,
+  type VideoTransitionPreviewFrame,
+} from '@/lib/video-transition-preview';
 import type { ClipTimelineEntry } from '@/lib/video-timeline';
 import type { ProjectVideoSource, VideoTransform } from '@/types/project';
 
@@ -21,6 +28,27 @@ type Props = {
 const fill: ViewStyle = { position: 'absolute', inset: 0 };
 
 export function VideoTransitionOverlay(props: Props) {
+  const windows = useMemo(
+    () => buildVideoTransitionPreviewWindows(props.entries, props.sources),
+    [props.entries, props.sources],
+  );
+  const frame = useMemo(
+    () => videoTransitionPreviewFrameAt(windows, props.timelineMs),
+    [props.timelineMs, windows],
+  );
+  const preload = videoTransitionPreloadWindow(windows, props.timelineMs);
+
+  if (frame?.mode === 'cover') return <CoverTransition frame={frame} width={props.width} height={props.height} />;
+  if (frame?.unavailableReason) return <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame.unavailableReason} />;
+  if (props.backgroundProcessingActive) {
+    return frame ? <PreviewNotice label="BACKGROUND PREVIEW APPROXIMATION" detail="Export blends both processed clips." /> : null;
+  }
+  if (preload?.mode !== 'composite') return null;
+
+  return <CompositeVideoTransitionOverlay key={preload.key} {...props} />;
+}
+
+function CompositeVideoTransitionOverlay(props: Props) {
   const preview = useVideoTransitionPreview({
     entries: props.entries,
     sources: props.sources,
@@ -30,11 +58,6 @@ export function VideoTransitionOverlay(props: Props) {
   const frame = preview.frame;
   if (!frame) return null;
 
-  if (frame.mode === 'cover') return <CoverTransition frame={frame} width={props.width} height={props.height} />;
-  if (frame.unavailableReason) return <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame.unavailableReason} />;
-  if (props.backgroundProcessingActive) {
-    return <PreviewNotice label="BACKGROUND PREVIEW APPROXIMATION" detail="Export blends both processed clips." />;
-  }
   if (preview.error) return <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={preview.error} />;
   if (!preview.ready || !frame.outgoing || !frame.incoming) {
     return <PreviewNotice label="LOADING TRANSITION PREVIEW" />;

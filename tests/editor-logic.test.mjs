@@ -296,6 +296,15 @@ test('Expo owns video-player release and editor teardown never commands a releas
   assert.match(teardown, /mountedRef\.current = false/);
   assert.match(teardown, /desiredRef\.current = undefined/);
   assert.doesNotMatch(teardown, /player\.(?:pause|play|replace|release)/);
+
+  const transitionPreview = readFileSync(new URL('../src/hooks/use-video-transition-preview.ts', import.meta.url), 'utf8');
+  const transitionTeardownStart = transitionPreview.lastIndexOf('useEffect(() => () => {');
+  const transitionTeardown = transitionPreview.slice(
+    transitionTeardownStart,
+    transitionPreview.indexOf('}, []);', transitionTeardownStart),
+  );
+  assert.match(transitionTeardown, /generationRef\.current \+= 1/);
+  assert.doesNotMatch(transitionTeardown, /(?:outgoingPlayer|incomingPlayer)\.(?:pause|play|replace|release)/);
 });
 
 test('production builds cannot use the debug signing config', () => {
