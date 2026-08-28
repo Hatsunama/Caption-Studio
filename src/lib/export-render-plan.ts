@@ -202,7 +202,7 @@ export function buildTimelineRenderPlan(
     });
   }
 
-  return {
+  const plan: TimelineRenderPlan = {
     version: 1,
     durationMs,
     width,
@@ -232,33 +232,46 @@ export function buildTimelineRenderPlan(
         transition: { ...effectiveVideoTransition(entry.clip, entries[index + 1]?.clip) },
       };
     }),
-    backgroundReplacement: project.backgroundReplacement.enabled && project.backgroundReplacement.source
-      ? {
-        kind: project.backgroundReplacement.source.kind,
-        uri: project.backgroundReplacement.source.uri,
-        qualityPreset: project.backgroundReplacement.mask.qualityPreset,
-        threshold: project.backgroundReplacement.mask.threshold,
-        softness: project.backgroundReplacement.mask.softness,
-        temporalStability: project.backgroundReplacement.mask.temporalStability,
-        edgeFeather: project.backgroundReplacement.mask.edgeFeather,
-        personTransform: {
-          ...project.backgroundReplacement.personTransform,
-          position: { ...project.backgroundReplacement.personTransform.position },
-        },
-        keyframes: project.backgroundReplacement.keyframes.map((keyframe) => ({
-          ...keyframe,
-          position: { ...keyframe.position },
-        })),
-      }
-      : undefined,
     captions,
     layers,
     audioClips: project.audioClips.map((clip) => {
       const source = project.audioSources.find((candidate) => candidate.id === clip.sourceId);
       if (!source) throw new Error(`An audio source used by clip ${clip.id} is unavailable.`);
-      return { ...clip, uri: source.uri };
+      return {
+        id: clip.id,
+        uri: source.uri,
+        startMs: clip.startMs,
+        sourceStartMs: clip.sourceStartMs,
+        sourceEndMs: clip.sourceEndMs,
+        volume: clip.volume,
+        muted: clip.muted,
+        fadeInMs: clip.fadeInMs,
+        fadeOutMs: clip.fadeOutMs,
+      };
     }),
+    ...(project.backgroundReplacement.enabled && project.backgroundReplacement.source
+      ? {
+        backgroundReplacement: {
+          kind: project.backgroundReplacement.source.kind,
+          uri: project.backgroundReplacement.source.uri,
+          qualityPreset: project.backgroundReplacement.mask.qualityPreset,
+          threshold: project.backgroundReplacement.mask.threshold,
+          softness: project.backgroundReplacement.mask.softness,
+          temporalStability: project.backgroundReplacement.mask.temporalStability,
+          edgeFeather: project.backgroundReplacement.mask.edgeFeather,
+          personTransform: {
+            ...project.backgroundReplacement.personTransform,
+            position: { ...project.backgroundReplacement.personTransform.position },
+          },
+          keyframes: project.backgroundReplacement.keyframes.map((keyframe) => ({
+            ...keyframe,
+            position: { ...keyframe.position },
+          })),
+        },
+      }
+      : {}),
   };
+  return omitUndefinedDeep(plan);
 }
 
 export function collectUnresolvedFontFamilies(plan: TimelineRenderPlan) {
@@ -280,15 +293,49 @@ function serializeStyle(style: CaptionStyle, resolvedFontUris: ResolvedFontUris)
   const resolvedUri = style.font.uri
     ?? (style.font.source === 'built-in' ? resolvedFontUris.get(style.font.family) : undefined);
   return {
-    ...style,
-    font: { ...style.font, ...(resolvedUri ? { uri: resolvedUri } : {}) },
+    font: {
+      id: style.font.id,
+      family: style.font.family,
+      source: style.font.source,
+      ...(style.font.postScriptName ? { postScriptName: style.font.postScriptName } : {}),
+      ...(resolvedUri ? { uri: resolvedUri } : {}),
+    },
+    fontSize: style.fontSize,
+    fontWeight: style.fontWeight,
+    italic: style.italic,
+    textColor: style.textColor,
+    secondaryTextColor: style.secondaryTextColor,
+    textTreatment: style.textTreatment,
+    activeWordColor: style.activeWordColor,
     stroke: { ...style.stroke },
     shadow: { ...style.shadow },
     background: { ...style.background },
+    alignment: style.alignment,
+    letterSpacing: style.letterSpacing,
+    lineHeight: style.lineHeight,
+    textTransform: style.textTransform,
     position: { ...style.position },
     box: { ...style.box },
+    rotation: style.rotation,
+    maxLines: style.maxLines,
     animation: { ...style.animation },
   };
+}
+
+/** Expo cannot convert JS `undefined` into Kotlin Map<String, Any>. Omit those keys. */
+export function omitUndefinedDeep<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((item) => omitUndefinedDeep(item)) as T;
+  const next: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (child === undefined) continue;
+    next[key] = omitUndefinedDeep(child);
+  }
+  return next as T;
+}
+
+export function toNativeRenderPlan(plan: TimelineRenderPlan): Record<string, unknown> {
+  return omitUndefinedDeep(plan) as Record<string, unknown>;
 }
 
 function activeProjectVideoSources(project: CaptionProject) {

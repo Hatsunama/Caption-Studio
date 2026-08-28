@@ -3,7 +3,7 @@ import * as Sharing from 'expo-sharing';
 import CaptionMedia from 'caption-media';
 import type { TimelineVideoExportProgress } from 'caption-media';
 
-import { buildTimelineRenderPlan, collectUnresolvedFontFamilies } from '@/lib/export-render-plan';
+import { buildTimelineRenderPlan, collectUnresolvedFontFamilies, toNativeRenderPlan } from '@/lib/export-render-plan';
 import { serializeAss, serializeSrt, visibleCaptions } from '@/lib/subtitle-export';
 import { requireBackgroundProcessingConsent } from '@/services/background-processing-consent';
 import {
@@ -44,7 +44,7 @@ export async function exportProjectVideo(project: CaptionProject) {
       session.throwIfCancelled();
       return await session.startNative(() => CaptionMedia.exportTimelineVideo(
         outputUri.replace(/^file:\/\//, ''),
-        renderPlan as unknown as Record<string, unknown>,
+        toNativeRenderPlan(renderPlan),
       ));
     } finally {
       try {
@@ -84,4 +84,16 @@ export async function exportSubtitleFile(project: CaptionProject, format: 'srt' 
     await removeFailedSubtitleExportArtifact(uri);
     throw error;
   }
+}
+
+export function userFacingExportError(caught: unknown, fallback = 'The video could not be exported.'): string {
+  if (!(caught instanceof Error)) return fallback;
+  const firstLine = caught.message.split(/\r?\n/)[0]?.trim() ?? '';
+  if (!firstLine) return fallback;
+  if (/Cannot convert|Value is undefined, expected an Object|index\.android\.bundle|InternalBytecode/i.test(caught.message)) {
+    return fallback;
+  }
+  const cleaned = firstLine.replace(/^\[[\w.]+\]\s*/, '');
+  if (!cleaned || cleaned.length > 180) return fallback;
+  return cleaned;
 }

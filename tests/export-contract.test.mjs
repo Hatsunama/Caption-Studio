@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildTimelineRenderPlan,
   collectUnresolvedFontFamilies,
+  toNativeRenderPlan,
 } from '../src/lib/export-render-plan.ts';
 import { serializeAss, serializeSrt } from '../src/lib/subtitle-export.ts';
 import {
@@ -124,6 +125,45 @@ test('SRT and ASS preserve visible Unicode multiline captions and nonzero timing
   assert.match(ass, /\\fs384[^}]*\\c&H0000FF00&/);
   assert.doesNotMatch(ass, /NEVER EXPORT/);
 });
+
+
+test('render plans omit undefined keys so Expo can convert them to Kotlin maps', () => {
+  const project = exportProject({
+    captions: [{ id: 'c1', text: 'Hello', startMs: 0, endMs: 1_000, wordIds: [] }],
+    audioSources: [{
+      id: 'audio', uri: 'file:///extracted.m4a', storageMode: 'copied', displayName: 'Extracted',
+      durationMs: 4_000, origin: 'video-audio',
+    }],
+    audioClips: [{
+      id: 'ac1', sourceId: 'audio', anchor: 'timeline', startMs: 0,
+      sourceStartMs: 0, sourceEndMs: 4_000, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0,
+    }],
+  });
+  const plan = buildTimelineRenderPlan(project);
+  assert.equal('backgroundReplacement' in plan, false);
+  assert.equal('uri' in plan.captions[0].style.font, false);
+  assert.equal('postScriptName' in plan.captions[0].style.font, false);
+  assert.deepEqual(Object.keys(plan.audioClips[0]).sort(), [
+    'fadeInMs', 'fadeOutMs', 'id', 'muted', 'sourceEndMs', 'sourceStartMs', 'startMs', 'uri', 'volume',
+  ]);
+  assert.equal(plan.audioClips[0].uri, 'file:///extracted.m4a');
+  assertNoUndefined(plan, 'plan');
+  const native = toNativeRenderPlan(plan);
+  assert.equal('backgroundReplacement' in native, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(native)), native);
+});
+
+function assertNoUndefined(value, path) {
+  if (value === undefined) assert.fail(`${path} is undefined`);
+  if (value === null || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoUndefined(item, `${path}[${index}]`));
+    return;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    assertNoUndefined(child, `${path}.${key}`);
+  }
+}
 
 test('optional dual captions share timing and export as two styled lines without changing single-language output', () => {
   const single = exportProject({
