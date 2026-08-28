@@ -99,7 +99,7 @@ import {
 } from '@/services/background-processing-consent';
 import { pickAndStoreImage, pickBackgroundMedia, type MediaImportProgress } from '@/services/media-import';
 import { releasePersonPreview, renderPersonPreview } from '@/services/person-compositor';
-import { cancelProjectVideoExport, exportProjectVideo, exportSubtitleFile, getProjectVideoExportProgress } from '@/services/project-export';
+import { cancelProjectVideoExport, exportProjectVideo, exportSubtitleFile, getProjectVideoExportProgress, userFacingExportError } from '@/services/project-export';
 import { validateProjectSources } from '@/services/project-media';
 import {
   appendVideosToProject,
@@ -1245,7 +1245,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       Alert.alert('Export complete', `Saved to your phone’s media library.\n${result.width} × ${result.height}`);
     } catch (caught) {
       if (!(caught instanceof VideoExportCancelledError)) {
-        setError(caught instanceof Error ? caught.message : 'The video could not be exported.');
+        setError(userFacingExportError(caught));
       }
     } finally {
       setExporting(false);
@@ -1262,7 +1262,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     try {
       await exportSubtitleFile(projectRef.current, format);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The subtitle file could not be exported.');
+      setError(userFacingExportError(caught, 'The subtitle file could not be exported.'));
     } finally {
       setExporting(false);
       setExportProgress(undefined);
