@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -15,10 +16,17 @@ import {
   splitCaptionScriptBlock,
   updateCaptionScriptText,
 } from '@/lib/caption-script';
+import {
+  clearEditorDraftJournal,
+  readEditorDraftJournal,
+  writeEditorDraftJournal,
+} from '@/services/editor-draft-journal';
 import type { CaptionBlock, WordToken } from '@/types/project';
 
 export function ScriptEditor(props: {
   visible: boolean;
+  projectId: string;
+  baseRevision: string;
   captions: CaptionBlock[];
   words: WordToken[];
   initialCaptionId?: string;
@@ -36,6 +44,7 @@ export function ScriptEditor(props: {
   const [boundaryMessage, setBoundaryMessage] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [saving, setSaving] = useState(false);
+  const [journalReady, setJournalReady] = useState(false);
   const wasVisibleRef = useRef(false);
 
   const sourceCaptions = useMemo(
@@ -58,15 +67,49 @@ export function ScriptEditor(props: {
     setBoundaryMessage(undefined);
     setSaveError(undefined);
     setSaving(false);
+    setJournalReady(false);
     selectionRef.current = {};
     splitCounterRef.current = 0;
+    void readEditorDraftJournal(props.projectId, 'caption-script').then((journal) => {
+      const recovered = decodeCaptionDraft(journal?.payload);
+      if (!recovered) {
+        setJournalReady(true);
+        return;
+      }
+      const conflict = journal?.baseRevision !== props.baseRevision;
+      Alert.alert(
+        conflict ? 'Recovery draft needs review' : 'Restore unsaved caption edits?',
+        conflict
+          ? 'The project changed after this recovery draft was created. Review it carefully before saving.'
+          : 'Caption Studio recovered edits that were not saved before the app closed.',
+        [
+          {
+            text: 'Discard recovery',
+            style: 'destructive',
+            onPress: () => {
+              void clearEditorDraftJournal(props.projectId, 'caption-script');
+              setJournalReady(true);
+            },
+          },
+          { text: 'Restore', onPress: () => { setDraftCaptions(recovered); setJournalReady(true); } },
+        ],
+      );
+    }).catch(() => setJournalReady(true));
     const timer = setTimeout(() => {
       if (sourceCaptions.length) {
         listRef.current?.scrollToIndex({ index: initialIndex, animated: false, viewPosition: 0.35 });
       }
     }, 180);
     return () => clearTimeout(timer);
-  }, [initialIndex, props.visible, sourceCaptions]);
+  }, [initialIndex, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
+
+  useEffect(() => {
+    if (!props.visible || !journalReady || sameCaptionDraft(draftCaptions, sourceCaptions)) return;
+    const timer = setTimeout(() => {
+      void writeEditorDraftJournal(props.projectId, 'caption-script', props.baseRevision, draftCaptions);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [draftCaptions, journalReady, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
 
   const selectForEditing = (caption: CaptionBlock) => {
     selectionRef.current[caption.id] ??= { start: caption.text.length, end: caption.text.length };
@@ -174,6 +217,7 @@ export function ScriptEditor(props: {
     setSaveError(undefined);
     try {
       await props.onSave(draftCaptions);
+      await clearEditorDraftJournal(props.projectId, 'caption-script');
     } catch (caught) {
       setSaveError(caught instanceof Error ? caught.message : 'Caption changes were not saved. Try again.');
     } finally {
@@ -181,17 +225,32 @@ export function ScriptEditor(props: {
     }
   };
 
+  const cancel = () => {
+    if (saving) return;
+    const close = () => {
+      void clearEditorDraftJournal(props.projectId, 'caption-script').finally(props.onCancel);
+    };
+    if (sameCaptionDraft(draftCaptions, sourceCaptions)) {
+      close();
+      return;
+    }
+    Alert.alert('Discard unsaved caption edits?', 'The recovery copy is also removed when you discard.', [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: close },
+    ]);
+  };
+
   return (
     <Modal
       visible={props.visible}
       animationType="slide"
       presentationStyle="pageSheet"
-      onRequestClose={saving ? undefined : props.onCancel}>
+      onRequestClose={saving ? undefined : cancel}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1, backgroundColor: '#0D1014' }}>
         <View style={{ minHeight: 76, paddingHorizontal: 18, paddingTop: 18, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: '#252B33' }}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Cancel caption edits" disabled={saving} hitSlop={10} onPress={props.onCancel} style={{ minWidth: 60, minHeight: 44, justifyContent: 'center' }}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Cancel caption edits" disabled={saving} hitSlop={10} onPress={cancel} style={{ minWidth: 60, minHeight: 44, justifyContent: 'center' }}>
             <Text style={{ color: '#A7B0BC', fontSize: 15, fontWeight: '700' }}>Cancel</Text>
           </Pressable>
           <View style={{ flex: 1, alignItems: 'center' }}>
@@ -303,4 +362,22 @@ function nextSplitCaptionId(
     candidate = `${parentId}-split-${counter.current++}`;
   } while (captions.some((caption) => caption.id === candidate));
   return candidate;
+}
+
+function decodeCaptionDraft(value: unknown): CaptionBlock[] | null {
+  if (!Array.isArray(value) || value.length > 20_000) return null;
+  const valid = value.every((entry) => {
+    if (!entry || typeof entry !== 'object') return false;
+    const caption = entry as Partial<CaptionBlock>;
+    return typeof caption.id === 'string'
+      && typeof caption.text === 'string'
+      && Number.isFinite(caption.startMs)
+      && Number.isFinite(caption.endMs)
+      && (caption.endMs ?? 0) > (caption.startMs ?? 0);
+  });
+  return valid ? value as CaptionBlock[] : null;
+}
+
+function sameCaptionDraft(left: CaptionBlock[], right: CaptionBlock[]) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }

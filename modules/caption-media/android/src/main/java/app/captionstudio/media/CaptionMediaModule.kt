@@ -40,8 +40,8 @@ import kotlin.math.roundToInt
 
 class CaptionMediaModule : Module() {
   private val segmentationLock = Any()
-  private val previewSegmenter = lazy { MediaPipePersonSegmenter(context) }
-  private val previewMatteProcessor = lazy { PersonMatteProcessor() }
+  private var previewSegmenter: MediaPipePersonSegmenter? = null
+  private var previewMatteProcessor: PersonMatteProcessor? = null
   private val timelineVideoExporter = lazy { TimelineVideoExporter(context) }
   private val audioExtractionEpoch = AtomicLong(0L)
   private var previewDestroyed = false
@@ -128,7 +128,7 @@ class CaptionMediaModule : Module() {
       synchronized(segmentationLock) {
         if (!previewDestroyed) {
           previewEpoch += 1L
-          resetPreviewMatteLocked()
+          releasePreviewModelsLocked()
         }
       }
     }
@@ -177,8 +177,7 @@ class CaptionMediaModule : Module() {
       synchronized(segmentationLock) {
         previewDestroyed = true
         previewEpoch += 1L
-        if (previewSegmenter.isInitialized()) previewSegmenter.value.close()
-        if (previewMatteProcessor.isInitialized()) previewMatteProcessor.value.close()
+        releasePreviewModelsLocked()
       }
       if (timelineVideoExporter.isInitialized()) timelineVideoExporter.value.close()
     }
@@ -240,11 +239,13 @@ class CaptionMediaModule : Module() {
         }
         previewInput = input
         previewTimeMs = timeMs
-        val result = previewSegmenter.value.segment(source)
+        val segmenter = previewSegmenter ?: MediaPipePersonSegmenter(context).also { previewSegmenter = it }
+        val matteProcessor = previewMatteProcessor ?: PersonMatteProcessor().also { previewMatteProcessor = it }
+        val result = segmenter.segment(source)
         PreviewMatte(
           result.width,
           result.height,
-          previewMatteProcessor.value.process(
+          matteProcessor.process(
             result.confidence,
             result.width,
             result.height,
@@ -439,7 +440,15 @@ class CaptionMediaModule : Module() {
   private fun resetPreviewMatteLocked() {
     previewInput = null
     previewTimeMs = -1L
-    if (previewMatteProcessor.isInitialized()) previewMatteProcessor.value.reset()
+    previewMatteProcessor?.reset()
+  }
+
+  private fun releasePreviewModelsLocked() {
+    resetPreviewMatteLocked()
+    previewSegmenter?.close()
+    previewSegmenter = null
+    previewMatteProcessor?.close()
+    previewMatteProcessor = null
   }
 
   private fun sha256(input: String): String {
@@ -737,6 +746,17 @@ class CaptionMediaModule : Module() {
 
       extractor.selectTrack(audioTrack)
       val inputFormat = extractor.getTrackFormat(audioTrack)
+      val declaredDurationUs = if (inputFormat.containsKey(MediaFormat.KEY_DURATION)) {
+        inputFormat.getLong(MediaFormat.KEY_DURATION).coerceAtLeast(0L)
+      } else {
+        0L
+      }
+      val maximumOutputSamples = if (declaredDurationUs > 0L) {
+        ((declaredDurationUs / 1_000L + AUDIO_DURATION_TOLERANCE_MS) * TARGET_SAMPLE_RATE / 1_000L)
+          .coerceAtMost(MAX_AUDIO_OUTPUT_SAMPLES)
+      } else {
+        MAX_AUDIO_OUTPUT_SAMPLES
+      }
       val mime = inputFormat.getString(MediaFormat.KEY_MIME)
         ?: throw IllegalArgumentException("The video audio format is missing")
       if (inputFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
@@ -800,6 +820,9 @@ class CaptionMediaModule : Module() {
               val mono = pcmToMono(outputBuffer.slice().order(ByteOrder.LITTLE_ENDIAN), pcmEncoding, channelCount)
               val targetStart = max(0L, info.presentationTimeUs * TARGET_SAMPLE_RATE / 1_000_000L)
               val targetEnd = targetStart + (mono.size.toLong() * TARGET_SAMPLE_RATE / max(1, sampleRate))
+              require(targetStart <= maximumOutputSamples && targetEnd <= maximumOutputSamples) {
+                "The decoded audio timestamps exceed the supported duration"
+              }
               if (targetStart > writer.sampleCount) {
                 val gap = targetStart - writer.sampleCount
                 writer.writeSilence(gap)
@@ -975,6 +998,8 @@ class CaptionMediaModule : Module() {
 
   companion object {
     private const val TARGET_SAMPLE_RATE = 16_000
+    private const val AUDIO_DURATION_TOLERANCE_MS = 5_000L
+    private const val MAX_AUDIO_OUTPUT_SAMPLES = 691_200_000L
     private const val TIMEOUT_US = 10_000L
     private const val PREVIEW_RESET_GAP_MS = 1_500L
     private const val PERSON_PREVIEW_LONG_EDGE = 720.0

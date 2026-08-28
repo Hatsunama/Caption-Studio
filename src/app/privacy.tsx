@@ -16,6 +16,7 @@ import {
   removeDownloadedNaturalTranslationModel,
   type DownloadedNaturalTranslationModel,
 } from '@/services/caption-translation';
+import { shareLocalProcessExits } from '@/services/local-diagnostics';
 
 const POLICY_URL = 'https://hatsunama.github.io/Caption-Studio/privacy/';
 const PRIVATE_CONTACT_URL = 'https://github.com/Hatsunama/Caption-Studio/security/advisories/new';
@@ -100,6 +101,25 @@ export default function PrivacyScreen() {
     );
   };
 
+  const shareDiagnostics = () => {
+    Alert.alert(
+      'Share local crash diagnostics?',
+      'The file contains only Android exit categories, times, memory totals, and app version numbers. It never includes media, captions, project names, or file paths.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Share',
+          onPress: () => {
+            void shareLocalProcessExits().catch((error) => Alert.alert(
+              'Could not share diagnostics',
+              error instanceof Error ? error.message : 'Try again.',
+            ));
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
@@ -146,7 +166,10 @@ export default function PrivacyScreen() {
         Caption Studio-managed project files but never deletes the original media you selected. A recovery
         copy is staged in private cache only while Android&apos;s share sheet is open and is then deleted;
         interrupted staging files are removed after 24 hours when the project library opens. Exported files
-        remain in the media library until you delete them there.
+        remain in the media library until you delete them there. Unsaved caption text is journaled in private
+        app storage so it can be recovered after a process exit, then cleared after Save or explicit Discard.
+        A bounded local diagnostic history stores only Android exit categories, times, memory totals, and app
+        version numbers. It never stores media, captions, names, or file paths and is shared only when you tap Share.
       </PolicySection>
       <PolicySection title="Security and children">
         Caption Studio restricts generated files to app-controlled storage, verifies downloaded model
@@ -188,6 +211,7 @@ export default function PrivacyScreen() {
           </View>
         )}
         <PolicyAction label="View bundled software, model, and font notices" onPress={() => router.push('/notices')} />
+        <PolicyAction label="Share sanitized local crash diagnostics" onPress={shareDiagnostics} />
         <PolicyLink label="Open the public privacy policy" url={POLICY_URL} />
         <PolicyLink label="Send a confidential privacy or security report" url={PRIVATE_CONTACT_URL} />
         <PolicyLink label="Open public support · never post private data" url={PUBLIC_SUPPORT_URL} />

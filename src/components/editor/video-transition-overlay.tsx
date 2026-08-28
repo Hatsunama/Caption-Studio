@@ -23,6 +23,7 @@ type Props = {
   height: number;
   backgroundColor: string;
   backgroundProcessingActive: boolean;
+  admitted: boolean;
 };
 
 const fill: ViewStyle = { position: 'absolute', inset: 0 };
@@ -38,6 +39,7 @@ export function VideoTransitionOverlay(props: Props) {
   );
   const preload = videoTransitionPreloadWindow(windows, props.timelineMs);
 
+  if (!props.admitted) return null;
   if (frame?.mode === 'cover') return <CoverTransition frame={frame} width={props.width} height={props.height} />;
   if (frame?.unavailableReason) return <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame.unavailableReason} />;
   if (props.backgroundProcessingActive) {
@@ -45,13 +47,12 @@ export function VideoTransitionOverlay(props: Props) {
   }
   if (preload?.mode !== 'composite') return null;
 
-  return <CompositeVideoTransitionOverlay key={preload.key} {...props} />;
+  return <CompositeVideoTransitionOverlay {...props} windows={windows} />;
 }
 
-function CompositeVideoTransitionOverlay(props: Props) {
+function CompositeVideoTransitionOverlay(props: Props & { windows: ReturnType<typeof buildVideoTransitionPreviewWindows> }) {
   const preview = useVideoTransitionPreview({
-    entries: props.entries,
-    sources: props.sources,
+    windows: props.windows,
     timelineMs: props.timelineMs,
     isPlaying: props.isPlaying && props.transportReady,
   });

@@ -4,6 +4,7 @@ import { Stack } from 'expo-router/stack';
 import { setVideoCacheSizeAsync } from 'expo-video';
 
 import { FONT_ASSETS } from '@/lib/font-catalog';
+import { captureHistoricalProcessExits } from '@/services/local-diagnostics';
 import { loadFontLibrary } from '@/services/font-storage';
 import { cleanupObsoletePickerCache } from '@/services/storage-policy';
 
@@ -15,6 +16,7 @@ export default function RootLayout() {
     void Promise.all([
       setVideoCacheSizeAsync(128 * 1024 * 1024),
       cleanupObsoletePickerCache(),
+      captureHistoricalProcessExits(),
     ]).catch((error) => console.error('Caption Studio cache maintenance failed', error));
     void loadFontLibrary()
       .catch((error) => console.error('Imported fonts could not be restored', error))

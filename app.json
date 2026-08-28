@@ -2,14 +2,14 @@
   "expo": {
     "name": "Caption Studio",
     "slug": "caption-studio",
-    "version": "1.4.1",
+    "version": "1.4.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "captionstudio",
     "userInterfaceStyle": "dark",
     "android": {
       "package": "com.hatsunama.captionstudio",
-      "versionCode": 13,
+      "versionCode": 14,
       "allowBackup": false,
       "blockedPermissions": [
         "android.permission.FOREGROUND_SERVICE",
@@ -47,7 +47,8 @@
       "expo-asset",
       "expo-sharing",
       "./plugins/with-legacy-export-permission",
-      "./plugins/with-soloader-metadata"
+      "./plugins/with-soloader-metadata",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,

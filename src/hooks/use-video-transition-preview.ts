@@ -2,84 +2,90 @@ import { useVideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  buildVideoTransitionPreviewWindows,
   videoTransitionPreloadWindow,
   videoTransitionPreviewFrameAt,
+  type VideoTransitionPreviewWindow,
 } from '@/lib/video-transition-preview';
-import type { ClipTimelineEntry } from '@/lib/video-timeline';
 import { configureTransitionPlayer } from '@/lib/video-playback-policy';
-import type { ProjectVideoSource } from '@/types/project';
 
 type PreviewPlayerLoad = {
   key?: string;
-  state: 'idle' | 'ready' | 'error';
+  state: 'idle' | 'loading' | 'ready' | 'error';
   error?: string;
 };
 
 export function useVideoTransitionPreview(options: {
-  entries: readonly ClipTimelineEntry[];
-  sources: readonly ProjectVideoSource[];
+  windows: readonly VideoTransitionPreviewWindow[];
   timelineMs: number;
   isPlaying: boolean;
 }) {
-  const windows = useMemo(
-    () => buildVideoTransitionPreviewWindows(options.entries, options.sources),
-    [options.entries, options.sources],
-  );
   const frame = useMemo(
-    () => videoTransitionPreviewFrameAt(windows, options.timelineMs),
-    [options.timelineMs, windows],
+    () => videoTransitionPreviewFrameAt(options.windows, options.timelineMs),
+    [options.timelineMs, options.windows],
   );
   const preload = useMemo(
     () => {
-      const candidate = videoTransitionPreloadWindow(windows, options.timelineMs);
+      const candidate = videoTransitionPreloadWindow(options.windows, options.timelineMs);
       return candidate?.mode === 'composite' ? candidate : undefined;
     },
-    [options.timelineMs, windows],
+    [options.timelineMs, options.windows],
   );
   const outgoingPlayer = useVideoPlayer(null, configureTransitionPlayer);
   const incomingPlayer = useVideoPlayer(null, configureTransitionPlayer);
   const [load, setLoad] = useState<PreviewPlayerLoad>({ state: 'idle' });
   const loadedUrisRef = useRef<{ outgoing?: string; incoming?: string }>({});
-  const loadingKeyRef = useRef<string | undefined>(undefined);
-  const generationRef = useRef(0);
+  const desiredRef = useRef<typeof preload>(undefined);
+  const drainingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const loadRef = useRef(load);
+  loadRef.current = load;
 
   useEffect(() => {
+    desiredRef.current = preload;
     if (!preload?.outgoing || !preload.incoming) {
       outgoingPlayer.pause();
       incomingPlayer.pause();
+      setLoad({ state: 'idle' });
       return;
     }
-    if (load.key === preload.key || loadingKeyRef.current === preload.key) return;
-    const generation = ++generationRef.current;
-    let cancelled = false;
-    loadingKeyRef.current = preload.key;
-    outgoingPlayer.pause();
-    incomingPlayer.pause();
-    void loadPreviewPair({
-      outgoingPlayer,
-      incomingPlayer,
-      outgoingUri: preload.outgoing.uri,
-      incomingUri: preload.incoming.uri,
-      loadedUris: loadedUrisRef.current,
-      shouldContinue: () => !cancelled && generation === generationRef.current,
-    }).then(() => {
-      if (cancelled || generation !== generationRef.current) return;
-      loadingKeyRef.current = undefined;
-      setLoad({ key: preload.key, state: 'ready' });
-    }).catch((caught) => {
-      if (cancelled || generation !== generationRef.current) return;
-      loadingKeyRef.current = undefined;
-      setLoad({
-        key: preload.key,
-        state: 'error',
-        error: caught instanceof Error ? caught.message : 'The transition preview videos could not be decoded.',
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [incomingPlayer, load.key, outgoingPlayer, preload]);
+    if (loadRef.current.key === preload.key && loadRef.current.state === 'ready') return;
+    if (drainingRef.current) return;
+    drainingRef.current = true;
+    void (async () => {
+      try {
+        while (mountedRef.current) {
+          const desired = desiredRef.current;
+          if (!desired?.outgoing || !desired.incoming) return;
+          if (loadRef.current.key === desired.key && loadRef.current.state === 'ready') return;
+          outgoingPlayer.pause();
+          incomingPlayer.pause();
+          setLoad({ key: desired.key, state: 'loading' });
+          try {
+            await loadPreviewPair({
+              outgoingPlayer,
+              incomingPlayer,
+              outgoingUri: desired.outgoing.uri,
+              incomingUri: desired.incoming.uri,
+              loadedUris: loadedUrisRef.current,
+            });
+          } catch (caught) {
+            if (desiredRef.current?.key !== desired.key) continue;
+            setLoad({
+              key: desired.key,
+              state: 'error',
+              error: caught instanceof Error ? caught.message : 'The transition preview videos could not be decoded.',
+            });
+            return;
+          }
+          if (desiredRef.current?.key !== desired.key) continue;
+          setLoad({ key: desired.key, state: 'ready' });
+          return;
+        }
+      } finally {
+        drainingRef.current = false;
+      }
+    })();
+  }, [incomingPlayer, outgoingPlayer, preload]);
 
   const loadedKey = load.state === 'ready' ? load.key : undefined;
   const state = !preload ? 'idle' : load.key === preload.key ? load.state : 'loading';
@@ -114,8 +120,8 @@ export function useVideoTransitionPreview(options: {
   }, [frame, incomingPlayer, loadedKey, options.isPlaying, outgoingPlayer, state]);
 
   useEffect(() => () => {
-    generationRef.current += 1;
-    loadingKeyRef.current = undefined;
+    mountedRef.current = false;
+    desiredRef.current = undefined;
     loadedUrisRef.current = {};
   }, []);
 
@@ -135,17 +141,13 @@ async function loadPreviewPair(options: {
   outgoingUri: string;
   incomingUri: string;
   loadedUris: { outgoing?: string; incoming?: string };
-  shouldContinue: () => boolean;
 }) {
   if (options.loadedUris.outgoing !== options.outgoingUri) {
     await options.outgoingPlayer.replaceAsync(options.outgoingUri);
-    if (!options.shouldContinue()) return;
     options.loadedUris.outgoing = options.outgoingUri;
   }
-  if (!options.shouldContinue()) return;
   if (options.loadedUris.incoming !== options.incomingUri) {
     await options.incomingPlayer.replaceAsync(options.incomingUri);
-    if (!options.shouldContinue()) return;
     options.loadedUris.incoming = options.incomingUri;
   }
 }

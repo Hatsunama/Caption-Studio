@@ -61,6 +61,16 @@ test('LiteRT runtime is pinned, identity-gated, serialized, and deterministicall
   assert.match(environment, /MINIMUM_TOTAL_MEMORY_BYTES = 4L \* GIBIBYTE/);
 });
 
+test('release shrinking preserves the LiteRT-LM JNI contract', async () => {
+  const [gradle, rules] = await Promise.all([
+    source('android/build.gradle'),
+    source('android/consumer-rules.pro'),
+  ]);
+
+  assert.match(gradle, /consumerProguardFiles\s+['"]consumer-rules\.pro['"]/);
+  assert.match(rules, /-keep class com\.google\.ai\.edge\.litertlm\.\*\* \{ \*; \}/);
+});
+
 test('one pinned local model owns every supported English-Chinese direction', async () => {
   const [service, languages, catalog] = await Promise.all([
     readFile(new URL('src/services/caption-translation.ts', repositoryRoot), 'utf8'),

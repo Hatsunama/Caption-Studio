@@ -24,8 +24,10 @@ test('optional Google ML processing is disclosed and consent-gated at every runt
 });
 
 test('background ML providers remain lazy until the optional feature is actually used', () => {
-  assert.match(nativeModule, /private val previewSegmenter = lazy/);
-  assert.match(nativeModule, /private val previewMatteProcessor = lazy/);
+  assert.match(nativeModule, /private var previewSegmenter: MediaPipePersonSegmenter\? = null/);
+  assert.match(nativeModule, /previewSegmenter \?: MediaPipePersonSegmenter\(context\)/);
+  assert.match(nativeModule, /private var previewMatteProcessor: PersonMatteProcessor\? = null/);
+  assert.match(nativeModule, /releasePreviewModelsLocked\(\)[\s\S]*previewSegmenter\?\.close\(\)[\s\S]*previewMatteProcessor\?\.close\(\)/);
   assert.match(matte, /private val faceDetector = lazy/);
 });
 

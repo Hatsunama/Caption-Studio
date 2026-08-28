@@ -5,14 +5,19 @@ import { audioClipEnd, audioClipVolume } from '@/lib/audio-timeline';
 import { TimelineAudioPlaybackController } from '@/services/timeline-audio-playback';
 import type { CaptionProject } from '@/types/project';
 
-export function useTimelineAudioController(project: CaptionProject, currentMs: number, isPlaying: boolean) {
+export function useTimelineAudioController(
+  project: CaptionProject,
+  currentMs: number,
+  isPlaying: boolean,
+  admitted = true,
+) {
   const controllerRef = useRef<TimelineAudioPlaybackController | undefined>(undefined);
   const sourceById = useMemo(
     () => new Map(project.audioSources.map((source) => [source.id, source])),
     [project.audioSources],
   );
   const targets = useMemo(
-    () => project.audioClips.flatMap((clip) => {
+    () => admitted ? project.audioClips.flatMap((clip) => {
       if (currentMs < clip.startMs || currentMs >= audioClipEnd(clip)) return [];
       const source = sourceById.get(clip.sourceId);
       if (!source) return [];
@@ -25,8 +30,8 @@ export function useTimelineAudioController(project: CaptionProject, currentMs: n
         muted: clip.muted,
         playing: isPlaying,
       }];
-    }),
-    [currentMs, isPlaying, project.audioClips, sourceById],
+    }) : [],
+    [admitted, currentMs, isPlaying, project.audioClips, sourceById],
   );
 
   useEffect(() => {

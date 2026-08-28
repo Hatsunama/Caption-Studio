@@ -33,6 +33,7 @@ import { VideoTransitionOverlay } from '@/components/editor/video-transition-ove
 import { useTimelineVideoController } from '@/hooks/use-timeline-video-controller';
 import { useTimelineAudioController } from '@/hooks/use-timeline-audio-controller';
 import { useProjectCaptionTranslation } from '@/hooks/use-project-caption-translation';
+import { useEditorRuntimePolicy } from '@/hooks/use-editor-runtime-policy';
 import { deleteAudioClip, duplicateAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '@/lib/audio-timeline';
 import { findAnimationPreset } from '@/lib/animation-presets';
 import { normalizeEnglishChineseCaptionLanguage } from '@/lib/caption-languages';
@@ -228,6 +229,17 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const exitPromptOpenRef = useRef(false);
   const pendingExitActionRef = useRef<NavigationAction | undefined>(undefined);
   const backgroundConsentRequestRef = useRef<Promise<boolean> | undefined>(undefined);
+  const blockingUi = Boolean(
+    fontBrowserOpen
+    || pendingChange
+    || editingLayerId
+    || scriptEditorOpen
+    || dualCaptionEditorOpen
+    || progress
+    || mediaProgress
+    || exporting,
+  );
+  const runtimePolicy = useEditorRuntimePolicy(blockingUi);
 
   useEffect(() => {
     let active = true;
@@ -309,8 +321,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const transport = useTimelineVideoController(project, setError);
   const { player, currentMs, isPlaying } = transport;
-  useTimelineAudioController(project, currentMs, isPlaying);
+  useTimelineAudioController(project, currentMs, isPlaying, runtimePolicy.mediaAdmitted);
   const pauseTransport = transport.pause;
+
+  useEffect(() => {
+    if (!runtimePolicy.mediaAdmitted) pauseTransport();
+  }, [pauseTransport, runtimePolicy.mediaAdmitted]);
 
   useEffect(() => navigation.addListener('beforeRemove', (event) => {
     if (exitApprovedRef.current) return;
@@ -439,7 +455,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const personProcessingActive = project.backgroundReplacement.enabled && backgroundProcessingAllowed === true;
 
   useEffect(() => {
-    if (!personProcessingActive || !currentClipEntry) {
+    if (!runtimePolicy.mediaAdmitted || !personProcessingActive || !currentClipEntry) {
       return;
     }
     const source = project.sources.find((candidate) => candidate.id === currentClipEntry.clip.sourceId);
@@ -464,7 +480,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       });
     }, isPlaying ? 160 : 80);
     return () => { active = false; clearTimeout(timer); };
-  }, [canvasHeight, canvasWidth, currentClipEntry, currentVideoTransform, isPlaying, personPreviewTimeMs, personProcessingActive, project.backgroundReplacement, project.id, project.sources]);
+  }, [canvasHeight, canvasWidth, currentClipEntry, currentVideoTransform, isPlaying, personPreviewTimeMs, personProcessingActive, project.backgroundReplacement, project.id, project.sources, runtimePolicy.mediaAdmitted]);
+
+  useEffect(() => {
+    if (runtimePolicy.mediaAdmitted) return;
+    setPersonPreviewUri(undefined);
+    setPersonPreviewBusy(false);
+    void releasePersonPreview(project.id).catch(() => undefined);
+  }, [project.id, runtimePolicy.mediaAdmitted]);
 
   useEffect(() => () => {
     void releasePersonPreview(project.id).catch(() => undefined);
@@ -732,6 +755,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     const existing = projectRef.current.captionTracks.translations.find((track) => track.visible)
       ?? projectRef.current.captionTracks.translations[0];
     if (existing) {
+      transport.pause();
       setSelectedTranslationTrackId(existing.id);
       setDualCaptionEditorOpen(true);
       return;
@@ -761,6 +785,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         projectRef.current = persisted;
         setProject(persisted);
         setSelectedTranslationTrackId(prepared.trackId);
+        transport.pause();
         setDualCaptionEditorOpen(true);
       });
       void translationController.refresh(
@@ -794,27 +819,20 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     void translationController.refresh(track.id, sourceCaptionIds);
   };
 
-  const saveDualCaptionEdits = (edits: DualCaptionTextEdit[]) => {
+  const saveDualCaptionEdits = async (edits: DualCaptionTextEdit[]) => {
     const track = selectedTranslationTrack;
-    if (!track || edits.length === 0) return;
+    if (!track || edits.length === 0) return false;
     if (edits.some((edit) => !edit.primaryText.trim() || !edit.translatedText.trim())) {
       Alert.alert('Both lines need text', 'Enter both the primary and translated subtitle before saving this row.');
-      return;
+      return false;
     }
     const reviewedById = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue.reviewed]));
     const overwritesReviewed = edits.some((edit) => edit.primaryChanged && !edit.translatedChanged && reviewedById.get(edit.sourceCaptionId));
     if (overwritesReviewed) {
-      Alert.alert(
-        'Replace reviewed translation?',
-        `At least one ${track.displayName} line was edited by a person. Automatic sync will replace it; Undo can restore both languages.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Replace + sync', style: 'destructive', onPress: () => { void translationController.synchronize(track.id, edits); } },
-        ],
-      );
-      return;
+      const confirmed = await confirmReviewedTranslationReplacement(track.displayName);
+      if (!confirmed) return false;
     }
-    void translationController.synchronize(track.id, edits);
+    return translationController.synchronize(track.id, edits);
   };
 
   const toggleSelectedTranslationTrack = async () => {
@@ -1472,6 +1490,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             height={canvasHeight}
             backgroundColor={project.canvas.backgroundColor}
             backgroundProcessingActive={personProcessingActive}
+            admitted={runtimePolicy.mediaAdmitted}
           />
           {activeTool === 'video' && currentClipEntry ? (
             <VideoTransformOverlay
@@ -1905,6 +1924,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       />
       <ScriptEditor
         visible={scriptEditorOpen}
+        projectId={project.id}
+        baseRevision={project.updatedAt}
         captions={timelineCaptions}
         words={project.transcription.words}
         initialCaptionId={selectedCaptionId ?? activeCaption?.id}
@@ -1914,14 +1935,16 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           setSelectedCaptionId(caption.id);
           setSelectedClipId(undefined);
           setActiveTool('captions');
-          seekTimeline(caption.startMs);
         }}
         onCancel={() => setScriptEditorOpen(false)}
         onSave={commitCaptionScript}
       />
       <DualCaptionEditor
-        key={`${selectedTranslationTrack?.id ?? 'none'}:${project.updatedAt}:${dualCaptionEditorOpen ? 'open' : 'closed'}`}
+        key={selectedTranslationTrack?.id ?? 'none'}
         visible={dualCaptionEditorOpen && Boolean(selectedTranslationTrack)}
+        projectId={project.id}
+        baseRevision={project.updatedAt}
+        trackId={selectedTranslationTrack?.id ?? 'none'}
         sourceLanguageLabel={captionLanguageLabel(project.transcription.language)}
         targetLanguageLabel={selectedTranslationTrack?.displayName ?? 'Second language'}
         pairs={selectedTranslationPairs}
@@ -2148,6 +2171,20 @@ function translationProgressLabel(progress?: CaptionTranslationProgress) {
   if (!progress) return undefined;
   if (progress.progress == null) return progress.detail;
   return `${progress.detail} · ${Math.round(progress.progress * 100)}%`;
+}
+
+function confirmReviewedTranslationReplacement(languageName: string) {
+  return new Promise<boolean>((resolve) => {
+    Alert.alert(
+      'Replace reviewed translation?',
+      `At least one ${languageName} line was edited by a person. Automatic sync will replace it; Undo can restore both languages.`,
+      [
+        { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Replace + sync', style: 'destructive', onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) },
+    );
+  });
 }
 
 function exportProgressLabel(progress: TimelineVideoExportProgress) {

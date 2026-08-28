@@ -65,7 +65,6 @@ internal class LiteRtLmTranslationRuntimeFactory : TranslationRuntimeFactory {
   }
 
   private fun closeEngine(engine: Engine): Throwable? {
-    if (!engine.isInitialized()) return null
     return runCatching { engine.close() }.exceptionOrNull()
   }
 

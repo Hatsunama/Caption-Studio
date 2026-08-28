@@ -1,0 +1,10 @@
+{
+  "name": "caption-diagnostics",
+  "version": "1.0.0",
+  "description": "Private on-device process exit diagnostics for Caption Studio",
+  "license": "MIT",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true,
+  "peerDependencies": { "expo": "*" }
+}

@@ -1158,10 +1158,19 @@ private class BitmapMemoryCache(private val maximumBytes: Int) : AutoCloseable {
 }
 
 private class ManagedRetriever(context: Context, uri: String) : AutoCloseable {
-  private val retriever = MediaMetadataRetriever().apply {
-    val parsed = Uri.parse(uri)
-    if (parsed.scheme.isNullOrEmpty() || parsed.scheme == "file") setDataSource(parsed.path ?: uri)
-    else setDataSource(context, parsed)
+  private val retriever: MediaMetadataRetriever
+
+  init {
+    val created = MediaMetadataRetriever()
+    try {
+      val parsed = Uri.parse(uri)
+      if (parsed.scheme.isNullOrEmpty() || parsed.scheme == "file") created.setDataSource(parsed.path ?: uri)
+      else created.setDataSource(context, parsed)
+      retriever = created
+    } catch (failure: Throwable) {
+      runCatching { created.release() }
+      throw failure
+    }
   }
   private val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
   private val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0

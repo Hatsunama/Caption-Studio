@@ -303,7 +303,8 @@ test('Expo owns video-player release and editor teardown never commands a releas
     transitionTeardownStart,
     transitionPreview.indexOf('}, []);', transitionTeardownStart),
   );
-  assert.match(transitionTeardown, /generationRef\.current \+= 1/);
+  assert.match(transitionTeardown, /mountedRef\.current = false/);
+  assert.match(transitionTeardown, /desiredRef\.current = undefined/);
   assert.doesNotMatch(transitionTeardown, /(?:outgoingPlayer|incomingPlayer)\.(?:pause|play|replace|release)/);
 });
 
