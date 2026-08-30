@@ -273,7 +273,7 @@ export function ScriptEditor(props: {
           ListHeaderComponent={(
             <View style={{ marginBottom: 6, gap: 5 }}>
               <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 18 }}>
-                Finish these spoken subtitles before adding a second language. Tap a subtitle to edit it. Split and Join keep the same rhythm the translation will try to follow.
+                Finish these spoken subtitles before adding a second language. Tap a subtitle to edit it. Use the visible Split and Join controls. Enter and Backspace remain available as keyboard shortcuts. Split and Join keep the same rhythm the translation will try to follow.
               </Text>
               {boundaryMessage ? <Text style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{boundaryMessage}</Text> : null}
               {saveError ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{saveError}</Text> : null}
