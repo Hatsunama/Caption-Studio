@@ -64,12 +64,12 @@ export function cutTranslatedDocument(
   if (sources.length === 0) return result;
   const translated = translatedText.normalize('NFC').trim();
   if (sources.length === 1) {
-    result.set(sources[0].id, translated || sources[0].text.trim());
+    result.set(sources[0].id, translated);
     return result;
   }
   const tokens = captionSpokenTokenSpans(translated).map((span) => span.text);
   if (tokens.length === 0) {
-    sources.forEach((source) => result.set(source.id, source.text.trim()));
+    sources.forEach((source) => result.set(source.id, ''));
     return result;
   }
 
@@ -78,8 +78,7 @@ export function cutTranslatedDocument(
   const assignments = allocateTokens(tokens, weights);
   assignments.forEach((slice, index) => {
     const source = sources[index];
-    const text = captionLayoutText(slice).trim();
-    result.set(source.id, text || source.text.trim());
+    result.set(source.id, captionLayoutText(slice).trim());
   });
   return result;
 }

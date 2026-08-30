@@ -20,6 +20,7 @@ import {
   translationTrackDisplayName,
   translationTrackIdForLanguage,
   updatePairedCaptionTexts,
+  type PairedCaptionTextUpdate,
 } from '@/lib/caption-tracks';
 import { visibleTimelineCaptions } from '@/lib/video-timeline';
 import {
@@ -119,12 +120,30 @@ export async function refreshProjectCaptionTranslation(options: {
     qwenSource,
     updatedAt,
   );
-  return updatePairedCaptionTexts(providerProject, captions.map((caption) => ({
-    trackId: track.id,
-    sourceCaptionId: caption.id,
-    translatedText: translated.captions.get(caption.id) ?? caption.text,
-    translationStatus: 'translated' as const,
-  })), updatedAt);
+  const previousById = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue]));
+  return updatePairedCaptionTexts(providerProject, captions.flatMap((caption): PairedCaptionTextUpdate[] => {
+    const applied = usableAutomaticTranslation(
+      caption.text,
+      translated.captions.get(caption.id),
+      translated.needsReview.has(caption.id),
+    );
+    if (applied) {
+      return [{
+        trackId: track.id,
+        sourceCaptionId: caption.id,
+        translatedText: applied,
+        translationStatus: 'translated' as const,
+      }];
+    }
+    const previous = previousById.get(caption.id)?.text.trim() ?? '';
+    if (!previous) return [];
+    return [{
+      trackId: track.id,
+      sourceCaptionId: caption.id,
+      translatedText: previous,
+      translationStatus: 'stale' as const,
+    }];
+  }), updatedAt);
 }
 
 export async function synchronizeProjectDualCaptionEdits(options: {
@@ -186,20 +205,38 @@ export async function synchronizeProjectDualCaptionEdits(options: {
     edits,
     options.project.captions,
     session?.operations.get('forward'),
+    session?.needsReviewByOperation.get('forward'),
     track.languageTag,
   );
   const reverseResults = session?.operations.get('reverse') ?? new Map<string, string>();
-  const updates = edits.map((edit) => ({
-    trackId: track.id,
-    sourceCaptionId: edit.sourceCaptionId,
-    primaryText: edit.translatedChanged && !edit.primaryChanged
-      ? reverseResults.get(edit.sourceCaptionId) ?? edit.primaryText
-      : edit.primaryText,
-    translatedText: edit.primaryChanged && !edit.translatedChanged
-      ? forwardResults.get(edit.sourceCaptionId) ?? edit.translatedText
-      : edit.translatedText,
-    translationStatus: edit.translatedChanged ? 'reviewed' as const : 'translated' as const,
-  }));
+  const reverseReview = session?.needsReviewByOperation.get('reverse') ?? new Set<string>();
+  const updates = edits.map((edit) => {
+    const automaticPrimary = edit.translatedChanged && !edit.primaryChanged
+      ? usableAutomaticTranslation(
+        edit.translatedText,
+        reverseResults.get(edit.sourceCaptionId),
+        reverseReview.has(edit.sourceCaptionId),
+      )
+      : undefined;
+    const automaticTranslation = edit.primaryChanged && !edit.translatedChanged
+      ? usableAutomaticTranslation(
+        edit.primaryText,
+        forwardResults.captions.get(edit.sourceCaptionId),
+        forwardResults.needsReview.has(edit.sourceCaptionId),
+      )
+      : undefined;
+    return {
+      trackId: track.id,
+      sourceCaptionId: edit.sourceCaptionId,
+      primaryText: automaticPrimary ?? edit.primaryText,
+      translatedText: automaticTranslation ?? edit.translatedText,
+      translationStatus: edit.translatedChanged
+        ? 'reviewed' as const
+        : automaticTranslation
+          ? 'translated' as const
+          : 'stale' as const,
+    };
+  });
   if (updates.some((update) => !update.primaryText || !update.translatedText)) {
     throw new Error('The local model returned an incomplete synchronized script. No captions were changed.');
   }
@@ -249,6 +286,13 @@ function requiredTrack(project: CaptionProject, trackId: string) {
   return track;
 }
 
+function usableAutomaticTranslation(sourceText: string, translatedText: string | undefined, needsReview: boolean) {
+  const source = sourceText.normalize('NFC').trim();
+  const translated = translatedText?.normalize('NFC').trim() ?? '';
+  if (needsReview || !translated || translated === source || captionTextLength(translated) > 500) return undefined;
+  return translated;
+}
+
 function assertTrackMatchesSource(track: TranslationCaptionTrack, sourceLanguage: string) {
   if (
     captionLanguageFamily(track.sourceLanguageTag) !== captionLanguageFamily(sourceLanguage)
@@ -280,13 +324,14 @@ async function translateCaptionDocument(options: {
       return caption ? [{ id: caption.id, text: caption.text, startMs: caption.startMs, endMs: caption.endMs }] : [];
     });
     const cut = cutTranslatedDocument(
-      translated.captions.get(chunk.id) ?? chunk.text,
+      translated.captions.get(chunk.id) ?? '',
       sources,
       options.targetLanguage,
     );
+    const documentNeedsReview = translated.needsReview.has(chunk.id) || !translated.captions.get(chunk.id)?.trim();
     cut.forEach((text, id) => {
       captions.set(id, text);
-      if (translated.needsReview.has(chunk.id)) needsReview.add(id);
+      if (documentNeedsReview) needsReview.add(id);
     });
   }
   return { captions, needsReview, provider: translated.provider };
@@ -296,10 +341,12 @@ function cutForwardDocumentResults(
   edits: readonly DualCaptionTextEdit[],
   captions: CaptionBlock[],
   documents: ReadonlyMap<string, string> | undefined,
+  documentReview: ReadonlySet<string> | undefined,
   targetLanguage: string,
 ) {
   const result = new Map<string, string>();
-  if (!documents || documents.size === 0) return result;
+  const needsReview = new Set<string>();
+  if (!documents || documents.size === 0) return { captions: result, needsReview };
   const byId = new Map(captions.map((caption) => [caption.id, caption]));
   const sources = edits.flatMap((edit) => {
     if (!edit.primaryChanged || edit.translatedChanged) return [];
@@ -310,12 +357,16 @@ function cutForwardDocumentResults(
   });
   for (const chunk of packCaptionDocuments(sources.map((source) => ({ id: source.id, text: source.text })))) {
     const translated = documents.get(chunk.id);
-    if (!translated) continue;
-    cutTranslatedDocument(
-      translated,
+    const cut = cutTranslatedDocument(
+      translated ?? '',
       sources.filter((source) => chunk.sourceIds.includes(source.id)),
       targetLanguage,
-    ).forEach((text, id) => result.set(id, text));
+    );
+    const documentNeedsReview = Boolean(documentReview?.has(chunk.id) || !translated?.trim());
+    cut.forEach((text, id) => {
+      result.set(id, text);
+      if (documentNeedsReview) needsReview.add(id);
+    });
   }
-  return result;
+  return { captions: result, needsReview };
 }

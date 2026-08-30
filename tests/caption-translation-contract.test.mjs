@@ -130,6 +130,9 @@ test('project translation orchestration owns concurrency, provenance, and mixed-
   assert.match(workflow, /projectPrimaryCaptionLanguage/);
   assert.match(workflow, /packCaptionDocuments/);
   assert.match(workflow, /cutTranslatedDocument/);
+  assert.match(workflow, /usableAutomaticTranslation/);
+  assert.match(workflow, /translated\.needsReview\.has/);
+  assert.doesNotMatch(workflow, /translatedText: translated\.captions\.get\(caption\.id\) \?\? caption\.text/);
   assert.match(workflow, /provider: \{ id: 'manual' \}/);
   assert.match(workflow, /translated\.provider/);
   assert.match(workflow, /session\.provider/);

@@ -61,7 +61,7 @@ export type PairedCaptionTextUpdate = {
   sourceCaptionId: string;
   primaryText?: string;
   translatedText?: string;
-  translationStatus?: Extract<TranslationCaptionStatus, 'translated' | 'reviewed'>;
+  translationStatus?: Extract<TranslationCaptionStatus, 'pending' | 'translated' | 'reviewed' | 'stale'>;
   updatedAt?: string;
 };
 

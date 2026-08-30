@@ -97,6 +97,17 @@ test('whole-script translation packs captions then cuts the result back to the o
   assert.ok((cut.get('c1') ?? '').includes('你'));
 });
 
+test('document cutting never copies source-language text into empty translation slots', () => {
+  const captions = [
+    { id: 'c1', text: 'Hello world.', startMs: 0, endMs: 1_000 },
+    { id: 'c2', text: 'How are you today?', startMs: 1_100, endMs: 2_400 },
+  ];
+  const empty = cutTranslatedDocument('', captions, 'zh-Hans');
+  assert.deepEqual([...empty.values()], ['', '']);
+  const single = cutTranslatedDocument('', [{ id: 'c1', text: 'Hello world.', startMs: 0, endMs: 1_000 }], 'zh-Hans');
+  assert.equal(single.get('c1'), '');
+});
+
 test('document packing respects the model chunk budget without splitting a caption', () => {
   const captions = [
     { id: 'a', text: 'A'.repeat(900) },
