@@ -456,8 +456,8 @@ async function repairChineseTranslations(
   run: ActiveTranslation,
   modelUri: string,
   prepared: {
-    sourceLanguage: string;
-    targetLanguage: string;
+    sourceLanguage: EnglishChineseCaptionLanguage;
+    targetLanguage: EnglishChineseCaptionLanguage;
     captions: NaturalCaptionTranslationInput[];
   }[],
   translatedById: Map<string, string>,
@@ -529,8 +529,8 @@ async function translateWithNative(
   modelUri: string,
   operations: {
     id: string;
-    sourceLanguage: string;
-    targetLanguage: string;
+    sourceLanguage: EnglishChineseCaptionLanguage;
+    targetLanguage: EnglishChineseCaptionLanguage;
     batches: { captions: NaturalCaptionTranslationInput[]; contextBefore?: string; contextAfter?: string; }[];
   }[],
 ) {
