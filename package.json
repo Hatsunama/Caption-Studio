@@ -8,7 +8,7 @@
     "url": "https://github.com/Hatsunama/Caption-Studio.git"
   },
   "dependencies": {
-    "@react-navigation/native": "^7.3.16",
+    "@react-navigation/native": "^7.3.18",
     "caption-diagnostics": "file:modules/caption-diagnostics",
     "caption-media": "file:modules/caption-media",
     "caption-translation": "file:modules/caption-translation",
