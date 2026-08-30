@@ -1,5 +1,6 @@
 package app.captionstudio.media
 
+import androidx.media3.common.C
 import kotlin.math.sqrt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -7,6 +8,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TimelineTransitionTimelineTest {
+  @Test
+  fun dynamicGainProvidersDeclareEveryUnityRegionBoundary() {
+    assertEquals(12_346L, dynamicUnityRegionEnd(12_345L, 1f))
+    assertEquals(C.TIME_UNSET, dynamicUnityRegionEnd(12_345L, 0.999f))
+  }
+
   @Test
   fun transitionUsesAdvancingRecoverableFramesOnBothSidesOfTheCut() {
     val outgoing = clip(

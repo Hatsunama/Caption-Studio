@@ -149,7 +149,18 @@ internal class TimelineVideoExporter(private val context: Context) {
               }
 
               override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
-                fail(task, "E_VIDEO_EXPORT", exportException.message ?: "Video export failed", exportException)
+                val cause = exportException.cause
+                val detail = cause?.message?.takeIf { it.isNotBlank() }
+                val message = buildString {
+                  append("Video export failed (")
+                  append(exportException.errorCodeName)
+                  append(')')
+                  if (detail != null) {
+                    append(": ")
+                    append(detail)
+                  }
+                }
+                fail(task, "E_VIDEO_EXPORT", message, exportException)
               }
             })
             .build()
@@ -1230,7 +1241,8 @@ private class TimelineClipGainProvider(
     return (clip.volume * min(userFadeIn, userFadeOut) * transitionGain).toFloat().coerceIn(0f, 1f)
   }
 
-  override fun isUnityUntil(samplePosition: Long, sampleRate: Int) = C.TIME_UNSET
+  override fun isUnityUntil(samplePosition: Long, sampleRate: Int) =
+    dynamicUnityRegionEnd(samplePosition, getGainFactorAtSamplePosition(samplePosition, sampleRate))
 }
 
 private class ClipGainProvider(
@@ -1246,8 +1258,12 @@ private class ClipGainProvider(
     return (volume * min(fadeIn, fadeOut)).toFloat().coerceIn(0f, 1f)
   }
 
-  override fun isUnityUntil(samplePosition: Long, sampleRate: Int) = C.TIME_UNSET
+  override fun isUnityUntil(samplePosition: Long, sampleRate: Int) =
+    dynamicUnityRegionEnd(samplePosition, getGainFactorAtSamplePosition(samplePosition, sampleRate))
 }
+
+internal fun dynamicUnityRegionEnd(samplePosition: Long, gain: Float) =
+  if (gain == 1f) samplePosition + 1L else C.TIME_UNSET
 
 private fun TimelineRenderPlan.textStyles() = sequence {
   captions.forEach { caption ->
