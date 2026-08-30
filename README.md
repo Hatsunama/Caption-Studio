@@ -31,21 +31,62 @@ termux-open ~/storage/downloads/caption-studio-android.apk
 
 When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a chooser, select Android's package installer. Then allow **Install unknown apps** for Termux when Android asks.
 
-### From a Windows PC with the phone plugged in
+### Recommended: install from a Windows PC with the phone plugged in
 
 1. Install Google's [Android SDK Platform Tools](https://developer.android.com/tools/releases/platform-tools).
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
-4. Plug in the phone and choose **File transfer** if Android shows a USB-mode prompt.
-5. Download **caption-studio-android.apk** from the [latest release](https://github.com/Hatsunama/Caption-Studio/releases/latest) to the PC.
-6. Open PowerShell in the folder containing the APK and run:
+4. Plug in the phone.
+5. Run this PowerShell script. Change `$Serial` if `adb devices` shows a different device serial.
 
 ```powershell
-adb devices
-adb install -r .\caption-studio-android.apk
+$ErrorActionPreference = 'Stop'
+
+$Serial = 'SM02G4061962301'
+$Version = '1.4.2'
+$FileName = 'caption-studio-android.apk'
+$Url = "https://github.com/Hatsunama/Caption-Studio/releases/download/v$Version/$FileName"
+$ExpectedHash = 'BEB3A1A86A16152ED6E09F3574E9E0E0FE6D8A519544B81351F12B2354886038'
+$Package = 'com.hatsunama.captionstudio'
+$Apk = Join-Path $env:TEMP "caption-studio-$Version-android.apk"
+
+try {
+    adb devices
+
+    Invoke-WebRequest -Uri $Url -OutFile $Apk
+
+    $ActualHash = (Get-FileHash -LiteralPath $Apk -Algorithm SHA256).Hash
+    if ($ActualHash -ne $ExpectedHash) {
+        throw "Checksum mismatch. Refusing installation."
+    }
+
+    adb -s $Serial install -r --no-streaming $Apk
+    if ($LASTEXITCODE -ne 0) {
+        throw "ADB install failed."
+    }
+
+    adb -s $Serial shell dumpsys package $Package |
+        Select-String 'versionName=|versionCode=|targetSdk='
+}
+finally {
+    if (Test-Path -LiteralPath $Apk) {
+        [IO.File]::Delete($Apk)
+    }
+}
 ```
 
-The first time `adb devices` runs, unlock the phone. Tap **Allow** on **Allow USB debugging?** and optionally check **Always allow from this computer**. Run the two commands again if the device initially says `unauthorized`.
+The first time `adb devices` runs, unlock the phone. Tap **Allow** on **Allow USB debugging?** and optionally check **Always allow from this computer**. Run the script again if the device initially says `unauthorized`.
+
+If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the phone already has Caption Studio installed with a different signing key. To try preserving the phone's local Caption Studio data, rerun the script with these two lines inserted immediately before the `adb -s $Serial install -r --no-streaming $Apk` line:
+
+```powershell
+adb -s $Serial uninstall -k $Package
+if ($LASTEXITCODE -ne 0) {
+    throw "ADB uninstall failed."
+}
+```
+
+If that still fails, uninstall Caption Studio from the phone first, then run the recommended script again. A clean uninstall removes that phone's local Caption Studio drafts and projects.
 
 ## What the current Android build includes
 
