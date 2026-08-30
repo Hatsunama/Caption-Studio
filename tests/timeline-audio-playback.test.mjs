@@ -61,10 +61,10 @@ test('normal playback tolerates small clock drift but resynchronizes larger drif
   await controller.whenIdle();
   assert.deepEqual(player.seekTargets, [1]);
 
-  controller.synchronize([target({ targetSeconds: 2, playing: true })]);
+  controller.synchronize([target({ targetSeconds: 2.1, playing: true })]);
   await controller.whenIdle();
-  assert.deepEqual(player.seekTargets, [1, 2]);
-  assert.deepEqual(player.playPositions, [1, 2]);
+  assert.deepEqual(player.seekTargets, [1, 2.1]);
+  assert.deepEqual(player.playPositions, [1]);
   controller.dispose();
 });
 

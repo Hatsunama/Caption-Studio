@@ -972,6 +972,29 @@ test('emoji reactions change with the spoken word', () => {
   assert.equal(new Set(reactionEmojis('camera')).size, 6);
 });
 
+test('an unexpected native pause while playback is intended resumes instead of killing the timeline', () => {
+  const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
+  const playingChange = controller.slice(
+    controller.indexOf("useEventListener(player, 'playingChange'"),
+    controller.indexOf("useEventListener(player, 'statusChange'"),
+  );
+  assert.match(playingChange, /if \(!playIntentRef\.current/);
+  assert.match(playingChange, /player\.play\(\)/);
+  assert.doesNotMatch(playingChange, /stopTransport\(\);\s*$/);
+});
+
+test('extract audio offers project videos by first frame before the system picker', () => {
+  const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
+  const sheet = readFileSync(new URL('../src/components/editor/extract-audio-source-sheet.tsx', import.meta.url), 'utf8');
+  const workflows = readFileSync(new URL('../src/services/project-workflows.ts', import.meta.url), 'utf8');
+  assert.match(editor, /<ExtractAudioSourceSheet/);
+  assert.match(sheet, /source\.thumbnailUri/);
+  assert.match(sheet, /source\.displayName/);
+  assert.match(sheet, /formatDuration\(source\.durationMs\)/);
+  assert.match(workflows, /appendProjectVideoAudioToProject/);
+  assert.match(workflows, /for \(const source of loadedProject\.sources\)/);
+});
+
 function clip(overrides = {}) {
   const sourceStartMs = overrides.sourceStartMs ?? 0;
   const sourceEndMs = overrides.sourceEndMs ?? 1_000;

@@ -125,16 +125,12 @@ export class TimelineAudioPlaybackController {
       }
 
       const driftMs = Math.abs(managed.player.currentTime - target.targetSeconds) * 1_000;
-      const driftLimitMs = target.playing ? 300 : 5;
+      const driftLimitMs = target.playing ? 800 : 5;
       const needsSeek = !managed.positioned
         || managed.playing !== target.playing
         || !Number.isFinite(driftMs)
         || driftMs > driftLimitMs;
       if (needsSeek) {
-        if (managed.playing) {
-          managed.player.pause();
-          managed.playing = false;
-        }
         await managed.player.seekTo(target.targetSeconds);
         if (managed.disposed || this.disposed) return;
         managed.positioned = true;

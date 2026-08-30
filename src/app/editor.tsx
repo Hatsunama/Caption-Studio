@@ -22,6 +22,7 @@ import { BackgroundTools } from '@/components/editor/background-tools';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
 import { FontBrowser } from '@/components/editor/font-browser';
+import { ExtractAudioSourceSheet } from '@/components/editor/extract-audio-source-sheet';
 import { ImageLayerOverlay } from '@/components/editor/image-layer-overlay';
 import { LayerTimeline } from '@/components/editor/layer-timeline';
 import { MediaLoadingOverlay } from '@/components/media-loading-overlay';
@@ -105,6 +106,7 @@ import { validateProjectSources } from '@/services/project-media';
 import {
   appendVideosToProject,
   appendAudioToProject,
+  appendProjectVideoAudioToProject,
   cancelProjectCaptionGeneration,
   checkpointEditorProject,
   discardEditorSession,
@@ -220,6 +222,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [exportKind, setExportKind] = useState<'video' | 'subtitle'>('video');
   const [exportProgress, setExportProgress] = useState<TimelineVideoExportProgress>();
   const [animationScope, setAnimationScope] = useState<StyleScope>('all');
+  const [extractAudioOpen, setExtractAudioOpen] = useState(false);
+  const [extractAudioBusy, setExtractAudioBusy] = useState(false);
   const undoStackRef = useRef<CaptionProject[]>([]);
   const redoStackRef = useRef<CaptionProject[]>([]);
   const interactionStartRef = useRef<CaptionProject | undefined>(undefined);
@@ -237,7 +241,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     || dualCaptionEditorOpen
     || progress
     || mediaProgress
-    || exporting,
+    || exporting
+    || extractAudioOpen,
   );
   const runtimePolicy = useEditorRuntimePolicy(blockingUi);
 
@@ -758,6 +763,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       transport.pause();
       setSelectedTranslationTrackId(existing.id);
       setDualCaptionEditorOpen(true);
+      const pendingIds = existing.cues
+        .filter((cue) => cue.status === 'pending' || cue.status === 'stale')
+        .map((cue) => cue.sourceCaptionId);
+      if (pendingIds.length > 0 && !translationController.busy) {
+        void translationController.refresh(existing.id, pendingIds, projectRef.current);
+      }
       return;
     }
     const downloadSize = formatMegabytes(NATURAL_TRANSLATION_MODEL.downloadBytes);
@@ -788,10 +799,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         transport.pause();
         setDualCaptionEditorOpen(true);
       });
+      const translationBaseline = projectRef.current;
       void translationController.refresh(
         prepared.trackId,
-        visibleTimelineCaptions(prepared.project.captions).map((caption) => caption.id),
-        prepared.project,
+        visibleTimelineCaptions(translationBaseline.captions).map((caption) => caption.id),
+        translationBaseline,
       );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Dual subtitles could not be enabled.');
@@ -1168,6 +1180,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const addAudio = async (origin: 'audio-file' | 'video-audio') => {
     transport.pause();
     setError(undefined);
+    if (origin === 'video-audio') {
+      setExtractAudioOpen(true);
+      return;
+    }
     try {
       const before = projectRef.current;
       const result = await appendAudioToProject(before, currentMs, origin);
@@ -1182,6 +1198,32 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       setActiveTool('audio');
     } catch (caught) {
       Alert.alert('Could not add audio', caught instanceof Error ? caught.message : 'The selected media could not be added.');
+    }
+  };
+
+  const addProjectVideoAudio = async (sourceId?: string) => {
+    transport.pause();
+    setExtractAudioBusy(true);
+    setError(undefined);
+    try {
+      const before = projectRef.current;
+      const result = sourceId
+        ? await appendProjectVideoAudioToProject(before, currentMs, sourceId)
+        : await appendAudioToProject(before, currentMs, 'video-audio');
+      if (!result) return;
+      trackSessionMedia(result.project);
+      pushUndo(before);
+      projectRef.current = result.project;
+      setProject(result.project);
+      setSelectedAudioClipId(result.clip.id);
+      setSelectedClipId(undefined);
+      setSelectedCaptionId(undefined);
+      setActiveTool('audio');
+      setExtractAudioOpen(false);
+    } catch (caught) {
+      Alert.alert('Could not extract audio', caught instanceof Error ? caught.message : 'The selected video could not be used.');
+    } finally {
+      setExtractAudioBusy(false);
     }
   };
 
@@ -1915,6 +1957,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         hasSelectedCaption={Boolean(selectedCaptionId)}
         onChoose={chooseStyleScope}
         onClose={() => setPendingChange(undefined)}
+      />
+      <ExtractAudioSourceSheet
+        visible={extractAudioOpen}
+        sources={project.sources}
+        busy={extractAudioBusy}
+        onChoose={(sourceId) => { void addProjectVideoAudio(sourceId); }}
+        onChooseAnother={() => { void addProjectVideoAudio(); }}
+        onClose={() => setExtractAudioOpen(false)}
       />
       <FontBrowser
         visible={fontBrowserOpen}

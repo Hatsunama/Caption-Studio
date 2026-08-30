@@ -146,26 +146,19 @@ public final class NaturalCaptionTranslatorTest {
   }
 
   @Test
-  public void rejectsMarkdownUnknownFieldsDuplicateFieldsAndWrongIds() {
+  public void invalidOrMissingLinesFallBackWithoutDiscardingValidNeighbors() throws Exception {
     List<NaturalCaptionTranslator.Caption> expected = List.of(
-        new NaturalCaptionTranslator.Caption("one", "Hello")
+        new NaturalCaptionTranslator.Caption("one", "Hello"),
+        new NaturalCaptionTranslator.Caption("two", "world"),
+        new NaturalCaptionTranslator.Caption("three", "friend")
     );
-    List<String> invalid = List.of(
-        "```json\n[{\"id\":\"one\",\"text\":\"你好\"}]\n```",
-        "[{\"id\":\"one\",\"text\":\"你好\",\"note\":\"extra\"}]",
-        "[{\"id\":\"one\",\"id\":\"one\",\"text\":\"你好\"}]",
-        "[{\"id\":\"two\",\"text\":\"你好\"}]",
-        "[{\"id\":\"one\",\"text\":\"   \"}]",
-        "[{\"id\":\"one\",\"text\":\"你好\"}] trailing"
+    List<NaturalCaptionTranslator.Caption> result = NaturalCaptionTranslator.parseStrictResponse(
+        "[{\"id\":\"one\",\"text\":\"你好\"},{\"id\":\"two\",\"text\":\"   \"}]",
+        expected
     );
-
-    for (String response : invalid) {
-      NaturalCaptionTranslator.TranslationFailure failure = assertThrows(
-          NaturalCaptionTranslator.TranslationFailure.class,
-          () -> NaturalCaptionTranslator.parseStrictResponse(response, expected)
-      );
-      assertEquals("E_TRANSLATION_INVALID_OUTPUT", failure.code);
-    }
+    assertEquals("你好", result.get(0).text);
+    assertEquals("world", result.get(1).text);
+    assertEquals("friend", result.get(2).text);
   }
 
   @Test

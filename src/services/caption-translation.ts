@@ -143,6 +143,7 @@ export async function translateNaturalCaptionOperations(options: {
     throw new Error('A natural translation session must contain between 1 and 8 operations.');
   }
   const operationIds = new Set<string>();
+  let nextCaptionKey = 1;
   const prepared = options.operations.map((operation) => {
     const id = operation.id.trim();
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/.test(id) || operationIds.has(id)) {
@@ -152,10 +153,24 @@ export async function translateNaturalCaptionOperations(options: {
     const sourceLanguage: EnglishChineseCaptionLanguage = normalizeNaturalCaptionLanguage(operation.sourceLanguage);
     const targetLanguage: EnglishChineseCaptionLanguage = normalizeNaturalCaptionLanguage(operation.targetLanguage);
     if (sourceLanguage === targetLanguage) throw new Error('Choose a different language for the second subtitle track.');
-    const captions = validateTranslationUnits(operation.captions);
-    const fullContext = operation.allCaptions?.length
-      ? validateTranslationUnits(operation.allCaptions)
-      : captions;
+    const originalCaptions = validateTranslationUnits(operation.captions);
+    const originalContext = operation.allCaptions?.length
+      ? validateTranslationUnits(operation.allCaptions.filter((caption) => caption.text.trim().length > 0))
+      : originalCaptions;
+    const keyByOriginalId = new Map<string, string>();
+    for (const caption of originalContext) keyByOriginalId.set(caption.id, `c${nextCaptionKey++}`);
+    for (const caption of originalCaptions) {
+      if (!keyByOriginalId.has(caption.id)) keyByOriginalId.set(caption.id, `c${nextCaptionKey++}`);
+    }
+    const captions = originalCaptions.map((caption) => ({
+      id: keyByOriginalId.get(caption.id)!,
+      text: caption.text,
+    }));
+    const fullContext = originalContext.map((caption) => ({
+      id: keyByOriginalId.get(caption.id)!,
+      text: caption.text,
+    }));
+    const originalIdByKey = new Map(originalCaptions.map((caption) => [keyByOriginalId.get(caption.id)!, caption.id]));
     const contextIndex = new Map(fullContext.map((caption, index) => [caption.id, index]));
     const batches = createBatches(captions).map((batch) => {
       const context = batchContext(fullContext, contextIndex, batch);
@@ -165,7 +180,7 @@ export async function translateNaturalCaptionOperations(options: {
         contextAfter: context.after,
       };
     });
-    return { id, sourceLanguage, targetLanguage, captions, batches };
+    return { id, sourceLanguage, targetLanguage, originalCaptions, originalIdByKey, captions, batches };
   });
   const allCaptionIds = new Set<string>();
   let totalCaptions = 0;
@@ -241,7 +256,7 @@ export async function translateNaturalCaptionOperations(options: {
         translatedOperations.set(operation.id, new Map(operation.captions.map((caption) => {
           const text = translatedById.get(caption.id);
           if (!text) throw new Error('The local model returned an incomplete translation. No captions were changed.');
-          return [caption.id, text];
+          return [operation.originalIdByKey.get(caption.id)!, text];
         })));
       }
       return {
@@ -358,7 +373,7 @@ function validateTranslationUnits(units: NaturalTranslationUnit[]) {
   return units.map((unit) => {
     const id = unit.id.trim();
     const text = unit.text.normalize('NFC').trim();
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/.test(id)) throw new Error('A subtitle has an invalid translation identifier.');
+    if (!id || captionTextLength(id) > 256) throw new Error('A subtitle has an invalid internal identity.');
     if (ids.has(id)) throw new Error(`Subtitle ${id} was included more than once.`);
     if (!text) throw new Error(`Subtitle ${id} has no text to translate.`);
     if (captionTextLength(text) > 500) throw new Error(`Subtitle ${id} is too long. Split it before translating.`);
@@ -407,17 +422,16 @@ function validateNativeResult(
   expected: NaturalCaptionTranslationInput[],
   translated: { id: string; text: string }[],
 ) {
-  if (translated.length !== expected.length) throw new Error('The local model returned an incomplete translation. No captions were changed.');
-  const expectedIds = new Set(expected.map((caption) => caption.id));
-  const seen = new Set<string>();
-  return translated.map((caption) => {
+  const translatedById = new Map<string, string>();
+  for (const caption of translated) {
+    if (translatedById.has(caption.id)) continue;
     const text = caption.text.normalize('NFC').trim();
-    if (!expectedIds.has(caption.id) || seen.has(caption.id) || !text || captionTextLength(text) > 2_000) {
-      throw new Error('The local model returned an invalid translation. No captions were changed.');
-    }
-    seen.add(caption.id);
-    return { id: caption.id, text };
-  });
+    if (text && captionTextLength(text) <= 2_000) translatedById.set(caption.id, text);
+  }
+  return expected.map((caption) => ({
+    id: caption.id,
+    text: translatedById.get(caption.id) ?? caption.text,
+  }));
 }
 
 function pollNativeProgress(

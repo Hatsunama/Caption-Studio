@@ -730,18 +730,20 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       List<Caption> expectedCaptions
   ) throws TranslationFailure {
     if (response == null || response.isEmpty() || response.length() > MAX_OUTPUT_CHARACTERS) {
-      throw invalidOutput();
+      return sourceFallback(expectedCaptions);
     }
-    List<Caption> translated = new ArrayList<>(expectedCaptions.size());
+    LinkedHashMap<String, Caption> validById = new LinkedHashMap<>();
+    LinkedHashMap<String, Caption> expectedById = new LinkedHashMap<>();
+    for (Caption expected : expectedCaptions) expectedById.put(expected.id, expected);
     int totalCharacters = 0;
     try (JsonReader reader = new JsonReader(new StringReader(response))) {
       reader.setStrictness(Strictness.STRICT);
-      if (reader.peek() != JsonToken.BEGIN_ARRAY) throw invalidOutput();
+      if (reader.peek() != JsonToken.BEGIN_ARRAY) return sourceFallback(expectedCaptions);
       reader.beginArray();
-      int index = 0;
       while (reader.hasNext()) {
-        if (index >= expectedCaptions.size() || reader.peek() != JsonToken.BEGIN_OBJECT) {
-          throw invalidOutput();
+        if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+          reader.skipValue();
+          continue;
         }
         reader.beginObject();
         String id = null;
@@ -749,38 +751,41 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         while (reader.hasNext()) {
           String field = reader.nextName();
           if ("id".equals(field) && id == null) {
-            if (reader.peek() != JsonToken.STRING) throw invalidOutput();
-            id = reader.nextString();
+            if (reader.peek() == JsonToken.STRING) id = reader.nextString();
+            else reader.skipValue();
           } else if ("text".equals(field) && text == null) {
-            if (reader.peek() != JsonToken.STRING) throw invalidOutput();
-            text = reader.nextString();
+            if (reader.peek() == JsonToken.STRING) text = reader.nextString();
+            else reader.skipValue();
           } else {
-            throw invalidOutput();
+            reader.skipValue();
           }
         }
         reader.endObject();
-        Caption expected = expectedCaptions.get(index);
-        if (!expected.id.equals(id)
-            || text == null
-            || isBlankText(text)
-            || textCharacterCount(text) > MAX_OUTPUT_TEXT_CHARACTERS) {
-          throw invalidOutput();
+        if (id != null && expectedById.containsKey(id) && !validById.containsKey(id)
+            && text != null && !isBlankText(text)
+            && textCharacterCount(text) <= MAX_OUTPUT_TEXT_CHARACTERS) {
+          totalCharacters += textCharacterCount(text);
+          if (totalCharacters <= MAX_TOTAL_OUTPUT_CHARACTERS) {
+            validById.put(id, new Caption(id, text));
+          }
         }
-        totalCharacters += textCharacterCount(text);
-        if (totalCharacters > MAX_TOTAL_OUTPUT_CHARACTERS) throw invalidOutput();
-        translated.add(new Caption(id, text));
-        index += 1;
       }
       reader.endArray();
-      if (reader.peek() != JsonToken.END_DOCUMENT || translated.size() != expectedCaptions.size()) {
-        throw invalidOutput();
-      }
-      return translated;
-    } catch (TranslationFailure error) {
-      throw error;
+      if (reader.peek() != JsonToken.END_DOCUMENT) return sourceFallback(expectedCaptions);
     } catch (IOException | IllegalStateException error) {
-      throw invalidOutput();
+      return sourceFallback(expectedCaptions);
     }
+    List<Caption> resolved = new ArrayList<>(expectedCaptions.size());
+    for (Caption expected : expectedCaptions) {
+      resolved.add(validById.getOrDefault(expected.id, new Caption(expected.id, expected.text)));
+    }
+    return resolved;
+  }
+
+  private static List<Caption> sourceFallback(List<Caption> expectedCaptions) {
+    List<Caption> fallback = new ArrayList<>(expectedCaptions.size());
+    for (Caption expected : expectedCaptions) fallback.add(new Caption(expected.id, expected.text));
+    return fallback;
   }
 
   private static Map<String, Object> resultMap(

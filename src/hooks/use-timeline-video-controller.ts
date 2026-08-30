@@ -264,7 +264,7 @@ export function useTimelineVideoController(
       advanceFrom(entry);
       return;
     }
-    stopTransport();
+    player.play();
   });
 
   useEventListener(player, 'statusChange', ({ status, error }) => {

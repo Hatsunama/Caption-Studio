@@ -203,28 +203,48 @@ export async function pickVideoAndExtractAudio(projectId: string, audioId: strin
   const asset = result.assets[0];
   const sourceInfo = await probeVideoForImport(asset.uri, asset.name);
   await CaptionMedia.persistReadPermission(asset.uri);
-  let outputUri: string | undefined;
   try {
-    if (!sourceInfo.hasAudio) throw new Error(`${asset.name} does not contain an audio track.`);
-    const estimatedAudioBytes = Math.ceil(sourceInfo.durationMs / 1000) * 64 * 1024;
-    await requireFreeSpace(estimatedAudioBytes + MIN_IMPORT_HEADROOM_BYTES, 'extract this audio');
-    outputUri = await prepareExtractedAudioUri(projectId, audioId);
-    const extraction = await CaptionMedia.extractAudioTrack(asset.uri, outputUri);
+    return await extractAudioFromVideo(projectId, audioId, asset.uri, asset.name, sourceInfo);
+  } finally {
+    await releaseReadPermissions([asset.uri]);
+  }
+}
+
+export async function extractAudioFromProjectVideo(
+  projectId: string,
+  audioId: string,
+  source: ProjectVideoSource,
+): Promise<ProjectAudioSource> {
+  const sourceInfo = await probeVideoForImport(source.uri, source.displayName);
+  return extractAudioFromVideo(projectId, audioId, source.uri, source.displayName, sourceInfo);
+}
+
+async function extractAudioFromVideo(
+  projectId: string,
+  audioId: string,
+  sourceUri: string,
+  displayName: string,
+  sourceInfo: Awaited<ReturnType<typeof probeVideoForImport>>,
+) {
+  if (!sourceInfo.hasAudio) throw new Error(`${displayName} does not contain an audio track.`);
+  const estimatedAudioBytes = Math.ceil(sourceInfo.durationMs / 1000) * 64 * 1024;
+  await requireFreeSpace(estimatedAudioBytes + MIN_IMPORT_HEADROOM_BYTES, 'extract this audio');
+  const outputUri = await prepareExtractedAudioUri(projectId, audioId);
+  try {
+    const extraction = await CaptionMedia.extractAudioTrack(sourceUri, outputUri);
     const storedInfo = await CaptionMedia.getMediaInfo(outputUri);
     return {
       id: audioId,
       uri: outputUri,
-      storageMode: 'copied',
-      displayName: `${cleanAudioName(asset.name)} audio`,
+      storageMode: 'copied' as const,
+      displayName: `${cleanAudioName(displayName)} audio`,
       durationMs: storedInfo.durationMs || extraction.durationMs,
       mimeType: extraction.mimeType,
-      origin: 'video-audio',
+      origin: 'video-audio' as const,
     };
   } catch (error) {
-    if (outputUri) await deleteProjectOwnedFiles(projectId, [outputUri]).catch(() => undefined);
+    await deleteProjectOwnedFiles(projectId, [outputUri]).catch(() => undefined);
     throw error;
-  } finally {
-    await releaseReadPermissions([asset.uri]);
   }
 }
 

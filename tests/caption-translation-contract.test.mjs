@@ -127,3 +127,15 @@ test('project translation orchestration owns concurrency, provenance, and mixed-
   assert.match(workflow, /session\.provider/);
   assert.doesNotMatch(workflow, /modelRevision:|promptVersion:/);
 });
+
+test('timeline identities are mapped to short model-session keys and pending dual tracks retry on open', async () => {
+  const [service, editor] = await Promise.all([
+    readFile(new URL('src/services/caption-translation.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/app/editor.tsx', repositoryRoot), 'utf8'),
+  ]);
+  assert.match(service, /keyByOriginalId\.set\(caption\.id, `c\$\{nextCaptionKey\+\+\}`\)/);
+  assert.match(service, /originalIdByKey/);
+  assert.doesNotMatch(service, /invalid translation identifier/);
+  assert.match(editor, /cue\.status === 'pending' \|\| cue\.status === 'stale'/);
+  assert.match(editor, /translationController\.refresh\(existing\.id, pendingIds, projectRef\.current\)/);
+});

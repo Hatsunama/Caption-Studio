@@ -23,6 +23,7 @@ import {
   pickAndStoreAudio,
   pickLinkedVideos,
   pickVideoAndExtractAudio,
+  extractAudioFromProjectVideo,
   type MediaImportProgress,
 } from '@/services/media-import';
 import {
@@ -81,11 +82,26 @@ export type EditorMediaLedger = {
 };
 
 export async function loadProjectForEditing(projectId: string) {
-  const project = await getProject(projectId);
+  let project = await getProject(projectId);
   if (project) {
+    const loadedProject = project;
     await runBestEffortCleanup('project media reconciliation', [
-      reconcileProjectOwnedFiles(project.id, collectProjectOwnedUris(project)),
+      reconcileProjectOwnedFiles(loadedProject.id, collectProjectOwnedUris(loadedProject)),
     ]);
+    const sources = [];
+    for (const source of loadedProject.sources) {
+      const thumbnailUri = await ensureProjectThumbnail({
+        projectId: loadedProject.id,
+        sourceId: source.id,
+        videoUri: source.uri,
+        thumbnailUri: source.thumbnailUri,
+      });
+      sources.push({ ...source, thumbnailUri: thumbnailUri ?? source.thumbnailUri });
+    }
+    if (sources.some((source, index) => source.thumbnailUri !== loadedProject.sources[index].thumbnailUri)) {
+      project = { ...loadedProject, sources };
+      await saveProject(project);
+    }
   }
   return project;
 }
@@ -172,6 +188,35 @@ export async function generateAndSaveProjectCaptions(
     session.throwIfCancelled();
     return generated;
   });
+}
+
+export async function appendProjectVideoAudioToProject(
+  project: CaptionProject,
+  currentMs: number,
+  videoSourceId: string,
+) {
+  const videoSource = project.sources.find((source) => source.id === videoSourceId);
+  if (!videoSource) throw new Error('That project video is no longer available.');
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const source = await extractAudioFromProjectVideo(project.id, `audio-source-${nonce}`, videoSource);
+  const result = addAudioSourceToProject(
+    project,
+    source,
+    `audio-clip-${nonce}`,
+    currentMs,
+    totalClipDuration(project.clips),
+  );
+  if (!result) {
+    await runBestEffortCleanup('unused extracted audio', [deleteProjectOwnedFiles(project.id, [source.uri])]);
+    throw new Error('Move the playhead earlier so the audio has room on the video timeline.');
+  }
+  try {
+    await saveProject(result.project);
+  } catch (error) {
+    await runBestEffortCleanup('failed extracted audio append', [deleteProjectOwnedFiles(project.id, [source.uri])]);
+    throw error;
+  }
+  return result;
 }
 
 export function cancelProjectCaptionGeneration() {
