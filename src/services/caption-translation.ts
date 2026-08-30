@@ -50,6 +50,7 @@ export type NaturalCaptionTranslationProvider = {
 
 export type NaturalCaptionTranslation = {
   captions: ReadonlyMap<string, string>;
+  needsReview: ReadonlySet<string>;
   provider: NaturalCaptionTranslationProvider;
 };
 
@@ -63,6 +64,7 @@ export type NaturalCaptionTranslationOperation = {
 
 export type NaturalCaptionTranslationSession = {
   operations: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  needsReviewByOperation: ReadonlyMap<string, ReadonlySet<string>>;
   provider: NaturalCaptionTranslationProvider;
 };
 
@@ -128,7 +130,11 @@ export async function translateNaturalCaptionBatch(options: {
   });
   const captions = session.operations.get(operationId);
   if (!captions) throw new Error('The local translation session did not return its requested operation.');
-  return { captions, provider: session.provider };
+  return {
+    captions,
+    needsReview: session.needsReviewByOperation.get(operationId) ?? new Set<string>(),
+    provider: session.provider,
+  };
 }
 
 export async function translateNaturalCaptionOperations(options: {
@@ -217,14 +223,13 @@ export async function translateNaturalCaptionOperations(options: {
     });
     const nativeProgress = pollNativeProgress(run, options.onProgress);
     try {
-      const result = await CaptionTranslation.translateNaturalCaptions(model.uri, {
-        operations: prepared.map((operation) => ({
-          id: operation.id,
-          sourceLanguage: operation.sourceLanguage,
-          targetLanguage: operation.targetLanguage,
-          batches: operation.batches,
-        })),
-      });
+      const nativeRequest = { operations: prepared.map((operation) => ({
+        id: operation.id,
+        sourceLanguage: operation.sourceLanguage,
+        targetLanguage: operation.targetLanguage,
+        batches: operation.batches,
+      })) };
+      const result = await translateWithNative(model.uri, nativeRequest.operations);
       throwIfCancelled(run);
       if (
         result.offline !== true
@@ -250,17 +255,30 @@ export async function translateNaturalCaptionOperations(options: {
       });
       const expectedCaptions = prepared.flatMap((operation) => operation.captions);
       const translated = validateNativeResult(expectedCaptions, result.captions);
-      const translatedById = new Map(translated.map((caption) => [caption.id, caption.text]));
+      const repaired = await repairChineseTranslations(
+        run,
+        model.uri,
+        prepared,
+        new Map(translated.map((caption) => [caption.id, caption.text])),
+        options.onProgress,
+      );
+      const translatedById = repaired.translatedById;
       const translatedOperations = new Map<string, ReadonlyMap<string, string>>();
+      const needsReviewByOperation = new Map<string, ReadonlySet<string>>();
       for (const operation of prepared) {
+        const needsReview = new Set<string>();
         translatedOperations.set(operation.id, new Map(operation.captions.map((caption) => {
           const text = translatedById.get(caption.id);
           if (!text) throw new Error('The local model returned an incomplete translation. No captions were changed.');
-          return [operation.originalIdByKey.get(caption.id)!, text];
+          const originalId = operation.originalIdByKey.get(caption.id)!;
+          if (repaired.needsReview.has(caption.id)) needsReview.add(originalId);
+          return [originalId, text];
         })));
+        needsReviewByOperation.set(operation.id, needsReview);
       }
       return {
         operations: translatedOperations,
+        needsReviewByOperation,
         provider: {
           id: 'litertlm',
           modelId: result.modelId,
@@ -434,14 +452,112 @@ function validateNativeResult(
   }));
 }
 
+async function repairChineseTranslations(
+  run: ActiveTranslation,
+  modelUri: string,
+  prepared: {
+    sourceLanguage: string;
+    targetLanguage: string;
+    captions: NaturalCaptionTranslationInput[];
+  }[],
+  translatedById: Map<string, string>,
+  onProgress?: (progress: CaptionTranslationProgress) => void,
+) {
+  let updated = new Map(translatedById);
+  const needsReview = new Set<string>();
+  for (const operation of prepared) {
+    if (run.cancelled) return { translatedById: updated, needsReview };
+    if (operation.targetLanguage !== 'zh-Hans' && operation.targetLanguage !== 'zh-Hant') continue;
+
+    let questionables = operation.captions.filter((caption) => isLikelyUntranslatedChinese(
+      caption.text,
+      updated.get(caption.id) ?? caption.text,
+      operation.targetLanguage,
+    ));
+    if (questionables.length === 0) continue;
+
+    let retryResult;
+    try {
+      retryResult = await translateWithNative(modelUri, [{
+        id: 'repair',
+        sourceLanguage: operation.sourceLanguage,
+        targetLanguage: operation.targetLanguage,
+        batches: createBatches(questionables).map((captions) => ({ captions })),
+      }]);
+    } catch {
+      for (const caption of questionables) {
+        updated.set(caption.id, caption.text);
+        needsReview.add(caption.id);
+      }
+      continue;
+    }
+    const validated = validateNativeResult(questionables, retryResult.captions);
+    questionables = questionables.filter((caption) => {
+      const repaired = validated.find((candidate) => candidate.id === caption.id);
+      const text = repaired?.text ?? '';
+      const keep = isLikelyUntranslatedChinese(caption.text, text, operation.targetLanguage);
+      if (keep) {
+        updated.set(caption.id, caption.text);
+        needsReview.add(caption.id);
+        return true;
+      }
+      updated.set(caption.id, text);
+      return false;
+    });
+    onProgress?.({ stage: 'translating', progress: 0.1, detail: 'Checking Chinese translations' });
+  }
+  return { translatedById: updated, needsReview };
+}
+
+function isLikelyUntranslatedChinese(sourceText: string, translatedText: string, targetLanguage: string) {
+  if (targetLanguage !== 'zh-Hans' && targetLanguage !== 'zh-Hant') return false;
+  const source = sourceText.normalize('NFC').trim();
+  const translated = translatedText.normalize('NFC').trim();
+  if (!translated || source === translated) return true;
+  if (!containsChineseText(translated)) {
+    const latinCount = (translated.match(/[A-Za-z]/g) ?? []).length;
+    if (latinCount >= 3 || /^[A-Za-z0-9\s.,!?'\":;()\-–—’”“‘“”'"]+$/.test(translated)) return true;
+  }
+  return false;
+}
+
+function containsChineseText(value: string) {
+  return /[\u3400-\u4DBF\u4E00-\u9FFF]/.test(value);
+}
+
+async function translateWithNative(
+  modelUri: string,
+  operations: {
+    id: string;
+    sourceLanguage: string;
+    targetLanguage: string;
+    batches: { captions: NaturalCaptionTranslationInput[]; contextBefore?: string; contextAfter?: string; }[];
+  }[],
+) {
+  const result = await CaptionTranslation.translateNaturalCaptions(modelUri, { operations });
+  if (
+    result.offline !== true
+    || result.backend !== 'cpu'
+    || result.modelId !== NATURAL_TRANSLATION_MODEL.id
+    || result.promptContract !== 'qwen2.5-caption-json-v1'
+  ) {
+    throw new Error('The local model returned an incomplete translation. No captions were changed.');
+  }
+  return result;
+}
+
 function pollNativeProgress(
   run: ActiveTranslation,
   onProgress?: (progress: CaptionTranslationProgress) => void,
 ) {
+  const startedAt = Date.now();
+  let nativeProgress = 0;
+  let syntheticProgress = 0;
+  let lastEmittedProgress = -1;
   return setInterval(() => {
     if (run.cancelled) return;
     void CaptionTranslation.getNaturalCaptionTranslationProgress().then((native) => {
-      if (run.cancelled || native.stage === 'idle') return;
+      if (run.cancelled) return;
       const stage = native.stage === 'verifying-model'
         ? 'verifying-model'
         : native.stage === 'loading-model'
@@ -450,9 +566,12 @@ function pollNativeProgress(
       const batchDetail = native.totalBatches > 1 && native.stage !== 'verifying-model' && native.stage !== 'loading-model'
         ? ` · batch ${Math.min(native.completedBatches + 1, native.totalBatches)} of ${native.totalBatches}`
         : '';
+      const reported = native.percent == null ? 0 : Math.min(1, Math.max(0, native.percent / 100));
+      nativeProgress = Math.max(nativeProgress, reported);
+      const progress = Math.max(nativeProgress, syntheticProgress);
       onProgress?.({
         stage,
-        progress: native.percent == null ? null : native.percent / 100,
+        progress,
         detail: native.stage === 'verifying-model'
           ? 'Verifying the local natural-language model'
           : native.stage === 'loading-model'
@@ -460,6 +579,20 @@ function pollNativeProgress(
             : `Translating locally${batchDetail}`,
       });
     }).catch(() => undefined);
+
+    const elapsedSinceStart = Date.now() - startedAt;
+    if (elapsedSinceStart >= 3_000 && syntheticProgress < 0.10) {
+      syntheticProgress = Math.min(0.10, 0.05 + Math.floor((elapsedSinceStart - 3_000) / 4_000) * 0.01);
+    }
+    const progress = Math.max(nativeProgress, syntheticProgress);
+    if (progress > lastEmittedProgress && onProgress != null) {
+      lastEmittedProgress = progress;
+      onProgress?.({
+        stage: 'translating',
+        progress,
+        detail: 'Translating locally',
+      });
+    }
   }, 500);
 }
 

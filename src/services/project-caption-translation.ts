@@ -92,7 +92,7 @@ export async function refreshProjectCaptionTranslation(options: {
   return updatePairedCaptionTexts(providerProject, captions.map((caption) => ({
     trackId: track.id,
     sourceCaptionId: caption.id,
-    translatedText: translated.captions.get(caption.id) ?? '',
+    translatedText: translated.captions.get(caption.id) ?? caption.text,
     translationStatus: 'translated' as const,
   })), updatedAt);
 }
@@ -148,10 +148,10 @@ export async function synchronizeProjectDualCaptionEdits(options: {
     trackId: track.id,
     sourceCaptionId: edit.sourceCaptionId,
     primaryText: edit.translatedChanged && !edit.primaryChanged
-      ? reverseResults.get(edit.sourceCaptionId)
+      ? reverseResults.get(edit.sourceCaptionId) ?? edit.primaryText
       : edit.primaryText,
     translatedText: edit.primaryChanged && !edit.translatedChanged
-      ? forwardResults.get(edit.sourceCaptionId)
+      ? forwardResults.get(edit.sourceCaptionId) ?? edit.translatedText
       : edit.translatedText,
     translationStatus: edit.translatedChanged ? 'reviewed' as const : 'translated' as const,
   }));
