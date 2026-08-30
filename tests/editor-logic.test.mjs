@@ -994,7 +994,7 @@ test('extract audio offers project videos by first frame before the system picke
   assert.match(sheet, /formatDuration\(source\.durationMs\)/);
   assert.match(workflows, /appendProjectVideoAudioToProject/);
   assert.match(workflows, /for \(const source of loadedProject\.sources\)/);
-  assert.match(media, /PROJECT_POSTER_VERSION = 2/);
+  assert.match(media, /PROJECT_POSTER_VERSION = 3/);
   assert.match(media, /-poster-v\$\{PROJECT_POSTER_VERSION\}\.jpg/);
 });
 

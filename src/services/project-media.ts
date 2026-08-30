@@ -4,7 +4,7 @@ import CaptionMedia from 'caption-media';
 import { assertSupportedVideo } from '@/lib/media-validation';
 
 const MAX_STORED_IMAGE_BYTES = 50 * 1024 * 1024;
-const PROJECT_POSTER_VERSION = 2;
+const PROJECT_POSTER_VERSION = 3;
 
 const ORPHAN_DIRECTORY_GRACE_SECONDS = 24 * 60 * 60;
 
