@@ -4,6 +4,7 @@ import CaptionMedia from 'caption-media';
 import { assertSupportedVideo } from '@/lib/media-validation';
 
 const MAX_STORED_IMAGE_BYTES = 50 * 1024 * 1024;
+const PROJECT_POSTER_VERSION = 2;
 
 const ORPHAN_DIRECTORY_GRACE_SECONDS = 24 * 60 * 60;
 
@@ -13,7 +14,7 @@ export async function ensureProjectThumbnail(options: {
   videoUri: string;
   thumbnailUri?: string;
 }): Promise<string | undefined> {
-  if (options.thumbnailUri) {
+  if (options.thumbnailUri?.endsWith(`-poster-v${PROJECT_POSTER_VERSION}.jpg`)) {
     const existing = await FileSystem.getInfoAsync(options.thumbnailUri);
     if (existing.exists && !existing.isDirectory) return options.thumbnailUri;
   }
@@ -22,7 +23,7 @@ export async function ensureProjectThumbnail(options: {
 
 export async function generateProjectThumbnail(projectId: string, sourceId: string, videoUri: string) {
   if (!FileSystem.documentDirectory) return undefined;
-  const outputUri = `${FileSystem.documentDirectory}projects/${projectId}/source-${safePathSegment(sourceId)}.jpg`;
+  const outputUri = `${FileSystem.documentDirectory}projects/${projectId}/source-${safePathSegment(sourceId)}-poster-v${PROJECT_POSTER_VERSION}.jpg`;
   try {
     await CaptionMedia.generateVideoThumbnail(videoUri, outputUri, 0);
     const generated = await FileSystem.getInfoAsync(outputUri);

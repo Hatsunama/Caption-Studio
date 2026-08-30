@@ -987,12 +987,15 @@ test('extract audio offers project videos by first frame before the system picke
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   const sheet = readFileSync(new URL('../src/components/editor/extract-audio-source-sheet.tsx', import.meta.url), 'utf8');
   const workflows = readFileSync(new URL('../src/services/project-workflows.ts', import.meta.url), 'utf8');
+  const media = readFileSync(new URL('../src/services/project-media.ts', import.meta.url), 'utf8');
   assert.match(editor, /<ExtractAudioSourceSheet/);
   assert.match(sheet, /source\.thumbnailUri/);
   assert.match(sheet, /source\.displayName/);
   assert.match(sheet, /formatDuration\(source\.durationMs\)/);
   assert.match(workflows, /appendProjectVideoAudioToProject/);
   assert.match(workflows, /for \(const source of loadedProject\.sources\)/);
+  assert.match(media, /PROJECT_POSTER_VERSION = 2/);
+  assert.match(media, /-poster-v\$\{PROJECT_POSTER_VERSION\}\.jpg/);
 });
 
 function clip(overrides = {}) {
