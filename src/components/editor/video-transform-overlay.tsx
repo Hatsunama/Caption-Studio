@@ -1,6 +1,7 @@
 import { useMemo, useRef } from 'react';
 import { type GestureResponderEvent, PanResponder, Text, View } from 'react-native';
 
+import { chrome } from '@/lib/ui-theme';
 import type { VideoTransform, VideoTransformPatch } from '@/types/project';
 
 type TouchPoint = { pageX: number; pageY: number };
@@ -106,8 +107,8 @@ export function VideoTransformOverlay(props: {
         position: 'absolute',
         inset: 0,
         borderWidth: 2,
-        borderColor: '#DFFF35',
-        borderRadius: 18,
+        borderColor: chrome.accent,
+        borderRadius: chrome.radius.lg,
       }}>
       <View
         pointerEvents="none"
@@ -117,10 +118,10 @@ export function VideoTransformOverlay(props: {
           top: 10,
           paddingHorizontal: 9,
           paddingVertical: 5,
-          borderRadius: 10,
-          backgroundColor: 'rgba(9,11,14,0.82)',
+          borderRadius: chrome.radius.md,
+          backgroundColor: chrome.overlay,
         }}>
-        <Text style={{ color: '#DFFF35', fontSize: 10, fontWeight: '800' }}>
+        <Text style={{ color: chrome.accent, fontSize: 10, fontWeight: '700' }}>
           DRAG • PINCH • TWIST
         </Text>
       </View>
@@ -132,8 +133,8 @@ export function VideoTransformOverlay(props: {
           top: 10,
           paddingHorizontal: 9,
           paddingVertical: 5,
-          borderRadius: 10,
-          backgroundColor: 'rgba(9,11,14,0.82)',
+          borderRadius: chrome.radius.md,
+          backgroundColor: chrome.overlay,
         }}>
         <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '800' }}>
           {Math.round(props.transform.scale * 100)}% • {Math.round(props.transform.rotation)}°

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native';
 
+import { chrome } from '@/lib/ui-theme';
 import {
   hasBackgroundProcessingConsent,
   setBackgroundProcessingConsent,
@@ -123,7 +124,7 @@ export default function PrivacyScreen() {
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
-      style={{ flex: 1, backgroundColor: '#090B0E' }}
+      style={{ flex: 1, backgroundColor: chrome.background }}
       contentContainerStyle={{ padding: 20, paddingBottom: 48, gap: 18 }}>
       <PolicySection title="Caption Studio privacy policy">
         Effective August 27, 2026. Caption Studio is provided by Hatsunama. The app is a local-first
@@ -186,8 +187,8 @@ export default function PrivacyScreen() {
         {backgroundConsent ? (
           <PolicyAction label="Turn off optional background-removal processing" onPress={revokeBackgroundProcessing} />
         ) : (
-          <View style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 14, backgroundColor: '#20262E' }}>
-            <Text style={{ color: '#B8C1CC', fontSize: 14, fontWeight: '700' }}>Optional background-removal processing is off</Text>
+        <View style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: chrome.radius.md, backgroundColor: chrome.surface }}>
+            <Text style={{ color: chrome.muted, fontSize: 14, fontWeight: '600' }}>Optional background-removal processing is off</Text>
           </View>
         )}
         {downloadedModels.length > 0 ? (
@@ -196,8 +197,8 @@ export default function PrivacyScreen() {
             onPress={removeOfflineModels}
           />
         ) : (
-          <View style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 14, backgroundColor: '#20262E' }}>
-            <Text style={{ color: '#B8C1CC', fontSize: 14, fontWeight: '700' }}>No transcription models are currently downloaded</Text>
+        <View style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: chrome.radius.md, backgroundColor: chrome.surface }}>
+            <Text style={{ color: chrome.muted, fontSize: 14, fontWeight: '600' }}>No transcription models are currently downloaded</Text>
           </View>
         )}
         {translationModels.length > 0 ? (
@@ -206,8 +207,8 @@ export default function PrivacyScreen() {
             onPress={removeTranslationModel}
           />
         ) : (
-          <View style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 14, backgroundColor: '#20262E' }}>
-            <Text style={{ color: '#B8C1CC', fontSize: 14, fontWeight: '700' }}>Optional natural translation model is not downloaded</Text>
+        <View style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: chrome.radius.md, backgroundColor: chrome.surface }}>
+            <Text style={{ color: chrome.muted, fontSize: 14, fontWeight: '600' }}>Optional natural translation model is not downloaded</Text>
           </View>
         )}
         <PolicyAction label="View bundled software, model, and font notices" onPress={() => router.push('/notices')} />
@@ -229,8 +230,8 @@ function PolicyAction(props: { label: string; onPress: () => void }) {
     <Pressable
       accessibilityRole="button"
       onPress={props.onPress}
-      style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 14, backgroundColor: '#20262E' }}>
-      <Text style={{ color: '#DFFF35', fontSize: 14, fontWeight: '800' }}>{props.label}</Text>
+      style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: chrome.radius.lg, backgroundColor: chrome.surface }}>
+      <Text style={{ color: chrome.accent, fontSize: 15, fontWeight: '600' }}>{props.label}</Text>
     </Pressable>
   );
 }
@@ -238,8 +239,8 @@ function PolicyAction(props: { label: string; onPress: () => void }) {
 function PolicySection(props: { title: string; children: string }) {
   return (
     <View style={{ gap: 7 }}>
-      <Text selectable style={{ color: '#F7F8FA', fontSize: 18, fontWeight: '800' }}>{props.title}</Text>
-      <Text selectable style={{ color: '#B8C1CC', fontSize: 14, lineHeight: 21 }}>{props.children}</Text>
+      <Text selectable style={{ color: chrome.text, fontSize: 18, fontWeight: '700' }}>{props.title}</Text>
+      <Text selectable style={{ color: chrome.muted, fontSize: 14, lineHeight: 21 }}>{props.children}</Text>
     </View>
   );
 }
@@ -249,8 +250,8 @@ function PolicyLink(props: { label: string; url: string }) {
     <Pressable
       accessibilityRole="link"
       onPress={() => void Linking.openURL(props.url)}
-      style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 14, backgroundColor: '#20262E' }}>
-      <Text style={{ color: '#DFFF35', fontSize: 14, fontWeight: '800' }}>{props.label}</Text>
+      style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: chrome.radius.lg, backgroundColor: chrome.surface }}>
+      <Text style={{ color: chrome.accent, fontSize: 15, fontWeight: '600' }}>{props.label}</Text>
     </Pressable>
   );
 }

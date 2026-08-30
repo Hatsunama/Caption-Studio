@@ -1,6 +1,6 @@
 import CaptionMedia from 'caption-media';
 
-import { groupTimelineWordsByClip } from '@/lib/caption-grouping';
+import { groupTimelineWordsByClip, groupingOptionsForLanguage } from '@/lib/caption-grouping';
 import { synchronizeCaptionTracksAfterTranscription } from '@/lib/caption-tracks';
 import type { TranscriptionModel } from '@/lib/model-catalog';
 import {
@@ -82,7 +82,11 @@ export async function generateProjectCaptions(
   const sourceWords: Record<string, WordToken[]> = {};
   for (const [sourceId, result] of Object.entries(sourceResults)) sourceWords[sourceId] = result.words;
   const words = mapSourceWordsToTimeline(project.clips, sourceWords);
-  const grouped = groupTimelineWordsByClip(words, project.clips.map((clip) => clip.id));
+  const grouped = groupTimelineWordsByClip(
+    words,
+    project.clips.map((clip) => clip.id),
+    groupingOptionsForLanguage(sourceResults[sourceIds[0]]?.language),
+  );
   const captions = anchorCaptionsToClips(grouped, project.clips, words);
   const now = new Date().toISOString();
   const generated = {

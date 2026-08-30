@@ -119,9 +119,13 @@ test('project translation orchestration owns concurrency, provenance, and mixed-
 
   assert.doesNotMatch(editor, /translateNaturalCaptionBatch|translateNaturalCaptionOperations|setTranslationProgress/);
   assert.match(editor, /useProjectCaptionTranslation/);
+  assert.match(editor, /DualLanguagePicker/);
   assert.match(controller, /activeOperationRef\.current === operationId/);
   assert.match(controller, /getCurrentProject\(\) !== baseline/);
   assert.match(workflow, /projectEnglishChineseCaptionLanguage/);
+  assert.match(workflow, /projectPrimaryCaptionLanguage/);
+  assert.match(workflow, /packCaptionDocuments/);
+  assert.match(workflow, /cutTranslatedDocument/);
   assert.match(workflow, /provider: \{ id: 'manual' \}/);
   assert.match(workflow, /translated\.provider/);
   assert.match(workflow, /session\.provider/);

@@ -21,6 +21,7 @@ import { AnimationBrowser } from '@/components/editor/animation-browser';
 import { BackgroundTools } from '@/components/editor/background-tools';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
+import { DualLanguagePicker } from '@/components/editor/dual-language-picker';
 import { FontBrowser } from '@/components/editor/font-browser';
 import { ExtractAudioSourceSheet } from '@/components/editor/extract-audio-source-sheet';
 import { ImageLayerOverlay } from '@/components/editor/image-layer-overlay';
@@ -37,9 +38,9 @@ import { useProjectCaptionTranslation } from '@/hooks/use-project-caption-transl
 import { useEditorRuntimePolicy } from '@/hooks/use-editor-runtime-policy';
 import { deleteAudioClip, duplicateAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '@/lib/audio-timeline';
 import { findAnimationPreset } from '@/lib/animation-presets';
-import { normalizeEnglishChineseCaptionLanguage } from '@/lib/caption-languages';
+import { canAutomaticallyTranslatePair, captionLanguageLabel, type CaptionLanguageTag } from '@/lib/caption-languages';
 import {
-  projectEnglishChineseCaptionLanguage,
+  projectPrimaryCaptionLanguage,
   removeTranslationCaptionTrack,
   resolveCaptionPairs,
   setTranslationCueStyle,
@@ -129,6 +130,7 @@ import {
   publishProjectAfterDurableSave,
 } from '@/services/project-persistence';
 import { VideoExportCancelledError } from '@/services/video-export-session';
+import { chrome } from '@/lib/ui-theme';
 import type { TranscriptionProgress } from '@/services/transcription';
 import {
   type CaptionAnimationId,
@@ -141,13 +143,13 @@ import {
 } from '@/types/project';
 
 const palette = {
-  background: '#090B0E',
-  surface: '#151A20',
-  surfaceRaised: '#20262E',
-  text: '#F7F8FA',
-  muted: '#939EAB',
-  accent: '#DFFF35',
-  purple: '#A985F8',
+  background: chrome.background,
+  surface: chrome.surface,
+  surfaceRaised: chrome.surfaceRaised,
+  text: chrome.text,
+  muted: chrome.muted,
+  accent: chrome.accent,
+  purple: chrome.purple,
 };
 
 type PendingStyleChange = {
@@ -213,6 +215,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [editingLayerId, setEditingLayerId] = useState<string>();
   const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
   const [dualCaptionEditorOpen, setDualCaptionEditorOpen] = useState(false);
+  const [dualLanguagePickerOpen, setDualLanguagePickerOpen] = useState(false);
   const [selectedTranslationTrackId, setSelectedTranslationTrackId] = useState<string>();
   const [personPreviewUri, setPersonPreviewUri] = useState<string>();
   const [personPreviewBusy, setPersonPreviewBusy] = useState(false);
@@ -706,7 +709,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const beginEditCaption = () => {
-    if (!selectedCaption) return;
+    if (timelineCaptions.length === 0) return;
     transport.pause();
     setScriptEditorOpen(true);
   };
@@ -756,9 +759,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
     let sourceLanguage;
     try {
-      sourceLanguage = projectEnglishChineseCaptionLanguage(projectRef.current);
+      sourceLanguage = projectPrimaryCaptionLanguage(projectRef.current);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'This caption language is not supported for dual subtitles.');
+      setError(caught instanceof Error ? caught.message : 'This caption language is not ready for dual subtitles.');
       return;
     }
     const existing = projectRef.current.captionTracks.translations.find((track) => track.visible)
@@ -770,28 +773,27 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       const pendingIds = existing.cues
         .filter((cue) => cue.status === 'pending' || cue.status === 'stale')
         .map((cue) => cue.sourceCaptionId);
-      if (pendingIds.length > 0 && !translationController.busy) {
+      if (
+        pendingIds.length > 0
+        && !translationController.busy
+        && canAutomaticallyTranslatePair(sourceLanguage, existing.languageTag)
+      ) {
         void translationController.refresh(existing.id, pendingIds, projectRef.current);
       }
       return;
     }
-    const downloadSize = formatMegabytes(NATURAL_TRANSLATION_MODEL.downloadBytes);
-    const message = `Dual subtitles are optional. Natural translation runs on this phone after a one-time ${downloadSize} model download. Use clips spoken mainly in one language; code-switching inside one clip can need manual correction. AI translation can still need human review.`;
-    if (sourceLanguage === 'en') {
-      Alert.alert('Add English + Chinese', message, [
+    Alert.alert(
+      'Finish spoken subtitles first',
+      'The second language is translated from your whole native script, then cut to follow the same subtitle rhythm. Add missed words and fix splits in the spoken language first. Changing those captions later can force a full retranslation.',
+      [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Traditional Chinese', onPress: () => { void enableDualCaptions('zh-Hant'); } },
-        { text: 'Simplified Chinese', onPress: () => { void enableDualCaptions('zh-Hans'); } },
-      ]);
-      return;
-    }
-    Alert.alert('Add Chinese + English', message, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Add English', onPress: () => { void enableDualCaptions('en'); } },
-    ]);
+        { text: 'Edit captions first', onPress: beginEditCaption },
+        { text: 'Choose language', onPress: () => setDualLanguagePickerOpen(true) },
+      ],
+    );
   };
 
-  const enableDualCaptions = async (targetLanguage: 'en' | 'zh-Hans' | 'zh-Hant') => {
+  const enableDualCaptions = async (targetLanguage: CaptionLanguageTag) => {
     const before = projectRef.current;
     try {
       const prepared = prepareOptionalDualCaptionTrack(before, targetLanguage);
@@ -801,8 +803,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         setProject(persisted);
         setSelectedTranslationTrackId(prepared.trackId);
         transport.pause();
+        setDualLanguagePickerOpen(false);
         setDualCaptionEditorOpen(true);
       });
+      if (!prepared.automatic) return;
       const translationBaseline = projectRef.current;
       void translationController.refresh(
         prepared.trackId,
@@ -820,6 +824,20 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   ) => {
     const track = requestedTrack;
     if (!track) return;
+    let sourceLanguage;
+    try {
+      sourceLanguage = projectPrimaryCaptionLanguage(projectRef.current);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Dual subtitles could not refresh.');
+      return;
+    }
+    if (!canAutomaticallyTranslatePair(sourceLanguage, track.languageTag)) {
+      Alert.alert(
+        'Type this language yourself',
+        `${track.displayName} is not covered by the on-device translator yet. Edit the second column directly. Automatic translation currently covers English and Chinese.`,
+      );
+      return;
+    }
     const reviewed = track.cues.filter((cue) => sourceCaptionIds.includes(cue.sourceCaptionId) && cue.reviewed);
     if (reviewed.length > 0) {
       Alert.alert(
@@ -1660,8 +1678,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           {project.captions.length === 0 ? (
             <Pressable
               onPress={() => chooseCaptionQuality(false)}
-              style={{ paddingHorizontal: 16, paddingVertical: 11, borderRadius: 999, backgroundColor: palette.accent }}>
-              <Text style={{ color: '#10130A', fontWeight: '800' }}>Generate captions</Text>
+              style={{ paddingHorizontal: 16, paddingVertical: 11, borderRadius: chrome.radius.pill, backgroundColor: palette.accent }}>
+              <Text style={{ color: chrome.accentInk, fontWeight: '700' }}>Generate captions</Text>
             </Pressable>
           ) : (
             <View style={{ alignItems: 'flex-end', gap: 4 }}>
@@ -1682,7 +1700,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 accessibilityLabel="Open optional dual subtitles"
                 onPress={openDualCaptionEditor}
                 hitSlop={8}>
-                <Text style={{ color: '#64E8FF', fontSize: 11, fontWeight: '800', textDecorationLine: 'underline' }}>
+                <Text style={{ color: '#64D2FF', fontSize: 13, fontWeight: '700' }}>
                   {project.captionTracks.translations.length > 0 ? 'Dual subtitles' : 'Add dual subtitles'}
                 </Text>
               </Pressable>
@@ -1785,12 +1803,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 </ScrollView>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                   {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map((rate) => (
-                    <Action key={rate} label={`${rate}× speed`} color={selectedClip.playbackRate === rate ? '#DFFF35' : undefined} onPress={() => updateSelectedClipRate(rate)} />
+                    <Action key={rate} label={`${rate}× speed`} color={selectedClip.playbackRate === rate ? chrome.accent : undefined} onPress={() => updateSelectedClipRate(rate)} />
                   ))}
                 </ScrollView>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                  {VIDEO_TRANSITION_PRESETS.map((preset) => <Action key={preset.id} label={preset.name} color={selectedClip.transitionAfter.type === preset.id ? '#DFFF35' : undefined} disabled={preset.id !== 'none' && !transitionBoundaryAvailable} onPress={() => applyTransition(preset.id, preset.durationMs)} />)}
-                  {[250, 500, 1000].map((duration) => <Action key={duration} label={`${duration} ms transition`} color={selectedClip.transitionAfter.durationMs === duration ? '#64E8FF' : undefined} disabled={!transitionBoundaryAvailable} onPress={() => applyTransition(selectedClip.transitionAfter.type === 'none' ? 'dip-black' : selectedClip.transitionAfter.type, duration)} />)}
+                  {VIDEO_TRANSITION_PRESETS.map((preset) => <Action key={preset.id} label={preset.name} color={selectedClip.transitionAfter.type === preset.id ? chrome.accent : undefined} disabled={preset.id !== 'none' && !transitionBoundaryAvailable} onPress={() => applyTransition(preset.id, preset.durationMs)} />)}
+                  {[250, 500, 1000].map((duration) => <Action key={duration} label={`${duration} ms transition`} color={selectedClip.transitionAfter.durationMs === duration ? chrome.accent : undefined} disabled={!transitionBoundaryAvailable} onPress={() => applyTransition(selectedClip.transitionAfter.type === 'none' ? 'dip-black' : selectedClip.transitionAfter.type, duration)} />)}
                 </ScrollView>
                 {!transitionBoundaryAvailable ? <Text style={{ color: palette.muted, fontSize: 11 }}>Transitions need another clip touching this clip with no empty gap.</Text> : null}
               </View>
@@ -2003,6 +2021,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         targetLanguageLabel={selectedTranslationTrack?.displayName ?? 'Second language'}
         pairs={selectedTranslationPairs}
         trackVisible={selectedTranslationTrack?.visible ?? false}
+        automaticTranslation={Boolean(
+          selectedTranslationTrack
+          && canAutomaticallyTranslatePair(project.transcription.language, selectedTranslationTrack.languageTag),
+        )}
         busy={Boolean(translationProgress) || translationCancelling}
         progressLabel={translationCancelling ? 'Cancelling local translation…' : translationProgressLabel(translationProgress)}
         errorMessage={translationController.error}
@@ -2014,6 +2036,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         onToggleVisibility={() => { void toggleSelectedTranslationTrack(); }}
         onRemove={confirmRemoveSelectedTranslationTrack}
         onCancelBusy={() => { void cancelDualCaptionTranslation(); }}
+      />
+      <DualLanguagePicker
+        visible={dualLanguagePickerOpen}
+        sourceLanguageTag={project.transcription.language}
+        sourceLanguageLabel={captionLanguageLabel(project.transcription.language)}
+        automaticModelLabel={NATURAL_TRANSLATION_MODEL.label}
+        onClose={() => setDualLanguagePickerOpen(false)}
+        onChoose={(choice) => { void enableDualCaptions(choice.tag); }}
       />
       <EditTextLayerModal
         visible={Boolean(editingLayerId)}
@@ -2046,7 +2076,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               </Text>
               {exportKind === 'video' && exportProgress ? (
                 <View style={{ gap: 7 }}>
-                  <View style={{ height: 8, overflow: 'hidden', borderRadius: 4, backgroundColor: '#303640' }}>
+                  <View style={{ height: 8, overflow: 'hidden', borderRadius: chrome.radius.pill, backgroundColor: chrome.fill }}>
                     <View style={{ width: `${exportProgress.percent ?? 0}%`, height: '100%', backgroundColor: palette.accent }} />
                   </View>
                   <Text style={{ color: palette.text, textAlign: 'center', fontVariant: ['tabular-nums'] }}>
@@ -2077,15 +2107,15 @@ function Action(props: { label: string; color?: string; danger?: boolean; disabl
       disabled={props.disabled}
       onPress={props.onPress}
       style={{
-        minHeight: 42,
-        paddingHorizontal: 13,
+        minHeight: 44,
+        paddingHorizontal: 14,
         flexDirection: 'row',
         gap: 7,
         alignItems: 'center',
-        borderRadius: 13,
+        borderRadius: chrome.radius.md,
         borderWidth: props.danger ? 1 : 0,
-        borderColor: props.danger ? '#7A2B38' : 'transparent',
-        backgroundColor: props.danger ? '#351D24' : palette.surfaceRaised,
+        borderColor: props.danger ? chrome.dangerFill : 'transparent',
+        backgroundColor: props.danger ? chrome.dangerFill : palette.surfaceRaised,
         opacity: props.disabled ? 0.35 : 1,
       }}>
       {props.color ? <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: props.color }} /> : null}
@@ -2101,8 +2131,8 @@ function HistoryButton(props: { label: string; disabled: boolean; version: numbe
       accessibilityLabel={props.label.replace(/[↶↷]/g, '').trim()}
       disabled={props.disabled}
       onPress={props.onPress}
-      style={{ minWidth: 108, minHeight: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: props.disabled ? '#29313A' : '#6A42A8', backgroundColor: props.disabled ? '#171C22' : '#2B1C42', opacity: props.disabled ? 0.45 : 1 }}>
-      <Text style={{ color: props.disabled ? '#76818D' : '#DDBEFF', fontSize: 13, fontWeight: '900' }}>{props.label}</Text>
+      style={{ minWidth: 108, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: chrome.radius.md, borderWidth: 0, backgroundColor: props.disabled ? chrome.surface : chrome.purpleFill, opacity: props.disabled ? 0.45 : 1 }}>
+      <Text style={{ color: props.disabled ? chrome.muted : chrome.purpleText, fontSize: 15, fontWeight: '600' }}>{props.label}</Text>
     </Pressable>
   );
 }
@@ -2129,13 +2159,13 @@ function ProgressOverlay(props: {
   return (
     <Modal visible transparent animationType="fade" onRequestClose={props.onCancel}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 26, backgroundColor: 'rgba(0,0,0,0.82)' }}>
-        <View style={{ width: '100%', maxWidth: 380, gap: 16, padding: 22, borderRadius: 24, backgroundColor: '#171C22' }}>
+        <View style={{ width: '100%', maxWidth: 380, gap: 16, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <ActivityIndicator color={palette.accent} size="large" />
           <Text style={{ color: palette.text, textAlign: 'center', fontSize: 20, fontWeight: '800' }}>
             {stageTitle(props.progress.stage)}
           </Text>
           <Text style={{ color: palette.muted, textAlign: 'center', fontSize: 14 }}>{props.progress.detail}</Text>
-          <View style={{ height: 8, overflow: 'hidden', borderRadius: 4, backgroundColor: '#303640' }}>
+          <View style={{ height: 8, overflow: 'hidden', borderRadius: chrome.radius.pill, backgroundColor: chrome.fill }}>
             <View style={{ width: `${percent}%`, height: '100%', backgroundColor: palette.accent }} />
           </View>
           <Text style={{ color: palette.text, textAlign: 'center', fontVariant: ['tabular-nums'] }}>{percent}%</Text>
@@ -2144,7 +2174,7 @@ function ProgressOverlay(props: {
             accessibilityLabel="Cancel caption generation"
             disabled={props.cancelling}
             onPress={props.onCancel}
-            style={{ minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#2A3038', opacity: props.cancelling ? 0.55 : 1 }}>
+            style={{ minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: chrome.radius.md, backgroundColor: chrome.fill, opacity: props.cancelling ? 0.55 : 1 }}>
             <Text style={{ color: '#FFBBC8', fontWeight: '800' }}>
               {props.cancelling ? 'Stopping…' : 'Cancel'}
             </Text>
@@ -2165,21 +2195,21 @@ function EditTextLayerModal(props: {
   return (
     <Modal visible={props.visible} transparent animationType="fade" onRequestClose={props.onCancel}>
       <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.72)' }}>
-        <View style={{ gap: 14, padding: 20, borderRadius: 22, backgroundColor: '#181D24' }}>
+        <View style={{ gap: 14, padding: 20, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <Text style={{ color: palette.text, fontSize: 20, fontWeight: '800' }}>Edit text layer</Text>
           <TextInput
             autoFocus
             multiline
             value={props.value}
             onChangeText={props.onChange}
-            style={{ minHeight: 110, padding: 14, borderRadius: 14, color: palette.text, backgroundColor: '#252C35', textAlignVertical: 'top' }}
+            style={{ minHeight: 110, padding: 14, borderRadius: chrome.radius.md, color: palette.text, backgroundColor: chrome.surfaceRaised, textAlignVertical: 'top' }}
           />
           <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end' }}>
             <Pressable onPress={props.onCancel} style={{ padding: 12 }}>
               <Text style={{ color: palette.muted }}>Cancel</Text>
             </Pressable>
-            <Pressable onPress={props.onSave} style={{ paddingHorizontal: 18, paddingVertical: 12, borderRadius: 999, backgroundColor: palette.accent }}>
-              <Text style={{ color: '#11140C', fontWeight: '800' }}>Save</Text>
+            <Pressable onPress={props.onSave} style={{ paddingHorizontal: 18, paddingVertical: 12, borderRadius: chrome.radius.pill, backgroundColor: palette.accent }}>
+              <Text style={{ color: chrome.accentInk, fontWeight: '700' }}>Save</Text>
             </Pressable>
           </View>
         </View>
@@ -2209,16 +2239,6 @@ function formatSeconds(ms: number) {
 
 function formatMegabytes(bytes: number) {
   return `${Math.ceil(bytes / (1024 * 1024))} MB`;
-}
-
-function captionLanguageLabel(languageTag: string) {
-  try {
-    const language = normalizeEnglishChineseCaptionLanguage(languageTag);
-    if (language === 'en') return 'English';
-    return language === 'zh-Hant' ? 'Chinese (Traditional)' : 'Chinese (Simplified)';
-  } catch {
-    return languageTag;
-  }
 }
 
 function translationProgressLabel(progress?: CaptionTranslationProgress) {

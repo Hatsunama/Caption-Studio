@@ -41,6 +41,11 @@ class TimelineTextPainterAnimationTest {
     assertTrue(realTimedCaptionWords(validCaption.copy(words = emptyList())).isEmpty())
     assertTrue(realTimedCaptionWords(validCaption.copy(words = listOf(RenderWord("real", 1_000, 1_000, style)))).isEmpty())
     assertTrue(realTimedCaptionWords(validCaption.copy(words = listOf(RenderWord("different", 1_000, 1_500, style)))).isEmpty())
+    val spread = playbackTimedCaptionWords(validCaption.copy(text = "real timing extra", words = emptyList()))
+    assertEquals(3, spread.size)
+    assertEquals(1_000L, spread.first().startMs)
+    assertEquals(1_500L, spread.last().endMs)
+    assertTrue(spread.all { it.endMs > it.startMs })
   }
 
   @Test

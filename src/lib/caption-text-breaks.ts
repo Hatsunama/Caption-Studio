@@ -11,8 +11,8 @@ export type TimedCaptionText = {
   endMs: number;
 };
 
-const TOKEN_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|[^\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu;
-const EAST_ASIAN_CHARACTER = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+const UNSPACED_CHARACTER = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}]/u;
+const TOKEN_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}]|[^\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}]+/gu;
 const CLOSING_PUNCTUATION = /^[,.;:!?%\u2026\u3001\u3002\uFF01\uFF0C\uFF0E\uFF1A\uFF1B\uFF1F\uFF05)\]}\u3009\u300B\u300D\u300F\u3011\u3015\u3017\u3019\u301B\u2019\u201D]+$/u;
 const OPENING_PUNCTUATION = /^[([{\u3008\u300A\u300C\u300E\u3010\u3014\u3016\u3018\u301A\u2018\u201C]+$/u;
 const CJK_PUNCTUATION_EDGE = /[\u3001\u3002\uFF01\uFF0C\uFF0E\uFF1A\uFF1B\uFF1F\uFF05\u3008-\u301B]/u;
@@ -85,6 +85,47 @@ export function alignCaptionTimedWords<T extends TimedCaptionText>(
   }));
 }
 
+export function captionPlaybackTimedWords<T extends TimedCaptionText>(
+  words: readonly T[],
+  captionText: string,
+  range: { id: string; startMs: number; endMs: number },
+): TimedCaptionText[] {
+  const aligned = alignCaptionTimedWords(words, captionText);
+  if (aligned.length > 0) return aligned;
+  return spreadCaptionTokensAcrossRange(captionText, range.startMs, range.endMs, range.id);
+}
+
+export function spreadCaptionTokensAcrossRange(
+  captionText: string,
+  startMs: number,
+  endMs: number,
+  idPrefix: string,
+): TimedCaptionText[] {
+  const tokens = captionSpokenTokenSpans(captionText.normalize('NFC')).map((span) => span.text).filter(Boolean);
+  if (tokens.length === 0) return [];
+  const rangeStart = Math.max(0, startMs);
+  const rangeEnd = Math.max(rangeStart + Math.max(10, tokens.length * 10), endMs);
+  const durationMs = rangeEnd - rangeStart;
+  const weights = tokens.map((token) => Math.max(1, captionTextLength(token)));
+  const totalWeight = weights.reduce((total, weight) => total + weight, 0);
+  let consumedWeight = 0;
+  return tokens.map((text, index) => {
+    const tokenStart = index === 0
+      ? rangeStart
+      : rangeStart + Math.round(durationMs * consumedWeight / totalWeight);
+    consumedWeight += weights[index];
+    const tokenEnd = index === tokens.length - 1
+      ? rangeEnd
+      : rangeStart + Math.round(durationMs * consumedWeight / totalWeight);
+    return {
+      id: `${idPrefix}:spread-${index}`,
+      text,
+      startMs: tokenStart,
+      endMs: Math.max(tokenStart + 10, tokenEnd),
+    };
+  });
+}
+
 export function captionLayoutText(tokens: readonly string[]) {
   return tokens.reduce((result, token, index) => {
     if (index === 0 || !captionTokensNeedSpace(tokens[index - 1], token)) return `${result}${token}`;
@@ -97,7 +138,7 @@ export function captionTokensNeedSpace(previous: string, current: string) {
   const currentEdge = firstCodePoint(current);
   if (!previousEdge || !currentEdge) return false;
   if (CLOSING_PUNCTUATION.test(current) || OPENING_PUNCTUATION.test(previous)) return false;
-  if (EAST_ASIAN_CHARACTER.test(previousEdge) || EAST_ASIAN_CHARACTER.test(currentEdge)) return false;
+  if (UNSPACED_CHARACTER.test(previousEdge) || UNSPACED_CHARACTER.test(currentEdge)) return false;
   if (CJK_PUNCTUATION_EDGE.test(previousEdge) || CJK_PUNCTUATION_EDGE.test(currentEdge)) return false;
   return true;
 }
@@ -166,16 +207,16 @@ export function captionTextNearestSpokenBoundary(text: string, requestedOffset: 
 
 export function captionCjkCharacterCount(text: string) {
   return captionGraphemeSpans(text.normalize('NFC'))
-    .filter((span) => EAST_ASIAN_CHARACTER.test(span.text))
+    .filter((span) => UNSPACED_CHARACTER.test(span.text))
     .length;
 }
 
 export function containsCaptionCjk(text: string) {
-  return EAST_ASIAN_CHARACTER.test(text);
+  return UNSPACED_CHARACTER.test(text);
 }
 
 export function compactCaptionToken(value: string) {
-  return /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{P}\p{S}]+$/u.test(value);
+  return /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}\p{P}\p{S}]+$/u.test(value);
 }
 
 type CaptionTimingUnit = {

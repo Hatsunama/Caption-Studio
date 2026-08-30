@@ -21,6 +21,7 @@ import {
   readEditorDraftJournal,
   writeEditorDraftJournal,
 } from '@/services/editor-draft-journal';
+import { chrome } from '@/lib/ui-theme';
 import type { CaptionBlock, WordToken } from '@/types/project';
 
 export function ScriptEditor(props: {
@@ -248,17 +249,17 @@ export function ScriptEditor(props: {
       onRequestClose={saving ? undefined : cancel}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1, backgroundColor: '#0D1014' }}>
-        <View style={{ minHeight: 76, paddingHorizontal: 18, paddingTop: 18, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: '#252B33' }}>
+        style={{ flex: 1, backgroundColor: chrome.background }}>
+        <View style={{ minHeight: 76, paddingHorizontal: 18, paddingTop: 18, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
           <Pressable accessibilityRole="button" accessibilityLabel="Cancel caption edits" disabled={saving} hitSlop={10} onPress={cancel} style={{ minWidth: 60, minHeight: 44, justifyContent: 'center' }}>
-            <Text style={{ color: '#A7B0BC', fontSize: 15, fontWeight: '700' }}>Cancel</Text>
+            <Text style={{ color: chrome.muted, fontSize: 17, fontWeight: '600' }}>Cancel</Text>
           </Pressable>
           <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={{ color: '#F7F8FA', fontSize: 19, fontWeight: '900' }}>Edit captions</Text>
-            <Text style={{ color: '#7F8996', fontSize: 11 }}>{draftCaptions.length} subtitle blocks</Text>
+            <Text style={{ color: chrome.text, fontSize: 17, fontWeight: '700' }}>Edit captions</Text>
+            <Text style={{ color: chrome.muted, fontSize: 12 }}>{draftCaptions.length} subtitle blocks</Text>
           </View>
           <Pressable accessibilityRole="button" accessibilityLabel="Save all caption edits" disabled={saving} hitSlop={10} onPress={() => { void save(); }} style={{ minWidth: 60, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' }}>
-            <Text style={{ color: '#DFFF35', fontSize: 24, fontWeight: '900', opacity: saving ? 0.45 : 1 }}>✓</Text>
+            <Text style={{ color: chrome.accent, fontSize: 17, fontWeight: '700', opacity: saving ? 0.45 : 1 }}>Done</Text>
           </Pressable>
         </View>
 
@@ -271,8 +272,8 @@ export function ScriptEditor(props: {
           contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 48, gap: 8 }}
           ListHeaderComponent={(
             <View style={{ marginBottom: 6, gap: 5 }}>
-              <Text style={{ color: '#8E98A5', fontSize: 12, lineHeight: 17 }}>
-                Tap a subtitle to edit it. Use the visible Split and Join controls. Enter and Backspace remain available as keyboard shortcuts.
+              <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 18 }}>
+                Finish these spoken subtitles before adding a second language. Tap a subtitle to edit it. Split and Join keep the same rhythm the translation will try to follow.
               </Text>
               {boundaryMessage ? <Text style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{boundaryMessage}</Text> : null}
               {saveError ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{saveError}</Text> : null}
@@ -280,8 +281,8 @@ export function ScriptEditor(props: {
           )}
           ListEmptyComponent={(
             <View style={{ paddingVertical: 64, alignItems: 'center', gap: 8 }}>
-              <Text style={{ color: '#F7F8FA', fontSize: 17, fontWeight: '800' }}>No captions yet</Text>
-              <Text style={{ color: '#8E98A5', textAlign: 'center' }}>Generate captions before opening the script editor.</Text>
+              <Text style={{ color: chrome.text, fontSize: 17, fontWeight: '700' }}>No captions yet</Text>
+              <Text style={{ color: chrome.muted, textAlign: 'center' }}>Generate captions before opening the script editor.</Text>
             </View>
           )}
           onScrollToIndexFailed={({ index, averageItemLength }) => {
@@ -293,9 +294,9 @@ export function ScriptEditor(props: {
             const editing = item.id === editingCaptionId;
             const invalid = item.id === emptyCaptionId;
             return (
-              <Pressable accessibilityRole="button" accessibilityLabel={`Edit caption ${index + 1} at ${formatTimestamp(item.startMs)}`} onPress={() => selectForEditing(item)} style={{ minHeight: 72, flexDirection: 'row', gap: 12, padding: 12, borderRadius: 15, borderWidth: 1.5, borderColor: invalid ? '#FF6680' : selected ? '#DFFF35' : '#252C35', backgroundColor: selected ? '#1F281C' : '#171C22' }}>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Edit caption ${index + 1} at ${formatTimestamp(item.startMs)}`} onPress={() => selectForEditing(item)} style={{ minHeight: 72, flexDirection: 'row', gap: 12, padding: 14, borderRadius: chrome.radius.lg, backgroundColor: selected ? chrome.surfaceRaised : chrome.surface }}>
                 <View style={{ width: 54, paddingTop: 3 }}>
-                  <Text style={{ color: selected ? '#DFFF35' : '#7F8996', fontSize: 11, fontWeight: '900', fontVariant: ['tabular-nums'] }}>{formatTimestamp(item.startMs)}</Text>
+                  <Text style={{ color: selected ? chrome.accent : chrome.muted, fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] }}>{formatTimestamp(item.startMs)}</Text>
                   <Text style={{ marginTop: 4, color: '#5E6874', fontSize: 9, fontVariant: ['tabular-nums'] }}>{formatTimestamp(item.endMs)}</Text>
                 </View>
                 <View style={{ flex: 1, justifyContent: 'center' }}>
@@ -309,8 +310,8 @@ export function ScriptEditor(props: {
                         onChangeText={(text) => updateText(item, text)}
                         onSelectionChange={(event) => { selectionRef.current[item.id] = event.nativeEvent.selection; }}
                         onKeyPress={(event) => { if (event.nativeEvent.key === 'Backspace') mergeWithPrevious(item); }}
-                        selectionColor="#DFFF35"
-                        style={{ minHeight: 44, padding: 0, color: '#F7F8FA', fontSize: 16, lineHeight: 22, fontWeight: '600', textAlignVertical: 'center' }}
+                        selectionColor={chrome.accent}
+                        style={{ minHeight: 44, padding: 0, color: chrome.text, fontSize: 17, lineHeight: 23, fontWeight: '400', textAlignVertical: 'center' }}
                       />
                       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
                         <ScriptAction label="Split here" onPress={() => splitAtCursor(item)} />
@@ -319,7 +320,7 @@ export function ScriptEditor(props: {
                       </View>
                     </View>
                   ) : (
-                    <Text style={{ color: '#F7F8FA', fontSize: 16, lineHeight: 22, fontWeight: '600' }}>{item.text}</Text>
+                    <Text style={{ color: chrome.text, fontSize: 17, lineHeight: 23, fontWeight: '400' }}>{item.text}</Text>
                   )}
                   {invalid ? <Text style={{ marginTop: 4, color: '#FF8FA2', fontSize: 11 }}>A subtitle cannot be empty. Merge it or delete its timeline block.</Text> : null}
                 </View>
@@ -339,8 +340,8 @@ function ScriptAction(props: { label: string; onPress: () => void }) {
       accessibilityLabel={props.label}
       hitSlop={4}
       onPress={props.onPress}
-      style={{ minHeight: 36, justifyContent: 'center', paddingHorizontal: 11, borderRadius: 10, borderWidth: 1, borderColor: '#46515E', backgroundColor: '#222933' }}>
-      <Text style={{ color: '#E9EDF2', fontSize: 12, fontWeight: '800' }}>{props.label}</Text>
+      style={{ minHeight: 36, justifyContent: 'center', paddingHorizontal: 12, borderRadius: chrome.radius.pill, backgroundColor: chrome.fill }}>
+      <Text style={{ color: chrome.text, fontSize: 13, fontWeight: '600' }}>{props.label}</Text>
     </Pressable>
   );
 }

@@ -2,7 +2,7 @@ import { Directory, File, FileMode, Paths } from 'expo-file-system';
 import { initWhisper, initWhisperVad } from 'whisper.rn/index';
 
 import CaptionMedia from 'caption-media';
-import { groupWordsIntoCaptions } from '@/lib/caption-grouping';
+import { groupWordsIntoCaptions, groupingOptionsForLanguage } from '@/lib/caption-grouping';
 import {
   getModel,
   LEGACY_ENGLISH_MODEL_FILES,
@@ -412,7 +412,8 @@ export async function transcribeVideoLocally(options: {
       progress: 0.5,
       detail: 'Grouping words into editable subtitles',
     });
-    const captions = groupWordsIntoCaptions(words);
+    const language = result.language || options.language || 'en';
+    const captions = groupWordsIntoCaptions(words, groupingOptionsForLanguage(language));
     onProgress?.({
       stage: 'grouping',
       progress: 1,
@@ -420,7 +421,7 @@ export async function transcribeVideoLocally(options: {
     });
 
     return {
-      language: result.language || options.language || 'en',
+      language,
       words,
       captions,
     };

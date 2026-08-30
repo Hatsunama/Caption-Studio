@@ -1,3 +1,4 @@
+import { captionGroupingProfile, type CaptionGroupingProfile } from '@/lib/caption-languages';
 import {
   captionCjkCharacterCount,
   captionLayoutText,
@@ -14,15 +15,29 @@ export type CaptionGroupingOptions = {
   pauseBreakMs: number;
 };
 
-export const DEFAULT_GROUPING_OPTIONS: CaptionGroupingOptions = {
-  maxWords: 7,
-  maxCharacters: 34,
-  maxCjkCharacters: 16,
-  maxDurationMs: 3_200,
-  pauseBreakMs: 650,
-};
+export function groupingOptionsForLanguage(languageTag?: string): CaptionGroupingOptions {
+  return groupingOptionsForProfile(captionGroupingProfile(languageTag ?? 'en'));
+}
 
-const HARD_BREAK = /[.!?\u3002\uFF01\uFF1F][\]"')\u2019\u201D\u300D\u300F\u3011]*$/u;
+export function groupingOptionsForProfile(profile: CaptionGroupingProfile): CaptionGroupingOptions {
+  if (profile === 'cjk') {
+    return { maxWords: 99, maxCharacters: 42, maxCjkCharacters: 16, maxDurationMs: 3_200, pauseBreakMs: 500 };
+  }
+  if (profile === 'hangul') {
+    return { maxWords: 8, maxCharacters: 32, maxCjkCharacters: 18, maxDurationMs: 3_200, pauseBreakMs: 550 };
+  }
+  if (profile === 'thai') {
+    return { maxWords: 99, maxCharacters: 36, maxCjkCharacters: 22, maxDurationMs: 3_200, pauseBreakMs: 500 };
+  }
+  if (profile === 'arabic') {
+    return { maxWords: 6, maxCharacters: 38, maxCjkCharacters: 16, maxDurationMs: 3_400, pauseBreakMs: 650 };
+  }
+  return { maxWords: 7, maxCharacters: 34, maxCjkCharacters: 16, maxDurationMs: 3_200, pauseBreakMs: 650 };
+}
+
+export const DEFAULT_GROUPING_OPTIONS: CaptionGroupingOptions = groupingOptionsForProfile('spaced');
+
+const HARD_BREAK = /[.!?\u3002\uFF01\uFF1F\u2026\u061F][\]"')\u2019\u201D\u300D\u300F\u3011]*$/u;
 
 export function groupWordsIntoCaptions(
   words: WordToken[],

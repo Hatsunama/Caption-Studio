@@ -159,6 +159,14 @@ private fun expandTimedWord(word: RenderWord): List<ExpandedTimedWord> {
   }
 }
 
+internal fun playbackTimedCaptionWords(caption: RenderCaption): List<RenderWord> {
+  val aligned = realTimedCaptionWords(caption)
+  if (aligned.isNotEmpty()) return aligned
+  return CaptionTextBreaks.spreadTokens(caption.text, caption.startMs, caption.endMs).map { token ->
+    RenderWord(token.text, token.startMs, token.endMs, caption.style)
+  }
+}
+
 internal class TimelineTextPainter(private val context: Context) : AutoCloseable {
   private val emojiReactions = EmojiReactionCatalog(context)
   private val typefaces = mutableMapOf<String, Typeface>()
@@ -169,7 +177,7 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
 
   fun drawCaption(canvas: Canvas, caption: RenderCaption, timeMs: Long, outputWidth: Int, outputHeight: Int) {
     if (timeMs !in caption.startMs until caption.endMs) return
-    val tokens = realTimedCaptionWords(caption)
+    val tokens = playbackTimedCaptionWords(caption)
     drawText(canvas, caption.text, tokens, caption.style, caption.startMs, caption.endMs, timeMs, outputWidth, outputHeight)
   }
 

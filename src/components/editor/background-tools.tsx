@@ -1,6 +1,7 @@
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { PERSON_MATTE_PRESETS, type PersonMattePreset } from '@/lib/person-matte-presets';
+import { chrome } from '@/lib/ui-theme';
 import type { BackgroundReplacement } from '@/types/project';
 
 export function BackgroundTools(props: {
@@ -25,11 +26,11 @@ export function BackgroundTools(props: {
     mask: { ...PERSON_MATTE_PRESETS[preset] },
   });
   return (
-    <View style={{ gap: 9, padding: 12, borderRadius: 16, backgroundColor: '#151A20' }}>
+    <View style={{ gap: 9, padding: 12, borderRadius: chrome.radius.lg, backgroundColor: chrome.surface }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: '#F7F8FA', fontSize: 14, fontWeight: '900' }}>Remove video background</Text>
-          <Text style={{ color: '#939EAB', fontSize: 11, marginTop: 2 }}>Runs privately on this phone. No green screen required.</Text>
+          <Text style={{ color: chrome.text, fontSize: 14, fontWeight: '700' }}>Remove video background</Text>
+          <Text style={{ color: chrome.muted, fontSize: 11, marginTop: 2 }}>Runs privately on this phone. No green screen required.</Text>
         </View>
         <Chip
           label={props.value.enabled && props.processingAllowed ? 'On' : 'Off'}
@@ -44,7 +45,7 @@ export function BackgroundTools(props: {
         />
       </View>
       {props.value.enabled && !props.processingAllowed ? (
-        <View style={{ gap: 7, padding: 11, borderRadius: 12, backgroundColor: '#28221B' }}>
+        <View style={{ gap: 7, padding: 11, borderRadius: chrome.radius.md, backgroundColor: chrome.warningFill }}>
           <Text style={{ color: '#FFE0A6', fontSize: 12, lineHeight: 17 }}>
             Background removal is paused until you review its on-device AI metrics disclosure.
           </Text>
@@ -102,8 +103,8 @@ export function BackgroundTools(props: {
 }
 
 function Chip(props: { label: string; active?: boolean; onPress?: () => void }) {
-  return <Pressable disabled={!props.onPress} onPress={props.onPress} style={{ minHeight: 42, justifyContent: 'center', paddingHorizontal: 13, borderRadius: 12, borderWidth: 1, borderColor: props.active ? '#DFFF35' : '#303842', backgroundColor: props.active ? '#29331D' : '#20262E' }}>
-    <Text numberOfLines={1} style={{ maxWidth: 220, color: props.active ? '#DFFF35' : '#F7F8FA', fontSize: 12, fontWeight: '800' }}>{props.label}</Text>
+  return <Pressable disabled={!props.onPress} onPress={props.onPress} style={{ minHeight: 42, justifyContent: 'center', paddingHorizontal: 13, borderRadius: chrome.radius.md, borderWidth: 1, borderColor: props.active ? chrome.accent : chrome.hairline, backgroundColor: props.active ? '#1A3A48' : chrome.surfaceRaised }}>
+    <Text numberOfLines={1} style={{ maxWidth: 220, color: props.active ? chrome.accent : chrome.text, fontSize: 12, fontWeight: '700' }}>{props.label}</Text>
   </Pressable>;
 }
 

@@ -19,9 +19,8 @@ import {
   type CaptionAnimationState,
 } from '@/lib/animation-timing';
 import {
-  alignCaptionTimedWords,
+  captionPlaybackTimedWords,
   captionLayoutText,
-  captionTextTokens,
   compactCaptionToken,
 } from '@/lib/caption-text-breaks';
 import { resolveCaptionStyle } from '@/lib/style-resolver';
@@ -143,8 +142,8 @@ export function CaptionOverlay(props: {
   const candidateTimedWords = caption.wordIds
     .map((id) => props.words.find((word) => word.id === id))
     .filter((word): word is WordToken => Boolean(word));
-  const timedWords = alignCaptionTimedWords(candidateTimedWords, caption.text);
-  const renderedWords = timedWords.length > 0 ? timedWords : fallbackWords(caption);
+  const timedWords = captionPlaybackTimedWords(candidateTimedWords, caption.text, caption);
+  const renderedWords = timedWords;
   const activeIndex = timedWords.findIndex((word) => props.currentMs >= word.startMs && props.currentMs < word.endMs);
   const visibleWords = wordsForAnimation(renderedWords, activeIndex, style.animation.id, props.currentMs, timedWords.length > 0);
   const activeWord = timedWords[activeIndex];
@@ -191,8 +190,8 @@ export function CaptionOverlay(props: {
           justifyContent: 'center',
           transform: [{ rotate: `${style.rotation}deg` }],
           borderWidth: props.interactive ? 2 : 0,
-          borderColor: '#DFFF35',
-          borderRadius: props.interactive ? 5 : 0,
+          borderColor: '#64D2FF',
+          borderRadius: props.interactive ? 16 : 0,
         }}>
         {props.interactive ? (
           <View
@@ -297,7 +296,7 @@ export function CaptionOverlay(props: {
                 borderRadius: 8,
                 backgroundColor: 'rgba(9,11,14,0.9)',
               }}>
-              <Text style={{ color: '#DFFF35', fontSize: 9, fontWeight: '800' }}>
+              <Text style={{ color: '#64D2FF', fontSize: 9, fontWeight: '800' }}>
                 {Math.round(style.box.width * 100)} × {Math.round(style.box.height * 100)} • {Math.round(style.rotation)}°
               </Text>
             </View>
@@ -559,7 +558,7 @@ function ResizeBar(props: {
           width: vertical ? 7 : 44,
           height: vertical ? 44 : 7,
           borderRadius: 7,
-          backgroundColor: '#DFFF35',
+          backgroundColor: '#64D2FF',
           borderWidth: 2,
           borderColor: '#11140C',
         }}
@@ -653,7 +652,7 @@ function RotateScaleHandle(props: {
         borderRadius: 23,
         borderWidth: 2,
         borderColor: '#11140C',
-        backgroundColor: '#DFFF35',
+        backgroundColor: '#64D2FF',
       }}>
       <Text pointerEvents="none" style={{ color: '#11140C', fontSize: 19, fontWeight: '900' }}>↻</Text>
     </View>
@@ -709,14 +708,4 @@ function normalizeDegrees(value: number) {
   if (result > 180) result -= 360;
   if (result < -180) result += 360;
   return result;
-}
-
-function fallbackWords(caption: CaptionBlock): WordToken[] {
-  const parts = captionTextTokens(caption.text);
-  return parts.map((text, index) => ({
-    id: `${caption.id}-fallback-${index}`,
-    text,
-    startMs: caption.startMs,
-    endMs: caption.startMs,
-  }));
 }

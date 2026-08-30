@@ -28,10 +28,10 @@ export default function RootLayout() {
   return (
     <Stack
       screenOptions={{
-        headerStyle: { backgroundColor: '#090B0E' },
-        headerTintColor: '#F7F8FA',
+        headerStyle: { backgroundColor: '#000000' },
+        headerTintColor: '#F5F5F7',
         headerShadowVisible: false,
-        contentStyle: { backgroundColor: '#090B0E' },
+        contentStyle: { backgroundColor: '#000000' },
       }}>
       <Stack.Screen name="index" options={{ title: 'Caption Studio' }} />
       <Stack.Screen name="privacy" options={{ title: 'Privacy policy' }} />

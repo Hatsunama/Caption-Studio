@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { type GestureResponderEvent, Modal, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 
+import { chrome } from '@/lib/ui-theme';
 import type { CaptionProject, VideoTransform } from '@/types/project';
 
 const presets: { id: CaptionProject['canvas']['preset']; label: string }[] = [
@@ -66,7 +67,7 @@ export function VideoTools(props: {
         <ToolChip label="Reset video" onPress={props.onReset} />
       </ScrollView>
 
-      <Text style={{ color: '#929CAA', fontSize: 11 }}>
+      <Text style={{ color: chrome.muted, fontSize: 11 }}>
         On the preview: drag to move, pinch to resize, and twist with two fingers to rotate.
       </Text>
 
@@ -94,20 +95,20 @@ function RotationModal(props: {
   return (
     <Modal visible={props.visible} transparent animationType="fade" onRequestClose={props.onClose}>
       <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.66)' }}>
-        <View style={{ gap: 18, padding: 22, paddingBottom: 34, borderTopLeftRadius: 26, borderTopRightRadius: 26, backgroundColor: '#171C22' }}>
+        <View style={{ gap: 18, padding: 22, paddingBottom: 34, borderTopLeftRadius: chrome.radius.xl, borderTopRightRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View>
-              <Text style={{ color: '#F7F8FA', fontSize: 21, fontWeight: '800' }}>Free video rotation</Text>
-              <Text style={{ color: '#939EAB', marginTop: 3 }}>Slide anywhere on the wide angle bar</Text>
+              <Text style={{ color: chrome.text, fontSize: 21, fontWeight: '700' }}>Free video rotation</Text>
+              <Text style={{ color: chrome.muted, marginTop: 3 }}>Slide anywhere on the wide angle bar</Text>
             </View>
             <Pressable onPress={props.onClose} hitSlop={12}>
-              <Text style={{ color: '#DFFF35', fontWeight: '800' }}>Done</Text>
+              <Text style={{ color: chrome.accent, fontWeight: '700' }}>Done</Text>
             </Pressable>
           </View>
 
           <AngleScrubber value={props.value} onChange={props.onChange} onEnd={props.onChangeEnd} />
 
-          <Text style={{ color: '#F7F8FA', textAlign: 'center', fontSize: 28, fontWeight: '900', fontVariant: ['tabular-nums'] }}>
+          <Text style={{ color: chrome.text, textAlign: 'center', fontSize: 28, fontWeight: '700', fontVariant: ['tabular-nums'] }}>
             {Math.round(props.value)}°
           </Text>
 
@@ -172,8 +173,8 @@ function AngleScrubber(props: { value: number; onChange: (value: number) => void
         });
       }}
       style={{ height: 64, justifyContent: 'center' }}>
-      <View pointerEvents="none" style={{ height: 10, borderRadius: 5, backgroundColor: '#303842' }}>
-        <View style={{ width: `${percent}%`, height: '100%', borderRadius: 5, backgroundColor: '#9CB328' }} />
+      <View pointerEvents="none" style={{ height: 10, borderRadius: 5, backgroundColor: chrome.fill }}>
+        <View style={{ width: `${percent}%`, height: '100%', borderRadius: 5, backgroundColor: chrome.accent }} />
       </View>
       <View
         pointerEvents="none"
@@ -185,8 +186,8 @@ function AngleScrubber(props: { value: number; onChange: (value: number) => void
           marginLeft: -17,
           borderRadius: 17,
           borderWidth: 3,
-          borderColor: '#11140C',
-          backgroundColor: '#DFFF35',
+          borderColor: chrome.accentInk,
+          backgroundColor: chrome.accent,
         }}
       />
     </View>
@@ -202,12 +203,12 @@ function ToolChip(props: { label: string; active?: boolean; onPress: () => void 
         minHeight: 44,
         justifyContent: 'center',
         paddingHorizontal: 14,
-        borderRadius: 13,
+        borderRadius: chrome.radius.md,
         borderWidth: 1,
-        borderColor: props.active ? '#DFFF35' : '#303842',
-        backgroundColor: props.active ? '#29331D' : '#20262E',
+        borderColor: props.active ? chrome.accent : chrome.hairline,
+        backgroundColor: props.active ? '#1A3A48' : chrome.surfaceRaised,
       }}>
-      <Text style={{ color: props.active ? '#DFFF35' : '#F7F8FA', fontSize: 12, fontWeight: '700' }}>{props.label}</Text>
+      <Text style={{ color: props.active ? chrome.accent : chrome.text, fontSize: 12, fontWeight: '700' }}>{props.label}</Text>
     </Pressable>
   );
 }

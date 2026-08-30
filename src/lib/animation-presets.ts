@@ -13,7 +13,7 @@ export type AnimationPreset = {
 
 export const ANIMATION_PRESETS: AnimationPreset[] = [
   { id: 'none', name: 'Classic', icon: 'Aa', description: 'Clean and steady', intensity: 0, durationMs: 1, accent: '#F7F8FA' },
-  { id: 'active-word', name: 'Spotlight', icon: '●', description: 'Spoken word lights up', intensity: 0.12, durationMs: 160, accent: '#DFFF35' },
+  { id: 'active-word', name: 'Spotlight', icon: '●', description: 'Spoken word lights up', intensity: 0.12, durationMs: 160, accent: '#64D2FF' },
   { id: 'karaoke', name: 'Karaoke', icon: '▰', description: 'Color sweeps forward', intensity: 0.16, durationMs: 180, accent: '#FFC247' },
   { id: 'single-word', name: 'One Word', icon: 'ONE', description: 'One word at a time', intensity: 0.2, durationMs: 140, accent: '#67E8F9' },
   { id: 'pop', name: 'Bubble Pop', icon: 'POP', description: 'Words spring into view', intensity: 0.24, durationMs: 240, accent: '#FF70C8' },
@@ -27,7 +27,7 @@ export const ANIMATION_PRESETS: AnimationPreset[] = [
   { id: 'wave', name: 'Word Wave', icon: '〰', description: 'Words ripple independently', intensity: 0.28, durationMs: 620, accent: '#45F0D1' },
   { id: 'shake', name: 'Quake', icon: '≋', description: 'Rapid energetic shake', intensity: 0.32, durationMs: 260, accent: '#FF5D5D' },
   { id: 'glow-pulse', name: 'Neon Pulse', icon: '✦', description: 'Breathing neon glow', intensity: 0.3, durationMs: 720, accent: '#5CFFFA' },
-  { id: 'elastic', name: 'Rubber Band', icon: '↔', description: 'Stretchy overshoot', intensity: 0.4, durationMs: 500, accent: '#DFFF35' },
+  { id: 'elastic', name: 'Rubber Band', icon: '↔', description: 'Stretchy overshoot', intensity: 0.4, durationMs: 500, accent: '#64D2FF' },
   { id: 'flip', name: 'Card Flip', icon: '◩', description: '3D flip reveal', intensity: 0.42, durationMs: 420, accent: '#C4A7FF' },
   { id: 'stomp', name: 'Stomp', icon: '▼', description: 'Drops with heavy impact', intensity: 0.48, durationMs: 320, accent: '#FFB347' },
   { id: 'fade-in', name: 'Soft Fade', icon: '◌', description: 'Gently fades into view', intensity: 0.18, durationMs: 520, accent: '#B8C5FF' },

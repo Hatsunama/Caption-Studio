@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   alignCaptionTimedWords,
+  captionPlaybackTimedWords,
   captionSplitBoundaryAtCursor,
   captionLayoutText,
   captionSpokenTokenSpans,
@@ -78,4 +79,17 @@ test('packed CJK timing is split by grapheme without splitting astral characters
     { id: 'packed:timing-0', text: '𠮷', startMs: 100, endMs: 200 },
     { id: 'packed:timing-1', text: '好', startMs: 200, endMs: 300 },
   ]);
+});
+
+test('edited captions that no longer match Whisper tokens still highlight across the subtitle window', () => {
+  const spread = captionPlaybackTimedWords(
+    [{ id: 'word-1', text: 'hello', startMs: 100, endMs: 400 }],
+    'hello there extra',
+    { id: 'caption', startMs: 1_000, endMs: 2_000 },
+  );
+  assert.equal(spread.length, 3);
+  assert.equal(spread[0].startMs, 1_000);
+  assert.equal(spread.at(-1)?.endMs, 2_000);
+  assert.ok(spread.every((word) => word.endMs > word.startMs));
+  assert.deepEqual(spread.map((word) => word.text), ['hello', 'there', 'extra']);
 });

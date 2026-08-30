@@ -1,7 +1,10 @@
 import { mergePatch, mergeStyle } from '@/lib/style-resolver';
 import {
+  canonicalCaptionLanguageTag,
   captionLanguageFamily,
+  captionLanguageLabel,
   normalizeEnglishChineseCaptionLanguage,
+  type CaptionLanguageTag,
   type EnglishChineseCaptionLanguage,
 } from '@/lib/caption-languages';
 import type {
@@ -303,30 +306,36 @@ export function setTranslationTrackProvider(
   }, updatedAt);
 }
 
-export function projectEnglishChineseCaptionLanguage(project: CaptionProject): EnglishChineseCaptionLanguage {
+export function projectPrimaryCaptionLanguage(project: CaptionProject): string {
   const sourceIds = [...new Set(project.clips.map((clip) => clip.sourceId))];
   const detected = sourceIds.flatMap((sourceId) => {
     const language = project.transcription.sourceResults[sourceId]?.language;
-    return language ? [normalizeEnglishChineseCaptionLanguage(language)] : [];
+    return language ? [canonicalCaptionLanguageTag(language)] : [];
   });
   if (detected.length > 0 && detected.length !== sourceIds.length) {
     throw new Error('Generate captions for every video before adding dual subtitles.');
   }
   const languages = detected.length > 0
     ? detected
-    : [normalizeEnglishChineseCaptionLanguage(project.transcription.language)];
+    : [canonicalCaptionLanguageTag(project.transcription.language)];
   const families = new Set(languages.map(captionLanguageFamily));
   if (families.size !== 1) {
-    throw new Error('Dual subtitles currently require every video clip to use the same source language: all English or all Chinese.');
+    throw new Error('Dual subtitles currently require every video clip to use the same source language.');
   }
-  const projectLanguage = normalizeEnglishChineseCaptionLanguage(project.transcription.language);
-  return captionLanguageFamily(projectLanguage) === captionLanguageFamily(languages[0]) ? projectLanguage : languages[0];
+  const projectLanguage = canonicalCaptionLanguageTag(project.transcription.language);
+  return captionLanguageFamily(projectLanguage) === captionLanguageFamily(languages[0])
+    ? projectLanguage
+    : languages[0];
+}
+
+export function projectEnglishChineseCaptionLanguage(project: CaptionProject): EnglishChineseCaptionLanguage {
+  return normalizeEnglishChineseCaptionLanguage(projectPrimaryCaptionLanguage(project));
 }
 
 export function assertVisibleTranslationTracksCompatible(project: CaptionProject) {
   const visible = (project.captionTracks?.translations ?? []).filter((track) => track.visible);
   if (visible.length === 0) return;
-  const sourceLanguage = projectEnglishChineseCaptionLanguage(project);
+  const sourceLanguage = projectPrimaryCaptionLanguage(project);
   for (const track of visible) {
     if (
       captionLanguageFamily(track.sourceLanguageTag) !== captionLanguageFamily(sourceLanguage)
@@ -345,8 +354,8 @@ export function synchronizeCaptionTracksAfterTranscription(
     return synchronizeCaptionTracks(generated, generated.captions);
   }
   try {
-    const previousLanguage = projectEnglishChineseCaptionLanguage(previous);
-    const generatedLanguage = projectEnglishChineseCaptionLanguage(generated);
+    const previousLanguage = projectPrimaryCaptionLanguage(previous);
+    const generatedLanguage = projectPrimaryCaptionLanguage(generated);
     if (captionLanguageFamily(previousLanguage) !== captionLanguageFamily(generatedLanguage)) {
       return emptyCaptionTrackCollection();
     }
@@ -354,6 +363,17 @@ export function synchronizeCaptionTracksAfterTranscription(
     return emptyCaptionTrackCollection();
   }
   return synchronizeCaptionTracks(generated, generated.captions);
+}
+
+export function translationTrackIdForLanguage(languageTag: CaptionLanguageTag | string) {
+  if (languageTag === 'zh-Hans') return CHINESE_SIMPLIFIED_TRACK_ID;
+  if (languageTag === 'zh-Hant') return CHINESE_TRADITIONAL_TRACK_ID;
+  if (languageTag === 'en') return ENGLISH_TRACK_ID;
+  return `translation-${languageTag}`;
+}
+
+export function translationTrackDisplayName(languageTag: string) {
+  return captionLanguageLabel(languageTag);
 }
 
 export function resolveCaptionPairs(project: CaptionProject, trackId: string): CaptionPair[] {
