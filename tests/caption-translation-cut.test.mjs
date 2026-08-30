@@ -67,7 +67,7 @@ test('document packing respects the model chunk budget without splitting a capti
     { id: 'a', text: 'A'.repeat(900) },
     { id: 'b', text: 'B'.repeat(900) },
   ];
-  const chunks = packCaptionDocuments(captions, 1_600);
+  const chunks = packCaptionDocuments(captions, 900);
   assert.equal(chunks.length, 2);
   assert.deepEqual(chunks.map((chunk) => chunk.sourceIds), [['a'], ['b']]);
 });

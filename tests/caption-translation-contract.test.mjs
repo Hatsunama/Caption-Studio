@@ -86,7 +86,7 @@ test('one pinned local model owns every supported English-Chinese direction', as
   assert.match(languages, /if \(normalized === 'en'/);
   assert.match(languages, /return 'zh-Hant'/);
   assert.match(languages, /return 'zh-Hans'/);
-  assert.match(service, /characters \+ captionLength > 1_800/);
+  assert.match(service, /characters \+ captionLength > 1_000/);
   assert.match(service, /captionTextTail\([^)]*[\s\S]*, 250\)/);
   assert.match(service, /captionTextHead\([^)]*[\s\S]*, 250\)/);
   assert.equal((service.match(/CaptionTranslation\.translateNaturalCaptions\(/g) ?? []).length, 1);

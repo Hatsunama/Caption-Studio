@@ -43,12 +43,12 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final int MAX_OPERATIONS = 8;
   static final int MAX_BATCHES = 128;
   static final int MAX_SESSION_CAPTIONS = 3_072;
-  static final int MAX_CAPTION_CHARACTERS = 2_000;
+  static final int MAX_CAPTION_CHARACTERS = 1_000;
   static final int MAX_TOTAL_CAPTION_CHARACTERS = 8_000;
   static final int MAX_SESSION_CAPTION_CHARACTERS = 256_000;
   static final int MAX_CONTEXT_CHARACTERS = 2_000;
   static final int MAX_OUTPUT_CHARACTERS = 65_536;
-  static final int MAX_OUTPUT_TEXT_CHARACTERS = 4_000;
+  static final int MAX_OUTPUT_TEXT_CHARACTERS = 2_000;
   static final int MAX_TOTAL_OUTPUT_CHARACTERS = 16_000;
   static final String PROMPT_CONTRACT = "qwen2.5-caption-json-v1";
 

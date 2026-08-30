@@ -18,7 +18,7 @@ export type CaptionDocumentChunk = {
   sourceIds: string[];
 };
 
-const DOCUMENT_CHUNK_CHARACTERS = 1_600;
+const DOCUMENT_CHUNK_CHARACTERS = 900;
 const SENTENCE_END = /[.!?。！？…\u061F]["'”’」』)\]]*$/u;
 
 export function packCaptionDocuments(

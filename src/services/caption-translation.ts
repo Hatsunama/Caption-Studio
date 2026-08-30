@@ -394,7 +394,7 @@ function validateTranslationUnits(units: NaturalTranslationUnit[]) {
     if (!id || captionTextLength(id) > 256) throw new Error('A subtitle has an invalid internal identity.');
     if (ids.has(id)) throw new Error(`Subtitle ${id} was included more than once.`);
     if (!text) throw new Error(`Subtitle ${id} has no text to translate.`);
-    if (captionTextLength(text) > 2_000) throw new Error(`Subtitle ${id} is too long. Split it before translating.`);
+    if (captionTextLength(text) > 1_000) throw new Error(`Subtitle ${id} is too long. Split it before translating.`);
     ids.add(id);
     return { id, text };
   });
@@ -406,7 +406,7 @@ function createBatches(captions: NaturalCaptionTranslationInput[]) {
   let characters = 0;
   for (const caption of captions) {
     const captionLength = captionTextLength(caption.text);
-    if (batch.length >= 24 || characters + captionLength > 1_800) {
+    if (batch.length >= 24 || characters + captionLength > 1_000) {
       batches.push(batch);
       batch = [];
       characters = 0;
@@ -444,7 +444,7 @@ function validateNativeResult(
   for (const caption of translated) {
     if (translatedById.has(caption.id)) continue;
     const text = caption.text.normalize('NFC').trim();
-    if (text && captionTextLength(text) <= 4_000) translatedById.set(caption.id, text);
+    if (text && captionTextLength(text) <= 2_000) translatedById.set(caption.id, text);
   }
   return expected.map((caption) => ({
     id: caption.id,
