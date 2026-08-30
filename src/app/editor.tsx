@@ -489,9 +489,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   useEffect(() => {
     if (runtimePolicy.mediaAdmitted) return;
-    setPersonPreviewUri(undefined);
-    setPersonPreviewBusy(false);
-    void releasePersonPreview(project.id).catch(() => undefined);
+    let active = true;
+    void releasePersonPreview(project.id).catch(() => undefined).finally(() => {
+      if (!active) return;
+      setPersonPreviewUri(undefined);
+      setPersonPreviewBusy(false);
+    });
+    return () => { active = false; };
   }, [project.id, runtimePolicy.mediaAdmitted]);
 
   useEffect(() => () => {

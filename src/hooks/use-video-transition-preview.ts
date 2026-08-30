@@ -45,7 +45,6 @@ export function useVideoTransitionPreview(options: {
     if (!preload?.outgoing || !preload.incoming) {
       outgoingPlayer.pause();
       incomingPlayer.pause();
-      setLoad({ state: 'idle' });
       return;
     }
     if (loadRef.current.key === preload.key && loadRef.current.state === 'ready') return;

@@ -1175,24 +1175,23 @@ private class ManagedRetriever(context: Context, uri: String) : AutoCloseable {
   private val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
   private val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
   private val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+  private val displayWidth = if (rotationSwapsDimensions(rotation)) height else width
+  private val displayHeight = if (rotationSwapsDimensions(rotation)) width else height
   val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 1L
 
   fun frame(timeMs: Long, targetWidth: Int, targetHeight: Int): Bitmap? {
     val timeUs = timeMs.coerceIn(0L, max(0L, durationMs - 1L)) * 1_000L
-    val decoded = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1 || width <= 0 || height <= 0) {
+    return if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1 || displayWidth <= 0 || displayHeight <= 0) {
       retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
     } else {
-      val scale = min(1.0, max(targetWidth, targetHeight).toDouble() / max(width, height).toDouble())
+      val scale = min(1.0, max(targetWidth, targetHeight).toDouble() / max(displayWidth, displayHeight).toDouble())
       retriever.getScaledFrameAtTime(
         timeUs,
         MediaMetadataRetriever.OPTION_CLOSEST,
-        max(1, (width * scale).toInt()),
-        max(1, (height * scale).toInt()),
+        max(1, (displayWidth * scale).toInt()),
+        max(1, (displayHeight * scale).toInt()),
       )
-    } ?: return null
-    val oriented = orientBitmap(decoded, rotation)
-    if (oriented !== decoded) decoded.recycle()
-    return oriented
+    }
   }
 
   override fun close() {

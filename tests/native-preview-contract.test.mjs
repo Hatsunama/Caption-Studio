@@ -30,6 +30,10 @@ const renderTransforms = readFileSync(
   new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/RenderTransforms.kt', import.meta.url),
   'utf8',
 );
+const timelineExporter = readFileSync(
+  new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineVideoExporter.kt', import.meta.url),
+  'utf8',
+);
 
 test('person segmentation releases its input and every confidence-mask image', () => {
   assert.match(segmenter, /finally\s*\{\s*masks\.forEach\s*\{\s*mask\s*->\s*runCatching\s*\{\s*mask\.close\(\)/s);
@@ -46,11 +50,19 @@ test('preview background uses timeline time independently of foreground source t
 
 test('preview backgrounds normalize video metadata and image EXIF orientation', () => {
   assert.match(nativeModule, /METADATA_KEY_VIDEO_ROTATION/);
-  assert.match(nativeModule, /rotationSwapsDimensions\(rotation\)/);
+  assert.match(nativeModule, /rotationSwapsDimensions\(sourceRotation\)/);
   assert.match(nativeModule, /BitmapOrientation\.fromExif\(ExifInterface\(stream\)\)/);
   assert.match(nativeModule, /drawBitmapFill\(canvas, requireNotNull\(backgroundBitmap\)/);
   assert.match(orientation, /flipHorizontal: Boolean/);
   assert.match(orientation, /normalizeRotationDegrees/);
+});
+
+test('MediaMetadataRetriever video frames are not rotated a second time', () => {
+  assert.match(nativeModule, /foreground = decoded/);
+  assert.match(nativeModule, /frame = recovered/);
+  assert.doesNotMatch(nativeModule, /orientBitmapAndRecycle\((?:decoded|recovered|frame), (?:sourceRotation|rotation)\)/);
+  assert.match(timelineExporter, /displayWidth = if \(rotationSwapsDimensions\(rotation\)\) height else width/);
+  assert.doesNotMatch(timelineExporter, /orientBitmap\(decoded, rotation\)/);
 });
 
 test('background preview and export share the full output-canvas transform contract', () => {

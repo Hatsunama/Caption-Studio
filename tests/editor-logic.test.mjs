@@ -173,7 +173,7 @@ test('timeline export is native, local, multi-track, and version-aligned', () =>
   assert.match(previewService, /queue\.pending = job/);
   assert.match(previewService, /superseded by a newer frame/);
   assert.ok((nativeModule.match(/METADATA_KEY_VIDEO_ROTATION/g) ?? []).length >= 2);
-  assert.match(nativeModule, /orientBitmapAndRecycle\(decoded, sourceRotation\)/);
+  assert.match(nativeModule, /foreground = decoded/);
   assert.match(exporter, /orientBitmapAndRecycle\(decoded, orientation\)/);
 });
 

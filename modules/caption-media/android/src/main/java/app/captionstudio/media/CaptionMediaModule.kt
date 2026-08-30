@@ -219,7 +219,11 @@ class CaptionMediaModule : Module() {
       val sourceWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
       val sourceHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
       val sourceRotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
-      val previewSize = previewFrameSize(sourceWidth, sourceHeight)
+      val previewSize = if (rotationSwapsDimensions(sourceRotation)) {
+        previewFrameSize(sourceHeight, sourceWidth)
+      } else {
+        previewFrameSize(sourceWidth, sourceHeight)
+      }
       val decoded = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 && previewSize.first > 0) {
         retriever.getScaledFrameAtTime(
           max(0L, timeMs) * 1_000L,
@@ -230,7 +234,7 @@ class CaptionMediaModule : Module() {
       } else {
         retriever.getFrameAtTime(max(0L, timeMs) * 1_000L, MediaMetadataRetriever.OPTION_CLOSEST)
       } ?: throw IllegalArgumentException("The requested video frame could not be decoded")
-      foreground = orientBitmapAndRecycle(decoded, sourceRotation)
+      foreground = decoded
       val source = requireNotNull(foreground)
       val matte = synchronized(segmentationLock) {
         ensurePreviewActiveLocked(requestEpoch)
@@ -312,23 +316,20 @@ class CaptionMediaModule : Module() {
     return try {
       setRetrieverDataSource(retriever, input)
       val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-      val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
       val loopedTimeMs = if (durationMs > 0) max(0L, timeMs) % durationMs else max(0L, timeMs)
-      val decodeWidth = if (rotationSwapsDimensions(rotation)) targetHeight else targetWidth
-      val decodeHeight = if (rotationSwapsDimensions(rotation)) targetWidth else targetHeight
       decoded = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
         retriever.getScaledFrameAtTime(
           loopedTimeMs * 1_000L,
           MediaMetadataRetriever.OPTION_CLOSEST,
-          max(1, decodeWidth),
-          max(1, decodeHeight),
+          max(1, targetWidth),
+          max(1, targetHeight),
         )
       } else {
         retriever.getFrameAtTime(loopedTimeMs * 1_000L, MediaMetadataRetriever.OPTION_CLOSEST)
       }
       val frame = decoded ?: return null
       decoded = null
-      orientBitmapAndRecycle(frame, rotation)
+      frame
     } catch (error: Throwable) {
       if (error is CancellationException || error is Error) throw error
       null
@@ -482,7 +483,7 @@ class CaptionMediaModule : Module() {
       val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
       val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
       val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
-      val target = thumbnailSize(width, height)
+      val target = if (rotationSwapsDimensions(rotation)) thumbnailSize(height, width) else thumbnailSize(width, height)
       val decoded = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1 && target.first > 0 && target.second > 0) {
         retriever.getScaledFrameAtTime(
           max(0L, timeMs) * 1_000L,
@@ -495,7 +496,7 @@ class CaptionMediaModule : Module() {
       }
       val recovered = decoded ?: retriever.frameAtTime
       if (recovered != null) {
-        frame = orientBitmapAndRecycle(recovered, rotation)
+        frame = recovered
       }
 
       val renderedFrame = frame ?: throw IllegalArgumentException("The first video frame could not be decoded")
