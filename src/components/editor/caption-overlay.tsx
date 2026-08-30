@@ -24,6 +24,7 @@ import {
   compactCaptionToken,
 } from '@/lib/caption-text-breaks';
 import { resolveCaptionStyle } from '@/lib/style-resolver';
+import { chrome } from '@/lib/ui-theme';
 import type { CaptionAnimationId, CaptionBlock, CaptionStyle, CaptionStylePatch, WordToken } from '@/types/project';
 
 type TouchPoint = { pageX: number; pageY: number };
@@ -190,7 +191,7 @@ export function CaptionOverlay(props: {
           justifyContent: 'center',
           transform: [{ rotate: `${style.rotation}deg` }],
           borderWidth: props.interactive ? 2 : 0,
-          borderColor: '#64D2FF',
+          borderColor: chrome.accent,
           borderRadius: props.interactive ? 16 : 0,
         }}>
         {props.interactive ? (
@@ -293,10 +294,10 @@ export function CaptionOverlay(props: {
                 bottom: -28,
                 paddingHorizontal: 7,
                 paddingVertical: 3,
-                borderRadius: 8,
-                backgroundColor: 'rgba(9,11,14,0.9)',
+                borderRadius: chrome.radius.sm,
+                backgroundColor: chrome.overlay,
               }}>
-              <Text style={{ color: '#64D2FF', fontSize: 9, fontWeight: '800' }}>
+              <Text style={{ color: chrome.accent, fontSize: 9, fontWeight: '800' }}>
                 {Math.round(style.box.width * 100)} × {Math.round(style.box.height * 100)} • {Math.round(style.rotation)}°
               </Text>
             </View>
@@ -558,7 +559,7 @@ function ResizeBar(props: {
           width: vertical ? 7 : 44,
           height: vertical ? 44 : 7,
           borderRadius: 7,
-          backgroundColor: '#64D2FF',
+          backgroundColor: chrome.accent,
           borderWidth: 2,
           borderColor: '#11140C',
         }}
@@ -652,7 +653,7 @@ function RotateScaleHandle(props: {
         borderRadius: 23,
         borderWidth: 2,
         borderColor: '#11140C',
-        backgroundColor: '#64D2FF',
+        backgroundColor: chrome.accent,
       }}>
       <Text pointerEvents="none" style={{ color: '#11140C', fontSize: 19, fontWeight: '900' }}>↻</Text>
     </View>

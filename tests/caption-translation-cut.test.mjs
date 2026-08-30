@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { groupingOptionsForLanguage, groupWordsIntoCaptions } from '../src/lib/caption-grouping.ts';
+import { groupingOptionsForLanguage, groupTimelineWordsByClip, groupWordsIntoCaptions } from '../src/lib/caption-grouping.ts';
 import {
   automaticTranslationTargetTags,
   canAutomaticallyTranslatePair,
@@ -41,6 +41,41 @@ test('Chinese grouping stays character-limited while English grouping stays word
     { id: 'w3', text: 'second.', startMs: 1_100, endMs: 1_300 },
   ], groupingOptionsForLanguage('en'));
   assert.equal(english.length, 2);
+});
+
+test('Korean grouping counts Hangul words instead of ignoring them as CJK characters only', () => {
+  const words = ['하나', '둘', '셋', '넷', '다섯', '여섯', '일곱', '여덟', '아홉'].map((text, index) => ({
+    id: `k${index + 1}`,
+    text,
+    startMs: index * 200,
+    endMs: index * 200 + 180,
+  }));
+  const captions = groupWordsIntoCaptions(words, groupingOptionsForLanguage('ko'));
+  assert.equal(captions.length, 2);
+  assert.equal(captions[0].wordIds.length, 8);
+  assert.equal(captions[1].text, '아홉');
+});
+
+test('timeline grouping uses each clip language instead of the first clip language', () => {
+  const englishWords = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'].map((text, index) => ({
+    id: `en-clip-${index + 1}`,
+    text,
+    startMs: index * 200,
+    endMs: index * 200 + 180,
+  }));
+  const chineseWords = [...'今天天氣很好我們一起出去散步吧真的'].map((text, index) => ({
+    id: `zh-clip-${index + 1}`,
+    text,
+    startMs: 2_000 + index * 100,
+    endMs: 2_000 + index * 100 + 90,
+  }));
+  const captions = groupTimelineWordsByClip(
+    [...englishWords, ...chineseWords],
+    ['en-clip', 'zh-clip'],
+    (clipId) => groupingOptionsForLanguage(clipId === 'en-clip' ? 'en' : 'zh-Hans'),
+  );
+  assert.equal(captions.filter((caption) => caption.id.startsWith('caption-en-clip-')).length, 2);
+  assert.ok(captions.filter((caption) => caption.id.startsWith('caption-zh-clip-')).length >= 2);
 });
 
 test('whole-script translation packs captions then cuts the result back to the original rhythm', () => {

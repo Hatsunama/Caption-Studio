@@ -3,7 +3,6 @@ import {
   captionCjkCharacterCount,
   captionLayoutText,
   captionTextLength,
-  containsCaptionCjk,
 } from '@/lib/caption-text-breaks';
 import type { CaptionBlock, WordToken } from '@/types/project';
 
@@ -38,6 +37,11 @@ export function groupingOptionsForProfile(profile: CaptionGroupingProfile): Capt
 export const DEFAULT_GROUPING_OPTIONS: CaptionGroupingOptions = groupingOptionsForProfile('spaced');
 
 const HARD_BREAK = /[.!?\u3002\uFF01\uFF1F\u2026\u061F][\]"')\u2019\u201D\u300D\u300F\u3011]*$/u;
+const UNSPACED_NON_HANGUL = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]/u;
+
+function isUnspacedNonHangulToken(text: string) {
+  return UNSPACED_NON_HANGUL.test(text);
+}
 
 export function groupWordsIntoCaptions(
   words: WordToken[],
@@ -57,7 +61,7 @@ export function groupWordsIntoCaptions(
     const duration = candidate.at(-1)!.endMs - candidate[0]!.startMs;
     const previous = current.at(-1);
     const pause = previous ? word.startMs - previous.endMs : 0;
-    const lexicalWordCount = candidate.filter((item) => !containsCaptionCjk(item.text)).length;
+    const lexicalWordCount = candidate.filter((item) => !isUnspacedNonHangulToken(item.text)).length;
 
     const mustBreakBefore =
       current.length > 0 &&
@@ -89,11 +93,11 @@ export function groupWordsIntoCaptions(
 export function groupTimelineWordsByClip(
   words: WordToken[],
   clipIds: string[],
-  options: CaptionGroupingOptions = DEFAULT_GROUPING_OPTIONS,
+  options: CaptionGroupingOptions | ((clipId: string) => CaptionGroupingOptions) = DEFAULT_GROUPING_OPTIONS,
 ) {
   return clipIds.flatMap((clipId) => groupWordsIntoCaptions(
     words.filter((word) => word.id.startsWith(`${clipId}-`)),
-    options,
+    typeof options === 'function' ? options(clipId) : options,
   ).map((caption, index) => ({ ...caption, id: `caption-${clipId}-${index + 1}` })));
 }
 

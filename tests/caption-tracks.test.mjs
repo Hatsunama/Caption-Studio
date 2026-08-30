@@ -124,6 +124,22 @@ test('English-Chinese pairing supports Traditional Chinese and Chinese-primary E
   );
 });
 
+test('Cantonese Whisper tags pair as Traditional Chinese and survive project reload', () => {
+  const cantonese = {
+    ...projectFixture(),
+    transcription: { ...projectFixture().transcription, language: 'yue' },
+  };
+  assert.equal(projectPrimaryCaptionLanguage(cantonese), 'zh-Hant');
+  assert.equal(projectEnglishChineseCaptionLanguage(cantonese), 'zh-Hant');
+  const bilingual = createEnglishChineseCaptionTrack(cantonese, { c1: 'Hello world' });
+  assert.equal(bilingual.captionTracks.translations[0].id, ENGLISH_TRACK_ID);
+  assert.equal(bilingual.captionTracks.translations[0].languageTag, 'en');
+  assert.equal(bilingual.captionTracks.translations[0].sourceLanguageTag, 'zh-Hant');
+  const decoded = decodeVersionTwoProject(serializedProject(bilingual));
+  assert.equal(decoded.captionTracks.translations[0].sourceLanguageTag, 'zh-Hant');
+  assert.equal(decoded.captionTracks.translations[0].languageTag, 'en');
+});
+
 test('translation visibility changes preserve reviewed text, manual source state, and cue identity', () => {
   const bilingual = createEnglishChineseCaptionTrack(projectFixture());
   const reviewed = updatePairedCaptionText(bilingual, {

@@ -41,6 +41,7 @@ import { findAnimationPreset } from '@/lib/animation-presets';
 import { canAutomaticallyTranslatePair, captionLanguageLabel, type CaptionLanguageTag } from '@/lib/caption-languages';
 import {
   projectPrimaryCaptionLanguage,
+  resolvedProjectCaptionLanguage,
   removeTranslationCaptionTrack,
   resolveCaptionPairs,
   setTranslationCueStyle,
@@ -395,6 +396,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   }, [initialProject.sources]);
 
   const timelineCaptions = useMemo(() => visibleTimelineCaptions(project.captions), [project.captions]);
+  const primaryCaptionLanguage = useMemo(() => resolvedProjectCaptionLanguage(project), [project]);
   const timelineLayers = useMemo(
     () => project.layers.filter((layer) => layer.kind === 'captions' || layer.timelineVisible !== false),
     [project.layers],
@@ -597,7 +599,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       if (before.captionTracks.translations.length > 0 && next.captionTracks.translations.length === 0) {
         Alert.alert(
           'Second language reset',
-          'The detected source language changed or the timeline mixes English and Chinese clips. Caption Studio removed the incompatible second-language track so it cannot show or export incorrect translations. Undo restores the previous caption script and track.',
+          'The detected source language changed, or the clips no longer share one caption language. Caption Studio removed the incompatible second-language track so it cannot show or export incorrect translations. Undo restores the previous caption script and track.',
         );
       } else {
         const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
@@ -784,7 +786,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
     Alert.alert(
       'Finish spoken subtitles first',
-      'The second language is translated from your whole native script, then cut to follow the same subtitle rhythm. Add missed words and fix splits in the spoken language first. Changing those captions later can force a full retranslation.',
+      'English and Chinese can be translated on this phone as a whole, then cut to the same subtitle rhythm. Other languages are typed or pasted by you. Add missed words and fix splits in the spoken language first. Changing those captions later can force a full retranslation.',
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Edit captions first', onPress: beginEditCaption },
@@ -1893,7 +1895,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           </ScrollView>
         ) : translationTrackSelected && selectedTranslationPair ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-            <Action label="Edit both languages" color="#64E8FF" onPress={() => setDualCaptionEditorOpen(true)} />
+            <Action label="Edit both languages" color={chrome.accent} onPress={() => setDualCaptionEditorOpen(true)} />
             <Action label="Refresh this translation" onPress={() => requestTranslationRefresh([selectedTranslationPair.source.id])} />
             <Action label={selectedTranslationTrack?.visible ? 'Hide second language' : 'Show second language'} onPress={() => { void toggleSelectedTranslationTrack(); }} />
             <Action label="Remove second language" danger onPress={confirmRemoveSelectedTranslationTrack} />
@@ -1907,7 +1909,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             <Action label="Join previous" onPress={() => joinSelectedCaption('previous')} />
             <Action label="Join next" onPress={() => joinSelectedCaption('next')} />
             <Action label="Edit captions" onPress={beginEditCaption} />
-            <Action label="Dual subtitles" color="#64E8FF" onPress={openDualCaptionEditor} />
+            <Action label="Dual subtitles" color={chrome.accent} onPress={openDualCaptionEditor} />
             <Action label="Delete subtitle" danger onPress={() => confirmDeleteCaption(selectedCaption.id)} />
             <Action label="Add text layer" onPress={addTextLayer} />
             <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
@@ -2017,13 +2019,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         projectId={project.id}
         baseRevision={project.updatedAt}
         trackId={selectedTranslationTrack?.id ?? 'none'}
-        sourceLanguageLabel={captionLanguageLabel(project.transcription.language)}
+        sourceLanguageLabel={captionLanguageLabel(primaryCaptionLanguage)}
         targetLanguageLabel={selectedTranslationTrack?.displayName ?? 'Second language'}
         pairs={selectedTranslationPairs}
         trackVisible={selectedTranslationTrack?.visible ?? false}
         automaticTranslation={Boolean(
           selectedTranslationTrack
-          && canAutomaticallyTranslatePair(project.transcription.language, selectedTranslationTrack.languageTag),
+          && canAutomaticallyTranslatePair(primaryCaptionLanguage, selectedTranslationTrack.languageTag),
         )}
         busy={Boolean(translationProgress) || translationCancelling}
         progressLabel={translationCancelling ? 'Cancelling local translation…' : translationProgressLabel(translationProgress)}
@@ -2039,8 +2041,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       />
       <DualLanguagePicker
         visible={dualLanguagePickerOpen}
-        sourceLanguageTag={project.transcription.language}
-        sourceLanguageLabel={captionLanguageLabel(project.transcription.language)}
+        sourceLanguageTag={primaryCaptionLanguage}
+        sourceLanguageLabel={captionLanguageLabel(primaryCaptionLanguage)}
         automaticModelLabel={NATURAL_TRANSLATION_MODEL.label}
         onClose={() => setDualLanguagePickerOpen(false)}
         onChoose={(choice) => { void enableDualCaptions(choice.tag); }}

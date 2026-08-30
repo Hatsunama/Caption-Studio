@@ -4,6 +4,7 @@ import { Stack } from 'expo-router/stack';
 import { setVideoCacheSizeAsync } from 'expo-video';
 
 import { FONT_ASSETS } from '@/lib/font-catalog';
+import { chrome } from '@/lib/ui-theme';
 import { captureHistoricalProcessExits } from '@/services/local-diagnostics';
 import { loadFontLibrary } from '@/services/font-storage';
 import { cleanupObsoletePickerCache } from '@/services/storage-policy';
@@ -28,10 +29,10 @@ export default function RootLayout() {
   return (
     <Stack
       screenOptions={{
-        headerStyle: { backgroundColor: '#000000' },
-        headerTintColor: '#F5F5F7',
+        headerStyle: { backgroundColor: chrome.background },
+        headerTintColor: chrome.text,
         headerShadowVisible: false,
-        contentStyle: { backgroundColor: '#000000' },
+        contentStyle: { backgroundColor: chrome.background },
       }}>
       <Stack.Screen name="index" options={{ title: 'Caption Studio' }} />
       <Stack.Screen name="privacy" options={{ title: 'Privacy policy' }} />

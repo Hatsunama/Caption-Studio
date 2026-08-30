@@ -61,6 +61,10 @@ export function captionLanguageFamily(languageTag: string) {
   return resolveCaptionLanguage(languageTag)?.family ?? languageTag.trim().toLowerCase().split('-')[0] ?? '';
 }
 
+export function sameCaptionLanguageFamily(left: string, right: string) {
+  return captionLanguageFamily(left) === captionLanguageFamily(right);
+}
+
 export function captionLanguageLabel(languageTag: string) {
   return resolveCaptionLanguage(languageTag)?.displayName ?? languageTag.trim();
 }

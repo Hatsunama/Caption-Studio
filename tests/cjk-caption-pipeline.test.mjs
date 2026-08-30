@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { groupWordsIntoCaptions, joinWords } from '../src/lib/caption-grouping.ts';
+import { groupWordsIntoCaptions, groupingOptionsForLanguage, joinWords } from '../src/lib/caption-grouping.ts';
 import { mergeCaptionScriptBlock, splitCaptionScriptBlock } from '../src/lib/caption-script.ts';
 import { splitVideoClip } from '../src/lib/project-editor.ts';
 import { serializeAss } from '../src/lib/subtitle-export.ts';
@@ -50,10 +50,22 @@ test('Chinese caption grouping uses readable CJK limits and sentence punctuation
     startMs: index * 100,
     endMs: index * 100 + 90,
   }));
-  const captions = groupWordsIntoCaptions(words);
+  const captions = groupWordsIntoCaptions(words, groupingOptionsForLanguage('zh-Hant'));
 
   assert.deepEqual(captions.map((caption) => caption.text), ['今天天氣很好。', '我們一起出去散步吧！']);
   assert.ok(captions.every((caption) => !caption.text.includes(' ')));
+});
+
+test('Chinese captions without punctuation still split on the CJK character budget', () => {
+  const words = [...'今天天氣很好我們一起出去散步吧真的'].map((character, index) => ({
+    id: `word-${index}`,
+    text: character,
+    startMs: index * 100,
+    endMs: index * 100 + 90,
+  }));
+  const captions = groupWordsIntoCaptions(words, groupingOptionsForLanguage('zh-Hans'));
+  assert.equal(captions.length, 2);
+  assert.ok(captions.every((caption) => [...caption.text].length <= 16));
 });
 
 test('Chinese script captions split and merge at character boundaries without manufactured spaces', () => {

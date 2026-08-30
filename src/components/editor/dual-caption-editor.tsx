@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionPair } from '@/lib/caption-tracks';
@@ -42,6 +43,7 @@ export function DualCaptionEditor(props: {
   onRemove: () => void;
   onCancelBusy: () => void;
 }) {
+  const insets = useSafeAreaInsets();
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() => (
     Object.fromEntries(props.pairs.map((pair) => [pair.source.id, {
       primaryText: pair.source.text,
@@ -146,7 +148,7 @@ export function DualCaptionEditor(props: {
 
   return (
     <Modal visible={props.visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={requestClose}>
-      <View style={{ flex: 1, backgroundColor: chrome.background }}>
+      <View style={{ flex: 1, backgroundColor: chrome.background, paddingTop: insets.top }}>
         <View style={{ paddingHorizontal: 18, paddingTop: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <View style={{ flex: 1 }}>
@@ -224,9 +226,9 @@ export function DualCaptionEditor(props: {
           })}
         </ScrollView>
 
-        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: 14, borderTopWidth: 1, borderTopColor: chrome.hairline, backgroundColor: chrome.background }}>
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: 14, paddingBottom: Math.max(14, insets.bottom), borderTopWidth: 1, borderTopColor: chrome.hairline, backgroundColor: chrome.background }}>
           {props.errorMessage ? (
-            <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: '#FF8C9D', fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
+            <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
               {props.errorMessage}
             </Text>
           ) : null}
@@ -237,7 +239,7 @@ export function DualCaptionEditor(props: {
                 <Text style={{ flexShrink: 1, color: chrome.text, fontSize: 13, fontWeight: '600' }}>{props.progressLabel ?? 'Translating locally…'}</Text>
               </View>
               <Pressable accessibilityRole="button" accessibilityLabel="Cancel local translation" onPress={props.onCancelBusy} style={{ alignItems: 'center', paddingVertical: 9 }}>
-                <Text style={{ color: '#FF8C9D', fontSize: 12, fontWeight: '900' }}>CANCEL</Text>
+                <Text style={{ color: chrome.dangerText, fontSize: 12, fontWeight: '900' }}>CANCEL</Text>
               </Pressable>
             </View>
           ) : (
@@ -275,6 +277,7 @@ function LanguageInput(props: {
         value={props.value}
         editable={!props.disabled}
         multiline
+        maxLength={500}
         placeholder={props.placeholder}
         placeholderTextColor={chrome.muted}
         onChangeText={props.onChangeText}
@@ -304,9 +307,9 @@ function statusLabel(status: CaptionPair['translation']['status']) {
 }
 
 function statusColor(status: CaptionPair['translation']['status']) {
-  if (status === 'reviewed') return '#19D98B';
-  if (status === 'translated') return '#64E8FF';
-  return '#FFB13B';
+  if (status === 'reviewed') return chrome.success;
+  if (status === 'translated') return chrome.accent;
+  return chrome.warning;
 }
 
 function formatTime(milliseconds: number) {

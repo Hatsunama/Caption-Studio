@@ -1,5 +1,6 @@
 import { ANIMATION_PRESETS } from '@/lib/animation-presets';
 import { emptyCaptionTrackCollection, synchronizeCaptionTracks } from '@/lib/caption-tracks';
+import { sameCaptionLanguageFamily } from '@/lib/caption-languages';
 import { hydrateVideoTransition } from '@/lib/video-transitions';
 import { DEFAULT_VIDEO_FRAME_RATE } from '@/lib/video-source-metadata';
 import {
@@ -326,10 +327,10 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
       if (!/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/.test(languageTag)) {
         throw new Error(`Translation track ${trackIndex + 1} language is invalid`);
       }
-      if (sourceLanguageTag.toLowerCase().split('-')[0] !== primaryLanguage.toLowerCase().split('-')[0]) {
+      if (!sameCaptionLanguageFamily(sourceLanguageTag, primaryLanguage)) {
         throw new Error(`Translation track ${trackIndex + 1} no longer matches the primary caption language`);
       }
-      if (sourceLanguageTag.toLowerCase().split('-')[0] === languageTag.toLowerCase().split('-')[0]) {
+      if (sameCaptionLanguageFamily(sourceLanguageTag, languageTag)) {
         throw new Error(`Translation track ${trackIndex + 1} duplicates the primary language`);
       }
       const origin = track.origin === undefined
