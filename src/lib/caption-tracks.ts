@@ -319,10 +319,7 @@ export function projectPrimaryCaptionLanguage(project: CaptionProject): string {
   if (families.size !== 1) {
     throw new Error('Dual subtitles currently require every video clip to use the same source language.');
   }
-  const projectLanguage = canonicalCaptionLanguageTag(project.transcription.language);
-  return sameCaptionLanguageFamily(projectLanguage, languages[0])
-    ? projectLanguage
-    : languages[0];
+  return languages[0];
 }
 
 export function projectEnglishChineseCaptionLanguage(project: CaptionProject): EnglishChineseCaptionLanguage {

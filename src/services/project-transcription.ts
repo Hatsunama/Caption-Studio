@@ -71,10 +71,17 @@ export async function generateProjectCaptions(
     };
     if (onCheckpoint) {
       session?.throwIfCancelled();
+      const allSourcesReady = sourceIds.every((sourceId) => sourceResults[sourceId]?.language);
       await onCheckpoint({
         ...project,
         updatedAt: new Date().toISOString(),
-        transcription: { ...project.transcription, sourceResults: { ...sourceResults } },
+        transcription: {
+          ...project.transcription,
+          sourceResults: { ...sourceResults },
+          ...(allSourcesReady
+            ? { language: canonicalCaptionLanguageTag(sourceResults[sourceIds[0]]!.language) }
+            : {}),
+        },
       });
       session?.throwIfCancelled();
     }

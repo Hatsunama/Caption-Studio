@@ -177,3 +177,20 @@ test('dual-subtitle language ownership stays canonical and does not overclaim ty
   assert.match(renderPlan, /activeWordColor", "#64D2FF"/);
   assert.match(renderPlan, /"radius", 18\)/);
 });
+
+test('English-target translation review and rounded spread timing stay fail-closed', async () => {
+  const [service, languages, workflow, transcription, breaks] = await Promise.all([
+    readFile(new URL('src/services/caption-translation.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/lib/caption-languages.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/services/project-caption-translation.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/services/project-transcription.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('modules/caption-media/android/src/main/java/app/captionstudio/media/CaptionTextBreaks.kt', repositoryRoot), 'utf8'),
+  ]);
+  assert.match(languages, /export function isLikelyUntranslatedCaption/);
+  assert.match(service, /repairUntranslatedCaptions/);
+  assert.doesNotMatch(service, /targetLanguage !== 'zh-Hans' && operation.targetLanguage !== 'zh-Hant'/);
+  assert.doesNotMatch(service, /updated\.set\(caption\.id, caption\.text\)/);
+  assert.match(workflow, /isLikelyUntranslatedCaption\(source, translated, targetLanguage\)/);
+  assert.match(transcription, /allSourcesReady/);
+  assert.match(breaks, /Math\.round\(durationMs\.toDouble\(\) \* consumed \/ totalWeight\)/);
+});

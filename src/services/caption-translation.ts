@@ -5,6 +5,7 @@ import CaptionTranslation, {
 } from 'caption-translation';
 
 import {
+  isLikelyUntranslatedCaption,
   normalizeEnglishChineseCaptionLanguage,
   type EnglishChineseCaptionLanguage,
 } from '@/lib/caption-languages';
@@ -255,7 +256,7 @@ export async function translateNaturalCaptionOperations(options: {
       });
       const expectedCaptions = prepared.flatMap((operation) => operation.captions);
       const translated = validateNativeResult(expectedCaptions, result.captions);
-      const repaired = await repairChineseTranslations(
+      const repaired = await repairUntranslatedCaptions(
         run,
         model.uri,
         prepared,
@@ -452,7 +453,7 @@ function validateNativeResult(
   }));
 }
 
-async function repairChineseTranslations(
+async function repairUntranslatedCaptions(
   run: ActiveTranslation,
   modelUri: string,
   prepared: {
@@ -467,9 +468,8 @@ async function repairChineseTranslations(
   const needsReview = new Set<string>();
   for (const operation of prepared) {
     if (run.cancelled) return { translatedById: updated, needsReview };
-    if (operation.targetLanguage !== 'zh-Hans' && operation.targetLanguage !== 'zh-Hant') continue;
 
-    let questionables = operation.captions.filter((caption) => isLikelyUntranslatedChinese(
+    let questionables = operation.captions.filter((caption) => isLikelyUntranslatedCaption(
       caption.text,
       updated.get(caption.id) ?? caption.text,
       operation.targetLanguage,
@@ -485,44 +485,24 @@ async function repairChineseTranslations(
         batches: createBatches(questionables).map((captions) => ({ captions })),
       }]);
     } catch {
-      for (const caption of questionables) {
-        updated.set(caption.id, caption.text);
-        needsReview.add(caption.id);
-      }
+      for (const caption of questionables) needsReview.add(caption.id);
       continue;
     }
     const validated = validateNativeResult(questionables, retryResult.captions);
     questionables = questionables.filter((caption) => {
       const repaired = validated.find((candidate) => candidate.id === caption.id);
       const text = repaired?.text ?? '';
-      const keep = isLikelyUntranslatedChinese(caption.text, text, operation.targetLanguage);
+      const keep = isLikelyUntranslatedCaption(caption.text, text, operation.targetLanguage);
       if (keep) {
-        updated.set(caption.id, caption.text);
         needsReview.add(caption.id);
         return true;
       }
       updated.set(caption.id, text);
       return false;
     });
-    onProgress?.({ stage: 'translating', progress: 0.1, detail: 'Checking Chinese translations' });
+    onProgress?.({ stage: 'translating', progress: 0.1, detail: 'Checking translations' });
   }
   return { translatedById: updated, needsReview };
-}
-
-function isLikelyUntranslatedChinese(sourceText: string, translatedText: string, targetLanguage: string) {
-  if (targetLanguage !== 'zh-Hans' && targetLanguage !== 'zh-Hant') return false;
-  const source = sourceText.normalize('NFC').trim();
-  const translated = translatedText.normalize('NFC').trim();
-  if (!translated || source === translated) return true;
-  if (!containsChineseText(translated)) {
-    const latinCount = (translated.match(/[A-Za-z]/g) ?? []).length;
-    if (latinCount >= 3 || /^[A-Za-z0-9\s.,!?'\":;()\-–—’”“‘“”'"]+$/.test(translated)) return true;
-  }
-  return false;
-}
-
-function containsChineseText(value: string) {
-  return /[\u3400-\u4DBF\u4E00-\u9FFF]/.test(value);
 }
 
 async function translateWithNative(

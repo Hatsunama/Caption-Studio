@@ -140,6 +140,27 @@ test('Cantonese Whisper tags pair as Traditional Chinese and survive project rel
   assert.equal(decoded.captionTracks.translations[0].languageTag, 'en');
 });
 
+test('completed sourceResults win over a stale same-family project language', () => {
+  const base = projectFixture();
+  const stale = {
+    ...base,
+    transcription: {
+      ...base.transcription,
+      language: 'zh-Hans',
+      sourceResults: {
+        [base.clips[0].sourceId]: {
+          language: 'yue',
+          modelId: 'balanced',
+          generatedAt: '2026-08-27T12:00:00.000Z',
+          words: [],
+        },
+      },
+    },
+  };
+  assert.equal(projectPrimaryCaptionLanguage(stale), 'zh-Hant');
+  assert.equal(projectEnglishChineseCaptionLanguage(stale), 'zh-Hant');
+});
+
 test('translation visibility changes preserve reviewed text, manual source state, and cue identity', () => {
   const bilingual = createEnglishChineseCaptionTrack(projectFixture());
   const reviewed = updatePairedCaptionText(bilingual, {

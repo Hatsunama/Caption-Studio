@@ -2,6 +2,7 @@ import {
   canAutomaticallyTranslatePair,
   captionLanguageFamily,
   captionLanguageLabel,
+  isLikelyUntranslatedCaption,
   type CaptionLanguageTag,
 } from '@/lib/caption-languages';
 import { captionTextLength } from '@/lib/caption-text-breaks';
@@ -126,6 +127,7 @@ export async function refreshProjectCaptionTranslation(options: {
       caption.text,
       translated.captions.get(caption.id),
       translated.needsReview.has(caption.id),
+      track.languageTag,
     );
     if (applied) {
       return [{
@@ -216,6 +218,7 @@ export async function synchronizeProjectDualCaptionEdits(options: {
         edit.translatedText,
         reverseResults.get(edit.sourceCaptionId),
         reverseReview.has(edit.sourceCaptionId),
+        sourceLanguage,
       )
       : undefined;
     const automaticTranslation = edit.primaryChanged && !edit.translatedChanged
@@ -223,6 +226,7 @@ export async function synchronizeProjectDualCaptionEdits(options: {
         edit.primaryText,
         forwardResults.captions.get(edit.sourceCaptionId),
         forwardResults.needsReview.has(edit.sourceCaptionId),
+        track.languageTag,
       )
       : undefined;
     return {
@@ -286,10 +290,21 @@ function requiredTrack(project: CaptionProject, trackId: string) {
   return track;
 }
 
-function usableAutomaticTranslation(sourceText: string, translatedText: string | undefined, needsReview: boolean) {
+function usableAutomaticTranslation(
+  sourceText: string,
+  translatedText: string | undefined,
+  needsReview: boolean,
+  targetLanguage: string,
+) {
   const source = sourceText.normalize('NFC').trim();
   const translated = translatedText?.normalize('NFC').trim() ?? '';
-  if (needsReview || !translated || translated === source || captionTextLength(translated) > 500) return undefined;
+  if (
+    needsReview
+    || !translated
+    || translated === source
+    || captionTextLength(translated) > 500
+    || isLikelyUntranslatedCaption(source, translated, targetLanguage)
+  ) return undefined;
   return translated;
 }
 

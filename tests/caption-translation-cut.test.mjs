@@ -8,6 +8,7 @@ import {
   captionLanguageLabel,
   captionGroupingProfile,
   dualCaptionLanguageChoices,
+  isLikelyUntranslatedCaption,
   TOP_SPOKEN_CAPTION_LANGUAGES,
 } from '../src/lib/caption-languages.ts';
 import { cutTranslatedDocument, packCaptionDocuments } from '../src/lib/caption-translation-cut.ts';
@@ -30,6 +31,15 @@ test('the spoken-language catalog covers twenty languages without claiming fake 
   const spanishChoices = dualCaptionLanguageChoices('es');
   assert.equal(spanishChoices.some((choice) => choice.tag === 'es'), false);
   assert.equal(spanishChoices.every((choice) => choice.automatic === false), true);
+});
+
+test('untranslated English-Chinese output is detected in both directions', () => {
+  assert.equal(isLikelyUntranslatedCaption('Hello world', 'Hello world', 'zh-Hans'), true);
+  assert.equal(isLikelyUntranslatedCaption('Hello world', '你好世界', 'zh-Hans'), false);
+  assert.equal(isLikelyUntranslatedCaption('Hello world', 'How are you today?', 'zh-Hans'), true);
+  assert.equal(isLikelyUntranslatedCaption('你好世界', '你好世界', 'en'), true);
+  assert.equal(isLikelyUntranslatedCaption('你好世界', 'Hello world', 'en'), false);
+  assert.equal(isLikelyUntranslatedCaption('你好世界。再见。', '你好世界。', 'en'), true);
 });
 
 test('Chinese grouping stays character-limited while English grouping stays word-limited', () => {

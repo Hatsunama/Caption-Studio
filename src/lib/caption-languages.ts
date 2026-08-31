@@ -147,6 +147,27 @@ export function normalizeEnglishChineseCaptionLanguage(languageTag: string): Eng
   throw new Error('On-device translation currently supports English and Chinese captions.');
 }
 
+export function isLikelyUntranslatedCaption(sourceText: string, translatedText: string, targetLanguage: string) {
+  const source = sourceText.normalize('NFC').trim();
+  const translated = translatedText.normalize('NFC').trim();
+  if (!translated || source === translated) return true;
+  try {
+    const target = normalizeEnglishChineseCaptionLanguage(targetLanguage);
+    if (target === 'en') return containsChineseCaptionText(translated);
+    if (!containsChineseCaptionText(translated)) {
+      const latinCount = (translated.match(/[A-Za-z]/g) ?? []).length;
+      return latinCount >= 3 || /^[A-Za-z0-9\s.,!?'\":;()\-–—’”“‘“”'"]+$/.test(translated);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function containsChineseCaptionText(value: string) {
+  return /[\u3400-\u4DBF\u4E00-\u9FFF]/.test(value);
+}
+
 function inferGroupingProfile(languageTag: string): CaptionGroupingProfile {
   const family = languageTag.trim().toLowerCase().split('-')[0] ?? '';
   if (family === 'zh' || family === 'ja' || family === 'yue') return 'cjk';

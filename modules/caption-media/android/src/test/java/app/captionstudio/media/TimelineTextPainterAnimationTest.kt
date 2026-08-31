@@ -46,6 +46,10 @@ class TimelineTextPainterAnimationTest {
     assertEquals(1_000L, spread.first().startMs)
     assertEquals(1_500L, spread.last().endMs)
     assertTrue(spread.all { it.endMs > it.startMs })
+    val rounded = playbackTimedCaptionWords(
+      RenderCaption("spread", "a b c", 0L, 1_000L, style, emptyList()),
+    )
+    assertEquals(listOf(0L to 333L, 333L to 667L, 667L to 1_000L), rounded.map { it.startMs to it.endMs })
   }
 
   @Test
