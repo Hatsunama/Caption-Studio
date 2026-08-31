@@ -198,3 +198,23 @@ test('dual-subtitle refresh commits translated text instead of leaving a pending
   assert.match(commit, /second language is still empty/);
   assert.match(controller, /setError\(caught instanceof Error \? caught\.message/);
 });
+
+test('English-target translation review and rounded spread timing stay fail-closed', async () => {
+  const [service, languages, workflow, commit, transcription, breaks] = await Promise.all([
+    readFile(new URL('src/services/caption-translation.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/lib/caption-languages.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/services/project-caption-translation.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/lib/caption-translation-commit.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/services/project-transcription.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('modules/caption-media/android/src/main/java/app/captionstudio/media/CaptionTextBreaks.kt', repositoryRoot), 'utf8'),
+  ]);
+  assert.match(languages, /export function isLikelyUntranslatedCaption/);
+  assert.match(service, /repairUntranslatedCaptions/);
+  assert.doesNotMatch(service, /targetLanguage !== 'zh-Hans' && operation.targetLanguage !== 'zh-Hant'/);
+  assert.doesNotMatch(service, /updated\.set\(caption\.id, caption\.text\)/);
+  assert.match(commit, /isLikelyUntranslatedCaption\(source, translated, targetLanguage\)/);
+  assert.match(workflow, /needsReviewById: translated\.needsReview/);
+  assert.match(workflow, /targetLanguage: track\.languageTag/);
+  assert.match(transcription, /allSourcesReady/);
+  assert.match(breaks, /Math\.round\(durationMs\.toDouble\(\) \* consumed \/ totalWeight\)/);
+});
