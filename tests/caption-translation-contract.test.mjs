@@ -195,8 +195,18 @@ test('dual-subtitle refresh commits translated text instead of leaving a pending
   assert.match(dualEditor, /displayDrafts = adoptCommittedDualCaptionDrafts/);
   assert.match(dualEditor, /shouldRestoreDualCaptionJournal/);
   assert.match(dualEditor, /if \(!props\.visible \|\| !journalReady \|\| props\.busy\) return/);
+  assert.match(dualEditor, /Keep current translation/);
+  assert.match(dualEditor, /pendingEmpty/);
+  assert.doesNotMatch(dualEditor, /props\.baseRevision, props\.pairs, props\.projectId, props\.visible, sourceDrafts/);
   assert.match(editor, /!cue\.text\.trim\(\) && \(cue\.status === 'pending' \|\| cue\.status === 'stale'\)/);
   assert.match(editor, /setTranslationStackGap/);
+  assert.match(editor, /key=\{selectedTranslationTrack\?\.id \?\? 'none'\}/);
+  assert.doesNotMatch(editor, /cues\.map\(\(cue\) => `\$\{cue\.sourceCaptionId\}:\$\{cue\.text\}`\)/);
+  assert.match(editor, /projectRef\.current = next;\s*setProject\(next\);/);
+  assert.match(editor, /Closer together/);
+  assert.match(editor, /Farther apart/);
+  assert.match(editor, /filter\(\(cue\) => !cue\.text\.trim\(\)\)/);
+  assert.match(editor, /position: _ignoredPosition/);
   assert.doesNotMatch(editor, /onSelectTranslationCaption[\s\S]{0,280}setDualCaptionEditorOpen\(true\)/);
   assert.match(workflow, /assertAutomaticTranslationWroteText\(captions, previousById, writes\)/);
   assert.match(commit, /second language is still empty/);

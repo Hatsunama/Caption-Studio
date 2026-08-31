@@ -400,10 +400,14 @@ export function resolveCaptionPairs(project: CaptionProject, trackId: string): C
       translation.styleOverride,
     );
     const stacked = !track.styleOverride?.position && !translation.styleOverride?.position;
-    const style = stacked
+    const stackedLayout = stacked
+      ? stackedTranslationLayout(primaryStyle, translationStyle, track.stackGap)
+      : undefined;
+    const style = stackedLayout
       ? {
           ...translationStyle,
-          position: stackedTranslationPosition(primaryStyle, translationStyle, track.stackGap),
+          position: stackedLayout.position,
+          box: stackedLayout.box,
         }
       : translationStyle;
     return {
@@ -581,15 +585,37 @@ export function stackedTranslationPosition(
   translation: CaptionStyle,
   stackGap = DEFAULT_TRANSLATION_STACK_GAP,
 ) {
+  return stackedTranslationLayout(primary, translation, stackGap).position;
+}
+
+export function stackedTranslationLayout(
+  primary: CaptionStyle,
+  translation: CaptionStyle,
+  stackGap = DEFAULT_TRANSLATION_STACK_GAP,
+) {
   const gap = clampStackGap(stackGap);
-  const translationHalf = Math.max(0.04, translation.box.height / 2);
+  const width = clamp(translation.box.width, 0.2, 1);
+  const minHeight = 0.06;
+  const desiredHeight = clamp(translation.box.height, minHeight, 0.4);
   const primaryBottom = primary.position.y + Math.max(0.04, primary.box.height / 2);
-  const horizontalLimit = Math.max(0.05, (1 - Math.min(1, translation.box.width)) / 2);
-  const minY = translationHalf + 0.02;
-  const maxY = 1 - translationHalf - 0.02;
+  const canvasBottom = 0.98;
+  let top = primaryBottom + gap;
+  let height = desiredHeight;
+  if (top + height > canvasBottom) {
+    height = Math.max(minHeight, canvasBottom - top);
+  }
+  if (top + minHeight > canvasBottom) {
+    height = minHeight;
+    top = Math.max(primaryBottom + MIN_TRANSLATION_STACK_GAP, canvasBottom - height);
+  }
+  const y = top + height / 2;
+  const horizontalLimit = Math.max(0.05, (1 - width) / 2);
   return {
-    x: clamp(primary.position.x, horizontalLimit, 1 - horizontalLimit),
-    y: clamp(primaryBottom + gap + translationHalf, minY, maxY),
+    position: {
+      x: clamp(primary.position.x, horizontalLimit, 1 - horizontalLimit),
+      y: Math.max(primary.position.y + 0.02, y),
+    },
+    box: { width, height },
   };
 }
 
