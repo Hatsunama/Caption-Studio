@@ -86,7 +86,7 @@ test('one pinned local model owns every supported English-Chinese direction', as
   assert.match(languages, /if \(normalized === 'en'/);
   assert.match(languages, /return 'zh-Hant'/);
   assert.match(languages, /return 'zh-Hans'/);
-  assert.match(service, /characters \+ captionLength > 1_800/);
+  assert.match(service, /characters \+ captionLength > 1_000/);
   assert.match(service, /captionTextTail\([^)]*[\s\S]*, 250\)/);
   assert.match(service, /captionTextHead\([^)]*[\s\S]*, 250\)/);
   assert.equal((service.match(/CaptionTranslation\.translateNaturalCaptions\(/g) ?? []).length, 1);
@@ -119,9 +119,20 @@ test('project translation orchestration owns concurrency, provenance, and mixed-
 
   assert.doesNotMatch(editor, /translateNaturalCaptionBatch|translateNaturalCaptionOperations|setTranslationProgress/);
   assert.match(editor, /useProjectCaptionTranslation/);
+  assert.match(editor, /DualLanguagePicker/);
+  assert.match(editor, /sourceLanguageTag=\{primaryCaptionLanguage\}/);
+  assert.match(editor, /canAutomaticallyTranslatePair\(primaryCaptionLanguage/);
+  assert.match(editor, /English and Chinese can be translated on this phone as a whole/);
+  assert.doesNotMatch(editor, /mixes English and Chinese clips/);
   assert.match(controller, /activeOperationRef\.current === operationId/);
   assert.match(controller, /getCurrentProject\(\) !== baseline/);
   assert.match(workflow, /projectEnglishChineseCaptionLanguage/);
+  assert.match(workflow, /projectPrimaryCaptionLanguage/);
+  assert.match(workflow, /packCaptionDocuments/);
+  assert.match(workflow, /cutTranslatedDocument/);
+  assert.match(workflow, /usableAutomaticTranslation/);
+  assert.match(workflow, /translated\.needsReview\.has/);
+  assert.doesNotMatch(workflow, /translatedText: translated\.captions\.get\(caption\.id\) \?\? caption\.text/);
   assert.match(workflow, /provider: \{ id: 'manual' \}/);
   assert.match(workflow, /translated\.provider/);
   assert.match(workflow, /session\.provider/);
@@ -138,4 +149,31 @@ test('timeline identities are mapped to short model-session keys and pending dua
   assert.doesNotMatch(service, /invalid translation identifier/);
   assert.match(editor, /cue\.status === 'pending' \|\| cue\.status === 'stale'/);
   assert.match(editor, /translationController\.refresh\(existing\.id, pendingIds, projectRef\.current\)/);
+});
+
+test('dual-subtitle language ownership stays canonical and does not overclaim typed translation', async () => {
+  const [picker, editor, schema, grouping, transcription, projectTranscription, dualEditor, renderPlan] = await Promise.all([
+    readFile(new URL('src/components/editor/dual-language-picker.tsx', repositoryRoot), 'utf8'),
+    readFile(new URL('src/app/editor.tsx', repositoryRoot), 'utf8'),
+    readFile(new URL('src/lib/project-schema.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/lib/caption-grouping.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/services/transcription.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/services/project-transcription.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/components/editor/dual-caption-editor.tsx', repositoryRoot), 'utf8'),
+    readFile(new URL('modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineRenderPlan.kt', repositoryRoot), 'utf8'),
+  ]);
+
+  assert.match(picker, /Type or paste \$\{choice\.displayName\} to follow your current subtitle blocks/);
+  assert.doesNotMatch(picker, /aware subtitle cuts/);
+  assert.match(editor, /resolvedProjectCaptionLanguage/);
+  assert.match(schema, /sameCaptionLanguageFamily\(sourceLanguageTag, primaryLanguage\)/);
+  assert.match(grouping, /typeof options === 'function' \? options\(clipId\) : options/);
+  assert.match(grouping, /isUnspacedNonHangulToken/);
+  assert.doesNotMatch(transcription, /groupWordsIntoCaptions/);
+  assert.match(projectTranscription, /groupingOptionsForLanguage\(languageByClipId\.get\(clipId\)\)/);
+  assert.match(projectTranscription, /canonicalCaptionLanguageTag/);
+  assert.match(dualEditor, /maxLength=\{500\}/);
+  assert.match(dualEditor, /useSafeAreaInsets/);
+  assert.match(renderPlan, /activeWordColor", "#64D2FF"/);
+  assert.match(renderPlan, /"radius", 18\)/);
 });

@@ -2,7 +2,6 @@ import { Directory, File, FileMode, Paths } from 'expo-file-system';
 import { initWhisper, initWhisperVad } from 'whisper.rn/index';
 
 import CaptionMedia from 'caption-media';
-import { groupWordsIntoCaptions } from '@/lib/caption-grouping';
 import {
   getModel,
   LEGACY_ENGLISH_MODEL_FILES,
@@ -20,7 +19,7 @@ import {
 import { buildPcm16MonoWave, parseCaptionPcmWave, planOverlappingPcmChunks } from '@/lib/wav-chunking';
 import { requireFreeSpace } from '@/services/storage-policy';
 import type { CaptionGenerationSessionContext } from '@/services/caption-generation-session';
-import type { CaptionBlock, WordToken } from '@/types/project';
+import type { WordToken } from '@/types/project';
 
 export type TranscriptionStage =
   | 'preparing-audio'
@@ -38,7 +37,6 @@ export type TranscriptionProgress = {
 export type LocalTranscriptionResult = {
   language: string;
   words: WordToken[];
-  captions: CaptionBlock[];
 };
 
 const activeModelDownloads = new Map<string, Promise<File>>();
@@ -407,22 +405,11 @@ export async function transcribeVideoLocally(options: {
     if (words.length === 0) {
       throw new Error('Speech was detected, but no reliable words were found. Try the Balanced model or clearer audio.');
     }
-    onProgress?.({
-      stage: 'grouping',
-      progress: 0.5,
-      detail: 'Grouping words into editable subtitles',
-    });
-    const captions = groupWordsIntoCaptions(words);
-    onProgress?.({
-      stage: 'grouping',
-      progress: 1,
-      detail: 'Captions ready',
-    });
+    const language = result.language || options.language || 'en';
 
     return {
-      language: result.language || options.language || 'en',
+      language,
       words,
-      captions,
     };
   } finally {
     await context.release();

@@ -21,17 +21,18 @@ import {
   importVideoProject,
   loadProjectLibrary,
 } from '@/services/project-workflows';
+import { chrome } from '@/lib/ui-theme';
 import type { CaptionProject } from '@/types/project';
 import type { ProjectRecordSummary } from '@/types/project-library';
 
 const palette = {
-  background: '#090B0E',
-  surface: '#14181E',
-  surfaceRaised: '#1B2028',
-  text: '#F7F8FA',
-  muted: '#9DA7B5',
-  accent: '#DFFF35',
-  border: '#282F39',
+  background: chrome.background,
+  surface: chrome.surface,
+  surfaceRaised: chrome.surfaceRaised,
+  text: chrome.text,
+  muted: chrome.muted,
+  accent: chrome.accent,
+  border: chrome.hairline,
 };
 
 export default function ProjectsScreen() {
@@ -125,7 +126,7 @@ export default function ProjectsScreen() {
       ListHeaderComponent={
         <View style={{ gap: 18 }}>
           <View style={{ gap: 6 }}>
-            <Text selectable style={{ color: palette.text, fontSize: 30, fontWeight: '800' }}>
+            <Text selectable style={{ color: palette.text, fontSize: 34, fontWeight: '700' }}>
               Captions first.
             </Text>
             <Text selectable style={{ color: palette.muted, fontSize: 16, lineHeight: 23 }}>
@@ -141,16 +142,16 @@ export default function ProjectsScreen() {
             onPress={importVideo}
             style={({ pressed }) => ({
               minHeight: 142,
-              borderRadius: 24,
+                          borderRadius: chrome.radius.lg,
               padding: 20,
               justifyContent: 'space-between',
-              backgroundColor: pressed ? '#CDEB2B' : palette.accent,
+              backgroundColor: pressed ? chrome.accentPressed : palette.accent,
             })}>
-            <Text style={{ color: '#11140C', fontSize: 16, fontWeight: '700' }}>
+            <Text style={{ color: chrome.accentInk, fontSize: 13, fontWeight: '600' }}>
               NEW PROJECT
             </Text>
             <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-              <Text style={{ color: '#11140C', fontSize: 28, lineHeight: 32, fontWeight: '900' }}>
+              <Text style={{ color: chrome.accentInk, fontSize: 28, lineHeight: 32, fontWeight: '800' }}>
                 Import video{`\n`}→ Generate captions
               </Text>
               {importing ? <ActivityIndicator color="#11140C" /> : <Text style={{ fontSize: 36 }}>＋</Text>}
@@ -165,7 +166,7 @@ export default function ProjectsScreen() {
                   flex: 1,
                   minHeight: 74,
                   justifyContent: 'center',
-                  borderRadius: 16,
+                  borderRadius: chrome.radius.lg,
                   padding: 12,
                   backgroundColor: palette.surface,
                   borderWidth: 1,
@@ -201,8 +202,8 @@ export default function ProjectsScreen() {
             <>
               <Text style={{ color: '#FFBBC8', fontSize: 17, fontWeight: '700' }}>Projects could not be loaded</Text>
               <Text style={{ color: palette.muted, fontSize: 13, textAlign: 'center' }}>{loadError}</Text>
-              <Pressable accessibilityRole="button" onPress={() => void refresh()} style={{ paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999, backgroundColor: palette.accent }}>
-                <Text style={{ color: '#11140C', fontWeight: '800' }}>Retry</Text>
+              <Pressable accessibilityRole="button" onPress={() => void refresh()} style={{ paddingHorizontal: 18, paddingVertical: 10, borderRadius: chrome.radius.pill, backgroundColor: palette.accent }}>
+                <Text style={{ color: chrome.accentInk, fontWeight: '700' }}>Retry</Text>
               </Pressable>
             </>
           ) : (
@@ -269,11 +270,11 @@ function ProjectCard(props: { project: CaptionProject; onOpen: () => void; onDel
   }, [props.project]);
 
   return (
-    <Pressable onPress={props.onOpen} style={{ position: 'relative', flexDirection: 'row', gap: 14, padding: 12, borderRadius: 18, backgroundColor: palette.surfaceRaised }}>
+    <Pressable onPress={props.onOpen} style={{ position: 'relative', flexDirection: 'row', gap: 14, padding: 14, borderRadius: chrome.radius.lg, backgroundColor: palette.surfaceRaised }}>
       {thumbnailUri ? (
-        <Image source={{ uri: thumbnailUri }} style={{ width: 74, height: 74, borderRadius: 12, backgroundColor: '#050607' }} contentFit="cover" transition={160} />
+        <Image source={{ uri: thumbnailUri }} style={{ width: 74, height: 74, borderRadius: chrome.radius.md, backgroundColor: '#050607' }} contentFit="cover" transition={160} />
       ) : (
-        <View style={{ width: 74, height: 74, borderRadius: 12, backgroundColor: '#050607', alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ width: 74, height: 74, borderRadius: chrome.radius.md, backgroundColor: '#050607', alignItems: 'center', justifyContent: 'center' }}>
           <Text style={{ color: palette.muted, fontSize: 11, fontWeight: '800' }}>VIDEO</Text>
         </View>
       )}
@@ -288,7 +289,7 @@ function ProjectCard(props: { project: CaptionProject; onOpen: () => void; onDel
         accessibilityLabel={`Delete ${props.project.name}`}
         hitSlop={10}
         onPress={(event) => { event.stopPropagation(); props.onDelete(); }}
-        style={{ position: 'absolute', right: 10, top: 10, width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: '#2B1820' }}>
+        style={{ position: 'absolute', right: 10, top: 10, width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: chrome.dangerFill }}>
         <Text style={{ color: '#FF7C8D', fontSize: 17 }}>🗑</Text>
       </Pressable>
     </Pressable>

@@ -1,7 +1,11 @@
 import { mergePatch, mergeStyle } from '@/lib/style-resolver';
 import {
+  canonicalCaptionLanguageTag,
   captionLanguageFamily,
+  captionLanguageLabel,
   normalizeEnglishChineseCaptionLanguage,
+  sameCaptionLanguageFamily,
+  type CaptionLanguageTag,
   type EnglishChineseCaptionLanguage,
 } from '@/lib/caption-languages';
 import type {
@@ -57,7 +61,7 @@ export type PairedCaptionTextUpdate = {
   sourceCaptionId: string;
   primaryText?: string;
   translatedText?: string;
-  translationStatus?: Extract<TranslationCaptionStatus, 'translated' | 'reviewed'>;
+  translationStatus?: Extract<TranslationCaptionStatus, 'pending' | 'translated' | 'reviewed' | 'stale'>;
   updatedAt?: string;
 };
 
@@ -72,24 +76,20 @@ export function createEnglishChineseCaptionTrack(
   translations: Readonly<Record<string, string>> = {},
   options: Partial<Omit<TranslationTrackOptions, 'translations'>> = {},
 ) {
-  const primaryLanguage = project.transcription.language.toLowerCase();
-  const englishPrimary = primaryLanguage === 'en' || primaryLanguage.startsWith('en-');
-  const chinesePrimary = primaryLanguage === 'zh' || primaryLanguage.startsWith('zh-');
-  if (!englishPrimary && !chinesePrimary) {
-    throw new Error('An English-Chinese caption pair requires an English or Chinese primary transcription.');
-  }
-  const languageTag = options.languageTag ?? (englishPrimary ? 'zh-Hans' : 'en');
-  const normalizedTarget = languageTag.toLowerCase();
-  if (englishPrimary && normalizedTarget !== 'zh-hans' && normalizedTarget !== 'zh-hant') {
+  const source = projectEnglishChineseCaptionLanguage(project);
+  const languageTag = options.languageTag
+    ? normalizeEnglishChineseCaptionLanguage(options.languageTag)
+    : source === 'en' ? 'zh-Hans' : 'en';
+  if (source === 'en' && languageTag === 'en') {
     throw new Error('An English primary track can pair with Simplified or Traditional Chinese.');
   }
-  if (chinesePrimary && normalizedTarget !== 'en' && !normalizedTarget.startsWith('en-')) {
+  if (source !== 'en' && languageTag !== 'en') {
     throw new Error('A Chinese primary track can pair with English.');
   }
   const target = englishChineseTarget(languageTag);
   return createTranslationCaptionTrack(project, {
     id: options.id ?? target.id,
-    sourceLanguageTag: options.sourceLanguageTag,
+    sourceLanguageTag: options.sourceLanguageTag ?? projectPrimaryCaptionLanguage(project),
     languageTag,
     displayName: options.displayName ?? target.displayName,
     origin: options.origin ?? 'manual',
@@ -104,7 +104,7 @@ export function createEnglishChineseCaptionTrack(
 export function createTranslationCaptionTrack(project: CaptionProject, options: TranslationTrackOptions) {
   requiredIdentifier(options.id, 'Caption track');
   requiredLanguageTag(options.languageTag);
-  const sourceLanguageTag = options.sourceLanguageTag ?? project.transcription.language;
+  const sourceLanguageTag = options.sourceLanguageTag ?? projectPrimaryCaptionLanguage(project);
   requiredLanguageTag(sourceLanguageTag);
   if (sameLanguage(sourceLanguageTag, options.languageTag)) {
     throw new Error('A translation track must use a different language from the primary captions.');
@@ -282,7 +282,7 @@ export function setTranslationTrackProvider(
   project: CaptionProject,
   trackId: string,
   provider: TranslationCaptionTrack['provider'],
-  sourceLanguageTag = project.transcription.language,
+  sourceLanguageTag = projectPrimaryCaptionLanguage(project),
   updatedAt = project.updatedAt,
 ) {
   if (provider.id !== 'manual' && provider.id !== 'litertlm') {
@@ -303,34 +303,48 @@ export function setTranslationTrackProvider(
   }, updatedAt);
 }
 
-export function projectEnglishChineseCaptionLanguage(project: CaptionProject): EnglishChineseCaptionLanguage {
+export function projectPrimaryCaptionLanguage(project: CaptionProject): string {
   const sourceIds = [...new Set(project.clips.map((clip) => clip.sourceId))];
   const detected = sourceIds.flatMap((sourceId) => {
     const language = project.transcription.sourceResults[sourceId]?.language;
-    return language ? [normalizeEnglishChineseCaptionLanguage(language)] : [];
+    return language ? [canonicalCaptionLanguageTag(language)] : [];
   });
   if (detected.length > 0 && detected.length !== sourceIds.length) {
     throw new Error('Generate captions for every video before adding dual subtitles.');
   }
   const languages = detected.length > 0
     ? detected
-    : [normalizeEnglishChineseCaptionLanguage(project.transcription.language)];
+    : [canonicalCaptionLanguageTag(project.transcription.language)];
   const families = new Set(languages.map(captionLanguageFamily));
   if (families.size !== 1) {
-    throw new Error('Dual subtitles currently require every video clip to use the same source language: all English or all Chinese.');
+    throw new Error('Dual subtitles currently require every video clip to use the same source language.');
   }
-  const projectLanguage = normalizeEnglishChineseCaptionLanguage(project.transcription.language);
-  return captionLanguageFamily(projectLanguage) === captionLanguageFamily(languages[0]) ? projectLanguage : languages[0];
+  const projectLanguage = canonicalCaptionLanguageTag(project.transcription.language);
+  return sameCaptionLanguageFamily(projectLanguage, languages[0])
+    ? projectLanguage
+    : languages[0];
+}
+
+export function projectEnglishChineseCaptionLanguage(project: CaptionProject): EnglishChineseCaptionLanguage {
+  return normalizeEnglishChineseCaptionLanguage(projectPrimaryCaptionLanguage(project));
+}
+
+export function resolvedProjectCaptionLanguage(project: CaptionProject): string {
+  try {
+    return projectPrimaryCaptionLanguage(project);
+  } catch {
+    return canonicalCaptionLanguageTag(project.transcription.language);
+  }
 }
 
 export function assertVisibleTranslationTracksCompatible(project: CaptionProject) {
   const visible = (project.captionTracks?.translations ?? []).filter((track) => track.visible);
   if (visible.length === 0) return;
-  const sourceLanguage = projectEnglishChineseCaptionLanguage(project);
+  const sourceLanguage = projectPrimaryCaptionLanguage(project);
   for (const track of visible) {
     if (
-      captionLanguageFamily(track.sourceLanguageTag) !== captionLanguageFamily(sourceLanguage)
-      || captionLanguageFamily(track.languageTag) === captionLanguageFamily(sourceLanguage)
+      !sameCaptionLanguageFamily(track.sourceLanguageTag, sourceLanguage)
+      || sameCaptionLanguageFamily(track.languageTag, sourceLanguage)
     ) {
       throw new Error(`${track.displayName} no longer matches the primary caption language. Remove it and add dual subtitles again.`);
     }
@@ -345,15 +359,26 @@ export function synchronizeCaptionTracksAfterTranscription(
     return synchronizeCaptionTracks(generated, generated.captions);
   }
   try {
-    const previousLanguage = projectEnglishChineseCaptionLanguage(previous);
-    const generatedLanguage = projectEnglishChineseCaptionLanguage(generated);
-    if (captionLanguageFamily(previousLanguage) !== captionLanguageFamily(generatedLanguage)) {
+    const previousLanguage = projectPrimaryCaptionLanguage(previous);
+    const generatedLanguage = projectPrimaryCaptionLanguage(generated);
+    if (!sameCaptionLanguageFamily(previousLanguage, generatedLanguage)) {
       return emptyCaptionTrackCollection();
     }
   } catch {
     return emptyCaptionTrackCollection();
   }
   return synchronizeCaptionTracks(generated, generated.captions);
+}
+
+export function translationTrackIdForLanguage(languageTag: CaptionLanguageTag | string) {
+  if (languageTag === 'zh-Hans') return CHINESE_SIMPLIFIED_TRACK_ID;
+  if (languageTag === 'zh-Hant') return CHINESE_TRADITIONAL_TRACK_ID;
+  if (languageTag === 'en') return ENGLISH_TRACK_ID;
+  return `translation-${languageTag}`;
+}
+
+export function translationTrackDisplayName(languageTag: string) {
+  return captionLanguageLabel(languageTag);
 }
 
 export function resolveCaptionPairs(project: CaptionProject, trackId: string): CaptionPair[] {
@@ -498,15 +523,14 @@ function requiredLanguageTag(value: string) {
   return value;
 }
 
-function englishChineseTarget(languageTag: string) {
-  const normalized = languageTag.toLowerCase();
-  if (normalized === 'zh-hans') {
-    return { id: CHINESE_SIMPLIFIED_TRACK_ID, displayName: 'Chinese (Simplified)', isChinese: true };
+function englishChineseTarget(languageTag: EnglishChineseCaptionLanguage) {
+  if (languageTag === 'zh-Hans') {
+    return { id: CHINESE_SIMPLIFIED_TRACK_ID, displayName: captionLanguageLabel('zh-Hans') };
   }
-  if (normalized === 'zh-hant') {
-    return { id: CHINESE_TRADITIONAL_TRACK_ID, displayName: 'Chinese (Traditional)', isChinese: true };
+  if (languageTag === 'zh-Hant') {
+    return { id: CHINESE_TRADITIONAL_TRACK_ID, displayName: captionLanguageLabel('zh-Hant') };
   }
-  return { id: ENGLISH_TRACK_ID, displayName: 'English', isChinese: false };
+  return { id: ENGLISH_TRACK_ID, displayName: captionLanguageLabel('en') };
 }
 
 function translationTargetStyle(custom: CaptionStylePatch | undefined) {
@@ -552,7 +576,7 @@ function translationValue(translations: Readonly<Record<string, string>> | undef
 }
 
 function sameLanguage(left: string, right: string) {
-  return captionLanguageFamily(left) === captionLanguageFamily(right);
+  return sameCaptionLanguageFamily(left, right);
 }
 
 function validateTranslationProvider(provider: TranslationCaptionTrack['provider']) {

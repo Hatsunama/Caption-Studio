@@ -8,6 +8,7 @@ import {
   createEnglishChineseCaptionTrack,
   createTranslationCaptionTrack,
   projectEnglishChineseCaptionLanguage,
+  projectPrimaryCaptionLanguage,
   resolveCaptionPairs,
   setTranslationCueStyle,
   setTranslationTrackStyle,
@@ -123,6 +124,22 @@ test('English-Chinese pairing supports Traditional Chinese and Chinese-primary E
   );
 });
 
+test('Cantonese Whisper tags pair as Traditional Chinese and survive project reload', () => {
+  const cantonese = {
+    ...projectFixture(),
+    transcription: { ...projectFixture().transcription, language: 'yue' },
+  };
+  assert.equal(projectPrimaryCaptionLanguage(cantonese), 'zh-Hant');
+  assert.equal(projectEnglishChineseCaptionLanguage(cantonese), 'zh-Hant');
+  const bilingual = createEnglishChineseCaptionTrack(cantonese, { c1: 'Hello world' });
+  assert.equal(bilingual.captionTracks.translations[0].id, ENGLISH_TRACK_ID);
+  assert.equal(bilingual.captionTracks.translations[0].languageTag, 'en');
+  assert.equal(bilingual.captionTracks.translations[0].sourceLanguageTag, 'zh-Hant');
+  const decoded = decodeVersionTwoProject(serializedProject(bilingual));
+  assert.equal(decoded.captionTracks.translations[0].sourceLanguageTag, 'zh-Hant');
+  assert.equal(decoded.captionTracks.translations[0].languageTag, 'en');
+});
+
 test('translation visibility changes preserve reviewed text, manual source state, and cue identity', () => {
   const bilingual = createEnglishChineseCaptionTrack(projectFixture());
   const reviewed = updatePairedCaptionText(bilingual, {
@@ -195,6 +212,32 @@ test('dual subtitles fail closed for mixed-language clips and reset after a sour
     primaryTrackId: 'captions',
     translations: [],
   });
+});
+
+test('non-English primary captions keep a typed second-language track after the same-language regenerate', () => {
+  const base = projectFixture();
+  const spanish = {
+    ...base,
+    transcription: { ...base.transcription, language: 'es' },
+  };
+  assert.equal(projectPrimaryCaptionLanguage(spanish), 'es');
+  assert.throws(() => projectEnglishChineseCaptionLanguage(spanish), /English and Chinese/);
+  const dual = createTranslationCaptionTrack(spanish, {
+    id: 'translation-en',
+    sourceLanguageTag: 'es',
+    languageTag: 'en',
+    displayName: 'English',
+    translations: { c1: 'Hello world' },
+  });
+  const regenerated = {
+    ...dual,
+    transcription: { ...dual.transcription, language: 'es' },
+    captions: dual.captions.map((caption) => ({ ...caption, text: `${caption.text}!` })),
+  };
+  const synchronized = synchronizeCaptionTracksAfterTranscription(dual, regenerated);
+  assert.equal(synchronized.translations.length, 1);
+  assert.equal(synchronized.translations[0].languageTag, 'en');
+  assert.equal(synchronized.translations[0].cues[0].status, 'stale');
 });
 
 test('automatic translation provenance is complete and cannot be manufactured by project code', () => {

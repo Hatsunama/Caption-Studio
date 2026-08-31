@@ -101,13 +101,19 @@ public final class NaturalCaptionTranslatorTest {
 
   @Test
   public void countsUnicodeCodePointsInsteadOfUtf16Units() throws Exception {
-    String astralHan = "𠮷".repeat(NaturalCaptionTranslator.MAX_CAPTION_CHARACTERS);
+    String astralHan = "𠮷".repeat(600);
     NaturalCaptionTranslator.ValidatedRequest accepted = NaturalCaptionTranslator.validateRequest(
         request("zh-Hans", "en", "one", astralHan)
     );
     assertEquals(astralHan, accepted.captions.get(0).text);
+    assertTrue(astralHan.length() > NaturalCaptionTranslator.MAX_CAPTION_CHARACTERS);
 
-    Map<String, Object> oversized = request("zh-Hans", "en", "one", astralHan + "𠮷");
+    Map<String, Object> oversized = request(
+        "zh-Hans",
+        "en",
+        "one",
+        "𠮷".repeat(NaturalCaptionTranslator.MAX_CAPTION_CHARACTERS + 1)
+    );
     assertThrows(
         NaturalCaptionTranslator.TranslationFailure.class,
         () -> NaturalCaptionTranslator.validateRequest(oversized)

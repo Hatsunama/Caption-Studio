@@ -389,7 +389,7 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   textColor: '#FFFFFF',
   secondaryTextColor: '#FF4FD8',
   textTreatment: 'solid',
-  activeWordColor: '#DFFF35',
+  activeWordColor: '#64D2FF',
   stroke: {
     color: '#111111',
     width: 3,
@@ -404,9 +404,9 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   background: {
     color: '#000000',
     opacity: 0,
-    radius: 12,
-    paddingX: 14,
-    paddingY: 8,
+    radius: 18,
+    paddingX: 16,
+    paddingY: 10,
   },
   alignment: 'center',
   letterSpacing: 0,

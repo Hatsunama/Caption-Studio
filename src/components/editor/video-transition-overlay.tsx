@@ -12,6 +12,7 @@ import {
 } from '@/lib/video-transition-preview';
 import type { ClipTimelineEntry } from '@/lib/video-timeline';
 import type { ProjectVideoSource, VideoTransform } from '@/types/project';
+import { chrome } from '@/lib/ui-theme';
 
 type Props = {
   entries: readonly ClipTimelineEntry[];
@@ -298,9 +299,9 @@ function GlitchOverlay(props: { phase: number; peak: number; height: number }) {
 function PreviewNotice(props: { label: string; detail?: string; compact?: boolean }) {
   return (
     <View pointerEvents="none" style={{ position: 'absolute', left: 7, right: 7, top: 7, alignItems: 'center' }}>
-      <View style={{ maxWidth: '94%', paddingHorizontal: 9, paddingVertical: props.compact ? 4 : 6, borderRadius: 8, backgroundColor: '#090B0ED9', borderWidth: 1, borderColor: '#596473' }}>
-        <Text style={{ color: '#F3F6FA', fontSize: props.compact ? 8 : 9, fontWeight: '900', textAlign: 'center' }}>{props.label}</Text>
-        {props.detail ? <Text style={{ color: '#B7C0CA', fontSize: 8, fontWeight: '700', textAlign: 'center', marginTop: 2 }}>{props.detail}</Text> : null}
+      <View style={{ maxWidth: '94%', paddingHorizontal: 9, paddingVertical: props.compact ? 4 : 6, borderRadius: chrome.radius.sm, backgroundColor: chrome.overlay, borderWidth: 1, borderColor: chrome.hairline }}>
+        <Text style={{ color: chrome.text, fontSize: props.compact ? 8 : 9, fontWeight: '900', textAlign: 'center' }}>{props.label}</Text>
+        {props.detail ? <Text style={{ color: chrome.muted, fontSize: 8, fontWeight: '700', textAlign: 'center', marginTop: 2 }}>{props.detail}</Text> : null}
       </View>
     </View>
   );

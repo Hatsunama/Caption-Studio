@@ -79,11 +79,6 @@ export function applyStylePatch(
   };
 }
 
-/**
- * "All captions" is authoritative for the fields the user just changed. Old
- * caption/word overrides for those same fields are removed so every subtitle
- * visibly receives the choice while unrelated custom styling is preserved.
- */
 function removePatchedKeys(
   override: CaptionStylePatch | undefined,
   patch: CaptionStylePatch,

@@ -2,12 +2,6 @@ import type { WordToken } from '@/types/project';
 
 export type SpeechSegment = { t0: number; t1: number };
 
-/**
- * Removes Whisper tokens that land in silence and clamps accepted tokens to
- * the speech window that actually contains them. whisper.cpp's public VAD
- * segment getters return centiseconds (the same 10 ms units as transcription
- * segments), while project timing is stored in milliseconds.
- */
 export function alignWordsToSpeech(words: WordToken[], speech: SpeechSegment[]): WordToken[] {
   const windows = mergeSpeechWindows(
     speech

@@ -394,7 +394,7 @@ function validateTranslationUnits(units: NaturalTranslationUnit[]) {
     if (!id || captionTextLength(id) > 256) throw new Error('A subtitle has an invalid internal identity.');
     if (ids.has(id)) throw new Error(`Subtitle ${id} was included more than once.`);
     if (!text) throw new Error(`Subtitle ${id} has no text to translate.`);
-    if (captionTextLength(text) > 500) throw new Error(`Subtitle ${id} is too long. Split it before translating.`);
+    if (captionTextLength(text) > 1_000) throw new Error(`Subtitle ${id} is too long. Split it before translating.`);
     ids.add(id);
     return { id, text };
   });
@@ -406,7 +406,7 @@ function createBatches(captions: NaturalCaptionTranslationInput[]) {
   let characters = 0;
   for (const caption of captions) {
     const captionLength = captionTextLength(caption.text);
-    if (batch.length >= 24 || characters + captionLength > 1_800) {
+    if (batch.length >= 24 || characters + captionLength > 1_000) {
       batches.push(batch);
       batch = [];
       characters = 0;
@@ -456,8 +456,8 @@ async function repairChineseTranslations(
   run: ActiveTranslation,
   modelUri: string,
   prepared: {
-    sourceLanguage: string;
-    targetLanguage: string;
+    sourceLanguage: EnglishChineseCaptionLanguage;
+    targetLanguage: EnglishChineseCaptionLanguage;
     captions: NaturalCaptionTranslationInput[];
   }[],
   translatedById: Map<string, string>,
@@ -529,8 +529,8 @@ async function translateWithNative(
   modelUri: string,
   operations: {
     id: string;
-    sourceLanguage: string;
-    targetLanguage: string;
+    sourceLanguage: EnglishChineseCaptionLanguage;
+    targetLanguage: EnglishChineseCaptionLanguage;
     batches: { captions: NaturalCaptionTranslationInput[]; contextBefore?: string; contextAfter?: string; }[];
   }[],
 ) {
