@@ -29,13 +29,13 @@ export function automaticTranslationCueWrites(options: {
   translatedById: ReadonlyMap<string, string>;
   previousById: ReadonlyMap<string, string>;
 }): AutomaticTranslationCueWrite[] {
-  return options.captions.flatMap((caption) => {
+  return options.captions.flatMap((caption): AutomaticTranslationCueWrite[] => {
     const applied = usableAutomaticTranslation(caption.text, options.translatedById.get(caption.id));
     if (applied) {
       return [{
         sourceCaptionId: caption.id,
         translatedText: applied,
-        translationStatus: 'translated' as const,
+        translationStatus: 'translated',
       }];
     }
     const previous = options.previousById.get(caption.id)?.trim() ?? '';
@@ -43,7 +43,7 @@ export function automaticTranslationCueWrites(options: {
     return [{
       sourceCaptionId: caption.id,
       translatedText: previous,
-      translationStatus: 'stale' as const,
+      translationStatus: 'stale',
     }];
   });
 }
