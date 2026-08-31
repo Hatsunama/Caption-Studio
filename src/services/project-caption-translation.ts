@@ -6,6 +6,12 @@ import {
 } from '@/lib/caption-languages';
 import { captionTextLength } from '@/lib/caption-text-breaks';
 import {
+  assertAutomaticTranslationWroteText,
+  automaticTranslationCueWrites,
+  translatedSliceReviewFlags,
+  usableAutomaticTranslation,
+} from '@/lib/caption-translation-commit';
+import {
   cutTranslatedDocument,
   packCaptionDocuments,
 } from '@/lib/caption-translation-cut';
@@ -20,7 +26,6 @@ import {
   translationTrackDisplayName,
   translationTrackIdForLanguage,
   updatePairedCaptionTexts,
-  type PairedCaptionTextUpdate,
 } from '@/lib/caption-tracks';
 import { visibleTimelineCaptions } from '@/lib/video-timeline';
 import {
@@ -112,6 +117,13 @@ export async function refreshProjectCaptionTranslation(options: {
     captions,
     onProgress: options.onProgress,
   });
+  const previousById = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue.text]));
+  const writes = automaticTranslationCueWrites({
+    captions,
+    translatedById: translated.captions,
+    previousById,
+  });
+  assertAutomaticTranslationWroteText(captions, previousById, writes);
   const updatedAt = new Date().toISOString();
   const providerProject = setTranslationTrackProvider(
     options.project,
@@ -120,30 +132,12 @@ export async function refreshProjectCaptionTranslation(options: {
     qwenSource,
     updatedAt,
   );
-  const previousById = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue]));
-  return updatePairedCaptionTexts(providerProject, captions.flatMap((caption): PairedCaptionTextUpdate[] => {
-    const applied = usableAutomaticTranslation(
-      caption.text,
-      translated.captions.get(caption.id),
-      translated.needsReview.has(caption.id),
-    );
-    if (applied) {
-      return [{
-        trackId: track.id,
-        sourceCaptionId: caption.id,
-        translatedText: applied,
-        translationStatus: 'translated' as const,
-      }];
-    }
-    const previous = previousById.get(caption.id)?.text.trim() ?? '';
-    if (!previous) return [];
-    return [{
-      trackId: track.id,
-      sourceCaptionId: caption.id,
-      translatedText: previous,
-      translationStatus: 'stale' as const,
-    }];
-  }), updatedAt);
+  return updatePairedCaptionTexts(providerProject, writes.map((write) => ({
+    trackId: track.id,
+    sourceCaptionId: write.sourceCaptionId,
+    translatedText: write.translatedText,
+    translationStatus: write.translationStatus,
+  })), updatedAt);
 }
 
 export async function synchronizeProjectDualCaptionEdits(options: {
@@ -205,24 +199,20 @@ export async function synchronizeProjectDualCaptionEdits(options: {
     edits,
     options.project.captions,
     session?.operations.get('forward'),
-    session?.needsReviewByOperation.get('forward'),
     track.languageTag,
   );
   const reverseResults = session?.operations.get('reverse') ?? new Map<string, string>();
-  const reverseReview = session?.needsReviewByOperation.get('reverse') ?? new Set<string>();
   const updates = edits.map((edit) => {
     const automaticPrimary = edit.translatedChanged && !edit.primaryChanged
       ? usableAutomaticTranslation(
         edit.translatedText,
         reverseResults.get(edit.sourceCaptionId),
-        reverseReview.has(edit.sourceCaptionId),
       )
       : undefined;
     const automaticTranslation = edit.primaryChanged && !edit.translatedChanged
       ? usableAutomaticTranslation(
         edit.primaryText,
         forwardResults.captions.get(edit.sourceCaptionId),
-        forwardResults.needsReview.has(edit.sourceCaptionId),
       )
       : undefined;
     return {
@@ -286,13 +276,6 @@ function requiredTrack(project: CaptionProject, trackId: string) {
   return track;
 }
 
-function usableAutomaticTranslation(sourceText: string, translatedText: string | undefined, needsReview: boolean) {
-  const source = sourceText.normalize('NFC').trim();
-  const translated = translatedText?.normalize('NFC').trim() ?? '';
-  if (needsReview || !translated || translated === source || captionTextLength(translated) > 500) return undefined;
-  return translated;
-}
-
 function assertTrackMatchesSource(track: TranslationCaptionTrack, sourceLanguage: string) {
   if (
     captionLanguageFamily(track.sourceLanguageTag) !== captionLanguageFamily(sourceLanguage)
@@ -328,11 +311,9 @@ async function translateCaptionDocument(options: {
       sources,
       options.targetLanguage,
     );
-    const documentNeedsReview = translated.needsReview.has(chunk.id) || !translated.captions.get(chunk.id)?.trim();
-    cut.forEach((text, id) => {
-      captions.set(id, text);
-      if (documentNeedsReview) needsReview.add(id);
-    });
+    const sourceById = new Map(sources.map((source) => [source.id, source.text]));
+    translatedSliceReviewFlags(cut, sourceById).forEach((id) => needsReview.add(id));
+    cut.forEach((text, id) => captions.set(id, text));
   }
   return { captions, needsReview, provider: translated.provider };
 }
@@ -341,7 +322,6 @@ function cutForwardDocumentResults(
   edits: readonly DualCaptionTextEdit[],
   captions: CaptionBlock[],
   documents: ReadonlyMap<string, string> | undefined,
-  documentReview: ReadonlySet<string> | undefined,
   targetLanguage: string,
 ) {
   const result = new Map<string, string>();
@@ -362,11 +342,9 @@ function cutForwardDocumentResults(
       sources.filter((source) => chunk.sourceIds.includes(source.id)),
       targetLanguage,
     );
-    const documentNeedsReview = Boolean(documentReview?.has(chunk.id) || !translated?.trim());
-    cut.forEach((text, id) => {
-      result.set(id, text);
-      if (documentNeedsReview) needsReview.add(id);
-    });
+    const sourceById = new Map(sources.filter((source) => chunk.sourceIds.includes(source.id)).map((source) => [source.id, source.text]));
+    translatedSliceReviewFlags(cut, sourceById).forEach((id) => needsReview.add(id));
+    cut.forEach((text, id) => result.set(id, text));
   }
   return { captions: result, needsReview };
 }

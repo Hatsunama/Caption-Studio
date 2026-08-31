@@ -858,17 +858,33 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const saveDualCaptionEdits = async (edits: DualCaptionTextEdit[]) => {
     const track = selectedTranslationTrack;
     if (!track || edits.length === 0) return false;
-    if (edits.some((edit) => !edit.primaryText.trim() || !edit.translatedText.trim())) {
+    const committedById = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue.text.trim()]));
+    const resolved = edits.flatMap((edit) => {
+      const committedTranslation = committedById.get(edit.sourceCaptionId) ?? '';
+      const primaryText = edit.primaryText.trim();
+      const translatedText = edit.translatedText.trim() || committedTranslation;
+      const primaryChanged = edit.primaryChanged;
+      const translatedChanged = translatedText !== committedTranslation;
+      return primaryChanged || translatedChanged ? [{
+        ...edit,
+        primaryText,
+        translatedText,
+        primaryChanged,
+        translatedChanged,
+      }] : [];
+    });
+    if (resolved.length === 0) return true;
+    if (resolved.some((edit) => !edit.primaryText || !edit.translatedText)) {
       Alert.alert('Both lines need text', 'Enter both the primary and translated subtitle before saving this row.');
       return false;
     }
     const reviewedById = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue.reviewed]));
-    const overwritesReviewed = edits.some((edit) => edit.primaryChanged && !edit.translatedChanged && reviewedById.get(edit.sourceCaptionId));
+    const overwritesReviewed = resolved.some((edit) => edit.primaryChanged && !edit.translatedChanged && reviewedById.get(edit.sourceCaptionId));
     if (overwritesReviewed) {
       const confirmed = await confirmReviewedTranslationReplacement(track.displayName);
       if (!confirmed) return false;
     }
-    return translationController.synchronize(track.id, edits);
+    return translationController.synchronize(track.id, resolved);
   };
 
   const toggleSelectedTranslationTrack = async () => {

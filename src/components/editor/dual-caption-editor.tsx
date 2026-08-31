@@ -13,6 +13,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionPair } from '@/lib/caption-tracks';
+import {
+  adoptCommittedDualCaptionDrafts,
+  committedDualCaptionText,
+  dualCaptionDraftsFromPairs,
+  dualCaptionDraftsMatch,
+  mergeRecoveredDualCaptionDrafts,
+  type DualCaptionDraft,
+} from '@/lib/dual-caption-drafts';
 import type { DualCaptionTextEdit } from '@/services/project-caption-translation';
 import {
   clearEditorDraftJournal,
@@ -20,8 +28,6 @@ import {
   writeEditorDraftJournal,
   type EditorDraftKind,
 } from '@/services/editor-draft-journal';
-
-type Draft = { primaryText: string; translatedText: string };
 
 export function DualCaptionEditor(props: {
   visible: boolean;
@@ -44,30 +50,34 @@ export function DualCaptionEditor(props: {
   onCancelBusy: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const [drafts, setDrafts] = useState<Record<string, Draft>>(() => (
-    Object.fromEntries(props.pairs.map((pair) => [pair.source.id, {
-      primaryText: pair.source.text,
-      translatedText: pair.translation.text,
-    }]))
-  ));
+  const [drafts, setDrafts] = useState<Record<string, DualCaptionDraft>>(() => dualCaptionDraftsFromPairs(props.pairs));
   const [journalReady, setJournalReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const wasVisibleRef = useRef(false);
+  const committedRef = useRef<Record<string, DualCaptionDraft>>(dualCaptionDraftsFromPairs(props.pairs));
+  const sourceDraftsRef = useRef<Record<string, DualCaptionDraft>>(committedRef.current);
   const journalKind = `dual-captions-${props.trackId}` as EditorDraftKind;
-  const sourceDrafts = useMemo(() => Object.fromEntries(props.pairs.map((pair) => [pair.source.id, {
-    primaryText: pair.source.text,
-    translatedText: pair.translation.text,
-  }])), [props.pairs]);
+  const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
+  sourceDraftsRef.current = sourceDrafts;
+  const displayDrafts = adoptCommittedDualCaptionDrafts(committedRef.current, sourceDrafts, drafts);
 
   useEffect(() => {
     const opening = props.visible && !wasVisibleRef.current;
     wasVisibleRef.current = props.visible;
     if (!opening) return;
+    committedRef.current = sourceDrafts;
     setDrafts(sourceDrafts);
     setJournalReady(false);
     void readEditorDraftJournal(props.projectId, journalKind).then((journal) => {
       const recovered = decodeDualDraft(journal?.payload, props.pairs.map((pair) => pair.source.id));
+      const committed = sourceDraftsRef.current;
       if (!recovered) {
+        setJournalReady(true);
+        return;
+      }
+      const merged = mergeRecoveredDualCaptionDrafts(recovered, committed);
+      if (dualCaptionDraftsMatch(merged, committed)) {
+        void clearEditorDraftJournal(props.projectId, journalKind);
         setJournalReady(true);
         return;
       }
@@ -78,25 +88,45 @@ export function DualCaptionEditor(props: {
           : 'The project changed after this recovery was created. Review both language columns before saving.',
         [
           { text: 'Discard recovery', style: 'destructive', onPress: () => { void clearEditorDraftJournal(props.projectId, journalKind); setJournalReady(true); } },
-          { text: 'Restore', onPress: () => { setDrafts(recovered); setJournalReady(true); } },
+          { text: 'Restore', onPress: () => { setDrafts(mergeRecoveredDualCaptionDrafts(recovered, sourceDraftsRef.current)); setJournalReady(true); } },
+        ],
+      );
+      Alert.alert(
+        journal?.baseRevision === props.baseRevision ? 'Restore unsaved dual-subtitle edits?' : 'Dual-subtitle recovery needs review',
+        journal?.baseRevision === props.baseRevision
+          ? 'Caption Studio recovered edits that were not saved before the app closed.'
+          : 'The project changed after this recovery was created. Review both language columns before saving.',
+        [
+          { text: 'Discard recovery', style: 'destructive', onPress: () => { void clearEditorDraftJournal(props.projectId, journalKind); setJournalReady(true); } },
+          { text: 'Restore', onPress: () => { setDrafts(mergeRecoveredDualCaptionDrafts(recovered, sourceDraftsRef.current)); setJournalReady(true); } },
         ],
       );
     }).catch(() => setJournalReady(true));
   }, [journalKind, props.baseRevision, props.pairs, props.projectId, props.visible, sourceDrafts]);
 
   useEffect(() => {
-    if (!props.visible || !journalReady || JSON.stringify(drafts) === JSON.stringify(sourceDrafts)) return;
+    if (!props.visible) return;
+    if (!dualCaptionDraftsMatch(drafts, displayDrafts)) setDrafts(displayDrafts);
+    committedRef.current = sourceDrafts;
+  }, [displayDrafts, drafts, props.visible, sourceDrafts]);
+
+  useEffect(() => {
+    if (!props.visible || !journalReady || props.busy) return;
+    if (dualCaptionDraftsMatch(displayDrafts, sourceDrafts)) {
+      void clearEditorDraftJournal(props.projectId, journalKind);
+      return;
+    }
     const timer = setTimeout(() => {
-      void writeEditorDraftJournal(props.projectId, journalKind, props.baseRevision, drafts);
+      void writeEditorDraftJournal(props.projectId, journalKind, props.baseRevision, displayDrafts);
     }, 600);
     return () => clearTimeout(timer);
-  }, [drafts, journalKind, journalReady, props.baseRevision, props.projectId, props.visible, sourceDrafts]);
+  }, [displayDrafts, journalKind, journalReady, props.baseRevision, props.busy, props.projectId, props.visible, sourceDrafts]);
 
   const edits = useMemo(() => props.pairs.flatMap((pair) => {
-    const draft = drafts[pair.source.id];
+    const draft = displayDrafts[pair.source.id];
     if (!draft) return [];
-    const primaryText = draft.primaryText.trim();
-    const translatedText = draft.translatedText.trim();
+    const primaryText = committedDualCaptionText(draft.primaryText, pair.source.text);
+    const translatedText = committedDualCaptionText(draft.translatedText, pair.translation.text);
     const primaryChanged = primaryText !== pair.source.text.trim();
     const translatedChanged = translatedText !== pair.translation.text.trim();
     return primaryChanged || translatedChanged ? [{
@@ -106,7 +136,7 @@ export function DualCaptionEditor(props: {
       primaryChanged,
       translatedChanged,
     }] : [];
-  }), [drafts, props.pairs]);
+  }), [displayDrafts, props.pairs]);
 
   const needsRefresh = props.pairs.filter((pair) => (
     pair.translation.status === 'pending' || pair.translation.status === 'stale'
@@ -135,7 +165,7 @@ export function DualCaptionEditor(props: {
     }
   };
 
-  const setDraft = (captionId: string, field: keyof Draft, value: string) => {
+  const setDraft = (captionId: string, field: keyof DualCaptionDraft, value: string) => {
     setDrafts((current) => ({
       ...current,
       [captionId]: {
@@ -186,7 +216,7 @@ export function DualCaptionEditor(props: {
 
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 10, padding: 14, paddingBottom: 120 }}>
           {props.pairs.map((pair, index) => {
-            const draft = drafts[pair.source.id] ?? { primaryText: pair.source.text, translatedText: pair.translation.text };
+            const draft = displayDrafts[pair.source.id] ?? { primaryText: pair.source.text, translatedText: pair.translation.text };
             const refreshRequired = pair.translation.status === 'pending' || pair.translation.status === 'stale';
             return (
               <View key={pair.source.id} style={{ gap: 9, padding: 14, borderRadius: chrome.radius.lg, borderWidth: 1, borderColor: refreshRequired ? chrome.warning : chrome.hairline, backgroundColor: chrome.surface }}>
@@ -319,15 +349,15 @@ function formatTime(milliseconds: number) {
   return `${minutes}:${seconds.toFixed(1).padStart(4, '0')}`;
 }
 
-function decodeDualDraft(value: unknown, allowedIds: string[]): Record<string, Draft> | null {
+function decodeDualDraft(value: unknown, allowedIds: string[]): Record<string, DualCaptionDraft> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const allowed = new Set(allowedIds);
   const entries = Object.entries(value);
   if (entries.length > allowed.size || entries.some(([id]) => !allowed.has(id))) return null;
   const valid = entries.every(([, draft]) => {
     if (!draft || typeof draft !== 'object') return false;
-    const candidate = draft as Partial<Draft>;
+    const candidate = draft as Partial<DualCaptionDraft>;
     return typeof candidate.primaryText === 'string' && typeof candidate.translatedText === 'string';
   });
-  return valid ? value as Record<string, Draft> : null;
+  return valid ? value as Record<string, DualCaptionDraft> : null;
 }

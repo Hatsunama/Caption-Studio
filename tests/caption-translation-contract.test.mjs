@@ -131,7 +131,9 @@ test('project translation orchestration owns concurrency, provenance, and mixed-
   assert.match(workflow, /packCaptionDocuments/);
   assert.match(workflow, /cutTranslatedDocument/);
   assert.match(workflow, /usableAutomaticTranslation/);
-  assert.match(workflow, /translated\.needsReview\.has/);
+  assert.match(workflow, /translatedSliceReviewFlags/);
+  assert.match(workflow, /assertAutomaticTranslationWroteText/);
+  assert.doesNotMatch(workflow, /if \(documentNeedsReview\) needsReview\.add\(id\)/);
   assert.doesNotMatch(workflow, /translatedText: translated\.captions\.get\(caption\.id\) \?\? caption\.text/);
   assert.match(workflow, /provider: \{ id: 'manual' \}/);
   assert.match(workflow, /translated\.provider/);
@@ -174,6 +176,25 @@ test('dual-subtitle language ownership stays canonical and does not overclaim ty
   assert.match(projectTranscription, /canonicalCaptionLanguageTag/);
   assert.match(dualEditor, /maxLength=\{500\}/);
   assert.match(dualEditor, /useSafeAreaInsets/);
+  assert.match(dualEditor, /adoptCommittedDualCaptionDrafts/);
+  assert.match(dualEditor, /props\.busy/);
+  assert.match(dualEditor, /committedDualCaptionText/);
+  assert.match(editor, /translatedText\.trim\(\) \|\| committedTranslation/);
   assert.match(renderPlan, /activeWordColor", "#64D2FF"/);
   assert.match(renderPlan, /"radius", 18\)/);
+});
+
+test('dual-subtitle refresh commits translated text instead of leaving a pending draft', async () => {
+  const [dualEditor, workflow, commit, controller] = await Promise.all([
+    readFile(new URL('src/components/editor/dual-caption-editor.tsx', repositoryRoot), 'utf8'),
+    readFile(new URL('src/services/project-caption-translation.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/lib/caption-translation-commit.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/hooks/use-project-caption-translation.ts', repositoryRoot), 'utf8'),
+  ]);
+  assert.match(dualEditor, /displayDrafts = adoptCommittedDualCaptionDrafts/);
+  assert.match(dualEditor, /mergeRecoveredDualCaptionDrafts/);
+  assert.match(dualEditor, /if \(!props\.visible \|\| !journalReady \|\| props\.busy\) return/);
+  assert.match(workflow, /assertAutomaticTranslationWroteText\(captions, previousById, writes\)/);
+  assert.match(commit, /second language is still empty/);
+  assert.match(controller, /setError\(caught instanceof Error \? caught\.message/);
 });
