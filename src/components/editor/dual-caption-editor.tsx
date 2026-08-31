@@ -19,6 +19,7 @@ import {
   dualCaptionDraftsFromPairs,
   dualCaptionDraftsMatch,
   mergeRecoveredDualCaptionDrafts,
+  shouldRestoreDualCaptionJournal,
   type DualCaptionDraft,
 } from '@/lib/dual-caption-drafts';
 import type { DualCaptionTextEdit } from '@/services/project-caption-translation';
@@ -76,8 +77,7 @@ export function DualCaptionEditor(props: {
         setJournalReady(true);
         return;
       }
-      const merged = mergeRecoveredDualCaptionDrafts(recovered, committed);
-      if (dualCaptionDraftsMatch(merged, committed)) {
+      if (!shouldRestoreDualCaptionJournal(recovered, committed)) {
         void clearEditorDraftJournal(props.projectId, journalKind);
         setJournalReady(true);
         return;
@@ -226,12 +226,14 @@ export function DualCaptionEditor(props: {
                   </View>
                 </View>
                 <LanguageInput
+                  key={`${pair.source.id}:primary:${pair.source.text}`}
                   label={props.sourceLanguageLabel}
                   value={draft.primaryText}
                   disabled={props.busy}
                   onChangeText={(value) => setDraft(pair.source.id, 'primaryText', value)}
                 />
                 <LanguageInput
+                  key={`${pair.source.id}:translated:${pair.translation.text}`}
                   label={props.targetLanguageLabel}
                   value={draft.translatedText}
                   disabled={props.busy}

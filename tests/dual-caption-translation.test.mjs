@@ -7,6 +7,7 @@ import {
   dualCaptionDraftsFromPairs,
   dualCaptionDraftsMatch,
   mergeRecoveredDualCaptionDrafts,
+  shouldRestoreDualCaptionJournal,
 } from '../src/lib/dual-caption-drafts.ts';
 import {
   assertAutomaticTranslationWroteText,
@@ -57,7 +58,15 @@ test('empty dual-subtitle recovery does not replace committed Chinese with Engli
     c1: { primaryText: 'Hello world', translatedText: '' },
   };
   assert.deepEqual(mergeRecoveredDualCaptionDrafts(recovered, committed), committed);
-  assert.equal(dualCaptionDraftsMatch(mergeRecoveredDualCaptionDrafts(recovered, committed), committed), true);
+  assert.equal(shouldRestoreDualCaptionJournal(recovered, committed), false);
+  assert.equal(
+    shouldRestoreDualCaptionJournal({ c1: { primaryText: 'Hello world', translatedText: 'Hello world' } }, committed),
+    false,
+  );
+  assert.equal(
+    shouldRestoreDualCaptionJournal({ c1: { primaryText: 'Hello world', translatedText: '人工翻译' } }, committed),
+    true,
+  );
 });
 
 test('usable Chinese slices are kept even when the parent document was flagged for review', () => {

@@ -57,11 +57,26 @@ export function mergeRecoveredDualCaptionDrafts(
     if (!recoveredDraft) return [id, committedDraft];
     return [id, {
       primaryText: recoveredDraft.primaryText,
-      translatedText: recoveredDraft.translatedText.trim() || committedDraft.translatedText,
+      translatedText: recoveredTranslationLooksCommitted(recoveredDraft)
+        ? recoveredDraft.translatedText
+        : committedDraft.translatedText,
     }];
   }));
 }
 
 export function committedDualCaptionText(draftText: string, committedText: string) {
   return draftText.trim() || committedText.trim();
+}
+
+export function shouldRestoreDualCaptionJournal(
+  recovered: Record<string, DualCaptionDraft>,
+  committed: Record<string, DualCaptionDraft>,
+) {
+  const merged = mergeRecoveredDualCaptionDrafts(recovered, committed);
+  return !dualCaptionDraftsMatch(merged, committed);
+}
+
+function recoveredTranslationLooksCommitted(draft: DualCaptionDraft) {
+  const translated = draft.translatedText.trim();
+  return Boolean(translated) && translated !== draft.primaryText.trim();
 }
