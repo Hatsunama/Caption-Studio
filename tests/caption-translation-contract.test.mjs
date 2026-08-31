@@ -185,15 +185,19 @@ test('dual-subtitle language ownership stays canonical and does not overclaim ty
 });
 
 test('dual-subtitle refresh commits translated text instead of leaving a pending draft', async () => {
-  const [dualEditor, workflow, commit, controller] = await Promise.all([
+  const [dualEditor, editor, workflow, commit, controller] = await Promise.all([
     readFile(new URL('src/components/editor/dual-caption-editor.tsx', repositoryRoot), 'utf8'),
+    readFile(new URL('src/app/editor.tsx', repositoryRoot), 'utf8'),
     readFile(new URL('src/services/project-caption-translation.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/lib/caption-translation-commit.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/hooks/use-project-caption-translation.ts', repositoryRoot), 'utf8'),
   ]);
   assert.match(dualEditor, /displayDrafts = adoptCommittedDualCaptionDrafts/);
-  assert.match(dualEditor, /mergeRecoveredDualCaptionDrafts/);
+  assert.match(dualEditor, /shouldRestoreDualCaptionJournal/);
   assert.match(dualEditor, /if \(!props\.visible \|\| !journalReady \|\| props\.busy\) return/);
+  assert.match(editor, /!cue\.text\.trim\(\) && \(cue\.status === 'pending' \|\| cue\.status === 'stale'\)/);
+  assert.match(editor, /setTranslationStackGap/);
+  assert.doesNotMatch(editor, /onSelectTranslationCaption[\s\S]{0,280}setDualCaptionEditorOpen\(true\)/);
   assert.match(workflow, /assertAutomaticTranslationWroteText\(captions, previousById, writes\)/);
   assert.match(commit, /second language is still empty/);
   assert.match(controller, /setError\(caught instanceof Error \? caught\.message/);

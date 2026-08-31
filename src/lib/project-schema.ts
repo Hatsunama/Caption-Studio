@@ -416,6 +416,7 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
           modelRevision,
           promptVersion,
         },
+        stackGap: optionalFiniteNumber(track.stackGap, `translation track ${trackIndex + 1} stack gap`, 0.008, 0.18) ?? 0.028,
         styleOverride: decodeCaptionStylePatch(track.styleOverride, `translation track ${trackIndex + 1} style override`),
         cues,
       };

@@ -168,6 +168,7 @@ export type TranslationCaptionTrack = {
     modelRevision?: string;
     promptVersion?: number;
   };
+  stackGap?: number;
   styleOverride?: CaptionStylePatch;
   cues: TranslationCaptionCue[];
 };
