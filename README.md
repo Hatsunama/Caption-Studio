@@ -51,7 +51,10 @@ $Package = 'com.hatsunama.captionstudio'
 $Apk = Join-Path $env:TEMP "caption-studio-$Version-android.apk"
 
 try {
-    adb devices
+    $state = (adb -s $Serial get-state).Trim()
+    if ($state -ne 'device') {
+        throw "Replace `$Serial with your device serial from `adb devices -l`, then unlock the phone and approve USB debugging."
+    }
 
     Invoke-WebRequest -Uri $Url -OutFile $Apk
 
