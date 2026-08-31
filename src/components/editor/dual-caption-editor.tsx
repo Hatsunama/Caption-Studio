@@ -55,7 +55,7 @@ export function DualCaptionEditor(props: {
   const [journalReady, setJournalReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [journalError, setJournalError] = useState<string>();
-  const wasVisibleRef = useRef(false);
+  const openSessionRef = useRef<string | undefined>(undefined);
   const committedRef = useRef<Record<string, DualCaptionDraft>>(dualCaptionDraftsFromPairs(props.pairs));
   const sourceDraftsRef = useRef<Record<string, DualCaptionDraft>>(committedRef.current);
   const journalKind = `dual-captions-${props.trackId}` as EditorDraftKind;
@@ -65,35 +65,35 @@ export function DualCaptionEditor(props: {
   if (dualCaptionDraftsMatch(drafts, displayDrafts)) committedRef.current = sourceDrafts;
 
   useEffect(() => {
-    const opening = props.visible && !wasVisibleRef.current;
-    wasVisibleRef.current = props.visible;
-    if (!opening) return;
-    committedRef.current = sourceDrafts;
-    setDrafts(sourceDrafts);
+    if (!props.visible) {
+      openSessionRef.current = undefined;
+      setJournalReady(false);
+      return;
+    }
+    if (openSessionRef.current === props.trackId) return;
+    openSessionRef.current = props.trackId;
+    const openingDrafts = sourceDraftsRef.current;
+    committedRef.current = openingDrafts;
+    setDrafts(openingDrafts);
     setJournalReady(false);
     setJournalError(undefined);
+    const allowedIds = Object.keys(openingDrafts);
     let active = true;
     void readEditorDraftJournal(props.projectId, journalKind).then((journal) => {
       if (!active) return;
-      const recovered = decodeDualDraft(journal?.payload, props.pairs.map((pair) => pair.source.id));
-      const committed = sourceDraftsRef.current;
-      if (!recovered) {
-        setJournalReady(true);
-        return;
-      }
-      if (!shouldRestoreDualCaptionJournal(recovered, committed)) {
-        void clearEditorDraftJournal(props.projectId, journalKind);
+      const recovered = decodeDualDraft(journal?.payload, allowedIds);
+      const nextCommitted = sourceDraftsRef.current;
+      if (!recovered || !shouldRestoreDualCaptionJournal(recovered, nextCommitted)) {
+        if (recovered) void clearEditorDraftJournal(props.projectId, journalKind);
         setJournalReady(true);
         return;
       }
       Alert.alert(
-        journal?.baseRevision === props.baseRevision ? 'Restore unsaved dual-subtitle edits?' : 'Dual-subtitle recovery needs review',
-        journal?.baseRevision === props.baseRevision
-          ? 'Caption Studio recovered edits that were not saved before the app closed.'
-          : 'The project changed after this recovery was created. Review both language columns before saving.',
+        'Restore unsaved dual-subtitle edits?',
+        'Caption Studio found typed edits that were not saved. Keeping the current translation leaves the second language as it is now.',
         [
-          { text: 'Discard recovery', style: 'destructive', onPress: () => { void clearEditorDraftJournal(props.projectId, journalKind); setJournalReady(true); } },
-          { text: 'Restore', onPress: () => { setDrafts(mergeRecoveredDualCaptionDrafts(recovered, sourceDraftsRef.current)); setJournalReady(true); } },
+          { text: 'Keep current translation', style: 'cancel', onPress: () => { void clearEditorDraftJournal(props.projectId, journalKind); setJournalReady(true); } },
+          { text: 'Restore unsaved typing', onPress: () => { setDrafts(mergeRecoveredDualCaptionDrafts(recovered, sourceDraftsRef.current)); setJournalReady(true); } },
         ],
       );
     }).catch(() => {
@@ -103,10 +103,15 @@ export function DualCaptionEditor(props: {
       }
     });
     return () => { active = false; };
-  }, [journalKind, props.baseRevision, props.pairs, props.projectId, props.visible, sourceDrafts]);
+  }, [journalKind, props.projectId, props.trackId, props.visible]);
 
   useEffect(() => {
     if (!props.visible || !journalReady || props.busy) return;
+    const pendingEmpty = props.pairs.some((pair) => (
+      !pair.translation.text.trim()
+      && (pair.translation.status === 'pending' || pair.translation.status === 'stale')
+    ));
+    if (pendingEmpty) return;
     if (dualCaptionDraftsMatch(displayDrafts, sourceDrafts)) {
       void clearEditorDraftJournal(props.projectId, journalKind);
       return;
@@ -121,7 +126,7 @@ export function DualCaptionEditor(props: {
       active = false;
       clearTimeout(timer);
     };
-  }, [displayDrafts, journalKind, journalReady, props.baseRevision, props.busy, props.projectId, props.visible, sourceDrafts]);
+  }, [displayDrafts, journalKind, journalReady, props.baseRevision, props.busy, props.pairs, props.projectId, props.visible, sourceDrafts]);
 
   const edits = useMemo(() => props.pairs.flatMap((pair) => {
     const draft = displayDrafts[pair.source.id];
@@ -242,17 +247,17 @@ export function DualCaptionEditor(props: {
                   </View>
                 </View>
                 <LanguageInput
-                  key={`${pair.source.id}:primary:${pair.source.text}`}
                   label={props.sourceLanguageLabel}
                   value={draft.primaryText}
                   disabled={props.busy}
+                  inputKey={`${pair.source.id}:primary:${pair.source.text}`}
                   onChangeText={(value) => setDraft(pair.source.id, 'primaryText', value)}
                 />
                 <LanguageInput
-                  key={`${pair.source.id}:translated:${pair.translation.text}`}
                   label={props.targetLanguageLabel}
                   value={draft.translatedText}
                   disabled={props.busy}
+                  inputKey={`${pair.source.id}:translated:${pair.translation.text}`}
                   placeholder="Translation pending"
                   onChangeText={(value) => setDraft(pair.source.id, 'translatedText', value)}
                 />
@@ -306,6 +311,7 @@ function LanguageInput(props: {
   label: string;
   value: string;
   disabled: boolean;
+  inputKey: string;
   placeholder?: string;
   onChangeText: (value: string) => void;
 }) {
@@ -313,6 +319,7 @@ function LanguageInput(props: {
     <View style={{ gap: 5 }}>
       <Text style={{ color: chrome.muted, fontSize: 11, fontWeight: '700', letterSpacing: 0.4 }}>{props.label.toUpperCase()}</Text>
       <TextInput
+        key={props.inputKey}
         accessibilityLabel={`${props.label} subtitle text`}
         value={props.value}
         editable={!props.disabled}

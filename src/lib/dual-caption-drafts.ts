@@ -73,7 +73,17 @@ export function shouldRestoreDualCaptionJournal(
   committed: Record<string, DualCaptionDraft>,
 ) {
   const merged = mergeRecoveredDualCaptionDrafts(recovered, committed);
-  return !dualCaptionDraftsMatch(merged, committed);
+  if (dualCaptionDraftsMatch(merged, committed)) return false;
+  return Object.entries(merged).some(([id, draft]) => {
+    const committedDraft = committed[id];
+    if (!committedDraft) return false;
+    const recoveredDraft = recovered[id];
+    if (!recoveredDraft) return false;
+    const primaryEdited = recoveredDraft.primaryText !== committedDraft.primaryText;
+    const translationEdited = recoveredTranslationLooksCommitted(recoveredDraft)
+      && recoveredDraft.translatedText !== committedDraft.translatedText;
+    return primaryEdited || translationEdited;
+  });
 }
 
 function recoveredTranslationLooksCommitted(draft: DualCaptionDraft) {

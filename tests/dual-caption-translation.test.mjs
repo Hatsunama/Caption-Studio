@@ -67,6 +67,10 @@ test('empty dual-subtitle recovery does not replace committed Chinese with Engli
     shouldRestoreDualCaptionJournal({ c1: { primaryText: 'Hello world', translatedText: '人工翻译' } }, committed),
     true,
   );
+  assert.equal(
+    shouldRestoreDualCaptionJournal({ c1: { primaryText: 'Hello edited', translatedText: '' } }, committed),
+    true,
+  );
 });
 
 test('usable Chinese slices are kept even when the parent document was flagged for review', () => {

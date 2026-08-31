@@ -396,7 +396,10 @@ test('translation style inheritance is project then source caption then track th
 test('second-language captions stay below the original and keep independent type color', () => {
   const bilingual = createEnglishChineseCaptionTrack(projectFixture(), { c1: '你好，世界' });
   const pair = resolveCaptionPairs(bilingual, CHINESE_SIMPLIFIED_TRACK_ID)[0];
+  const primaryBottom = bilingual.projectStyle.position.y + bilingual.projectStyle.box.height / 2;
+  const translationTop = pair.style.position.y - pair.style.box.height / 2;
   assert.ok(pair.style.position.y > bilingual.projectStyle.position.y);
+  assert.ok(translationTop >= primaryBottom - 0.0001, `secondary top ${translationTop} should sit below primary bottom ${primaryBottom}`);
   assert.equal(pair.style.fontSize, 34);
   const recolored = {
     ...bilingual,
@@ -409,6 +412,11 @@ test('second-language captions stay below the original and keep independent type
   const fartherPair = resolveCaptionPairs(farther, CHINESE_SIMPLIFIED_TRACK_ID)[0];
   assert.ok(fartherPair.style.position.y >= pair.style.position.y);
   assert.equal(farther.captionTracks.translations[0].stackGap, DEFAULT_TRANSLATION_STACK_GAP + 0.06);
+  const sized = setTranslationTrackStyle(bilingual, CHINESE_SIMPLIFIED_TRACK_ID, { fontSize: 22, textColor: '#64D2FF' });
+  const sizedPair = resolveCaptionPairs(sized, CHINESE_SIMPLIFIED_TRACK_ID)[0];
+  assert.equal(sizedPair.style.fontSize, 22);
+  assert.equal(sizedPair.style.textColor, '#64D2FF');
+  assert.equal(sized.projectStyle.fontSize, bilingual.projectStyle.fontSize);
 });
 
 test('existing primary-caption editor operations keep translated cues synchronized', () => {
