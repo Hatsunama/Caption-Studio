@@ -60,6 +60,7 @@ export function DualCaptionEditor(props: {
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
   sourceDraftsRef.current = sourceDrafts;
   const displayDrafts = adoptCommittedDualCaptionDrafts(committedRef.current, sourceDrafts, drafts);
+  if (dualCaptionDraftsMatch(drafts, displayDrafts)) committedRef.current = sourceDrafts;
 
   useEffect(() => {
     const opening = props.visible && !wasVisibleRef.current;
@@ -91,24 +92,8 @@ export function DualCaptionEditor(props: {
           { text: 'Restore', onPress: () => { setDrafts(mergeRecoveredDualCaptionDrafts(recovered, sourceDraftsRef.current)); setJournalReady(true); } },
         ],
       );
-      Alert.alert(
-        journal?.baseRevision === props.baseRevision ? 'Restore unsaved dual-subtitle edits?' : 'Dual-subtitle recovery needs review',
-        journal?.baseRevision === props.baseRevision
-          ? 'Caption Studio recovered edits that were not saved before the app closed.'
-          : 'The project changed after this recovery was created. Review both language columns before saving.',
-        [
-          { text: 'Discard recovery', style: 'destructive', onPress: () => { void clearEditorDraftJournal(props.projectId, journalKind); setJournalReady(true); } },
-          { text: 'Restore', onPress: () => { setDrafts(mergeRecoveredDualCaptionDrafts(recovered, sourceDraftsRef.current)); setJournalReady(true); } },
-        ],
-      );
     }).catch(() => setJournalReady(true));
   }, [journalKind, props.baseRevision, props.pairs, props.projectId, props.visible, sourceDrafts]);
-
-  useEffect(() => {
-    if (!props.visible) return;
-    if (!dualCaptionDraftsMatch(drafts, displayDrafts)) setDrafts(displayDrafts);
-    committedRef.current = sourceDrafts;
-  }, [displayDrafts, drafts, props.visible, sourceDrafts]);
 
   useEffect(() => {
     if (!props.visible || !journalReady || props.busy) return;
@@ -166,14 +151,16 @@ export function DualCaptionEditor(props: {
   };
 
   const setDraft = (captionId: string, field: keyof DualCaptionDraft, value: string) => {
-    setDrafts((current) => ({
-      ...current,
-      [captionId]: {
-        primaryText: current[captionId]?.primaryText ?? '',
-        translatedText: current[captionId]?.translatedText ?? '',
-        [field]: value,
-      },
-    }));
+    setDrafts((current) => {
+      const baseline = displayDrafts[captionId] ?? current[captionId] ?? { primaryText: '', translatedText: '' };
+      return {
+        ...current,
+        [captionId]: {
+          ...baseline,
+          [field]: value,
+        },
+      };
+    });
   };
 
   return (
