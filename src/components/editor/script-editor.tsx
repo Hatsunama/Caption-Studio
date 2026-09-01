@@ -44,6 +44,7 @@ export function ScriptEditor(props: {
   const [emptyCaptionId, setEmptyCaptionId] = useState<string>();
   const [boundaryMessage, setBoundaryMessage] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
+  const [journalError, setJournalError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [journalReady, setJournalReady] = useState(false);
   const wasVisibleRef = useRef(false);
@@ -67,6 +68,7 @@ export function ScriptEditor(props: {
     setEmptyCaptionId(undefined);
     setBoundaryMessage(undefined);
     setSaveError(undefined);
+    setJournalError(undefined);
     setSaving(false);
     setJournalReady(false);
     selectionRef.current = {};
@@ -95,7 +97,10 @@ export function ScriptEditor(props: {
           { text: 'Restore', onPress: () => { setDraftCaptions(recovered); setJournalReady(true); } },
         ],
       );
-    }).catch(() => setJournalReady(true));
+    }).catch(() => {
+      setJournalError('Caption recovery storage could not be read. Save your changes before leaving this editor.');
+      setJournalReady(true);
+    });
     const timer = setTimeout(() => {
       if (sourceCaptions.length) {
         listRef.current?.scrollToIndex({ index: initialIndex, animated: false, viewPosition: 0.35 });
@@ -106,10 +111,13 @@ export function ScriptEditor(props: {
 
   useEffect(() => {
     if (!props.visible || !journalReady || sameCaptionDraft(draftCaptions, sourceCaptions)) return;
+    let active = true;
     const timer = setTimeout(() => {
-      void writeEditorDraftJournal(props.projectId, 'caption-script', props.baseRevision, draftCaptions);
+      void writeEditorDraftJournal(props.projectId, 'caption-script', props.baseRevision, draftCaptions)
+        .then(() => { if (active) setJournalError(undefined); })
+        .catch(() => { if (active) setJournalError('Caption recovery could not be saved. Keep this editor open until you press Done.'); });
     }, 600);
-    return () => clearTimeout(timer);
+    return () => { active = false; clearTimeout(timer); };
   }, [draftCaptions, journalReady, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
 
   const selectForEditing = (caption: CaptionBlock) => {
@@ -276,6 +284,7 @@ export function ScriptEditor(props: {
                 Finish these spoken subtitles before adding a second language. Tap a subtitle to edit it. Use the visible Split and Join controls. Enter and Backspace remain available as keyboard shortcuts. Split and Join keep the same rhythm the translation will try to follow.
               </Text>
               {boundaryMessage ? <Text style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{boundaryMessage}</Text> : null}
+              {journalError ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{journalError}</Text> : null}
               {saveError ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{saveError}</Text> : null}
             </View>
           )}

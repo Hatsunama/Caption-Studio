@@ -659,8 +659,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         setProject(persisted);
         setPendingChange(undefined);
       });
-    } catch {
-      return;
+    } catch (caught) {
+      Alert.alert(
+        'Second language visibility not saved',
+        caught instanceof Error ? caught.message : 'The second language visibility could not be saved. Try again.',
+      );
     }
   };
 
@@ -928,7 +931,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setProject(persisted);
             setSelectedTranslationTrackId(undefined);
             setDualCaptionEditorOpen(false);
-          }).catch(() => undefined);
+          }).catch((caught) => {
+            Alert.alert(
+              'Second language not removed',
+              caught instanceof Error ? caught.message : 'The second language could not be removed. Try again.',
+            );
+          });
         },
       },
     ]);
@@ -955,6 +963,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
   };
 
+  const reportCaptionCommitFailure = (caught: unknown) => {
+    Alert.alert(
+      'Caption change not saved',
+      caught instanceof Error ? caught.message : 'The caption change could not be saved. Try again.',
+    );
+  };
+
   const splitSelectedCaptionAtPlayhead = () => {
     if (!selectedCaption) return;
     const mutation = splitCaptionScriptBlockAtTime(
@@ -968,7 +983,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       Alert.alert('Move the playhead inside this subtitle', 'A split needs a little room on both sides of the playhead.');
       return;
     }
-    void commitCaptionStructure(mutation).catch(() => undefined);
+    void commitCaptionStructure(mutation).catch(reportCaptionCommitFailure);
   };
 
   const joinSelectedCaption = (direction: 'previous' | 'next') => {
@@ -982,7 +997,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       Alert.alert('Cannot join across a video cut', 'Subtitles attached to different video clips stay separate so their timing remains correct.');
       return;
     }
-    void commitCaptionStructure(mutation).catch(() => undefined);
+    void commitCaptionStructure(mutation).catch(reportCaptionCommitFailure);
   };
 
   const updateTextLayerStyle = (layerId: string, patch: CaptionStylePatch, persist = false) => {

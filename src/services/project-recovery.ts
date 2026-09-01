@@ -33,11 +33,7 @@ export async function shareProjectRecoveryRecord(projectId: string, projectName:
     try {
       await deleteOwnedRecoveryArtifact(uri);
     } catch (cleanupError) {
-      if (shareFailure) {
-        console.warn('Could not remove the temporary project recovery file.', cleanupError);
-      } else {
-        throw cleanupError;
-      }
+      console.warn('Could not remove the temporary project recovery file.', cleanupError);
     }
   }
   if (shareFailure) throw shareFailure;

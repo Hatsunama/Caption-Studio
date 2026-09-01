@@ -32,5 +32,7 @@ test('recovery sharing always enters owned cleanup and never returns a private c
   const service = readFileSync(new URL('../src/services/project-recovery.ts', import.meta.url), 'utf8');
   assert.match(service, /try \{[\s\S]*Sharing\.shareAsync\(uri[\s\S]*\} finally \{[\s\S]*deleteOwnedRecoveryArtifact\(uri\)/);
   assert.doesNotMatch(service, /return uri/);
+  assert.match(service, /Could not remove the temporary project recovery file/);
+  assert.doesNotMatch(service, /else \{\s*throw cleanupError/);
   assert.match(service, /isStaleCaptionStudioRecoveryCacheArtifact/);
 });

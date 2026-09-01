@@ -1082,6 +1082,17 @@ test('caption editing opens the full timestamped script and keeps text-layer edi
   assert.match(scriptEditor, /Join previous/);
   assert.match(scriptEditor, /Join next/);
   assert.match(scriptEditor, /onSave\(draftCaptions\)/);
+  assert.match(scriptEditor, /writeEditorDraftJournal[\s\S]*\.catch\(\(\) => \{ if \(active\) setJournalError/);
+});
+
+test('user-initiated caption commits and recovery failures are visible', () => {
+  const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
+  const dualEditor = readFileSync(new URL('../src/components/editor/dual-caption-editor.tsx', import.meta.url), 'utf8');
+  assert.match(editor, /commitCaptionStructure\(mutation\)\.catch\(reportCaptionCommitFailure\)/);
+  assert.match(editor, /Caption change not saved/);
+  assert.match(editor, /Second language not removed/);
+  assert.match(dualEditor, /writeEditorDraftJournal[\s\S]*\.catch\(\(\) => \{ if \(active\) setJournalError/);
+  assert.match(dualEditor, /Dual-subtitle recovery could not be saved/);
 });
 
 test('selected captions expose direct timeline split and join commands', () => {
