@@ -37,7 +37,10 @@ import { generateProjectCaptions } from '@/services/project-transcription';
 import { persistProjectCheckpoint } from '@/services/project-persistence';
 import { cleanupStaleProjectRecoveryCache } from '@/services/project-recovery';
 import CaptionMedia from 'caption-media';
-import { createCaptionGenerationSession } from '@/services/caption-generation-session';
+import {
+  CaptionGenerationCancelledError,
+  createCaptionGenerationSession,
+} from '@/services/caption-generation-session';
 import {
   linkedMediaUris,
   releaseReadPermissions,
@@ -182,11 +185,22 @@ export async function generateAndSaveProjectCaptions(
     const guardedProgress = (progress: TranscriptionProgress) => {
       if (!session.isCancelled()) onProgress?.(progress);
     };
-    const generated = await generateProjectCaptions(project, modelId, guardedProgress, saveProject, session);
-    session.throwIfCancelled();
-    await saveProject(generated);
-    session.throwIfCancelled();
-    return generated;
+    try {
+      const generated = await generateProjectCaptions(project, modelId, guardedProgress, saveProject, session);
+      session.throwIfCancelled();
+      await saveProject(generated);
+      session.throwIfCancelled();
+      return generated;
+    } catch (error) {
+      if (error instanceof CaptionGenerationCancelledError) {
+        try {
+          await saveProject(project);
+        } catch {
+          throw new Error('Caption generation was cancelled, but its partial checkpoint could not be rolled back. Reopen the project before editing.');
+        }
+      }
+      throw error;
+    }
   });
 }
 

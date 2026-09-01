@@ -95,6 +95,9 @@ test('one pinned local model owns every supported English-Chinese direction', as
   assert.match(service, /result\.offline !== true/);
   assert.match(service, /result\.backend !== 'cpu'/);
   assert.match(service, /result\.promptContract !== 'qwen2\.5-caption-json-v1'/);
+  assert.match(service, /translatedById\.size !== expected\.length/);
+  assert.match(service, /duplicate or unknown subtitle identities/);
+  assert.doesNotMatch(service, /translatedById\.get\(caption\.id\) \?\? caption\.text/);
   assert.doesNotMatch(service, /com\.google\.mlkit|Google Translate|translation API/i);
   assert.match(catalog, /ggml-tiny-q5_1\.bin/);
   assert.match(catalog, /ggml-base-q5_1\.bin/);

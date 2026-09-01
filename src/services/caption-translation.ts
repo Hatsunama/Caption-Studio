@@ -440,15 +440,24 @@ function validateNativeResult(
   expected: NaturalCaptionTranslationInput[],
   translated: { id: string; text: string }[],
 ) {
+  const expectedIds = new Set(expected.map((caption) => caption.id));
   const translatedById = new Map<string, string>();
   for (const caption of translated) {
-    if (translatedById.has(caption.id)) continue;
+    if (!expectedIds.has(caption.id) || translatedById.has(caption.id)) {
+      throw new Error('The local model returned duplicate or unknown subtitle identities. No captions were changed.');
+    }
     const text = caption.text.normalize('NFC').trim();
-    if (text && captionTextLength(text) <= 2_000) translatedById.set(caption.id, text);
+    if (!text || captionTextLength(text) > 2_000) {
+      throw new Error('The local model returned invalid translated text. No captions were changed.');
+    }
+    translatedById.set(caption.id, text);
+  }
+  if (translatedById.size !== expected.length) {
+    throw new Error('The local model returned an incomplete translation. No captions were changed.');
   }
   return expected.map((caption) => ({
     id: caption.id,
-    text: translatedById.get(caption.id) ?? caption.text,
+    text: translatedById.get(caption.id)!,
   }));
 }
 

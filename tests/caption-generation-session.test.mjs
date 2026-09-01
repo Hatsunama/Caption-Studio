@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -49,4 +50,15 @@ test('a completed or cancelled caption session never poisons the next generation
   await assert.rejects(cancelled, CaptionGenerationCancelledError);
 
   assert.equal(await session.run(async () => 2), 2);
+});
+
+test('cancelling generation rolls durable checkpoints back before later editor saves', () => {
+  const workflows = readFileSync(new URL('../src/services/project-workflows.ts', import.meta.url), 'utf8');
+  const generation = workflows.slice(
+    workflows.indexOf('export async function generateAndSaveProjectCaptions'),
+    workflows.indexOf('export async function appendProjectVideoAudioToProject'),
+  );
+  assert.match(generation, /error instanceof CaptionGenerationCancelledError/);
+  assert.match(generation, /await saveProject\(project\)/);
+  assert.match(generation, /partial checkpoint could not be rolled back/);
 });
