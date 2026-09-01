@@ -86,77 +86,34 @@ export function setVideoClipTransform(
 export function setCaptionTiming(
   project: CaptionProject,
   captionId: string,
-  edge: 'start' | 'end',
+  edge: 'start' | 'end' | 'move',
   startMs: number,
   endMs: number,
 ) {
   const entries = buildClipTimeline(project.clips);
-  const visible = project.captions
-    .filter((caption) => caption.timelineVisible !== false)
-    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
-  const selectedIndex = visible.findIndex((caption) => caption.id === captionId);
-  const selected = visible[selectedIndex];
-  if (!selected) return project;
+  const selected = project.captions.find((caption) => caption.id === captionId);
+  if (!selected || selected.timelineVisible === false) return project;
   const entry = entries.find((candidate) => candidate.clip.id === selected.sourceAnchor?.clipId)
     ?? timelineEntryAt(entries, selected.startMs)
     ?? timelineEntryAt(entries, Math.max(selected.startMs, selected.endMs - 1));
   if (!entry) return project;
-  const previous = visible[selectedIndex - 1];
-  const next = visible[selectedIndex + 1];
-  const sameClip = (caption?: CaptionProject['captions'][number]) => Boolean(
-    caption
-    && caption.sourceAnchor?.clipId
-    && caption.sourceAnchor.clipId === entry.clip.id,
-  );
+  const minDuration = 80;
   let safeStartMs = selected.startMs;
   let safeEndMs = selected.endMs;
-  let linkedCaptionId: string | undefined;
-  let linkedEdge: 'start' | 'end' | undefined;
-  let linkedBoundaryMs: number | undefined;
-
   if (edge === 'start') {
-    safeStartMs = clamp(startMs, entry.startMs, selected.endMs - 80);
-    if (sameClip(previous)) {
-      const sharesBoundary = Math.abs(previous.endMs - selected.startMs) <= 40;
-      if (sharesBoundary || safeStartMs < previous.endMs) {
-        safeStartMs = clamp(safeStartMs, previous.startMs + 80, selected.endMs - 80);
-        linkedCaptionId = previous.id;
-        linkedEdge = 'end';
-        linkedBoundaryMs = safeStartMs;
-      } else {
-        safeStartMs = Math.max(safeStartMs, previous.endMs);
-      }
-    }
+    safeStartMs = clamp(startMs, entry.startMs, selected.endMs - minDuration);
+  } else if (edge === 'end') {
+    safeEndMs = clamp(endMs, selected.startMs + minDuration, entry.endMs);
   } else {
-    safeEndMs = clamp(endMs, selected.startMs + 80, entry.endMs);
-    if (sameClip(next)) {
-      const sharesBoundary = Math.abs(selected.endMs - next.startMs) <= 40;
-      if (sharesBoundary || safeEndMs > next.startMs) {
-        safeEndMs = clamp(safeEndMs, selected.startMs + 80, next.endMs - 80);
-        linkedCaptionId = next.id;
-        linkedEdge = 'start';
-        linkedBoundaryMs = safeEndMs;
-      } else {
-        safeEndMs = Math.min(safeEndMs, next.startMs);
-      }
-    }
+    const duration = Math.max(minDuration, selected.endMs - selected.startMs);
+    safeStartMs = clamp(startMs, entry.startMs, entry.endMs - duration);
+    safeEndMs = safeStartMs + duration;
   }
-
+  if (safeStartMs === selected.startMs && safeEndMs === selected.endMs) return project;
   return updateProject(project, {
-    captions: project.captions.map((caption) => {
-      if (caption.id === captionId) {
-        return withTimelineCaptionTiming(caption, entry, safeStartMs, safeEndMs);
-      }
-      if (caption.id === linkedCaptionId && linkedEdge && linkedBoundaryMs != null) {
-        return withTimelineCaptionTiming(
-          caption,
-          entry,
-          linkedEdge === 'start' ? linkedBoundaryMs : caption.startMs,
-          linkedEdge === 'end' ? linkedBoundaryMs : caption.endMs,
-        );
-      }
-      return caption;
-    }),
+    captions: project.captions.map((caption) => caption.id === captionId
+      ? withTimelineCaptionTiming(caption, entry, safeStartMs, safeEndMs)
+      : caption),
   });
 }
 

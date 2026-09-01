@@ -232,8 +232,9 @@ export function remapCaptionsToTimeline(
     if (visibleSourceEnd <= visibleSourceStart) return { ...caption, timelineVisible: false };
     const startMs = timelineTimeAt(entry, visibleSourceStart);
     const endMs = timelineTimeAt(entry, visibleSourceEnd);
-    const wordIds = anchor.wordIds.filter((wordId) => wordById.has(wordId));
-    const automaticText = joinTimelineWords(wordIds.map((wordId) => wordById.get(wordId)!).filter(Boolean));
+    const keepExistingWords = timelineWords.length === 0;
+    const wordIds = keepExistingWords ? (anchor.wordIds.length > 0 ? anchor.wordIds : caption.wordIds) : anchor.wordIds.filter((wordId) => wordById.has(wordId));
+    const automaticText = keepExistingWords ? '' : joinTimelineWords(wordIds.map((wordId) => wordById.get(wordId)!).filter(Boolean));
     return {
       ...caption,
       startMs,

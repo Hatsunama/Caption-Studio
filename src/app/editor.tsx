@@ -1013,7 +1013,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
-  const updateCaptionTiming = (captionId: string, edge: 'start' | 'end', startMs: number, endMs: number) => {
+  const updateCaptionTiming = (captionId: string, edge: 'start' | 'end' | 'move', startMs: number, endMs: number) => {
     setProject((current) => {
       const next = setCaptionTiming(current, captionId, edge, startMs, endMs);
       projectRef.current = next;
@@ -1214,7 +1214,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject(result.project);
     persistProjectInBackground(result.project);
     transport.pause();
-    queueMicrotask(() => transport.seek(result.seekMs));
   };
 
   const addAudio = async (origin: 'audio-file' | 'video-audio') => {

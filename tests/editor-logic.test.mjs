@@ -880,7 +880,7 @@ test('timeline split and join are explicit, word-aware, and reversible', () => {
   ]);
 });
 
-test('dragging a shared subtitle boundary keeps adjacent blocks end to end', () => {
+test('adjusting one subtitle leaves neighboring subtitles where they are', () => {
   const project = projectFixture({
     clips: [clip({ id: 'clip', sourceEndMs: 3_000, availableSourceEndMs: 3_000 })],
     captions: [
@@ -888,11 +888,57 @@ test('dragging a shared subtitle boundary keeps adjacent blocks end to end', () 
       { id: 'right', text: 'right', startMs: 1_000, endMs: 2_000, wordIds: [], timelineVisible: true, sourceAnchor: { clipId: 'clip', sourceStartMs: 1_000, sourceEndMs: 2_000, wordIds: [] } },
     ],
   });
-  const movedRight = setCaptionTiming(project, 'left', 'end', 0, 1_250);
-  assert.deepEqual(movedRight.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_250], [1_250, 2_000]]);
-  const movedLeft = setCaptionTiming(movedRight, 'right', 'start', 900, 2_000);
-  assert.deepEqual(movedLeft.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 900], [900, 2_000]]);
-  assert.equal(packTimelineLanes(movedLeft.captions).laneCount, 1);
+  const shortened = setCaptionTiming(project, 'left', 'end', 0, 700);
+  assert.deepEqual(shortened.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 700], [1_000, 2_000]]);
+  const opened = setCaptionTiming(project, 'right', 'start', 1_300, 2_000);
+  assert.deepEqual(opened.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_000], [1_300, 2_000]]);
+  const shifted = setCaptionTiming(project, 'right', 'move', 1_200, 2_200);
+  assert.deepEqual(shifted.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_000], [1_200, 2_200]]);
+  const overlapped = setCaptionTiming(project, 'left', 'end', 0, 1_500);
+  assert.deepEqual(overlapped.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_500], [1_000, 2_000]]);
+});
+
+test('sliding a video gap keeps edited captions locked to that clip', () => {
+  const project = projectFixture({
+    clips: [
+      clip({ id: 'one', sourceEndMs: 3_000, availableSourceEndMs: 3_000 }),
+      clip({ id: 'two', sourceEndMs: 2_000, availableSourceEndMs: 2_000, gapBeforeMs: 1_000 }),
+    ],
+    captions: [
+      {
+        id: 'on-first',
+        text: 'stay on first',
+        textMode: 'manual',
+        startMs: 500,
+        endMs: 1_500,
+        wordIds: [],
+        timelineVisible: true,
+        sourceAnchor: { clipId: 'one', sourceStartMs: 500, sourceEndMs: 1_500, wordIds: [] },
+      },
+      {
+        id: 'on-second',
+        text: 'I moved this around',
+        textMode: 'manual',
+        startMs: 4_200,
+        endMs: 5_000,
+        wordIds: [],
+        timelineVisible: true,
+        sourceAnchor: { clipId: 'two', sourceStartMs: 200, sourceEndMs: 1_000, wordIds: [] },
+      },
+    ],
+  });
+  const slid = setVideoClipGap(project, 'two', 250);
+  assert.ok(slid);
+  assert.equal(slid.project.clips[1].gapBeforeMs, 250);
+  const byId = Object.fromEntries(slid.project.captions.map((caption) => [caption.id, caption]));
+  assert.deepEqual([byId['on-first'].startMs, byId['on-first'].endMs], [500, 1_500]);
+  assert.deepEqual([byId['on-second'].startMs, byId['on-second'].endMs], [3_450, 4_250]);
+  const openedLead = setVideoClipGap(project, 'one', 500);
+  assert.ok(openedLead);
+  assert.equal(openedLead.project.clips[0].gapBeforeMs, 500);
+  const leadById = Object.fromEntries(openedLead.project.captions.map((caption) => [caption.id, caption]));
+  assert.deepEqual([leadById['on-first'].startMs, leadById['on-first'].endMs], [1_000, 2_000]);
+  assert.deepEqual([leadById['on-second'].startMs, leadById['on-second'].endMs], [4_700, 5_500]);
 });
 
 test('script captions never merge across a hard video cut', () => {
@@ -925,6 +971,26 @@ test('selected captions expose direct timeline split and join commands', () => {
   assert.match(editor, /Split at playhead/);
   assert.match(editor, /Join previous/);
   assert.match(editor, /Join next/);
+});
+
+test('the gap close control stays large and on the left of the gap', () => {
+  const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
+  const gapBlock = timeline.slice(timeline.indexOf('function VideoGapBlock'), timeline.indexOf('function TimelineRow'));
+  assert.match(gapBlock, /closeLeft/);
+  assert.match(gapBlock, /width:\s*32/);
+  assert.match(gapBlock, /height:\s*32/);
+  assert.match(gapBlock, /fontSize:\s*22/);
+  assert.doesNotMatch(gapBlock, /right:\s*2\b/);
+  const clipIndex = timeline.indexOf('<VideoClipBlock');
+  const beforeGapIndex = timeline.indexOf('{startMs > gapStartMs ? (');
+  assert.ok(clipIndex > 0 && beforeGapIndex > clipIndex);
+});
+
+test('sliding a video gap does not seek the playhead', () => {
+  const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
+  const setter = editor.slice(editor.indexOf('const setClipGap ='), editor.indexOf('const addAudio ='));
+  assert.doesNotMatch(setter, /transport\.seek\(result\.seekMs\)/);
+  assert.match(setter, /transport\.pause\(\)/);
 });
 
 test('timeline selection does not move or snap the playhead', () => {
