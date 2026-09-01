@@ -121,26 +121,25 @@ internal class TimelineVideoExporter(private val context: Context) {
                     val outputSize = verifyLocalVideo(task.output)
                     val mediaUri = publishToMediaLibrary(task)
                     verifyPublishedVideo(mediaUri, outputSize)
-                    if (!claim(task)) {
-                      deletePublishedOutput(task)
+                    task.publishedVerified.set(true)
+                    val result = mapOf(
+                      "outputUri" to Uri.fromFile(task.output).toString(),
+                      "durationMs" to exportResult.approximateDurationMs,
+                      "width" to exportResult.width,
+                      "height" to exportResult.height,
+                      "sizeBytes" to outputSize,
+                      "mediaUri" to mediaUri.toString(),
+                    )
+                    if (!resolve(task, result)) {
+                      if (!task.publishedVerified.get()) deletePublishedOutput(task)
                       task.output.delete()
                       return@execute
                     }
-                    promise.resolve(
-                      mapOf(
-                        "outputUri" to Uri.fromFile(task.output).toString(),
-                        "durationMs" to exportResult.approximateDurationMs,
-                        "width" to exportResult.width,
-                        "height" to exportResult.height,
-                        "sizeBytes" to outputSize,
-                        "mediaUri" to mediaUri.toString(),
-                      ),
-                    )
                   } catch (_: CancellationException) {
-                    deletePublishedOutput(task)
+                    if (!task.publishedVerified.get()) deletePublishedOutput(task)
                     task.output.delete()
                   } catch (error: Throwable) {
-                    deletePublishedOutput(task)
+                    if (!task.publishedVerified.get()) deletePublishedOutput(task)
                     if (claim(task)) {
                       task.output.delete()
                       promise.reject("E_MEDIA_LIBRARY", error.message ?: "The export could not be saved", error)
@@ -387,7 +386,7 @@ internal class TimelineVideoExporter(private val context: Context) {
       check(System.nanoTime() < deadlineNanos) { "Android did not finish adding the export to the media library" }
     }
     ensureActive(task)
-    return scanned ?: Uri.fromFile(destination)
+    return scanned ?: throw IllegalStateException("Android could not add the export to the media library")
   }
 
   private fun publishScoped(task: ActiveExport): Uri {
@@ -480,7 +479,7 @@ internal class TimelineVideoExporter(private val context: Context) {
     task.cancelled.set(true)
     task.transformer?.cancel()
     val cleanupError = runCatching { releaseTaskResources(task) }.exceptionOrNull()
-    deletePublishedOutput(task)
+    if (!task.publishedVerified.get()) deletePublishedOutput(task)
     task.output.delete()
     task.promise.reject("E_EXPORT_CANCELLED", "Video export was cancelled", cleanupError)
   }
@@ -527,6 +526,16 @@ internal class TimelineVideoExporter(private val context: Context) {
     }
   }
 
+  private fun resolve(task: ActiveExport, result: Map<String, Any>): Boolean = synchronized(stateLock) {
+    if (activeExport !== task) {
+      false
+    } else {
+      task.promise.resolve(result)
+      activeExport = null
+      true
+    }
+  }
+
   private fun fail(task: ActiveExport, code: String, message: String, error: Throwable) {
     if (!claim(task)) return
     runCatching { releaseTaskResources(task) }.exceptionOrNull()?.let(error::addSuppressed)
@@ -544,6 +553,7 @@ internal class TimelineVideoExporter(private val context: Context) {
     var transformer: Transformer? = null,
     val cancelled: AtomicBoolean = AtomicBoolean(false),
     val resourcesReleased: AtomicBoolean = AtomicBoolean(false),
+    val publishedVerified: AtomicBoolean = AtomicBoolean(false),
     @Volatile var stage: ExportStage = ExportStage.PREPARING,
     @Volatile var publishedUri: Uri? = null,
     @Volatile var publishedFile: File? = null,
