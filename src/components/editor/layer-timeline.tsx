@@ -41,7 +41,7 @@ export function LayerTimeline(props: {
   onSelectLayer: (id: string) => void;
   onSelectCaption: (caption: CaptionBlock) => void;
   onSelectTranslationCaption: (trackId: string, pair: CaptionPair) => void;
-  onSelectClip: (clipId: string, timelineStartMs: number) => void;
+  onSelectClip: (clipId: string) => void;
   onTrimClip: (clipId: string, edge: 'start' | 'end', targetSourceMs: number) => void;
   onSetClipGap: (clipId: string, gapMs: number, edge?: 'before' | 'after') => void;
   onLayerTimingChange: (layerId: string, startMs: number, endMs: number) => void;
@@ -51,7 +51,7 @@ export function LayerTimeline(props: {
   onMoveLayer: (layerId: string, direction: -1 | 1) => void;
   onDeleteLayer: (layerId: string) => void;
   onAddVideos: () => void;
-  onSelectAudioClip: (clipId: string, startMs: number) => void;
+  onSelectAudioClip: (clipId: string) => void;
   onAudioTimingChange: (clipId: string, edge: 'start' | 'end', startMs: number, endMs: number) => void;
 }) {
   const horizontalRef = useRef<ScrollView>(null);
@@ -190,7 +190,7 @@ export function LayerTimeline(props: {
                       endMs={startMs}
                       durationMs={duration}
                       trackWidth={trackWidth}
-                      onPress={() => props.onSelectClip(clip.id, startMs)}
+                      onPress={() => props.onSelectClip(clip.id)}
                       onRemove={() => props.onSetClipGap(clip.id, 0)}
                     />
                   ) : null}
@@ -201,7 +201,7 @@ export function LayerTimeline(props: {
                       durationMs={duration}
                       trackWidth={trackWidth}
                       accessibilityLabel={`Empty gap after ${formatGap(afterGapEndMs - endMs)}. Tap to select the preceding clip.`}
-                      onPress={() => props.onSelectClip(clip.id, endMs)}
+                      onPress={() => props.onSelectClip(clip.id)}
                       onRemove={() => props.onSetClipGap(clip.id, 0, 'after')}
                     />
                   ) : null}
@@ -214,7 +214,7 @@ export function LayerTimeline(props: {
                     trackWidth={trackWidth}
                     selected={props.selectedClipId === clip.id}
                     color={index % 2 ? '#38404A' : '#46515D'}
-                    onPress={() => props.onSelectClip(clip.id, startMs)}
+                    onPress={() => props.onSelectClip(clip.id)}
                     onTrimPreview={(edge, targetSourceMs) => setClipPreview(previewVideoClipTrim(clip, edge, targetSourceMs))}
                     onTrimCommit={(edge, targetSourceMs) => {
                       setClipPreview(undefined);
@@ -232,7 +232,7 @@ export function LayerTimeline(props: {
             <TimelineRow label="AUDIO" labelColor="#64E8FF" selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => props.onSeek(x / trackWidth * duration)} controls={<Text style={{ color: '#6F7985', fontSize: 8 }}>{props.audioClips.length} TRACK{props.audioClips.length === 1 ? '' : 'S'}</Text>}>
               {props.audioClips.filter((clip) => isVisible(clip.startMs, audioClipEnd(clip))).map((clip) => {
                 const source = props.audioSources.find((candidate) => candidate.id === clip.sourceId);
-                return <TimedBlock key={clip.id} label={`${clip.muted ? 'MUTED · ' : ''}${source?.displayName ?? 'AUDIO'}`} startMs={clip.startMs} endMs={audioClipEnd(clip)} durationMs={duration} trackWidth={trackWidth} lane={audioLayout.laneById.get(clip.id) ?? 0} color={clip.muted ? '#59636F' : '#00B8C7'} selected={props.selectedAudioClipId === clip.id} onPress={() => props.onSelectAudioClip(clip.id, clip.startMs)} onChangeStart={props.onTimingChangeStart} onChange={(edge, startMs, endMs) => props.onAudioTimingChange(clip.id, edge, startMs, endMs)} onEnd={props.onTimingChangeEnd} />;
+                return <TimedBlock key={clip.id} label={`${clip.muted ? 'MUTED · ' : ''}${source?.displayName ?? 'AUDIO'}`} startMs={clip.startMs} endMs={audioClipEnd(clip)} durationMs={duration} trackWidth={trackWidth} lane={audioLayout.laneById.get(clip.id) ?? 0} color={clip.muted ? '#59636F' : '#00B8C7'} selected={props.selectedAudioClipId === clip.id} onPress={() => props.onSelectAudioClip(clip.id)} onChangeStart={props.onTimingChangeStart} onChange={(edge, startMs, endMs) => props.onAudioTimingChange(clip.id, edge, startMs, endMs)} onEnd={props.onTimingChangeEnd} />;
               })}
             </TimelineRow>
             {props.layers.map((layer, layerIndex) => {
@@ -258,7 +258,7 @@ export function LayerTimeline(props: {
                   {isCaptions ? props.captions.map((caption, index) => ({ caption, index })).filter(({ caption }) => isVisible(caption.startMs, caption.endMs)).map(({ caption, index }) => (
                     <TimedBlock key={caption.id} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} lane={captionLayout.laneById.get(caption.id) ?? 0} color={NEON_CAPTION_COLORS[index % NEON_CAPTION_COLORS.length]} selected={props.selectedCaptionId === caption.id} onPress={() => props.onSelectCaption(caption)} onChangeStart={props.onTimingChangeStart} onChange={(edge, startMs, endMs) => props.onCaptionTimingChange(caption.id, edge, startMs, endMs)} onEnd={props.onTimingChangeEnd} />
                   )) : (
-                    <TimedBlock label={layer.kind === 'text' ? layer.text : 'IMAGE'} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => { props.onSelectLayer(layer.id); props.onSeek(layer.startMs); }} onChangeStart={props.onTimingChangeStart} onChange={(_edge, startMs, endMs) => props.onLayerTimingChange(layer.id, startMs, endMs)} onEnd={props.onTimingChangeEnd} />
+                    <TimedBlock label={layer.kind === 'text' ? layer.text : 'IMAGE'} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={props.onTimingChangeStart} onChange={(_edge, startMs, endMs) => props.onLayerTimingChange(layer.id, startMs, endMs)} onEnd={props.onTimingChangeEnd} />
                   )}
                 </TimelineRow>
                 {isCaptions ? props.translationTracks.map((track, trackIndex) => (

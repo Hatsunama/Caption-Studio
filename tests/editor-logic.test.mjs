@@ -927,6 +927,20 @@ test('selected captions expose direct timeline split and join commands', () => {
   assert.match(editor, /Join next/);
 });
 
+test('timeline selection does not move or snap the playhead', () => {
+  const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
+  const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(editor, /seekTimeline\(caption\.startMs\)/);
+  assert.doesNotMatch(editor, /seekTimeline\(pair\.startMs\)/);
+  assert.doesNotMatch(editor, /seekTimeline\(startMs\)/);
+  assert.doesNotMatch(timeline, /onSeek\(layer\.startMs\)/);
+  assert.match(timeline, /onSelectClip: \(clipId: string\) => void/);
+  assert.match(timeline, /onSelectAudioClip: \(clipId: string\) => void/);
+  assert.match(timeline, /onPress=\{\(\) => props\.onSelectLayer\(layer\.id\)\}/);
+  assert.match(editor, /onSelectClip=\{\(clipId\) => \{/);
+  assert.match(editor, /onSelectAudioClip=\{\(clipId\) => \{/);
+});
+
 test('timeline keeps a fixed playhead, scrubs its content, renders a ruler, and offers an append-video control', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   assert.match(timeline, /timelineTimeAtScroll\(offset, duration, trackWidth\)/);
