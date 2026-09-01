@@ -48,7 +48,8 @@
       "expo-sharing",
       "./plugins/with-legacy-export-permission",
       "./plugins/with-soloader-metadata",
-      "expo-font"
+      "expo-font",
+      "expo-image"
     ],
     "experiments": {
       "typedRoutes": true,
