@@ -238,13 +238,14 @@ test('provider URIs stay in persistence and never cross the navigation URL', () 
   assert.match(projectsScreen, /params: \{ projectId: project\.id \}/);
 });
 
-test('caption trim grips remain available on both edges without covering adjacent blocks', () => {
+test('selected caption trim grips stay distinct even on tiny blocks', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   assert.match(timeline, /<TimingGrip side="start" \{\.\.\.props\} \/>/);
   assert.match(timeline, /<TimingGrip side="end" \{\.\.\.props\} \/>/);
   const grip = timeline.slice(timeline.indexOf('function TimingGrip'));
-  assert.match(grip, /\[props\.side === 'start' \? 'left' : 'right'\]: 0/);
-  assert.doesNotMatch(grip, /\[props\.side === 'start' \? 'left' : 'right'\]: -/);
+  assert.match(grip, /\[props\.side === 'start' \? 'left' : 'right'\]: -20/);
+  assert.match(grip, /width: 20/);
+  assert.doesNotMatch(grip, /left: 4, right: 4/);
 });
 
 test('downloaded transcription models are pinned by SHA-256', () => {
@@ -1054,12 +1055,15 @@ test('timeline selection does not move or snap the playhead', () => {
   assert.match(row, /pointerEvents="box-none"/);
   assert.doesNotMatch(row, /<Pressable onPress=\{\(event\) => props\.onPressTrack[\s\S]*\{props\.children\}<\/Pressable>/);
   assert.match(timeline, /scrollEnabled=\{!gestureLock\}/);
+  assert.match(timeline, /gestureLockRef/);
+  assert.match(timeline, /if \(scrubEndTimer\.current\) clearTimeout\(scrubEndTimer\.current\);[\s\S]*scrubbingRef\.current = false;[\s\S]*setItemGestureLock\(true\)/);
 });
 
-test('only the selected subtitle exposes move and trim handles', () => {
+test('every subtitle body captures selection while only the selected subtitle exposes trim handles', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   const block = timeline.slice(timeline.indexOf('function TimedBlock'), timeline.indexOf('function LinkedCaptionBlock'));
-  assert.match(block, /props\.selected && props\.movable \? <CaptionMoveGrip/);
+  assert.match(block, /props\.movable \? <CaptionMoveGrip/);
+  assert.doesNotMatch(block, /props\.selected && props\.movable/);
   assert.match(block, /\{props\.selected \? \(/);
   assert.match(block, /<TimingGrip side="start"/);
   assert.match(block, /<TimingGrip side="end"/);
@@ -1067,6 +1071,14 @@ test('only the selected subtitle exposes move and trim handles', () => {
   const moveGrip = timeline.slice(timeline.indexOf('function CaptionMoveGrip'), timeline.indexOf('function TimingGrip'));
   assert.match(moveGrip, /onPanResponderTerminationRequest: \(\) => false/);
   assert.match(moveGrip, /onShouldBlockNativeResponder: \(\) => true/);
+});
+
+test('the add-video button stays in the timeline header instead of covering clip gestures', () => {
+  const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
+  const button = timeline.slice(timeline.indexOf('accessibilityLabel="Add videos to the end of the timeline"'), timeline.indexOf('{zoomNotice'));
+  assert.match(button, /top: 2/);
+  assert.match(button, /height: 32/);
+  assert.doesNotMatch(button, /top: RULER_HEIGHT/);
 });
 
 test('timeline keeps a fixed playhead, scrubs its content, renders a ruler, and offers an append-video control', () => {

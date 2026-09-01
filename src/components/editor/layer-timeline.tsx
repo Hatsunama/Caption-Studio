@@ -59,6 +59,7 @@ export function LayerTimeline(props: {
   const [viewportWidth, setViewportWidth] = useState(360);
   const [clipPreview, setClipPreview] = useState<VideoClip[]>();
   const [gestureLock, setGestureLock] = useState(false);
+  const gestureLockRef = useRef(false);
   const previewClips = useMemo(
     () => clipPreview ?? props.clips,
     [clipPreview, props.clips],
@@ -136,16 +137,24 @@ export function LayerTimeline(props: {
   const finishScrub = () => {
     if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
     scrubbingRef.current = false;
-    if (!gestureLock) seekFromScroll(scrollXRef.current, true);
+    if (!gestureLockRef.current) seekFromScroll(scrollXRef.current, true);
+  };
+
+  const setItemGestureLock = (locked: boolean) => {
+    gestureLockRef.current = locked;
+    setGestureLock(locked);
   };
 
   const beginBlockGesture = () => {
-    setGestureLock(true);
+    if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+    scrubEndTimer.current = null;
+    scrubbingRef.current = false;
+    setItemGestureLock(true);
     props.onTimingChangeStart();
   };
 
   const endBlockGesture = () => {
-    setGestureLock(false);
+    setItemGestureLock(false);
     props.onTimingChangeEnd();
   };
 
@@ -187,7 +196,7 @@ export function LayerTimeline(props: {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ width: scrollContentWidth }}
         onScrollBeginDrag={() => {
-          if (gestureLock) return;
+          if (gestureLockRef.current) return;
           if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
           scrubbingRef.current = true;
           props.onScrubStart();
@@ -196,13 +205,14 @@ export function LayerTimeline(props: {
           const x = clamp(event.nativeEvent.contentOffset.x, 0, trackWidth);
           scrollXRef.current = x;
           if (Math.abs(x - visibleCenterX) >= Math.max(120, viewportWidth / 3)) setVisibleCenterX(x);
-          if (scrubbingRef.current && !gestureLock) seekFromScroll(x);
+          if (scrubbingRef.current && !gestureLockRef.current) seekFromScroll(x);
         }}
         onScrollEndDrag={() => {
           if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
           scrubEndTimer.current = setTimeout(finishScrub, 90);
         }}
         onMomentumScrollBegin={() => {
+          if (gestureLockRef.current) return;
           if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
           scrubbingRef.current = true;
         }}
@@ -227,24 +237,24 @@ export function LayerTimeline(props: {
                     selected={props.selectedClipId === clip.id}
                     color={index % 2 ? '#38404A' : '#46515D'}
                     onPress={() => props.onSelectClip(clip.id)}
-                    onGestureLock={setGestureLock}
+                    onGestureLock={setItemGestureLock}
                     onTrimPreview={(edge, targetSourceMs) => {
-                      setGestureLock(true);
+                      setItemGestureLock(true);
                       const preview = previewVideoClipTrim(clip, edge, targetSourceMs);
                       setClipPreview(previewClips.map((candidate) => candidate.id === clip.id ? preview : candidate));
                     }}
                     onTrimCommit={(edge, targetSourceMs) => {
-                      setGestureLock(false);
+                      setItemGestureLock(false);
                       setClipPreview(undefined);
                       props.onTrimClip(clip.id, edge, targetSourceMs);
                     }}
                     onGapPreview={(gapBeforeMs) => {
-                      setGestureLock(true);
+                      setItemGestureLock(true);
                       const preview = previewVideoClipLeadingGap(props.clips, clip.id, gapBeforeMs);
                       if (preview) setClipPreview(preview);
                     }}
                     onGapCommit={(gapBeforeMs) => {
-                      setGestureLock(false);
+                      setItemGestureLock(false);
                       setClipPreview(undefined);
                       props.onSetClipLeadingGap(clip.id, gapBeforeMs);
                     }}
@@ -347,8 +357,8 @@ export function LayerTimeline(props: {
       <View pointerEvents="none" style={{ position: 'absolute', left: '50%', top: 36, bottom: 0, width: 2, marginLeft: -1, backgroundColor: '#FF5267' }}>
         <View style={{ position: 'absolute', left: -7, top: 0, width: 0, height: 0, borderLeftWidth: 8, borderRightWidth: 8, borderTopWidth: 11, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: '#FF5267' }} />
       </View>
-      <Pressable accessibilityRole="button" accessibilityLabel="Add videos to the end of the timeline" onPress={props.onAddVideos} style={{ position: 'absolute', right: 10, top: RULER_HEIGHT + 45, width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: '#64D2FF' }}>
-        <Text style={{ color: '#11140C', fontSize: 27, fontWeight: '700', lineHeight: 30 }}>+</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Add videos to the end of the timeline" onPress={props.onAddVideos} style={{ position: 'absolute', right: 8, top: 2, width: 34, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: '#64D2FF' }}>
+        <Text style={{ color: '#11140C', fontSize: 22, fontWeight: '700', lineHeight: 25 }}>+</Text>
       </Pressable>
       {zoomNotice == null ? null : <View pointerEvents="none" style={{ position: 'absolute', alignSelf: 'center', top: 72, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 14, backgroundColor: 'rgba(5,7,9,0.92)' }}><Text style={{ color: '#FFFFFF', fontSize: 15, fontWeight: '900' }}>{zoomNotice}%</Text></View>}
     </View>
@@ -547,7 +557,7 @@ function TimedBlock(props: { label: string; startMs: number; endMs: number; dura
   return (
     <View style={{ position: 'absolute', left: props.startMs / props.durationMs * props.trackWidth, width, top: props.lane * LANE_HEIGHT + 3, height: LANE_HEIGHT - 6, zIndex: props.selected ? 6 : 1, justifyContent: 'center', paddingHorizontal: 9, borderRadius: 7, borderWidth: props.selected ? 2 : 1, borderColor: props.selected ? '#FFFFFF' : `${props.color}CC`, backgroundColor: `${props.color}B8`, shadowColor: props.color, shadowOpacity: props.selected ? 0.8 : 0.35, shadowRadius: 5 }}>
       <Text pointerEvents="none" numberOfLines={1} style={{ color: '#FFFFFF', fontSize: 8, fontWeight: '900' }}>{props.label}</Text>
-      {props.selected && props.movable ? <CaptionMoveGrip {...props} /> : (
+      {props.movable ? <CaptionMoveGrip {...props} /> : (
         <Pressable onPress={props.onPress} style={{ position: 'absolute', left: props.selected ? 24 : 0, right: props.selected ? 24 : 0, top: 0, bottom: 0 }} />
       )}
       {props.selected ? (
@@ -633,7 +643,7 @@ function TimingGrip(props: Parameters<typeof TimedBlock>[0] & { side: 'start' | 
   propsRef.current = props;
   const start = useRef({ startMs: props.startMs, endMs: props.endMs });
   const responder = useMemo(() => PanResponder.create({ onStartShouldSetPanResponder: () => true, onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dx) > 2, onPanResponderTerminationRequest: () => false, onShouldBlockNativeResponder: () => true, onPanResponderGrant: () => { propsRef.current.onPress(); propsRef.current.onChangeStart(); start.current = { startMs: propsRef.current.startMs, endMs: propsRef.current.endMs }; }, onPanResponderMove: (_event, gesture) => { const delta = gesture.dx / Math.max(1, propsRef.current.trackWidth) * propsRef.current.durationMs; if (propsRef.current.side === 'start') propsRef.current.onChange('start', clamp(start.current.startMs + delta, 0, start.current.endMs - 80), start.current.endMs); else propsRef.current.onChange('end', start.current.startMs, clamp(start.current.endMs + delta, start.current.startMs + 80, propsRef.current.durationMs)); }, onPanResponderRelease: () => propsRef.current.onEnd(), onPanResponderTerminate: () => propsRef.current.onEnd() }), []);
-  return <View {...responder.panHandlers} accessible accessibilityRole="adjustable" accessibilityLabel={`${props.side === 'start' ? 'Start' : 'End'} subtitle boundary. Drag to move this boundary.`} hitSlop={{ top: 6, bottom: 6 }} style={{ position: 'absolute', [props.side === 'start' ? 'left' : 'right']: 0, top: 0, bottom: 0, width: 24, borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}><View pointerEvents="none" style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: '#151A20' }} /></View>;
+  return <View {...responder.panHandlers} accessible accessibilityRole="adjustable" accessibilityLabel={`${props.side === 'start' ? 'Start' : 'End'} subtitle boundary. Drag to move this boundary.`} hitSlop={{ top: 6, bottom: 6 }} style={{ position: 'absolute', [props.side === 'start' ? 'left' : 'right']: -20, top: 0, bottom: 0, width: 20, borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}><View pointerEvents="none" style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: '#151A20' }} /></View>;
 }
 
 function TinyButton(props: { label: string; danger?: boolean; disabled?: boolean; onPress: () => void }) { return <Pressable disabled={props.disabled} onPress={props.onPress} hitSlop={5} style={{ opacity: props.disabled ? 0.25 : 1 }}><Text style={{ color: props.danger ? '#FF7C8D' : '#9FAAB6', fontSize: 11, fontWeight: '900' }}>{props.label}</Text></Pressable>; }
