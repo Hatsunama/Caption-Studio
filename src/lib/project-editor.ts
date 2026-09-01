@@ -389,7 +389,7 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
     layers,
   );
   const captionById = new Map(rebuilt.captions.map((caption) => [caption.id, caption]));
-  const translations = project.captionTracks.translations.map((track) => ({
+  const translations = (project.captionTracks?.translations ?? []).map((track) => ({
     ...track,
     cues: track.cues.flatMap((cue) => {
       const split = splitRatios.get(cue.sourceCaptionId);
@@ -426,7 +426,12 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
     ...rebuilt,
     captionTracks: synchronizeCaptionTracks({
       ...rebuilt,
-      captionTracks: { ...rebuilt.captionTracks, translations },
+      captionTracks: {
+        schemaVersion: 1,
+        primaryTrackId: 'captions',
+        ...rebuilt.captionTracks,
+        translations,
+      },
     }, rebuilt.captions),
   };
   return { project: next, rightClipId: right.id };

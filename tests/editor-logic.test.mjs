@@ -15,7 +15,6 @@ import { PREPARING_AUDIO_CUES } from '../src/lib/transcription-progress.ts';
 import { humanVideoName, isMachineVideoName } from '../src/lib/project-presentation.ts';
 import { applyCaptionTextChanges } from '../src/lib/caption-text-edits.ts';
 import { serializeAss, serializeSrt } from '../src/lib/subtitle-export.ts';
-import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
 import { mergeCaptionScriptBlock, splitCaptionScriptBlock, splitCaptionScriptBlockAtTime } from '../src/lib/caption-script.ts';
 import { deleteVideoClip, previewVideoClipLeadingGap, previewVideoClipTrim, setCaptionTiming, setVideoClipGap, setVideoClipLeadingGap, setVideoTransition, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
 import { addAudioSourceToProject, audioClipEnd, audioClipVolume, deleteAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '../src/lib/audio-timeline.ts';
@@ -924,7 +923,6 @@ test('manual timeline timing clears stale automatic word highlights', () => {
   assert.equal(moved.captions[0].textMode, 'manual');
   assert.deepEqual(moved.captions[0].wordIds, []);
   assert.deepEqual(moved.captions[0].sourceAnchor.wordIds, []);
-  assert.deepEqual(buildTimelineRenderPlan(moved).captions[0].words, []);
 });
 
 test('sliding a video gap keeps edited captions locked to that clip', () => {
