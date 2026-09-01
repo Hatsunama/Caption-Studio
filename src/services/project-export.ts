@@ -42,10 +42,31 @@ export async function exportProjectVideo(project: CaptionProject) {
     const releaseArtifactProtection = protectTemporaryVideoExportArtifacts(outputUri);
     try {
       session.throwIfCancelled();
-      return await session.startNative(() => CaptionMedia.exportTimelineVideo(
+      const result = await session.startNative(() => CaptionMedia.exportTimelineVideo(
         outputUri.replace(/^file:\/\//, ''),
         toNativeRenderPlan(renderPlan),
       ));
+      if (result.outputUri !== outputUri) {
+        throw new Error('The video exporter returned an unexpected output location.');
+      }
+      const outputInfo = await session.waitFor(FileSystem.getInfoAsync(outputUri));
+      if (
+        !outputInfo.exists
+        || outputInfo.isDirectory
+        || outputInfo.size <= 0
+        || outputInfo.size !== result.sizeBytes
+      ) {
+        throw new Error('The exported video could not be verified before delivery.');
+      }
+      if (!await session.waitFor(Sharing.isAvailableAsync())) {
+        throw new Error('The video was saved to the media library, but Android file sharing is unavailable.');
+      }
+      await session.waitFor(Sharing.shareAsync(outputUri, {
+        mimeType: 'video/mp4',
+        dialogTitle: 'Save or share exported video',
+        UTI: 'public.mpeg-4',
+      }));
+      return result;
     } finally {
       try {
         await removeTemporaryVideoExportArtifacts(outputUri);

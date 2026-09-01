@@ -118,20 +118,21 @@ internal class TimelineVideoExporter(private val context: Context) {
                 publishingExecutor.execute {
                   try {
                     ensureActive(task)
+                    val outputSize = verifyLocalVideo(task.output)
                     val mediaUri = publishToMediaLibrary(task)
+                    verifyPublishedVideo(mediaUri, outputSize)
                     if (!claim(task)) {
                       deletePublishedOutput(task)
                       task.output.delete()
                       return@execute
                     }
-                    task.output.delete()
                     promise.resolve(
                       mapOf(
-                        "outputUri" to mediaUri.toString(),
+                        "outputUri" to Uri.fromFile(task.output).toString(),
                         "durationMs" to exportResult.approximateDurationMs,
                         "width" to exportResult.width,
                         "height" to exportResult.height,
-                        "sizeBytes" to exportResult.fileSizeBytes,
+                        "sizeBytes" to outputSize,
                         "mediaUri" to mediaUri.toString(),
                       ),
                     )
@@ -415,6 +416,52 @@ internal class TimelineVideoExporter(private val context: Context) {
     } catch (error: Throwable) {
       resolver.delete(uri, null, null)
       throw error
+    }
+  }
+
+  private fun verifyLocalVideo(file: File): Long {
+    check(file.isFile) { "The rendered video file is missing" }
+    val size = file.length()
+    check(size > 0L) { "The rendered video file is empty" }
+    verifyPlayableVideo(Uri.fromFile(file), "rendered")
+    return size
+  }
+
+  private fun verifyPublishedVideo(uri: Uri, expectedSize: Long) {
+    if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") {
+      val file = File(uri.path ?: throw IllegalStateException("The published video path is invalid"))
+      check(file.isFile && file.length() == expectedSize) { "Android saved an incomplete exported video" }
+    } else {
+      val descriptorSize = context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+        descriptor.declaredLength
+      } ?: throw IllegalStateException("Android could not reopen the exported video")
+      if (descriptorSize >= 0L) {
+        check(descriptorSize == expectedSize) { "Android saved an incomplete exported video" }
+      }
+    }
+    verifyPlayableVideo(uri, "published")
+  }
+
+  private fun verifyPlayableVideo(uri: Uri, label: String) {
+    val extractor = MediaExtractor()
+    val retriever = MediaMetadataRetriever()
+    try {
+      if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") {
+        val path = uri.path ?: throw IllegalStateException("The $label video path is invalid")
+        extractor.setDataSource(path)
+        retriever.setDataSource(path)
+      } else {
+        extractor.setDataSource(context, uri, null)
+        retriever.setDataSource(context, uri)
+      }
+      check((0 until extractor.trackCount).any { index ->
+        extractor.getTrackFormat(index).getString(android.media.MediaFormat.KEY_MIME)?.startsWith("video/") == true
+      }) { "The $label export does not contain a video track" }
+      val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+      check(durationMs > 0L) { "The $label export has no readable duration" }
+    } finally {
+      extractor.release()
+      retriever.release()
     }
   }
 

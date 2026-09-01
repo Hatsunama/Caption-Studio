@@ -63,9 +63,14 @@ test('stale cleanup policy fails closed and never claims fresh or unrelated cach
 
 test('project export preflights space and owns temporary cleanup around native execution', () => {
   const service = readFileSync(new URL('../src/services/project-export.ts', import.meta.url), 'utf8');
+  const native = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineVideoExporter.kt', import.meta.url), 'utf8');
   assert.match(service, /estimateVideoExportStorageBytes\(unresolvedPlan\)/);
   assert.match(service, /requireFreeSpace\([\s\S]*'export this video'/);
   assert.match(service, /protectTemporaryVideoExportArtifacts\(outputUri\)/);
-  assert.match(service, /try \{[\s\S]*session\.startNative[\s\S]*\} finally \{[\s\S]*removeTemporaryVideoExportArtifacts\(outputUri\);/);
+  assert.match(service, /session\.startNative[\s\S]*FileSystem\.getInfoAsync\(outputUri\)[\s\S]*Sharing\.shareAsync\(outputUri[\s\S]*finally \{[\s\S]*removeTemporaryVideoExportArtifacts\(outputUri\);/);
+  assert.match(service, /outputInfo\.size !== result\.sizeBytes/);
+  assert.match(native, /val outputSize = verifyLocalVideo\(task\.output\)[\s\S]*publishToMediaLibrary\(task\)[\s\S]*verifyPublishedVideo\(mediaUri, outputSize\)/);
+  assert.match(native, /"outputUri" to Uri\.fromFile\(task\.output\)\.toString\(\)/);
+  assert.match(native, /does not contain a video track/);
   assert.match(service, /catch \(error\) \{\s*await removeFailedSubtitleExportArtifact\(uri\);\s*throw error;/);
 });
