@@ -86,77 +86,34 @@ export function setVideoClipTransform(
 export function setCaptionTiming(
   project: CaptionProject,
   captionId: string,
-  edge: 'start' | 'end',
+  edge: 'start' | 'end' | 'move',
   startMs: number,
   endMs: number,
 ) {
   const entries = buildClipTimeline(project.clips);
-  const visible = project.captions
-    .filter((caption) => caption.timelineVisible !== false)
-    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
-  const selectedIndex = visible.findIndex((caption) => caption.id === captionId);
-  const selected = visible[selectedIndex];
-  if (!selected) return project;
+  const selected = project.captions.find((caption) => caption.id === captionId);
+  if (!selected || selected.timelineVisible === false) return project;
   const entry = entries.find((candidate) => candidate.clip.id === selected.sourceAnchor?.clipId)
     ?? timelineEntryAt(entries, selected.startMs)
     ?? timelineEntryAt(entries, Math.max(selected.startMs, selected.endMs - 1));
   if (!entry) return project;
-  const previous = visible[selectedIndex - 1];
-  const next = visible[selectedIndex + 1];
-  const sameClip = (caption?: CaptionProject['captions'][number]) => Boolean(
-    caption
-    && caption.sourceAnchor?.clipId
-    && caption.sourceAnchor.clipId === entry.clip.id,
-  );
+  const minDuration = 80;
   let safeStartMs = selected.startMs;
   let safeEndMs = selected.endMs;
-  let linkedCaptionId: string | undefined;
-  let linkedEdge: 'start' | 'end' | undefined;
-  let linkedBoundaryMs: number | undefined;
-
   if (edge === 'start') {
-    safeStartMs = clamp(startMs, entry.startMs, selected.endMs - 80);
-    if (sameClip(previous)) {
-      const sharesBoundary = Math.abs(previous.endMs - selected.startMs) <= 40;
-      if (sharesBoundary || safeStartMs < previous.endMs) {
-        safeStartMs = clamp(safeStartMs, previous.startMs + 80, selected.endMs - 80);
-        linkedCaptionId = previous.id;
-        linkedEdge = 'end';
-        linkedBoundaryMs = safeStartMs;
-      } else {
-        safeStartMs = Math.max(safeStartMs, previous.endMs);
-      }
-    }
+    safeStartMs = clamp(startMs, entry.startMs, selected.endMs - minDuration);
+  } else if (edge === 'end') {
+    safeEndMs = clamp(endMs, selected.startMs + minDuration, entry.endMs);
   } else {
-    safeEndMs = clamp(endMs, selected.startMs + 80, entry.endMs);
-    if (sameClip(next)) {
-      const sharesBoundary = Math.abs(selected.endMs - next.startMs) <= 40;
-      if (sharesBoundary || safeEndMs > next.startMs) {
-        safeEndMs = clamp(safeEndMs, selected.startMs + 80, next.endMs - 80);
-        linkedCaptionId = next.id;
-        linkedEdge = 'start';
-        linkedBoundaryMs = safeEndMs;
-      } else {
-        safeEndMs = Math.min(safeEndMs, next.startMs);
-      }
-    }
+    const duration = Math.max(minDuration, selected.endMs - selected.startMs);
+    safeStartMs = clamp(startMs, entry.startMs, entry.endMs - duration);
+    safeEndMs = safeStartMs + duration;
   }
-
+  if (safeStartMs === selected.startMs && safeEndMs === selected.endMs) return project;
   return updateProject(project, {
-    captions: project.captions.map((caption) => {
-      if (caption.id === captionId) {
-        return withTimelineCaptionTiming(caption, entry, safeStartMs, safeEndMs);
-      }
-      if (caption.id === linkedCaptionId && linkedEdge && linkedBoundaryMs != null) {
-        return withTimelineCaptionTiming(
-          caption,
-          entry,
-          linkedEdge === 'start' ? linkedBoundaryMs : caption.startMs,
-          linkedEdge === 'end' ? linkedBoundaryMs : caption.endMs,
-        );
-      }
-      return caption;
-    }),
+    captions: project.captions.map((caption) => caption.id === captionId
+      ? withTimelineCaptionTiming(caption, entry, safeStartMs, safeEndMs)
+      : caption),
   });
 }
 
@@ -170,11 +127,13 @@ function withTimelineCaptionTiming(
     ...caption,
     startMs,
     endMs,
+    textMode: 'manual' as const,
+    wordIds: [],
     sourceAnchor: {
       clipId: entry.clip.id,
       sourceStartMs: sourceTimeAt(entry, startMs),
       sourceEndMs: sourceTimeAt(entry, endMs),
-      wordIds: caption.sourceAnchor?.wordIds ?? caption.wordIds,
+      wordIds: [],
     },
     timelineVisible: true,
   };
@@ -369,6 +328,7 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
   const index = clips.findIndex((clip) => clip.id === clipId);
   clips.splice(index, 1, left, right);
   const wordById = new Map(project.transcription.words.map((word) => [word.id, word]));
+  const splitRatios = new Map<string, { ratio: number; rightCaptionId: string }>();
   const captions = anchorCaptionsToClips(project.captions, project.clips, project.transcription.words).flatMap((caption) => {
     const anchor = caption.sourceAnchor;
     if (anchor?.clipId !== entry.clip.id) return [caption];
@@ -383,6 +343,11 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
     const [leftText, rightText] = splitCaptionText(caption.text, (
       sourceSplitMs - anchor.sourceStartMs
     ) / Math.max(1, anchor.sourceEndMs - anchor.sourceStartMs));
+    const rightCaptionId = `${caption.id}-${rightId}`;
+    splitRatios.set(caption.id, {
+      ratio: (sourceSplitMs - anchor.sourceStartMs) / Math.max(1, anchor.sourceEndMs - anchor.sourceStartMs),
+      rightCaptionId,
+    });
     return [
       {
         ...caption,
@@ -397,7 +362,7 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
       },
       {
         ...caption,
-        id: `${caption.id}-${rightId}`,
+        id: rightCaptionId,
         text: caption.textMode === 'manual' ? rightText : caption.text,
         wordIds: rightWordIds,
         sourceAnchor: {
@@ -423,7 +388,51 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
     { atMs: entry.endMs, removeMs: 0, insertMs: 0 },
     layers,
   );
-  return { project: rebuilt, rightClipId: right.id };
+  const captionById = new Map(rebuilt.captions.map((caption) => [caption.id, caption]));
+  const translations = (project.captionTracks?.translations ?? []).map((track) => ({
+    ...track,
+    cues: track.cues.flatMap((cue) => {
+      const split = splitRatios.get(cue.sourceCaptionId);
+      if (!split) return [cue];
+      const leftSource = captionById.get(cue.sourceCaptionId);
+      const rightSource = captionById.get(split.rightCaptionId);
+      if (!leftSource || !rightSource) return [cue];
+      const [leftText, rightText] = cue.text.trim()
+        ? splitCaptionText(cue.text, split.ratio)
+        : ['', ''];
+      const splitStatus = cue.text.trim() ? cue.status : 'pending' as const;
+      const reviewed = Boolean(cue.text.trim()) && cue.reviewed;
+      return [
+        {
+          ...cue,
+          sourceTextSnapshot: leftSource.text,
+          text: leftText,
+          status: splitStatus,
+          reviewed,
+        },
+        {
+          ...cue,
+          id: `${track.id}:${split.rightCaptionId}`,
+          sourceCaptionId: split.rightCaptionId,
+          sourceTextSnapshot: rightSource.text,
+          text: rightText,
+          status: splitStatus,
+          reviewed,
+        },
+      ];
+    }),
+  }));
+  const next = {
+    ...rebuilt,
+    captionTracks: synchronizeCaptionTracks({
+      ...rebuilt,
+      captionTracks: {
+        ...(rebuilt.captionTracks ?? { schemaVersion: 1 as const, primaryTrackId: 'captions' as const }),
+        translations,
+      },
+    }, rebuilt.captions),
+  };
+  return { project: next, rightClipId: right.id };
 }
 
 export function trimVideoClip(project: CaptionProject, clipId: string, edge: 'start' | 'end', targetSourceMs: number) {
@@ -490,6 +499,50 @@ export function setVideoClipGap(
   const next = rebuildAfterLayoutEdit(project, clips, project.captions, splice);
   const nextEntry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId)!;
   return { project: next, seekMs: edge === 'before' ? nextEntry.startMs : nextEntry.endMs };
+}
+
+export function previewVideoClipLeadingGap(
+  clips: VideoClip[],
+  clipId: string,
+  requestedGapMs: number,
+) {
+  const index = clips.findIndex((clip) => clip.id === clipId);
+  if (index < 0 || !Number.isFinite(requestedGapMs)) return null;
+  const gapMs = clamp(requestedGapMs, 0, 60 * 60_000);
+  if (index === 0) {
+    return clips.map((clip, clipIndex) => clipIndex === 0 ? { ...clip, gapBeforeMs: gapMs } : clip);
+  }
+  const previous = clips[index - 1];
+  const previousGapAfterMs = Math.min(previous.gapAfterMs, gapMs);
+  const gapBeforeMs = gapMs - previousGapAfterMs;
+  return clips.map((clip, clipIndex) => {
+    if (clipIndex === index - 1) return { ...clip, gapAfterMs: previousGapAfterMs };
+    if (clipIndex === index) return { ...clip, gapBeforeMs };
+    return clip;
+  });
+}
+
+export function setVideoClipLeadingGap(
+  project: CaptionProject,
+  clipId: string,
+  requestedGapMs: number,
+) {
+  const entries = buildClipTimeline(project.clips);
+  const index = entries.findIndex((entry) => entry.clip.id === clipId);
+  if (index < 0) return null;
+  const previousEndMs = index === 0 ? 0 : entries[index - 1].endMs;
+  const currentGapMs = entries[index].startMs - previousEndMs;
+  const clips = previewVideoClipLeadingGap(project.clips, clipId, requestedGapMs);
+  if (!clips) return null;
+  const nextEntry = buildClipTimeline(clips)[index];
+  const gapMs = nextEntry.startMs - previousEndMs;
+  const delta = gapMs - currentGapMs;
+  if (Math.abs(delta) < 1) return null;
+  const splice = delta > 0
+    ? { atMs: previousEndMs, removeMs: 0, insertMs: delta }
+    : { atMs: previousEndMs + gapMs, removeMs: -delta, insertMs: 0 };
+  const next = rebuildAfterLayoutEdit(project, clips, project.captions, splice);
+  return { project: next, seekMs: buildClipTimeline(next.clips)[index].startMs };
 }
 
 export function setCanvasPreset(project: CaptionProject, preset: CaptionProject['canvas']['preset']) {

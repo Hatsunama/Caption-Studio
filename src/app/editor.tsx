@@ -81,6 +81,7 @@ import {
   setTextLayerStyle,
   setTextLayerText,
   setVideoClipGap,
+  setVideoClipLeadingGap,
   setVideoClipTransform,
   setVideoTransition,
   moveVideoClip,
@@ -1013,7 +1014,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
-  const updateCaptionTiming = (captionId: string, edge: 'start' | 'end', startMs: number, endMs: number) => {
+  const updateCaptionTiming = (captionId: string, edge: 'start' | 'end' | 'move', startMs: number, endMs: number) => {
     setProject((current) => {
       const next = setCaptionTiming(current, captionId, edge, startMs, endMs);
       projectRef.current = next;
@@ -1214,7 +1215,17 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject(result.project);
     persistProjectInBackground(result.project);
     transport.pause();
-    queueMicrotask(() => transport.seek(result.seekMs));
+  };
+
+  const setClipLeadingGap = (clipId: string, gapMs: number) => {
+    const result = setVideoClipLeadingGap(projectRef.current, clipId, gapMs);
+    if (!result) return;
+    pushUndo();
+    projectRef.current = result.project;
+    transport.synchronizeProject(result.project);
+    setProject(result.project);
+    persistProjectInBackground(result.project);
+    transport.pause();
   };
 
   const addAudio = async (origin: 'audio-file' | 'video-audio') => {
@@ -1756,7 +1767,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedClipId(undefined);
             setSelectedAudioClipId(undefined);
             setActiveTool('captions');
-            seekTimeline(caption.startMs);
           }}
           onSelectTranslationCaption={(trackId, pair) => {
             transport.pause();
@@ -1766,19 +1776,18 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedClipId(undefined);
             setSelectedAudioClipId(undefined);
             setActiveTool('captions');
-            seekTimeline(pair.startMs);
             setDualCaptionEditorOpen(true);
           }}
-          onSelectClip={(clipId, startMs) => {
+          onSelectClip={(clipId) => {
             transport.pause();
             setSelectedClipId(clipId);
             setSelectedCaptionId(undefined);
             setSelectedAudioClipId(undefined);
             setActiveTool('video');
-            seekTimeline(startMs);
           }}
           onTrimClip={trimClipEdge}
           onSetClipGap={setClipGap}
+          onSetClipLeadingGap={setClipLeadingGap}
           onLayerTimingChange={updateLayerTiming}
           onCaptionTimingChange={updateCaptionTiming}
           onTimingChangeStart={beginHistoryInteraction}
@@ -1786,13 +1795,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onMoveLayer={moveLayer}
           onDeleteLayer={deleteLayer}
           onAddVideos={() => { void addVideosToTimeline(); }}
-          onSelectAudioClip={(clipId, startMs) => {
+          onSelectAudioClip={(clipId) => {
             transport.pause();
             setSelectedAudioClipId(clipId);
             setSelectedClipId(undefined);
             setSelectedCaptionId(undefined);
             setActiveTool('audio');
-            seekTimeline(startMs);
           }}
           onAudioTimingChange={changeAudioTiming}
         />

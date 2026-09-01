@@ -19,7 +19,7 @@ import {
   updatePairedCaptionText,
   updatePairedCaptionTexts,
 } from '../src/lib/caption-tracks.ts';
-import { setCaptionTexts, deleteCaptionBlock } from '../src/lib/project-editor.ts';
+import { deleteCaptionBlock, setCaptionTexts, splitVideoClip } from '../src/lib/project-editor.ts';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { decodeVersionTwoProject } from '../src/lib/project-schema.ts';
 import { setClipPlaybackRate } from '../src/lib/video-timeline.ts';
@@ -371,6 +371,20 @@ test('existing primary-caption editor operations keep translated cues synchroniz
   assert.equal(edited.captionTracks.translations[0].cues[0].status, 'stale');
   const deleted = deleteCaptionBlock(edited, 'c2');
   assert.deepEqual(deleted.captionTracks.translations[0].cues.map((cue) => cue.sourceCaptionId), ['c1']);
+});
+
+test('splitting a video preserves both halves of an existing translation cue', () => {
+  const bilingual = createEnglishChineseCaptionTrack(projectFixture(), { c1: '你好世界', c2: '再见' });
+  const result = splitVideoClip(bilingual, 'clip-source-1-0', 1_500, 'left', 'right');
+  assert.ok(result);
+  const sourceCaptionIds = result.project.captionTracks.translations[0].cues.map((cue) => cue.sourceCaptionId);
+  assert.deepEqual(sourceCaptionIds, ['c1', 'c1-right', 'c2']);
+  const [leftCue, rightCue] = result.project.captionTracks.translations[0].cues;
+  assert.equal(`${leftCue.text}${rightCue.text}`, '你好世界');
+  assert.deepEqual([leftCue.status, rightCue.status], ['translated', 'translated']);
+  const captionById = new Map(result.project.captions.map((caption) => [caption.id, caption]));
+  assert.equal(leftCue.sourceTextSnapshot, captionById.get('c1').text);
+  assert.equal(rightCue.sourceTextSnapshot, captionById.get('c1-right').text);
 });
 
 test('timeline speed changes preserve cue linkage and resolve translated timing from the primary track', () => {
