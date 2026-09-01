@@ -71,7 +71,9 @@ export function DualCaptionEditor(props: {
     setDrafts(sourceDrafts);
     setJournalReady(false);
     setJournalError(undefined);
+    let active = true;
     void readEditorDraftJournal(props.projectId, journalKind).then((journal) => {
+      if (!active) return;
       const recovered = decodeDualDraft(journal?.payload, props.pairs.map((pair) => pair.source.id));
       const committed = sourceDraftsRef.current;
       if (!recovered) {
@@ -95,9 +97,12 @@ export function DualCaptionEditor(props: {
         ],
       );
     }).catch(() => {
-      setJournalError('Dual-subtitle recovery storage could not be read. Save your changes before leaving this editor.');
-      setJournalReady(true);
+      if (active) {
+        setJournalError('Dual-subtitle recovery storage could not be read. Save your changes before leaving this editor.');
+        setJournalReady(true);
+      }
     });
+    return () => { active = false; };
   }, [journalKind, props.baseRevision, props.pairs, props.projectId, props.visible, sourceDrafts]);
 
   useEffect(() => {

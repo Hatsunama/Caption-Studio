@@ -73,7 +73,9 @@ export function ScriptEditor(props: {
     setJournalReady(false);
     selectionRef.current = {};
     splitCounterRef.current = 0;
+    let active = true;
     void readEditorDraftJournal(props.projectId, 'caption-script').then((journal) => {
+      if (!active) return;
       const recovered = decodeCaptionDraft(journal?.payload);
       if (!recovered) {
         setJournalReady(true);
@@ -98,15 +100,17 @@ export function ScriptEditor(props: {
         ],
       );
     }).catch(() => {
-      setJournalError('Caption recovery storage could not be read. Save your changes before leaving this editor.');
-      setJournalReady(true);
+      if (active) {
+        setJournalError('Caption recovery storage could not be read. Save your changes before leaving this editor.');
+        setJournalReady(true);
+      }
     });
     const timer = setTimeout(() => {
       if (sourceCaptions.length) {
         listRef.current?.scrollToIndex({ index: initialIndex, animated: false, viewPosition: 0.35 });
       }
     }, 180);
-    return () => clearTimeout(timer);
+    return () => { active = false; clearTimeout(timer); };
   }, [initialIndex, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
 
   useEffect(() => {
