@@ -12,6 +12,46 @@ export type VideoExportStorageInput = {
   frameRate: number;
 };
 
+export type CompletedVideoExportResult = {
+  outputUri: string;
+  mediaUri: string;
+  durationMs: number;
+  width: number;
+  height: number;
+  sizeBytes: number;
+};
+
+export type CompletedVideoExportFileInfo =
+  | { exists: false; isDirectory: false }
+  | { exists: true; isDirectory: boolean; size: number };
+
+export function assertCompletedVideoExport(
+  expectedOutputUri: string,
+  result: CompletedVideoExportResult,
+  fileInfo: CompletedVideoExportFileInfo,
+): void {
+  if (!expectedOutputUri.startsWith('file://') || result.outputUri !== expectedOutputUri) {
+    throw new Error('The video exporter returned an unexpected output location.');
+  }
+  if (!result.mediaUri.startsWith('content://') && !result.mediaUri.startsWith('file://')) {
+    throw new Error('The video exporter did not return a published media location.');
+  }
+  positiveFinite(result.durationMs, 'export duration');
+  positiveFinite(result.width, 'export width');
+  positiveFinite(result.height, 'export height');
+  const sizeBytes = positiveFinite(result.sizeBytes, 'export file size');
+  if (!Number.isSafeInteger(sizeBytes)) throw new Error('The exported video size is invalid.');
+  if (
+    !fileInfo.exists
+    || fileInfo.isDirectory
+    || !Number.isSafeInteger(fileInfo.size)
+    || fileInfo.size <= 0
+    || fileInfo.size !== sizeBytes
+  ) {
+    throw new Error('The exported video could not be verified before delivery.');
+  }
+}
+
 export function estimateVideoExportStorageBytes(input: VideoExportStorageInput): number {
   const width = positiveFinite(input.width, 'render width');
   const height = positiveFinite(input.height, 'render height');

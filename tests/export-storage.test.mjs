@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  assertCompletedVideoExport,
   createExportCacheFileName,
   estimateVideoExportStorageBytes,
   isCaptionStudioExportCacheArtifact,
@@ -10,6 +11,39 @@ import {
   isStaleCaptionStudioExportCacheArtifact,
   isStaleLegacyCaptionStudioExportCacheArtifact,
 } from '../src/services/export-storage-policy.ts';
+
+test('completed exports require a verified local file and published media URI', () => {
+  const outputUri = 'file:///cache/caption-studio-project-1777777777777-12345678.mp4';
+  const result = {
+    outputUri,
+    mediaUri: 'content://media/external/video/media/42',
+    durationMs: 4_000,
+    width: 1080,
+    height: 1920,
+    sizeBytes: 1_024,
+  };
+  assert.doesNotThrow(() => assertCompletedVideoExport(
+    outputUri,
+    result,
+    { exists: true, isDirectory: false, size: 1_024 },
+  ));
+  assert.throws(
+    () => assertCompletedVideoExport(outputUri, result, { exists: false, isDirectory: false }),
+    /could not be verified/,
+  );
+  assert.throws(
+    () => assertCompletedVideoExport(outputUri, result, { exists: true, isDirectory: false, size: 512 }),
+    /could not be verified/,
+  );
+  assert.throws(
+    () => assertCompletedVideoExport(outputUri, { ...result, mediaUri: '' }, { exists: true, isDirectory: false, size: 1_024 }),
+    /published media location/,
+  );
+  assert.throws(
+    () => assertCompletedVideoExport(outputUri, { ...result, durationMs: 0 }, { exists: true, isDirectory: false, size: 1_024 }),
+    /export duration is invalid/,
+  );
+});
 
 test('export storage estimate grows with duration and rendered pixel rate', () => {
   const short1080 = estimateVideoExportStorageBytes({
@@ -68,7 +102,7 @@ test('project export preflights space and owns temporary cleanup around native e
   assert.match(service, /requireFreeSpace\([\s\S]*'export this video'/);
   assert.match(service, /protectTemporaryVideoExportArtifacts\(outputUri\)/);
   assert.match(service, /session\.startNative[\s\S]*FileSystem\.getInfoAsync\(outputUri\)[\s\S]*Sharing\.shareAsync\(outputUri[\s\S]*finally \{[\s\S]*removeTemporaryVideoExportArtifacts\(outputUri\);/);
-  assert.match(service, /outputInfo\.size !== result\.sizeBytes/);
+  assert.match(service, /assertCompletedVideoExport\(outputUri, result, outputInfo\)/);
   assert.match(native, /val outputSize = verifyLocalVideo\(task\.output\)[\s\S]*publishToMediaLibrary\(task\)[\s\S]*verifyPublishedVideo\(mediaUri, outputSize\)/);
   assert.match(native, /"outputUri" to Uri\.fromFile\(task\.output\)\.toString\(\)/);
   assert.match(native, /does not contain a video track/);

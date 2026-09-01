@@ -7,6 +7,7 @@ import { buildTimelineRenderPlan, collectUnresolvedFontFamilies, toNativeRenderP
 import { serializeAss, serializeSrt, visibleCaptions } from '@/lib/subtitle-export';
 import { requireBackgroundProcessingConsent } from '@/services/background-processing-consent';
 import {
+  assertCompletedVideoExport,
   createExportCacheFileName,
   estimateVideoExportStorageBytes,
   prepareCaptionStudioExportCache,
@@ -46,18 +47,8 @@ export async function exportProjectVideo(project: CaptionProject) {
         outputUri.replace(/^file:\/\//, ''),
         toNativeRenderPlan(renderPlan),
       ));
-      if (result.outputUri !== outputUri) {
-        throw new Error('The video exporter returned an unexpected output location.');
-      }
       const outputInfo = await session.waitFor(FileSystem.getInfoAsync(outputUri));
-      if (
-        !outputInfo.exists
-        || outputInfo.isDirectory
-        || outputInfo.size <= 0
-        || outputInfo.size !== result.sizeBytes
-      ) {
-        throw new Error('The exported video could not be verified before delivery.');
-      }
+      assertCompletedVideoExport(outputUri, result, outputInfo);
       if (!await session.waitFor(Sharing.isAvailableAsync())) {
         throw new Error('The video was saved to the media library, but Android file sharing is unavailable.');
       }
