@@ -1005,6 +1005,23 @@ test('timeline selection does not move or snap the playhead', () => {
   assert.match(timeline, /onPress=\{\(\) => props\.onSelectLayer\(layer\.id\)\}/);
   assert.match(editor, /onSelectClip=\{\(clipId\) => \{/);
   assert.match(editor, /onSelectAudioClip=\{\(clipId\) => \{/);
+  const row = timeline.slice(timeline.indexOf('function TimelineRow'), timeline.indexOf('function TimedBlock'));
+  assert.match(row, /pointerEvents="box-none"/);
+  assert.doesNotMatch(row, /<Pressable onPress=\{\(event\) => props\.onPressTrack[\s\S]*\{props\.children\}<\/Pressable>/);
+  assert.match(timeline, /scrollEnabled=\{!gestureLock\}/);
+});
+
+test('only the selected subtitle exposes move and trim handles', () => {
+  const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
+  const block = timeline.slice(timeline.indexOf('function TimedBlock'), timeline.indexOf('function LinkedCaptionBlock'));
+  assert.match(block, /props\.selected && props\.movable \? <CaptionMoveGrip/);
+  assert.match(block, /\{props\.selected \? \(/);
+  assert.match(block, /<TimingGrip side="start"/);
+  assert.match(block, /<TimingGrip side="end"/);
+  assert.match(block, /zIndex: props\.selected \? 6 : 1/);
+  const moveGrip = timeline.slice(timeline.indexOf('function CaptionMoveGrip'), timeline.indexOf('function TimingGrip'));
+  assert.match(moveGrip, /onPanResponderTerminationRequest: \(\) => false/);
+  assert.match(moveGrip, /onShouldBlockNativeResponder: \(\) => true/);
 });
 
 test('timeline keeps a fixed playhead, scrubs its content, renders a ruler, and offers an append-video control', () => {
