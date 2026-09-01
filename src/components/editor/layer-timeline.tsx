@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { chrome } from '@/lib/ui-theme';
@@ -215,7 +215,7 @@ export function LayerTimeline(props: {
                 const previousEndMs = index === 0 ? 0 : clipPositions[index - 1].endMs;
                 const leadingGapMs = startMs - previousEndMs;
                 return (
-                <View key={clip.id} style={{ position: 'absolute', inset: 0 }} pointerEvents="box-none">
+                <Fragment key={clip.id}>
                   <VideoClipBlock
                     clip={clip}
                     leadingGapMs={leadingGapMs}
@@ -270,7 +270,7 @@ export function LayerTimeline(props: {
                       onRemove={() => props.onSetClipGap(clip.id, 0, 'after')}
                     />
                   ) : null}
-                </View>
+                </Fragment>
                 );
               })}
             </TimelineRow>

@@ -1026,6 +1026,9 @@ test('the gap close control stays large and on the left of the gap', () => {
   const clipIndex = timeline.indexOf('<VideoClipBlock');
   const beforeGapIndex = timeline.indexOf('{startMs > gapStartMs ? (');
   assert.ok(clipIndex > 0 && beforeGapIndex > clipIndex);
+  const videoRow = timeline.slice(timeline.indexOf('clipPositions.map'), timeline.indexOf('<TimelineRow label="AUDIO"'));
+  assert.match(videoRow, /<Fragment key=\{clip\.id\}>/);
+  assert.doesNotMatch(videoRow, /<View key=\{clip\.id\} style=\{\{ position: 'absolute', inset: 0 \}\}/);
 });
 
 test('sliding a video gap does not seek the playhead', () => {
