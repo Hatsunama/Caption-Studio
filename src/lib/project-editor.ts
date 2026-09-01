@@ -427,9 +427,7 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
     captionTracks: synchronizeCaptionTracks({
       ...rebuilt,
       captionTracks: {
-        schemaVersion: 1,
-        primaryTrackId: 'captions',
-        ...rebuilt.captionTracks,
+        ...(rebuilt.captionTracks ?? { schemaVersion: 1 as const, primaryTrackId: 'captions' as const }),
         translations,
       },
     }, rebuilt.captions),
