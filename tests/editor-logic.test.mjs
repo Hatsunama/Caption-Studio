@@ -15,6 +15,7 @@ import { PREPARING_AUDIO_CUES } from '../src/lib/transcription-progress.ts';
 import { humanVideoName, isMachineVideoName } from '../src/lib/project-presentation.ts';
 import { applyCaptionTextChanges } from '../src/lib/caption-text-edits.ts';
 import { serializeAss, serializeSrt } from '../src/lib/subtitle-export.ts';
+import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
 import { mergeCaptionScriptBlock, splitCaptionScriptBlock, splitCaptionScriptBlockAtTime } from '../src/lib/caption-script.ts';
 import { deleteVideoClip, previewVideoClipLeadingGap, previewVideoClipTrim, setCaptionTiming, setVideoClipGap, setVideoClipLeadingGap, setVideoTransition, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
 import { addAudioSourceToProject, audioClipEnd, audioClipVolume, deleteAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '../src/lib/audio-timeline.ts';
@@ -897,6 +898,33 @@ test('adjusting one subtitle leaves neighboring subtitles where they are', () =>
   assert.deepEqual(shifted.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_000], [1_200, 2_200]]);
   const overlapped = setCaptionTiming(project, 'left', 'end', 0, 1_500);
   assert.deepEqual(overlapped.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_500], [1_000, 2_000]]);
+});
+
+test('manual timeline timing clears stale automatic word highlights', () => {
+  const project = projectFixture({
+    clips: [clip({ id: 'clip', sourceEndMs: 3_000, availableSourceEndMs: 3_000 })],
+    transcription: {
+      language: 'en',
+      modelId: 'fast',
+      words: [{ id: 'clip-word', text: 'hello', startMs: 500, endMs: 1_000 }],
+      sourceResults: {},
+    },
+    captions: [{
+      id: 'caption',
+      text: 'hello',
+      textMode: 'automatic',
+      startMs: 500,
+      endMs: 1_500,
+      wordIds: ['clip-word'],
+      timelineVisible: true,
+      sourceAnchor: { clipId: 'clip', sourceStartMs: 500, sourceEndMs: 1_500, wordIds: ['clip-word'] },
+    }],
+  });
+  const moved = setCaptionTiming(project, 'caption', 'move', 1_200, 2_200);
+  assert.equal(moved.captions[0].textMode, 'manual');
+  assert.deepEqual(moved.captions[0].wordIds, []);
+  assert.deepEqual(moved.captions[0].sourceAnchor.wordIds, []);
+  assert.deepEqual(buildTimelineRenderPlan(moved).captions[0].words, []);
 });
 
 test('sliding a video gap keeps edited captions locked to that clip', () => {

@@ -127,11 +127,13 @@ function withTimelineCaptionTiming(
     ...caption,
     startMs,
     endMs,
+    textMode: 'manual' as const,
+    wordIds: [],
     sourceAnchor: {
       clipId: entry.clip.id,
       sourceStartMs: sourceTimeAt(entry, startMs),
       sourceEndMs: sourceTimeAt(entry, endMs),
-      wordIds: caption.sourceAnchor?.wordIds ?? caption.wordIds,
+      wordIds: [],
     },
     timelineVisible: true,
   };
@@ -326,6 +328,7 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
   const index = clips.findIndex((clip) => clip.id === clipId);
   clips.splice(index, 1, left, right);
   const wordById = new Map(project.transcription.words.map((word) => [word.id, word]));
+  const splitRatios = new Map<string, { ratio: number; rightCaptionId: string }>();
   const captions = anchorCaptionsToClips(project.captions, project.clips, project.transcription.words).flatMap((caption) => {
     const anchor = caption.sourceAnchor;
     if (anchor?.clipId !== entry.clip.id) return [caption];
@@ -340,6 +343,11 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
     const [leftText, rightText] = splitCaptionText(caption.text, (
       sourceSplitMs - anchor.sourceStartMs
     ) / Math.max(1, anchor.sourceEndMs - anchor.sourceStartMs));
+    const rightCaptionId = `${caption.id}-${rightId}`;
+    splitRatios.set(caption.id, {
+      ratio: (sourceSplitMs - anchor.sourceStartMs) / Math.max(1, anchor.sourceEndMs - anchor.sourceStartMs),
+      rightCaptionId,
+    });
     return [
       {
         ...caption,
@@ -354,7 +362,7 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
       },
       {
         ...caption,
-        id: `${caption.id}-${rightId}`,
+        id: rightCaptionId,
         text: caption.textMode === 'manual' ? rightText : caption.text,
         wordIds: rightWordIds,
         sourceAnchor: {
@@ -380,7 +388,48 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
     { atMs: entry.endMs, removeMs: 0, insertMs: 0 },
     layers,
   );
-  return { project: rebuilt, rightClipId: right.id };
+  const captionById = new Map(rebuilt.captions.map((caption) => [caption.id, caption]));
+  const translations = project.captionTracks.translations.map((track) => ({
+    ...track,
+    cues: track.cues.flatMap((cue) => {
+      const split = splitRatios.get(cue.sourceCaptionId);
+      if (!split) return [cue];
+      const leftSource = captionById.get(cue.sourceCaptionId);
+      const rightSource = captionById.get(split.rightCaptionId);
+      if (!leftSource || !rightSource) return [cue];
+      const [leftText, rightText] = cue.text.trim()
+        ? splitCaptionText(cue.text, split.ratio)
+        : ['', ''];
+      const splitStatus = cue.text.trim() ? cue.status : 'pending' as const;
+      const reviewed = Boolean(cue.text.trim()) && cue.reviewed;
+      return [
+        {
+          ...cue,
+          sourceTextSnapshot: leftSource.text,
+          text: leftText,
+          status: splitStatus,
+          reviewed,
+        },
+        {
+          ...cue,
+          id: `${track.id}:${split.rightCaptionId}`,
+          sourceCaptionId: split.rightCaptionId,
+          sourceTextSnapshot: rightSource.text,
+          text: rightText,
+          status: splitStatus,
+          reviewed,
+        },
+      ];
+    }),
+  }));
+  const next = {
+    ...rebuilt,
+    captionTracks: synchronizeCaptionTracks({
+      ...rebuilt,
+      captionTracks: { ...rebuilt.captionTracks, translations },
+    }, rebuilt.captions),
+  };
+  return { project: next, rightClipId: right.id };
 }
 
 export function trimVideoClip(project: CaptionProject, clipId: string, edge: 'start' | 'end', targetSourceMs: number) {
