@@ -16,7 +16,7 @@ import { humanVideoName, isMachineVideoName } from '../src/lib/project-presentat
 import { applyCaptionTextChanges } from '../src/lib/caption-text-edits.ts';
 import { serializeAss, serializeSrt } from '../src/lib/subtitle-export.ts';
 import { mergeCaptionScriptBlock, splitCaptionScriptBlock, splitCaptionScriptBlockAtTime } from '../src/lib/caption-script.ts';
-import { deleteVideoClip, previewVideoClipLeadingGap, previewVideoClipTrim, setCaptionTiming, setVideoClipGap, setVideoClipLeadingGap, setVideoTransition, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
+import { deleteVideoClip, moveVideoClip, previewVideoClipLeadingGap, previewVideoClipTrim, setCaptionTiming, setVideoClipGap, setVideoClipLeadingGap, setVideoTransition, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
 import { addAudioSourceToProject, audioClipEnd, audioClipVolume, deleteAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '../src/lib/audio-timeline.ts';
 import {
   buildClipTimeline,
@@ -1008,6 +1008,56 @@ test('sliding a clip closes a gap owned by the previous trimmed clip', () => {
   const byId = Object.fromEntries(slid.project.captions.map((caption) => [caption.id, caption]));
   assert.deepEqual([byId['on-first'].startMs, byId['on-first'].endMs], [500, 1_500]);
   assert.deepEqual([byId['on-second'].startMs, byId['on-second'].endMs], [2_450, 3_250]);
+});
+
+test('reordering clips and editing trailing gaps preserve caption ownership', () => {
+  const project = projectFixture({
+    clips: [
+      clip({ id: 'one', sourceEndMs: 2_000, availableSourceEndMs: 2_000 }),
+      clip({ id: 'two', sourceEndMs: 2_000, availableSourceEndMs: 2_000 }),
+    ],
+    captions: [
+      { id: 'on-one', text: 'one', textMode: 'manual', startMs: 250, endMs: 750, wordIds: [], timelineVisible: true, sourceAnchor: { clipId: 'one', sourceStartMs: 250, sourceEndMs: 750, wordIds: [] } },
+      { id: 'on-two', text: 'two', textMode: 'manual', startMs: 2_250, endMs: 2_750, wordIds: [], timelineVisible: true, sourceAnchor: { clipId: 'two', sourceStartMs: 250, sourceEndMs: 750, wordIds: [] } },
+    ],
+  });
+  const reordered = moveVideoClip(project, 'two', -1);
+  const reorderedById = Object.fromEntries(reordered.captions.map((caption) => [caption.id, caption]));
+  assert.deepEqual(reordered.clips.map((clip) => clip.id), ['two', 'one']);
+  assert.deepEqual([reorderedById['on-two'].startMs, reorderedById['on-two'].endMs], [250, 750]);
+  assert.deepEqual([reorderedById['on-one'].startMs, reorderedById['on-one'].endMs], [2_250, 2_750]);
+  assert.equal(reorderedById['on-two'].sourceAnchor.clipId, 'two');
+  assert.equal(reorderedById['on-one'].sourceAnchor.clipId, 'one');
+
+  const trailingGap = setVideoClipGap(project, 'one', 1_000, 'after');
+  assert.ok(trailingGap);
+  const gapById = Object.fromEntries(trailingGap.project.captions.map((caption) => [caption.id, caption]));
+  assert.deepEqual([gapById['on-one'].startMs, gapById['on-one'].endMs], [250, 750]);
+  assert.deepEqual([gapById['on-two'].startMs, gapById['on-two'].endMs], [3_250, 3_750]);
+});
+
+test('partially trimmed captions retain their full anchor for restoration', () => {
+  const project = projectFixture({
+    clips: [clip({ id: 'clip', sourceEndMs: 4_000, availableSourceEndMs: 4_000 })],
+    captions: [{
+      id: 'ending',
+      text: 'keep my ending',
+      textMode: 'manual',
+      startMs: 3_200,
+      endMs: 3_800,
+      wordIds: [],
+      timelineVisible: true,
+      sourceAnchor: { clipId: 'clip', sourceStartMs: 3_200, sourceEndMs: 3_800, wordIds: [] },
+    }],
+  });
+  const trimmed = trimVideoClip(project, 'clip', 'end', 3_500);
+  assert.ok(trimmed);
+  assert.deepEqual([trimmed.project.captions[0].startMs, trimmed.project.captions[0].endMs], [3_200, 3_500]);
+  assert.equal(trimmed.project.captions[0].sourceAnchor.sourceEndMs, 3_800);
+  assert.equal(trimmed.project.captions[0].text, 'keep my ending');
+  const restored = trimVideoClip(trimmed.project, 'clip', 'end', 4_000);
+  assert.ok(restored);
+  assert.deepEqual([restored.project.captions[0].startMs, restored.project.captions[0].endMs], [3_200, 3_800]);
 });
 
 test('script captions never merge across a hard video cut', () => {
