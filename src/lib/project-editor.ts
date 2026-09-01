@@ -449,6 +449,50 @@ export function setVideoClipGap(
   return { project: next, seekMs: edge === 'before' ? nextEntry.startMs : nextEntry.endMs };
 }
 
+export function previewVideoClipLeadingGap(
+  clips: VideoClip[],
+  clipId: string,
+  requestedGapMs: number,
+) {
+  const index = clips.findIndex((clip) => clip.id === clipId);
+  if (index < 0 || !Number.isFinite(requestedGapMs)) return null;
+  const gapMs = clamp(requestedGapMs, 0, 60 * 60_000);
+  if (index === 0) {
+    return clips.map((clip, clipIndex) => clipIndex === 0 ? { ...clip, gapBeforeMs: gapMs } : clip);
+  }
+  const previous = clips[index - 1];
+  const previousGapAfterMs = Math.min(previous.gapAfterMs, gapMs);
+  const gapBeforeMs = gapMs - previousGapAfterMs;
+  return clips.map((clip, clipIndex) => {
+    if (clipIndex === index - 1) return { ...clip, gapAfterMs: previousGapAfterMs };
+    if (clipIndex === index) return { ...clip, gapBeforeMs };
+    return clip;
+  });
+}
+
+export function setVideoClipLeadingGap(
+  project: CaptionProject,
+  clipId: string,
+  requestedGapMs: number,
+) {
+  const entries = buildClipTimeline(project.clips);
+  const index = entries.findIndex((entry) => entry.clip.id === clipId);
+  if (index < 0) return null;
+  const previousEndMs = index === 0 ? 0 : entries[index - 1].endMs;
+  const currentGapMs = entries[index].startMs - previousEndMs;
+  const clips = previewVideoClipLeadingGap(project.clips, clipId, requestedGapMs);
+  if (!clips) return null;
+  const nextEntry = buildClipTimeline(clips)[index];
+  const gapMs = nextEntry.startMs - previousEndMs;
+  const delta = gapMs - currentGapMs;
+  if (Math.abs(delta) < 1) return null;
+  const splice = delta > 0
+    ? { atMs: previousEndMs, removeMs: 0, insertMs: delta }
+    : { atMs: previousEndMs + gapMs, removeMs: -delta, insertMs: 0 };
+  const next = rebuildAfterLayoutEdit(project, clips, project.captions, splice);
+  return { project: next, seekMs: buildClipTimeline(next.clips)[index].startMs };
+}
+
 export function setCanvasPreset(project: CaptionProject, preset: CaptionProject['canvas']['preset']) {
   const size = canvasPresetSize(preset, project);
   return updateProject(project, {

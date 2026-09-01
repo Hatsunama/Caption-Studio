@@ -3,7 +3,7 @@ import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { chrome } from '@/lib/ui-theme';
 import { packTimelineLanes } from '@/lib/timeline-layout';
-import { previewVideoClipTrim } from '@/lib/project-editor';
+import { previewVideoClipLeadingGap, previewVideoClipTrim } from '@/lib/project-editor';
 import {
   clampTimelineScale,
   minimumTimelineScale,
@@ -44,6 +44,7 @@ export function LayerTimeline(props: {
   onSelectClip: (clipId: string) => void;
   onTrimClip: (clipId: string, edge: 'start' | 'end', targetSourceMs: number) => void;
   onSetClipGap: (clipId: string, gapMs: number, edge?: 'before' | 'after') => void;
+  onSetClipLeadingGap: (clipId: string, gapMs: number) => void;
   onLayerTimingChange: (layerId: string, startMs: number, endMs: number) => void;
   onCaptionTimingChange: (captionId: string, edge: 'start' | 'end' | 'move', startMs: number, endMs: number) => void;
   onTimingChangeStart: () => void;
@@ -56,10 +57,10 @@ export function LayerTimeline(props: {
 }) {
   const horizontalRef = useRef<ScrollView>(null);
   const [viewportWidth, setViewportWidth] = useState(360);
-  const [clipPreview, setClipPreview] = useState<VideoClip>();
+  const [clipPreview, setClipPreview] = useState<VideoClip[]>();
   const [gestureLock, setGestureLock] = useState(false);
   const previewClips = useMemo(
-    () => clipPreview ? props.clips.map((clip) => clip.id === clipPreview.id ? clipPreview : clip) : props.clips,
+    () => clipPreview ?? props.clips,
     [clipPreview, props.clips],
   );
   const clipPositions = useMemo(() => buildClipTimeline(previewClips), [previewClips]);
@@ -210,10 +211,14 @@ export function LayerTimeline(props: {
           <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
           <ScrollView style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}>
             <TimelineRow label="VIDEO" labelColor={chrome.accent} selected={Boolean(props.selectedClipId)} trackWidth={trackWidth} height={46} onPressTrack={(x) => props.onSeek(x / trackWidth * duration)} controls={<Text style={{ color: chrome.muted, fontSize: 8 }}>{props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}</Text>}>
-              {clipPositions.map((entry, index) => ({ ...entry, index })).filter(({ gapStartMs, afterGapEndMs }) => isVisible(gapStartMs, afterGapEndMs)).map(({ clip, gapStartMs, startMs, endMs, afterGapEndMs, index }) => (
+              {clipPositions.map((entry, index) => ({ ...entry, index })).filter(({ gapStartMs, afterGapEndMs }) => isVisible(gapStartMs, afterGapEndMs)).map(({ clip, gapStartMs, startMs, endMs, afterGapEndMs, index }) => {
+                const previousEndMs = index === 0 ? 0 : clipPositions[index - 1].endMs;
+                const leadingGapMs = startMs - previousEndMs;
+                return (
                 <View key={clip.id} style={{ position: 'absolute', inset: 0 }} pointerEvents="box-none">
                   <VideoClipBlock
                     clip={clip}
+                    leadingGapMs={leadingGapMs}
                     label={`CLIP ${index + 1}`}
                     startMs={startMs}
                     endMs={endMs}
@@ -225,7 +230,8 @@ export function LayerTimeline(props: {
                     onGestureLock={setGestureLock}
                     onTrimPreview={(edge, targetSourceMs) => {
                       setGestureLock(true);
-                      setClipPreview(previewVideoClipTrim(clip, edge, targetSourceMs));
+                      const preview = previewVideoClipTrim(clip, edge, targetSourceMs);
+                      setClipPreview(previewClips.map((candidate) => candidate.id === clip.id ? preview : candidate));
                     }}
                     onTrimCommit={(edge, targetSourceMs) => {
                       setGestureLock(false);
@@ -234,12 +240,13 @@ export function LayerTimeline(props: {
                     }}
                     onGapPreview={(gapBeforeMs) => {
                       setGestureLock(true);
-                      setClipPreview({ ...clip, gapBeforeMs });
+                      const preview = previewVideoClipLeadingGap(props.clips, clip.id, gapBeforeMs);
+                      if (preview) setClipPreview(preview);
                     }}
                     onGapCommit={(gapBeforeMs) => {
                       setGestureLock(false);
                       setClipPreview(undefined);
-                      props.onSetClipGap(clip.id, gapBeforeMs);
+                      props.onSetClipLeadingGap(clip.id, gapBeforeMs);
                     }}
                   />
                   {startMs > gapStartMs ? (
@@ -264,7 +271,8 @@ export function LayerTimeline(props: {
                     />
                   ) : null}
                 </View>
-              ))}
+                );
+              })}
             </TimelineRow>
             <TimelineRow label="AUDIO" labelColor="#64E8FF" selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => props.onSeek(x / trackWidth * duration)} controls={<Text style={{ color: '#6F7985', fontSize: 8 }}>{props.audioClips.length} TRACK{props.audioClips.length === 1 ? '' : 'S'}</Text>}>
               {props.audioClips.filter((clip) => isVisible(clip.startMs, audioClipEnd(clip))).map((clip) => {
@@ -356,6 +364,7 @@ function TimelineRuler(props: { durationMs: number; trackWidth: number; pixelsPe
 
 function VideoClipBlock(props: {
   clip: VideoClip;
+  leadingGapMs: number;
   label: string;
   startMs: number;
   endMs: number;
@@ -450,8 +459,8 @@ function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'st
 function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0]) {
   const propsRef = useRef(props);
   propsRef.current = props;
-  const gapRef = useRef(props.clip.gapBeforeMs);
-  const initialGapRef = useRef(props.clip.gapBeforeMs);
+  const gapRef = useRef(props.leadingGapMs);
+  const initialGapRef = useRef(props.leadingGapMs);
   const draggedRef = useRef(false);
   const responder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
@@ -461,7 +470,7 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0]) {
     onPanResponderGrant: () => {
       propsRef.current.onPress();
       propsRef.current.onGestureLock(true);
-      initialGapRef.current = propsRef.current.clip.gapBeforeMs;
+      initialGapRef.current = propsRef.current.leadingGapMs;
       gapRef.current = initialGapRef.current;
       draggedRef.current = false;
     },

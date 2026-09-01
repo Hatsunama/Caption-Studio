@@ -81,6 +81,7 @@ import {
   setTextLayerStyle,
   setTextLayerText,
   setVideoClipGap,
+  setVideoClipLeadingGap,
   setVideoClipTransform,
   setVideoTransition,
   moveVideoClip,
@@ -1216,6 +1217,17 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     transport.pause();
   };
 
+  const setClipLeadingGap = (clipId: string, gapMs: number) => {
+    const result = setVideoClipLeadingGap(projectRef.current, clipId, gapMs);
+    if (!result) return;
+    pushUndo();
+    projectRef.current = result.project;
+    transport.synchronizeProject(result.project);
+    setProject(result.project);
+    persistProjectInBackground(result.project);
+    transport.pause();
+  };
+
   const addAudio = async (origin: 'audio-file' | 'video-audio') => {
     transport.pause();
     setError(undefined);
@@ -1775,6 +1787,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           }}
           onTrimClip={trimClipEdge}
           onSetClipGap={setClipGap}
+          onSetClipLeadingGap={setClipLeadingGap}
           onLayerTimingChange={updateLayerTiming}
           onCaptionTimingChange={updateCaptionTiming}
           onTimingChangeStart={beginHistoryInteraction}

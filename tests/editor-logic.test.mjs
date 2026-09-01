@@ -16,7 +16,7 @@ import { humanVideoName, isMachineVideoName } from '../src/lib/project-presentat
 import { applyCaptionTextChanges } from '../src/lib/caption-text-edits.ts';
 import { serializeAss, serializeSrt } from '../src/lib/subtitle-export.ts';
 import { mergeCaptionScriptBlock, splitCaptionScriptBlock, splitCaptionScriptBlockAtTime } from '../src/lib/caption-script.ts';
-import { deleteVideoClip, previewVideoClipTrim, setCaptionTiming, setVideoClipGap, setVideoTransition, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
+import { deleteVideoClip, previewVideoClipLeadingGap, previewVideoClipTrim, setCaptionTiming, setVideoClipGap, setVideoClipLeadingGap, setVideoTransition, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
 import { addAudioSourceToProject, audioClipEnd, audioClipVolume, deleteAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '../src/lib/audio-timeline.ts';
 import {
   buildClipTimeline,
@@ -939,6 +939,48 @@ test('sliding a video gap keeps edited captions locked to that clip', () => {
   const leadById = Object.fromEntries(openedLead.project.captions.map((caption) => [caption.id, caption]));
   assert.deepEqual([leadById['on-first'].startMs, leadById['on-first'].endMs], [1_000, 2_000]);
   assert.deepEqual([leadById['on-second'].startMs, leadById['on-second'].endMs], [4_700, 5_500]);
+});
+
+test('sliding a clip closes a gap owned by the previous trimmed clip', () => {
+  const project = projectFixture({
+    clips: [
+      clip({ id: 'one', sourceEndMs: 2_000, availableSourceEndMs: 3_000, gapAfterMs: 1_000 }),
+      clip({ id: 'two', sourceEndMs: 2_000, availableSourceEndMs: 2_000 }),
+    ],
+    captions: [
+      {
+        id: 'on-first',
+        text: 'stay on first',
+        textMode: 'manual',
+        startMs: 500,
+        endMs: 1_500,
+        wordIds: [],
+        timelineVisible: true,
+        sourceAnchor: { clipId: 'one', sourceStartMs: 500, sourceEndMs: 1_500, wordIds: [] },
+      },
+      {
+        id: 'on-second',
+        text: 'follow second',
+        textMode: 'manual',
+        startMs: 3_200,
+        endMs: 4_000,
+        wordIds: [],
+        timelineVisible: true,
+        sourceAnchor: { clipId: 'two', sourceStartMs: 200, sourceEndMs: 1_000, wordIds: [] },
+      },
+    ],
+  });
+  const preview = previewVideoClipLeadingGap(project.clips, 'two', 250);
+  assert.ok(preview);
+  assert.equal(preview[0].gapAfterMs, 250);
+  assert.equal(preview[1].gapBeforeMs, 0);
+  assert.deepEqual(buildClipTimeline(preview).map(({ startMs, endMs }) => [startMs, endMs]), [[0, 2_000], [2_250, 4_250]]);
+
+  const slid = setVideoClipLeadingGap(project, 'two', 250);
+  assert.ok(slid);
+  const byId = Object.fromEntries(slid.project.captions.map((caption) => [caption.id, caption]));
+  assert.deepEqual([byId['on-first'].startMs, byId['on-first'].endMs], [500, 1_500]);
+  assert.deepEqual([byId['on-second'].startMs, byId['on-second'].endMs], [2_450, 3_250]);
 });
 
 test('script captions never merge across a hard video cut', () => {
