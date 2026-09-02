@@ -1,7 +1,6 @@
 package app.captionstudio.media
 
 import android.Manifest
-import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -118,28 +117,33 @@ internal class TimelineVideoExporter(private val context: Context) {
                 publishingExecutor.execute {
                   try {
                     ensureActive(task)
-                    val mediaUri = publishToMediaLibrary(task)
-                    if (!claim(task)) {
-                      deletePublishedOutput(task)
-                      task.output.delete()
-                      return@execute
-                    }
-                    task.output.delete()
-                    promise.resolve(
-                      mapOf(
-                        "outputUri" to mediaUri.toString(),
-                        "durationMs" to exportResult.approximateDurationMs,
-                        "width" to exportResult.width,
-                        "height" to exportResult.height,
-                        "sizeBytes" to exportResult.fileSizeBytes,
-                        "mediaUri" to mediaUri.toString(),
-                      ),
+                    val sizeBytes = requireRenderedVideoFile(task.output)
+                    val verified = inspectRenderedVideo(context, Uri.fromFile(task.output), sizeBytes)
+                    val mediaUri = publishToMediaLibrary(task, verified)
+                    inspectRenderedVideo(context, mediaUri, verified.sizeBytes)
+                    task.publishedVerified.set(true)
+                    val result = mapOf(
+                      "outputUri" to Uri.fromFile(task.output).toString(),
+                      "durationMs" to verified.durationMs,
+                      "width" to verified.width,
+                      "height" to verified.height,
+                      "sizeBytes" to verified.sizeBytes,
+                      "mediaUri" to mediaUri.toString(),
                     )
+                    if (!resolve(task, result)) {
+                      if (!task.publishedVerified.get()) {
+                        deletePublishedOutput(task)
+                        task.output.delete()
+                      }
+                    }
                   } catch (_: CancellationException) {
-                    deletePublishedOutput(task)
-                    task.output.delete()
+                    if (!task.publishedVerified.get()) deletePublishedOutput(task)
+                    if (claim(task)) {
+                      task.output.delete()
+                      task.promise.reject("E_EXPORT_CANCELLED", "Video export was cancelled", null)
+                    }
                   } catch (error: Throwable) {
-                    deletePublishedOutput(task)
+                    if (!task.publishedVerified.get()) deletePublishedOutput(task)
                     if (claim(task)) {
                       task.output.delete()
                       promise.reject("E_MEDIA_LIBRARY", error.message ?: "The export could not be saved", error)
@@ -229,7 +233,6 @@ internal class TimelineVideoExporter(private val context: Context) {
     val sequences = mutableListOf<EditedMediaItemSequence>()
     sequences += EditedMediaItemSequence.withVideoFrom(listOf(baseVideo))
     sequences += buildNativeVideoSequence(plan)
-    sequences += EditedMediaItemSequence.withVideoFrom(listOf(baseVideo))
     sequences += buildOriginalAudioSequences(plan, task)
     plan.audioClips.mapNotNull { buildInsertedAudioSequence(it, plan.durationMs) }.forEach(sequences::add)
     return Composition.Builder(sequences)
@@ -362,8 +365,8 @@ internal class TimelineVideoExporter(private val context: Context) {
     }
   }
 
-  private fun publishToMediaLibrary(task: ActiveExport): Uri {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) return publishScoped(task)
+  private fun publishToMediaLibrary(task: ActiveExport, verified: VerifiedRenderedVideo): Uri {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) return publishScoped(task, verified)
     check(
       ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED,
     ) { "Allow storage access so Caption Studio can save this export to your media library." }
@@ -386,29 +389,26 @@ internal class TimelineVideoExporter(private val context: Context) {
       check(System.nanoTime() < deadlineNanos) { "Android did not finish adding the export to the media library" }
     }
     ensureActive(task)
-    return scanned ?: Uri.fromFile(destination)
+    check(destination.isFile && destination.length() == verified.sizeBytes) {
+      "Android saved an incomplete exported video"
+    }
+    return scanned ?: throw IllegalStateException("Android could not add the export to the media library")
   }
 
-  private fun publishScoped(task: ActiveExport): Uri {
+  private fun publishScoped(task: ActiveExport, verified: VerifiedRenderedVideo): Uri {
     val resolver = context.contentResolver
-    val values = ContentValues().apply {
-      put(MediaStore.Video.Media.DISPLAY_NAME, task.output.name)
-      put(MediaStore.Video.Media.MIME_TYPE, MimeTypes.VIDEO_MP4)
-      put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/Caption Studio")
-      put(MediaStore.Video.Media.IS_PENDING, 1)
-    }
+    val values = pendingVideoContentValues(task.output.name)
     val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
       ?: throw IllegalStateException("Android could not create the exported video in the media library")
     task.publishedUri = uri
     try {
-      resolver.openOutputStream(uri, "w")?.use { destination ->
+      val opened = resolver.openOutputStream(uri, "w")
+        ?: throw IllegalStateException("Android could not open the exported video in the media library")
+      opened.use { destination ->
         task.output.inputStream().use { source -> copyCancellable(source, destination, task) }
       }
-        ?: throw IllegalStateException("Android could not open the exported video in the media library")
       ensureActive(task)
-      values.clear()
-      values.put(MediaStore.Video.Media.IS_PENDING, 0)
-      check(resolver.update(uri, values, null, null) == 1) {
+      check(resolver.update(uri, finishedVideoContentValues(verified), null, null) == 1) {
         "Android could not finish publishing the exported video"
       }
       return uri
@@ -429,7 +429,15 @@ internal class TimelineVideoExporter(private val context: Context) {
   }
 
   private fun cancelActive() {
-    val task = synchronized(stateLock) { activeExport.also { activeExport = null } } ?: return
+    val task = synchronized(stateLock) {
+      val current = activeExport
+      if (current == null || current.publishedVerified.get()) {
+        null
+      } else {
+        activeExport = null
+        current
+      }
+    } ?: return
     task.cancelled.set(true)
     task.transformer?.cancel()
     val cleanupError = runCatching { releaseTaskResources(task) }.exceptionOrNull()
@@ -480,6 +488,16 @@ internal class TimelineVideoExporter(private val context: Context) {
     }
   }
 
+  private fun resolve(task: ActiveExport, result: Map<String, Any>): Boolean = synchronized(stateLock) {
+    if (activeExport !== task) {
+      false
+    } else {
+      activeExport = null
+      task.promise.resolve(result)
+      true
+    }
+  }
+
   private fun fail(task: ActiveExport, code: String, message: String, error: Throwable) {
     if (!claim(task)) return
     runCatching { releaseTaskResources(task) }.exceptionOrNull()?.let(error::addSuppressed)
@@ -497,6 +515,7 @@ internal class TimelineVideoExporter(private val context: Context) {
     var transformer: Transformer? = null,
     val cancelled: AtomicBoolean = AtomicBoolean(false),
     val resourcesReleased: AtomicBoolean = AtomicBoolean(false),
+    val publishedVerified: AtomicBoolean = AtomicBoolean(false),
     @Volatile var stage: ExportStage = ExportStage.PREPARING,
     @Volatile var publishedUri: Uri? = null,
     @Volatile var publishedFile: File? = null,
@@ -515,9 +534,6 @@ internal class TimelineVideoCompositorSettings(
   override fun getOutputSize(inputSizes: List<Size>) = Size(plan.width, plan.height)
 
   override fun getOverlaySettings(inputId: Int, presentationTimeUs: Long): OverlaySettings {
-    if (inputId == CLOCK_SEQUENCE_INDEX) {
-      return StaticOverlaySettings.Builder().setAlphaScale(0f).build()
-    }
     if (inputId != VIDEO_SEQUENCE_INDEX) return StaticOverlaySettings.Builder().build()
     val timeMs = (presentationTimeUs / 1_000L).coerceIn(0L, plan.durationMs)
     val clip = plan.clips.firstOrNull { timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs }
@@ -536,7 +552,6 @@ internal class TimelineVideoCompositorSettings(
   }
 
   private companion object {
-    const val CLOCK_SEQUENCE_INDEX = 0
     const val VIDEO_SEQUENCE_INDEX = 1
   }
 }

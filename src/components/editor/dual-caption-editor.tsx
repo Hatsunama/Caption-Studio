@@ -53,6 +53,7 @@ export function DualCaptionEditor(props: {
   const [drafts, setDrafts] = useState<Record<string, DualCaptionDraft>>(() => dualCaptionDraftsFromPairs(props.pairs));
   const [journalReady, setJournalReady] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [journalError, setJournalError] = useState<string>();
   const wasVisibleRef = useRef(false);
   const committedRef = useRef<Record<string, DualCaptionDraft>>(dualCaptionDraftsFromPairs(props.pairs));
   const sourceDraftsRef = useRef<Record<string, DualCaptionDraft>>(committedRef.current);
@@ -69,7 +70,10 @@ export function DualCaptionEditor(props: {
     committedRef.current = sourceDrafts;
     setDrafts(sourceDrafts);
     setJournalReady(false);
+    setJournalError(undefined);
+    let active = true;
     void readEditorDraftJournal(props.projectId, journalKind).then((journal) => {
+      if (!active) return;
       const recovered = decodeDualDraft(journal?.payload, props.pairs.map((pair) => pair.source.id));
       const committed = sourceDraftsRef.current;
       if (!recovered) {
@@ -92,7 +96,13 @@ export function DualCaptionEditor(props: {
           { text: 'Restore', onPress: () => { setDrafts(mergeRecoveredDualCaptionDrafts(recovered, sourceDraftsRef.current)); setJournalReady(true); } },
         ],
       );
-    }).catch(() => setJournalReady(true));
+    }).catch(() => {
+      if (active) {
+        setJournalError('Dual-subtitle recovery storage could not be read. Save your changes before leaving this editor.');
+        setJournalReady(true);
+      }
+    });
+    return () => { active = false; };
   }, [journalKind, props.baseRevision, props.pairs, props.projectId, props.visible, sourceDrafts]);
 
   useEffect(() => {
@@ -101,10 +111,16 @@ export function DualCaptionEditor(props: {
       void clearEditorDraftJournal(props.projectId, journalKind);
       return;
     }
+    let active = true;
     const timer = setTimeout(() => {
-      void writeEditorDraftJournal(props.projectId, journalKind, props.baseRevision, displayDrafts);
+      void writeEditorDraftJournal(props.projectId, journalKind, props.baseRevision, displayDrafts)
+        .then(() => { if (active) setJournalError(undefined); })
+        .catch(() => { if (active) setJournalError('Dual-subtitle recovery could not be saved. Keep this editor open until you save.'); });
     }, 600);
-    return () => clearTimeout(timer);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [displayDrafts, journalKind, journalReady, props.baseRevision, props.busy, props.projectId, props.visible, sourceDrafts]);
 
   const edits = useMemo(() => props.pairs.flatMap((pair) => {
@@ -244,6 +260,11 @@ export function DualCaptionEditor(props: {
         </ScrollView>
 
         <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: 14, paddingBottom: Math.max(14, insets.bottom), borderTopWidth: 1, borderTopColor: chrome.hairline, backgroundColor: chrome.background }}>
+          {journalError ? (
+            <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
+              {journalError}
+            </Text>
+          ) : null}
           {props.errorMessage ? (
             <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
               {props.errorMessage}

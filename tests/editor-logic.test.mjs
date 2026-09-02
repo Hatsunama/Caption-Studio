@@ -1082,6 +1082,8 @@ test('caption editing opens the full timestamped script and keeps text-layer edi
   assert.match(scriptEditor, /Join previous/);
   assert.match(scriptEditor, /Join next/);
   assert.match(scriptEditor, /onSave\(draftCaptions\)/);
+  assert.match(scriptEditor, /Caption recovery storage could not be read/);
+  assert.match(scriptEditor, /if \(!active\) return/);
 });
 
 test('selected captions expose direct timeline split and join commands', () => {

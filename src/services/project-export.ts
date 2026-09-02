@@ -7,6 +7,7 @@ import { buildTimelineRenderPlan, collectUnresolvedFontFamilies, toNativeRenderP
 import { serializeAss, serializeSrt, visibleCaptions } from '@/lib/subtitle-export';
 import { requireBackgroundProcessingConsent } from '@/services/background-processing-consent';
 import {
+  assertVideoExportDelivery,
   createExportCacheFileName,
   estimateVideoExportStorageBytes,
   prepareCaptionStudioExportCache,
@@ -42,10 +43,14 @@ export async function exportProjectVideo(project: CaptionProject) {
     const releaseArtifactProtection = protectTemporaryVideoExportArtifacts(outputUri);
     try {
       session.throwIfCancelled();
-      return await session.startNative(() => CaptionMedia.exportTimelineVideo(
+      const nativeResult = await session.startNative(() => CaptionMedia.exportTimelineVideo(
         outputUri.replace(/^file:\/\//, ''),
         toNativeRenderPlan(renderPlan),
       ));
+      const delivered = assertVideoExportDelivery(nativeResult);
+      await session.waitFor(confirmLocalExportFile(outputUri, delivered.sizeBytes));
+      await session.waitFor(deliverExportedVideo(outputUri));
+      return delivered;
     } finally {
       try {
         await removeTemporaryVideoExportArtifacts(outputUri);
@@ -96,4 +101,28 @@ export function userFacingExportError(caught: unknown, fallback = 'The video cou
   const cleaned = firstLine.replace(/^\[[\w.]+\]\s*/, '');
   if (!cleaned || cleaned.length > 180) return fallback;
   return cleaned;
+}
+
+async function confirmLocalExportFile(outputUri: string, sizeBytes: number) {
+  const info = await FileSystem.getInfoAsync(outputUri);
+  if (!info.exists || info.isDirectory) {
+    throw new Error('The exported video file is missing.');
+  }
+  if (info.size <= 0) {
+    throw new Error('The exported video file is empty.');
+  }
+  if (info.size !== sizeBytes) {
+    throw new Error('The exported video file is incomplete.');
+  }
+}
+
+async function deliverExportedVideo(outputUri: string) {
+  if (!await Sharing.isAvailableAsync()) {
+    throw new Error('Android file sharing is unavailable on this device.');
+  }
+  await Sharing.shareAsync(outputUri, {
+    mimeType: 'video/mp4',
+    dialogTitle: 'Save exported video',
+    UTI: 'public.mpeg-4',
+  });
 }
