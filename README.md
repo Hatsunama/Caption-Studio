@@ -37,25 +37,46 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. Change `$Serial` if `adb devices` shows a different device serial.
+5. Run this PowerShell script. It accepts exactly one authorized Android device and never uninstalls the app or clears its data.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
 
-$Serial = 'PASTE-YOUR-DEVICE-SERIAL-HERE'
 $Version = '1.4.2'
 $FileName = 'caption-studio-android.apk'
 $Url = "https://github.com/Hatsunama/Caption-Studio/releases/download/v$Version/$FileName"
 $ExpectedHash = 'BEB3A1A86A16152ED6E09F3574E9E0E0FE6D8A519544B81351F12B2354886038'
 $Package = 'com.hatsunama.captionstudio'
-$Apk = Join-Path $env:TEMP "caption-studio-$Version-android.apk"
+$TempDir = Join-Path $env:TEMP "CaptionStudioInstaller-$PID"
+$Apk = Join-Path $TempDir $FileName
 
 try {
-    $state = (adb -s $Serial get-state).Trim()
-    if ($state -ne 'device') {
-        throw "Replace `$Serial with your device serial from `adb devices -l`, then unlock the phone and approve USB debugging."
+    if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
+        throw 'adb was not found. Install Android SDK Platform Tools and add it to PATH.'
     }
 
+    adb start-server | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'adb could not start.'
+    }
+
+    $Devices = @(adb devices | ForEach-Object {
+        if ($_ -match '^(\S+)\s+device(?:\s|$)') { $Matches[1] }
+    })
+    if ($Devices.Count -eq 0) {
+        throw 'No authorized Android device is ready. Unlock the phone, enable USB debugging, and approve this computer.'
+    }
+    if ($Devices.Count -gt 1) {
+        throw "Multiple authorized Android devices are connected: $($Devices -join ', '). Disconnect all but the intended phone."
+    }
+
+    $Serial = $Devices[0]
+    $state = (adb -s $Serial get-state).Trim()
+    if ($state -ne 'device') {
+        throw "Device $Serial is not ready (state: $state)."
+    }
+
+    New-Item -ItemType Directory -Path $TempDir | Out-Null
     Invoke-WebRequest -Uri $Url -OutFile $Apk
 
     $ActualHash = (Get-FileHash -LiteralPath $Apk -Algorithm SHA256).Hash
@@ -65,29 +86,26 @@ try {
 
     adb -s $Serial install -r --no-streaming $Apk
     if ($LASTEXITCODE -ne 0) {
-        throw "ADB install failed."
+        throw 'ADB update failed. The existing app was not uninstalled and its data was not cleared.'
     }
 
+    adb -s $Serial shell pm enable $Package | Out-Null
+    adb -s $Serial shell monkey -p $Package -c android.intent.category.LAUNCHER 1 | Out-Null
     adb -s $Serial shell dumpsys package $Package |
         Select-String 'versionName=|versionCode=|targetSdk='
 }
 finally {
-    if (Test-Path -LiteralPath $Apk) {
-        [IO.File]::Delete($Apk)
+    if (Test-Path -LiteralPath $TempDir) {
+        Remove-Item -LiteralPath $TempDir -Recurse -Force
     }
 }
 ```
 
 The first time `adb devices` runs, unlock the phone. Tap **Allow** on **Allow USB debugging?** and optionally check **Always allow from this computer**. Run the script again if the device initially says `unauthorized`.
 
-If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the phone already has Caption Studio installed with a different signing key. To try preserving the phone's local Caption Studio data, rerun the script with these two lines inserted immediately before the `adb -s $Serial install -r --no-streaming $Apk` line:
+If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, stop. The installed app uses a different signing identity. Do not uninstall it if its local projects or drafts matter; an uninstall can make that data unrecoverable.
 
-```powershell
-adb -s $Serial uninstall -k $Package
-if ($LASTEXITCODE -ne 0) {
-    throw "ADB uninstall failed."
-}
-```
+The existing Seeker test installation uses the earlier debug signing lineage, so it cannot accept the production-signed APK above. Its export-fix compatibility update is the pinned prerelease [`v1.4.2-export-fix-seeker.1`](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.2-export-fix-seeker.1). Use the certificate-checking PowerShell installer in that release's notes; it refuses any phone or APK whose signing identity does not match before running an in-place `adb install -r` update.
 
 If that still fails, uninstall Caption Studio from the phone first, then run the recommended script again. A clean uninstall removes that phone's local Caption Studio drafts and projects.
 
