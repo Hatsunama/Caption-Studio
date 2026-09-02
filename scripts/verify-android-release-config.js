@@ -4,6 +4,21 @@ const path = require('node:path');
 const REQUIRED_ANDROID_SDK = '36';
 const REQUIRED_MIN_ANDROID_SDK = '24';
 const REQUIRED_GRADLE_DISTRIBUTION_SHA256 = '60ea723356d81263e8002fec0fcf9e2b0eee0c0850c7a3d7ab0a63f2ccc601f3';
+const PRODUCTION_ANDROID_PACKAGE = 'com.hatsunama.captionstudio';
+const FIXED_ANDROID_PACKAGE = 'com.hatsunama.captionstudio.fixed';
+const APPROVED_ANDROID_PACKAGES = new Set([
+  PRODUCTION_ANDROID_PACKAGE,
+  FIXED_ANDROID_PACKAGE,
+]);
+
+function resolveExpectedAndroidPackage(environment = process.env) {
+  const expectedPackage =
+    environment.CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE || PRODUCTION_ANDROID_PACKAGE;
+  if (!APPROVED_ANDROID_PACKAGES.has(expectedPackage)) {
+    throw new Error(`Unsupported Android application id requested for release verification: ${expectedPackage}`);
+  }
+  return expectedPackage;
+}
 
 function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.filename), '..')) {
   const appBuild = readRequired(path.join(projectRoot, 'android', 'app', 'build.gradle'));
@@ -17,6 +32,7 @@ function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.
     path.join(projectRoot, 'node_modules', 'react-native', 'gradle', 'libs.versions.toml'),
   );
   const appConfig = JSON.parse(readRequired(path.join(projectRoot, 'app.json')));
+  const expectedAndroidPackage = resolveExpectedAndroidPackage();
 
   requireText(appBuild, "findProperty('CAPTION_STUDIO_RELEASE_STORE_FILE')", 'release keystore property');
   requireText(appBuild, "findProperty('CAPTION_STUDIO_RELEASE_STORE_PASSWORD')", 'release keystore password property');
@@ -66,8 +82,10 @@ function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.
   );
 
   const androidConfig = appConfig.expo?.android;
-  if (androidConfig?.package !== 'com.hatsunama.captionstudio') {
-    throw new Error('app.json does not declare the production Android application id.');
+  if (androidConfig?.package !== expectedAndroidPackage) {
+    throw new Error(
+      `app.json Android application id must be ${expectedAndroidPackage}; found ${androidConfig?.package ?? 'nothing'}.`,
+    );
   }
   if (!Number.isInteger(androidConfig.versionCode) || androidConfig.versionCode < 1) {
     throw new Error('app.json does not declare a valid positive Android versionCode.');
@@ -116,4 +134,9 @@ function escapeRegExp(value) {
 
 if (require.main === module) verifyAndroidReleaseConfig();
 
-module.exports = { verifyAndroidReleaseConfig };
+module.exports = {
+  FIXED_ANDROID_PACKAGE,
+  PRODUCTION_ANDROID_PACKAGE,
+  resolveExpectedAndroidPackage,
+  verifyAndroidReleaseConfig,
+};
