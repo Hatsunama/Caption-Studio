@@ -98,3 +98,53 @@ function positiveFinite(value: number, label: string): number {
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
+
+export type VideoExportDelivery = {
+  outputUri: string;
+  mediaUri: string;
+  durationMs: number;
+  width: number;
+  height: number;
+  sizeBytes: number;
+};
+
+export function assertVideoExportDelivery(value: unknown): VideoExportDelivery {
+  if (value === null || typeof value !== 'object') {
+    throw new Error('The exporter did not return a video.');
+  }
+  const record = value as Record<string, unknown>;
+  const sizeBytes = requiredPositiveInteger(record.sizeBytes, 'exported file size');
+  if (!Number.isSafeInteger(sizeBytes)) {
+    throw new Error('The exported video is too large to verify.');
+  }
+  return {
+    outputUri: requiredNonBlankString(record.outputUri, 'exported video'),
+    mediaUri: requiredNonBlankString(record.mediaUri, 'media library copy'),
+    durationMs: requiredPositiveInteger(record.durationMs, 'exported duration'),
+    width: requiredEvenDimension(record.width, 'exported width'),
+    height: requiredEvenDimension(record.height, 'exported height'),
+    sizeBytes,
+  };
+}
+
+function requiredNonBlankString(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`The ${label} is missing.`);
+  }
+  return value;
+}
+
+function requiredPositiveInteger(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`The ${label} is invalid.`);
+  }
+  return value;
+}
+
+function requiredEvenDimension(value: unknown, label: string): number {
+  const dimension = requiredPositiveInteger(value, label);
+  if (dimension < 2 || dimension > 3840 || dimension % 2 !== 0) {
+    throw new Error(`The ${label} is invalid.`);
+  }
+  return dimension;
+}

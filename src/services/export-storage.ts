@@ -8,6 +8,7 @@ import {
 } from '@/services/export-storage-policy';
 
 export {
+  assertVideoExportDelivery,
   createExportCacheFileName,
   estimateVideoExportStorageBytes,
   isCaptionStudioExportCacheArtifact,
