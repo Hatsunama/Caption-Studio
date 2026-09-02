@@ -105,7 +105,7 @@ The first time `adb devices` runs, unlock the phone. Tap **Allow** on **Allow US
 
 If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, stop. The installed app uses a different signing identity. Do not uninstall it if its local projects or drafts matter; an uninstall can make that data unrecoverable.
 
-The existing Seeker test installation uses the earlier debug signing lineage, so it cannot accept the production-signed APK above. Its export-fix compatibility update is the pinned prerelease [`v1.4.2-export-fix-seeker.1`](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.2-export-fix-seeker.1). Use the certificate-checking PowerShell installer in that release's notes; it refuses any phone or APK whose signing identity does not match before running an in-place `adb install -r` update.
+The current Seeker installation is production-signed with certificate SHA-256 `CB58765460B1C4BD30F0FC86331B37D7F27640034509C0690E63EF6A24EA2A8A`. Do not install the legacy debug-lineage prerelease `v1.4.2-export-fix-seeker.1` over it. A data-preserving update must be signed by the same production key; the certificate-checking installer intentionally refuses every mismatch before running `adb install -r`. Never uninstall or clear the app to bypass that refusal when local projects matter.
 
 If that still fails, uninstall Caption Studio from the phone first, then run the recommended script again. A clean uninstall removes that phone's local Caption Studio drafts and projects.
 
