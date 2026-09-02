@@ -67,19 +67,21 @@ export function DualCaptionEditor(props: {
   useEffect(() => {
     if (!props.visible) {
       openSessionRef.current = undefined;
-      setJournalReady(false);
       return;
     }
     if (openSessionRef.current === props.trackId) return;
     openSessionRef.current = props.trackId;
     const openingDrafts = sourceDraftsRef.current;
     committedRef.current = openingDrafts;
-    setDrafts(openingDrafts);
-    setJournalReady(false);
-    setJournalError(undefined);
     const allowedIds = Object.keys(openingDrafts);
     let active = true;
-    void readEditorDraftJournal(props.projectId, journalKind).then((journal) => {
+    void Promise.resolve().then(() => {
+      if (!active) return undefined;
+      setDrafts(openingDrafts);
+      setJournalReady(false);
+      setJournalError(undefined);
+      return readEditorDraftJournal(props.projectId, journalKind);
+    }).then((journal) => {
       if (!active) return;
       const recovered = decodeDualDraft(journal?.payload, allowedIds);
       const nextCommitted = sourceDraftsRef.current;
