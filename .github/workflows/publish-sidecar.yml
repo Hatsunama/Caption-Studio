@@ -68,8 +68,9 @@ jobs:
         run: node ./scripts/configure-sidecar-release.mjs "$VERSION" "$VERSION_CODE"
 
       - name: Generate clean Android project
-        env:
-          NODE_ENV: production
+    env:
+      NODE_ENV: production
+      CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE: com.hatsunama.captionstudio.fixed
         run: |
           npx expo prebuild --platform android --clean --no-install
           node ./scripts/patch-react-native-gradle.js
