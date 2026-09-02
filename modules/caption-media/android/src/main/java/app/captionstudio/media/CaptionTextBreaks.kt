@@ -72,9 +72,9 @@ internal object CaptionTextBreaks {
     val totalWeight = weights.sum().coerceAtLeast(1)
     var consumed = 0
     return tokens.mapIndexed { index, token ->
-      val tokenStart = if (index == 0) rangeStart else rangeStart + durationMs * consumed / totalWeight
+      val tokenStart = if (index == 0) rangeStart else rangeStart + Math.round(durationMs.toDouble() * consumed / totalWeight)
       consumed += weights[index]
-      val tokenEnd = if (index == tokens.lastIndex) rangeEnd else rangeStart + durationMs * consumed / totalWeight
+      val tokenEnd = if (index == tokens.lastIndex) rangeEnd else rangeStart + Math.round(durationMs.toDouble() * consumed / totalWeight)
       SpreadTimedToken(token, tokenStart, maxOf(tokenStart + 10, tokenEnd))
     }
   }

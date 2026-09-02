@@ -185,16 +185,50 @@ test('dual-subtitle language ownership stays canonical and does not overclaim ty
 });
 
 test('dual-subtitle refresh commits translated text instead of leaving a pending draft', async () => {
-  const [dualEditor, workflow, commit, controller] = await Promise.all([
+  const [dualEditor, editor, workflow, commit, controller] = await Promise.all([
     readFile(new URL('src/components/editor/dual-caption-editor.tsx', repositoryRoot), 'utf8'),
+    readFile(new URL('src/app/editor.tsx', repositoryRoot), 'utf8'),
     readFile(new URL('src/services/project-caption-translation.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/lib/caption-translation-commit.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/hooks/use-project-caption-translation.ts', repositoryRoot), 'utf8'),
   ]);
   assert.match(dualEditor, /displayDrafts = adoptCommittedDualCaptionDrafts/);
-  assert.match(dualEditor, /mergeRecoveredDualCaptionDrafts/);
+  assert.match(dualEditor, /shouldRestoreDualCaptionJournal/);
   assert.match(dualEditor, /if \(!props\.visible \|\| !journalReady \|\| props\.busy\) return/);
+  assert.match(dualEditor, /Keep current translation/);
+  assert.match(dualEditor, /pendingEmpty/);
+  assert.doesNotMatch(dualEditor, /props\.baseRevision, props\.pairs, props\.projectId, props\.visible, sourceDrafts/);
+  assert.match(editor, /!cue\.text\.trim\(\) && \(cue\.status === 'pending' \|\| cue\.status === 'stale'\)/);
+  assert.match(editor, /setTranslationStackGap/);
+  assert.match(editor, /key=\{selectedTranslationTrack\?\.id \?\? 'none'\}/);
+  assert.doesNotMatch(editor, /cues\.map\(\(cue\) => `\$\{cue\.sourceCaptionId\}:\$\{cue\.text\}`\)/);
+  assert.match(editor, /projectRef\.current = next;\s*setProject\(next\);/);
+  assert.match(editor, /Closer together/);
+  assert.match(editor, /Farther apart/);
+  assert.match(editor, /filter\(\(cue\) => !cue\.text\.trim\(\)\)/);
+  assert.match(editor, /position: _ignoredPosition/);
+  assert.doesNotMatch(editor, /onSelectTranslationCaption[\s\S]{0,280}setDualCaptionEditorOpen\(true\)/);
   assert.match(workflow, /assertAutomaticTranslationWroteText\(captions, previousById, writes\)/);
   assert.match(commit, /second language is still empty/);
   assert.match(controller, /setError\(caught instanceof Error \? caught\.message/);
+});
+
+test('English-target translation review and rounded spread timing stay fail-closed', async () => {
+  const [service, languages, workflow, commit, transcription, breaks] = await Promise.all([
+    readFile(new URL('src/services/caption-translation.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/lib/caption-languages.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/services/project-caption-translation.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/lib/caption-translation-commit.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/services/project-transcription.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('modules/caption-media/android/src/main/java/app/captionstudio/media/CaptionTextBreaks.kt', repositoryRoot), 'utf8'),
+  ]);
+  assert.match(languages, /export function isLikelyUntranslatedCaption/);
+  assert.match(service, /repairUntranslatedCaptions/);
+  assert.doesNotMatch(service, /targetLanguage !== 'zh-Hans' && operation.targetLanguage !== 'zh-Hant'/);
+  assert.doesNotMatch(service, /updated\.set\(caption\.id, caption\.text\)/);
+  assert.match(commit, /isLikelyUntranslatedCaption\(source, translated, targetLanguage\)/);
+  assert.match(workflow, /needsReviewById: translated\.needsReview/);
+  assert.match(workflow, /targetLanguage: track\.languageTag/);
+  assert.match(transcription, /allSourcesReady/);
+  assert.match(breaks, /Math\.round\(durationMs\.toDouble\(\) \* consumed \/ totalWeight\)/);
 });

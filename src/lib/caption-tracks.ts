@@ -25,11 +25,17 @@ export const ENGLISH_TRACK_ID = 'translation-en';
 
 const DEFAULT_TRANSLATION_TRACK_STYLE = {
   font: { id: 'system-sans', family: 'sans-serif', source: 'system' as const },
-  fontSize: 38,
-  box: { width: 0.9, height: 0.14 },
+  fontSize: 34,
+  fontWeight: '700' as const,
+  textColor: '#FFFFFF',
+  box: { width: 0.9, height: 0.12 },
   maxLines: 2,
   animation: { id: 'none' as const, intensity: 1, durationMs: 220 },
 } satisfies CaptionStylePatch;
+
+export const DEFAULT_TRANSLATION_STACK_GAP = 0.028;
+export const MIN_TRANSLATION_STACK_GAP = 0.008;
+export const MAX_TRANSLATION_STACK_GAP = 0.18;
 
 export type CaptionPair = {
   trackId: string;
@@ -51,6 +57,7 @@ export type TranslationTrackOptions = {
   origin?: TranslationCaptionTrack['origin'];
   provider?: TranslationCaptionTrack['provider'];
   visible?: boolean;
+  stackGap?: number;
   styleOverride?: CaptionStylePatch;
   translations?: Readonly<Record<string, string>>;
   updatedAt?: string;
@@ -138,6 +145,7 @@ export function createTranslationCaptionTrack(project: CaptionProject, options: 
     visible: options.visible ?? true,
     origin: provider.id === 'litertlm' ? 'automatic' : 'manual',
     provider,
+    stackGap: clampStackGap(options.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP),
     styleOverride: options.styleOverride,
     cues: project.captions.map((caption) => createCue(
       options.id,
@@ -319,10 +327,7 @@ export function projectPrimaryCaptionLanguage(project: CaptionProject): string {
   if (families.size !== 1) {
     throw new Error('Dual subtitles currently require every video clip to use the same source language.');
   }
-  const projectLanguage = canonicalCaptionLanguageTag(project.transcription.language);
-  return sameCaptionLanguageFamily(projectLanguage, languages[0])
-    ? projectLanguage
-    : languages[0];
+  return languages[0];
 }
 
 export function projectEnglishChineseCaptionLanguage(project: CaptionProject): EnglishChineseCaptionLanguage {
@@ -387,10 +392,21 @@ export function resolveCaptionPairs(project: CaptionProject, trackId: string): C
   return project.captions.map((source) => {
     const translation = cues.get(source.id) ?? createCue(track.id, source, '');
     const primaryStyle = mergeStyle(project.projectStyle, source.styleOverride);
-    const mergedStyle = mergeStyle(mergeStyle(primaryStyle, track.styleOverride), translation.styleOverride);
-    const style = track.styleOverride?.position || translation.styleOverride?.position
-      ? mergedStyle
-      : { ...mergedStyle, position: relativeTranslationPosition(primaryStyle, mergedStyle) };
+    const translationStyle = mergeStyle(
+      mergeStyle(mergeStyle(primaryStyle, DEFAULT_TRANSLATION_TRACK_STYLE), track.styleOverride),
+      translation.styleOverride,
+    );
+    const stacked = !track.styleOverride?.position && !translation.styleOverride?.position;
+    const stackedLayout = stacked
+      ? stackedTranslationLayout(primaryStyle, translationStyle, track.stackGap)
+      : undefined;
+    const style = stackedLayout
+      ? {
+          ...translationStyle,
+          position: stackedLayout.position,
+          box: stackedLayout.box,
+        }
+      : translationStyle;
     return {
       trackId: track.id,
       languageTag: track.languageTag,
@@ -543,21 +559,76 @@ function translationTargetStyle(custom: CaptionStylePatch | undefined) {
   };
 }
 
-function relativeTranslationPosition(primary: CaptionStyle, translation: CaptionStyle) {
-  const horizontalLimit = Math.max(0, (1 - Math.min(1, translation.box.width)) / 2);
-  const verticalLimit = Math.max(0, (1 - Math.min(1, translation.box.height)) / 2);
-  const below = primary.position.y + 0.11;
-  const y = below <= 1 - verticalLimit
-    ? below
-    : primary.position.y - 0.11;
+export function setTranslationStackGap(
+  project: CaptionProject,
+  trackId: string,
+  stackGap: number,
+  updatedAt = project.updatedAt,
+) {
+  const nextGap = clampStackGap(stackGap);
+  return mapTranslationTrack(project, trackId, (track) => ({
+    ...track,
+    stackGap: nextGap,
+    styleOverride: omitStylePosition(track.styleOverride),
+    cues: track.cues.map((cue) => ({
+      ...cue,
+      styleOverride: omitStylePosition(cue.styleOverride),
+    })),
+  }), updatedAt);
+}
+
+export function stackedTranslationPosition(
+  primary: CaptionStyle,
+  translation: CaptionStyle,
+  stackGap = DEFAULT_TRANSLATION_STACK_GAP,
+) {
+  return stackedTranslationLayout(primary, translation, stackGap).position;
+}
+
+export function stackedTranslationLayout(
+  primary: CaptionStyle,
+  translation: CaptionStyle,
+  stackGap = DEFAULT_TRANSLATION_STACK_GAP,
+) {
+  const gap = clampStackGap(stackGap);
+  const width = clamp(translation.box.width, 0.2, 1);
+  const minHeight = 0.06;
+  const desiredHeight = clamp(translation.box.height, minHeight, 0.4);
+  const primaryBottom = primary.position.y + Math.max(0.04, primary.box.height / 2);
+  const canvasBottom = 0.98;
+  let top = primaryBottom + gap;
+  let height = desiredHeight;
+  if (top + height > canvasBottom) {
+    height = Math.max(minHeight, canvasBottom - top);
+  }
+  if (top + minHeight > canvasBottom) {
+    height = minHeight;
+    top = Math.max(primaryBottom + MIN_TRANSLATION_STACK_GAP, canvasBottom - height);
+  }
+  const y = top + height / 2;
+  const horizontalLimit = Math.max(0.05, (1 - width) / 2);
   return {
-    x: clamp(primary.position.x, horizontalLimit, 1 - horizontalLimit),
-    y: clamp(y, verticalLimit, 1 - verticalLimit),
+    position: {
+      x: clamp(primary.position.x, horizontalLimit, 1 - horizontalLimit),
+      y: Math.max(primary.position.y + 0.02, y),
+    },
+    box: { width, height },
   };
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, value));
+}
+
+function clampStackGap(value: number | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_TRANSLATION_STACK_GAP;
+  return clamp(value, MIN_TRANSLATION_STACK_GAP, MAX_TRANSLATION_STACK_GAP);
+}
+
+function omitStylePosition(patch: CaptionStylePatch | undefined) {
+  if (!patch) return undefined;
+  const { position: _position, ...rest } = patch;
+  return Object.keys(rest).length > 0 ? rest : undefined;
 }
 
 function requiredDisplayName(value: string) {

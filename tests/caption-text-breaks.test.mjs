@@ -93,3 +93,16 @@ test('edited captions that no longer match Whisper tokens still highlight across
   assert.ok(spread.every((word) => word.endMs > word.startMs));
   assert.deepEqual(spread.map((word) => word.text), ['hello', 'there', 'extra']);
 });
+
+test('spread highlight timing rounds the same way native export should', () => {
+  const spread = captionPlaybackTimedWords(
+    [],
+    'a b c',
+    { id: 'caption', startMs: 0, endMs: 1_000 },
+  );
+  assert.deepEqual(spread.map((word) => [word.startMs, word.endMs]), [
+    [0, 333],
+    [333, 667],
+    [667, 1_000],
+  ]);
+});

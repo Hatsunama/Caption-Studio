@@ -45,8 +45,12 @@ import {
   removeTranslationCaptionTrack,
   resolveCaptionPairs,
   setTranslationCueStyle,
+  setTranslationStackGap,
   setTranslationTrackStyle,
   setTranslationTrackVisibility,
+  DEFAULT_TRANSLATION_STACK_GAP,
+  MAX_TRANSLATION_STACK_GAP,
+  MIN_TRANSLATION_STACK_GAP,
 } from '@/lib/caption-tracks';
 import { deletePersonKeyframe, resolvePersonTransform, upsertPersonKeyframe } from '@/lib/person-motion';
 import {
@@ -198,10 +202,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const projectRef = useRef(project);
   const ownedAssetLedgerRef = useRef(createProjectOwnedAssetLedger(initialProject));
   const linkedPermissionLedgerRef = useRef(createLinkedMediaPermissionLedger(initialProject));
-
-  useEffect(() => {
-    projectRef.current = project;
-  }, [project]);
   const [selectedCaptionId, setSelectedCaptionId] = useState<string>();
   const [selectedLayerId, setSelectedLayerId] = useState('captions');
   const [selectedClipId, setSelectedClipId] = useState<string>();
@@ -539,11 +539,20 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       if (projectRef.current !== baseline) {
         throw new Error('The project changed while both languages were synchronizing. Save again to avoid overwriting newer edits.');
       }
-      await commitPersistedProject(next, (persisted) => {
-        pushUndo(baseline);
-        projectRef.current = persisted;
-        setProject(persisted);
-      });
+      pushUndo(baseline);
+      projectRef.current = next;
+      setProject(next);
+      try {
+        await commitPersistedProject(next, (persisted) => {
+          projectRef.current = persisted;
+          setProject(persisted);
+        });
+      } catch (caught) {
+        projectRef.current = baseline;
+        setProject(baseline);
+        if (undoStackRef.current.at(-1) === baseline) undoStackRef.current.pop();
+        throw caught;
+      }
     },
   });
   const translationProgress = translationController.progress;
@@ -685,10 +694,25 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const queueCaptionStyleChange = (label: string, patch: CaptionStylePatch) => {
+    if (translationTrackSelected && selectedTranslationTrack) {
+      const before = projectRef.current;
+      const next = setTranslationTrackStyle(before, selectedTranslationTrack.id, patch, new Date().toISOString());
+      projectRef.current = next;
+      setProject(next);
+      void commitPersistedProject(next, (persisted) => {
+        pushUndo(before);
+        projectRef.current = persisted;
+        setProject(persisted);
+      }).catch((caught) => {
+        projectRef.current = before;
+        setProject(before);
+        setError(caught instanceof Error ? caught.message : 'The second-language style could not be saved.');
+      });
+      return;
+    }
     setPendingChange({
       label,
       patch,
-      translationTrackId: translationTrackSelected ? selectedTranslationTrack?.id : undefined,
     });
   };
 
@@ -785,7 +809,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       setSelectedTranslationTrackId(existing.id);
       setDualCaptionEditorOpen(true);
       const pendingIds = existing.cues
-        .filter((cue) => cue.status === 'pending' || cue.status === 'stale')
+        .filter((cue) => !cue.text.trim() && (cue.status === 'pending' || cue.status === 'stale'))
         .map((cue) => cue.sourceCaptionId);
       if (
         pendingIds.length > 0
@@ -822,11 +846,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       });
       if (!prepared.automatic) return;
       const translationBaseline = projectRef.current;
-      void translationController.refresh(
-        prepared.trackId,
-        visibleTimelineCaptions(translationBaseline.captions).map((caption) => caption.id),
-        translationBaseline,
-      );
+      const track = translationBaseline.captionTracks.translations.find((candidate) => candidate.id === prepared.trackId);
+      const pendingIds = (track?.cues ?? [])
+        .filter((cue) => !cue.text.trim())
+        .map((cue) => cue.sourceCaptionId);
+      if (pendingIds.length === 0) return;
+      void translationController.refresh(prepared.trackId, pendingIds, translationBaseline);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Dual subtitles could not be enabled.');
     }
@@ -1028,6 +1053,49 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       projectRef.current = next;
       return next;
     });
+  };
+
+  const updateTranslationTransform = (patch: CaptionStylePatch) => {
+    const track = selectedTranslationTrack;
+    if (!track) return;
+    const { position: _ignoredPosition, ...sizePatch } = patch;
+    if (sizePatch.box === undefined && sizePatch.fontSize === undefined && sizePatch.rotation === undefined) return;
+    setProject((current) => {
+      const next = setTranslationTrackStyle(current, track.id, sizePatch, new Date().toISOString());
+      projectRef.current = next;
+      return next;
+    });
+  };
+
+  const commitTranslationTrackPatch = (next: CaptionProject, before: CaptionProject) => {
+    void commitPersistedProject(next, (persisted) => {
+      pushUndo(before);
+      projectRef.current = persisted;
+      setProject(persisted);
+    }).catch(() => undefined);
+  };
+
+  const adjustTranslationGap = (delta: number) => {
+    const track = selectedTranslationTrack;
+    if (!track) return;
+    const before = projectRef.current;
+    commitTranslationTrackPatch(
+      setTranslationStackGap(before, track.id, (track.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) + delta),
+      before,
+    );
+  };
+
+  const adjustTranslationFontSize = (delta: number) => {
+    const track = selectedTranslationTrack;
+    const currentSize = selectedTranslationPair?.style.fontSize ?? track?.styleOverride?.fontSize ?? 34;
+    if (!track) return;
+    const before = projectRef.current;
+    commitTranslationTrackPatch(
+      setTranslationTrackStyle(before, track.id, {
+        fontSize: Math.min(96, Math.max(14, currentSize + delta)),
+      }),
+      before,
+    );
   };
 
   const updateVideoTransform = (patch: VideoTransformPatch) => {
@@ -1653,6 +1721,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                       words={[]}
                       projectStyle={pair.style}
                       currentMs={currentMs}
+                      interactive={activeTool !== 'video' && selectedLayerId === pair.trackId && selectedCaptionId === pair.source.id}
+                      onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
+                      onTransform={(patch) => {
+                        const { position: _ignoredPosition, ...sizePatch } = patch;
+                        updateTranslationTransform(sizePatch);
+                      }}
+                      onTransformEnd={finishHistoryInteraction}
                     />
                   ))}
                 </View>
@@ -1807,7 +1882,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedClipId(undefined);
             setSelectedAudioClipId(undefined);
             setActiveTool('captions');
-            setDualCaptionEditorOpen(true);
           }}
           onSelectClip={(clipId) => {
             transport.pause();
@@ -1948,15 +2022,35 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             <Action label="Add text layer" onPress={addTextLayer} />
             <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
           </ScrollView>
-        ) : translationTrackSelected && selectedTranslationPair ? (
+        ) : translationTrackSelected && selectedTranslationTrack ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
             <Action label="Edit both languages" color={chrome.accent} onPress={() => setDualCaptionEditorOpen(true)} />
-            <Action label="Refresh this translation" onPress={() => requestTranslationRefresh([selectedTranslationPair.source.id])} />
-            <Action label={selectedTranslationTrack?.visible ? 'Hide second language' : 'Show second language'} onPress={() => { void toggleSelectedTranslationTrack(); }} />
-            <Action label="Remove second language" danger onPress={confirmRemoveSelectedTranslationTrack} />
+            <Action label="Closer together" disabled={(selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) <= MIN_TRANSLATION_STACK_GAP} onPress={() => adjustTranslationGap(-0.016)} />
+            <Action
+              label={`Distance ${Math.round((selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) * 100)}`}
+              color="#64E8FF"
+              onPress={() => {
+                const before = projectRef.current;
+                commitTranslationTrackPatch(
+                  setTranslationStackGap(before, selectedTranslationTrack.id, DEFAULT_TRANSLATION_STACK_GAP),
+                  before,
+                );
+              }}
+            />
+            <Action label="Farther apart" disabled={(selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) >= MAX_TRANSLATION_STACK_GAP} onPress={() => adjustTranslationGap(0.016)} />
+            <Action label="Smaller type" onPress={() => adjustTranslationFontSize(-4)} />
+            <Action label={`${Math.round(selectedTranslationPair?.style.fontSize ?? 34)} pt`} color="#64E8FF" onPress={() => setFontBrowserOpen(true)} />
+            <Action label="Larger type" onPress={() => adjustTranslationFontSize(4)} />
+            <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
             <Action label="White" color="#FFFFFF" onPress={() => queueCaptionStyleChange('Translated text color: white', { textColor: '#FFFFFF' })} />
             <Action label="Lime" color="#DFFF35" onPress={() => queueCaptionStyleChange('Translated text color: lime', { textColor: '#DFFF35' })} />
+            <Action label="Cyan" color="#64D2FF" onPress={() => queueCaptionStyleChange('Translated text color: cyan', { textColor: '#64D2FF' })} />
+            <Action label="Yellow" color="#FFE566" onPress={() => queueCaptionStyleChange('Translated text color: yellow', { textColor: '#FFE566' })} />
+            <Action label="Pink" color="#FF8AD4" onPress={() => queueCaptionStyleChange('Translated text color: pink', { textColor: '#FF8AD4' })} />
             <Action label="Uppercase" onPress={() => queueCaptionStyleChange('Uppercase translated captions', { textTransform: 'uppercase' })} />
+            {selectedTranslationPair ? <Action label="Refresh this translation" onPress={() => requestTranslationRefresh([selectedTranslationPair.source.id])} /> : null}
+            <Action label={selectedTranslationTrack.visible ? 'Hide second language' : 'Show second language'} onPress={() => { void toggleSelectedTranslationTrack(); }} />
+            <Action label="Remove second language" danger onPress={confirmRemoveSelectedTranslationTrack} />
           </ScrollView>
         ) : selectedCaption ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
@@ -2047,7 +2141,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       />
       <FontBrowser
         visible={fontBrowserOpen}
-        previewText={selectedTextLayer?.text ?? selectedCaption?.text ?? activeCaption?.text ?? 'Make every word count'}
+        previewText={selectedTextLayer?.text ?? selectedTranslationPair?.translation.text ?? selectedCaption?.text ?? activeCaption?.text ?? 'Make every word count'}
         onClose={() => setFontBrowserOpen(false)}
         onSelect={chooseFont}
       />

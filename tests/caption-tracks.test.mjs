@@ -11,6 +11,7 @@ import {
   projectPrimaryCaptionLanguage,
   resolveCaptionPairs,
   setTranslationCueStyle,
+  setTranslationStackGap,
   setTranslationTrackStyle,
   setTranslationTrackProvider,
   setTranslationTrackVisibility,
@@ -18,6 +19,7 @@ import {
   synchronizeCaptionTracksAfterTranscription,
   updatePairedCaptionText,
   updatePairedCaptionTexts,
+  DEFAULT_TRANSLATION_STACK_GAP,
 } from '../src/lib/caption-tracks.ts';
 import { deleteCaptionBlock, setCaptionTexts, splitVideoClip } from '../src/lib/project-editor.ts';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
@@ -46,7 +48,8 @@ test('English and Chinese cues pair by stable caption identity without duplicati
     family: 'sans-serif',
     source: 'system',
   });
-  assert.equal(track.styleOverride.fontSize, 38);
+  assert.equal(track.styleOverride.fontSize, 34);
+  assert.equal(track.styleOverride.textColor, '#FFFFFF');
   assert.equal(track.styleOverride.position, undefined);
   assert.deepEqual(track.cues.map((cue) => [cue.sourceCaptionId, cue.text, cue.status]), [
     ['c1', '你好，世界', 'translated'],
@@ -66,7 +69,7 @@ test('English and Chinese cues pair by stable caption identity without duplicati
   assert.equal(pair.startMs, 700);
   assert.equal(pair.endMs, 2_400);
   assert.equal(pair.translation.text, '你好，世界');
-  assert.notEqual(pair.style.position.y, bilingual.projectStyle.position.y);
+  assert.ok(pair.style.position.y > bilingual.projectStyle.position.y);
   assert.ok(pair.style.position.y + pair.style.box.height / 2 <= 1);
 
   const moved = {
@@ -75,7 +78,11 @@ test('English and Chinese cues pair by stable caption identity without duplicati
   };
   const movedPair = resolveCaptionPairs(moved, track.id)[0];
   assert.equal(movedPair.style.position.x, 0.32);
-  assert.equal(movedPair.style.position.y, 0.55);
+  assert.ok(movedPair.style.position.y > 0.44);
+  assert.ok(
+    movedPair.style.position.y - movedPair.style.box.height / 2
+    >= 0.44 + moved.projectStyle.box.height / 2 - 0.001,
+  );
 });
 
 test('English-Chinese pairing supports Traditional Chinese and Chinese-primary English tracks', () => {
@@ -138,6 +145,27 @@ test('Cantonese Whisper tags pair as Traditional Chinese and survive project rel
   const decoded = decodeVersionTwoProject(serializedProject(bilingual));
   assert.equal(decoded.captionTracks.translations[0].sourceLanguageTag, 'zh-Hant');
   assert.equal(decoded.captionTracks.translations[0].languageTag, 'en');
+});
+
+test('completed sourceResults win over a stale same-family project language', () => {
+  const base = projectFixture();
+  const stale = {
+    ...base,
+    transcription: {
+      ...base.transcription,
+      language: 'zh-Hans',
+      sourceResults: {
+        [base.clips[0].sourceId]: {
+          language: 'yue',
+          modelId: 'balanced',
+          generatedAt: '2026-08-27T12:00:00.000Z',
+          words: [],
+        },
+      },
+    },
+  };
+  assert.equal(projectPrimaryCaptionLanguage(stale), 'zh-Hant');
+  assert.equal(projectEnglishChineseCaptionLanguage(stale), 'zh-Hant');
 });
 
 test('translation visibility changes preserve reviewed text, manual source state, and cue identity', () => {
@@ -358,11 +386,37 @@ test('translation style inheritance is project then source caption then track th
     textColor: '#00FF00',
   });
   const style = resolveCaptionPairs(project, CHINESE_SIMPLIFIED_TRACK_ID)[0].style;
-  assert.equal(style.fontSize, 38);
+  assert.equal(style.fontSize, 34);
   assert.equal(style.font.id, 'system-sans');
   assert.equal(style.font.source, 'system');
   assert.equal(style.position.y, 0.9);
   assert.equal(style.textColor, '#00FF00');
+});
+
+test('second-language captions stay below the original and keep independent type color', () => {
+  const bilingual = createEnglishChineseCaptionTrack(projectFixture(), { c1: '你好，世界' });
+  const pair = resolveCaptionPairs(bilingual, CHINESE_SIMPLIFIED_TRACK_ID)[0];
+  const primaryBottom = bilingual.projectStyle.position.y + bilingual.projectStyle.box.height / 2;
+  const translationTop = pair.style.position.y - pair.style.box.height / 2;
+  assert.ok(pair.style.position.y > bilingual.projectStyle.position.y);
+  assert.ok(translationTop >= primaryBottom - 0.0001, `secondary top ${translationTop} should sit below primary bottom ${primaryBottom}`);
+  assert.equal(pair.style.fontSize, 34);
+  const recolored = {
+    ...bilingual,
+    projectStyle: { ...bilingual.projectStyle, textColor: '#FF4FD8', fontSize: 64 },
+  };
+  const recoloredPair = resolveCaptionPairs(recolored, CHINESE_SIMPLIFIED_TRACK_ID)[0];
+  assert.equal(recoloredPair.style.textColor, '#FFFFFF');
+  assert.equal(recoloredPair.style.fontSize, 34);
+  const farther = setTranslationStackGap(bilingual, CHINESE_SIMPLIFIED_TRACK_ID, DEFAULT_TRANSLATION_STACK_GAP + 0.06);
+  const fartherPair = resolveCaptionPairs(farther, CHINESE_SIMPLIFIED_TRACK_ID)[0];
+  assert.ok(fartherPair.style.position.y >= pair.style.position.y);
+  assert.equal(farther.captionTracks.translations[0].stackGap, DEFAULT_TRANSLATION_STACK_GAP + 0.06);
+  const sized = setTranslationTrackStyle(bilingual, CHINESE_SIMPLIFIED_TRACK_ID, { fontSize: 22, textColor: '#64D2FF' });
+  const sizedPair = resolveCaptionPairs(sized, CHINESE_SIMPLIFIED_TRACK_ID)[0];
+  assert.equal(sizedPair.style.fontSize, 22);
+  assert.equal(sizedPair.style.textColor, '#64D2FF');
+  assert.equal(sized.projectStyle.fontSize, bilingual.projectStyle.fontSize);
 });
 
 test('existing primary-caption editor operations keep translated cues synchronized', () => {

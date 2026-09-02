@@ -122,6 +122,8 @@ export async function refreshProjectCaptionTranslation(options: {
     captions,
     translatedById: translated.captions,
     previousById,
+    needsReviewById: translated.needsReview,
+    targetLanguage: track.languageTag,
   });
   assertAutomaticTranslationWroteText(captions, previousById, writes);
   const updatedAt = new Date().toISOString();
@@ -202,17 +204,22 @@ export async function synchronizeProjectDualCaptionEdits(options: {
     track.languageTag,
   );
   const reverseResults = session?.operations.get('reverse') ?? new Map<string, string>();
+  const reverseReview = session?.needsReviewByOperation.get('reverse') ?? new Set<string>();
   const updates = edits.map((edit) => {
     const automaticPrimary = edit.translatedChanged && !edit.primaryChanged
       ? usableAutomaticTranslation(
         edit.translatedText,
         reverseResults.get(edit.sourceCaptionId),
+        reverseReview.has(edit.sourceCaptionId),
+        sourceLanguage,
       )
       : undefined;
     const automaticTranslation = edit.primaryChanged && !edit.translatedChanged
       ? usableAutomaticTranslation(
         edit.primaryText,
         forwardResults.captions.get(edit.sourceCaptionId),
+        forwardResults.needsReview.has(edit.sourceCaptionId),
+        track.languageTag,
       )
       : undefined;
     return {
@@ -312,7 +319,7 @@ async function translateCaptionDocument(options: {
       options.targetLanguage,
     );
     const sourceById = new Map(sources.map((source) => [source.id, source.text]));
-    translatedSliceReviewFlags(cut, sourceById).forEach((id) => needsReview.add(id));
+    translatedSliceReviewFlags(cut, sourceById, options.targetLanguage).forEach((id) => needsReview.add(id));
     cut.forEach((text, id) => captions.set(id, text));
   }
   return { captions, needsReview, provider: translated.provider };
@@ -343,7 +350,7 @@ function cutForwardDocumentResults(
       targetLanguage,
     );
     const sourceById = new Map(sources.filter((source) => chunk.sourceIds.includes(source.id)).map((source) => [source.id, source.text]));
-    translatedSliceReviewFlags(cut, sourceById).forEach((id) => needsReview.add(id));
+    translatedSliceReviewFlags(cut, sourceById, targetLanguage).forEach((id) => needsReview.add(id));
     cut.forEach((text, id) => result.set(id, text));
   }
   return { captions: result, needsReview };
