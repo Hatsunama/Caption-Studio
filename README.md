@@ -109,6 +109,29 @@ The current Seeker installation is production-signed with certificate SHA-256 `C
 
 If that still fails, uninstall Caption Studio from the phone first, then run the recommended script again. A clean uninstall removes that phone's local Caption Studio drafts and projects.
 
+### Fixed side-by-side build when the production signing key is unavailable
+
+The fixed side-by-side release installs as **Caption Studio Fixed** with package `com.hatsunama.captionstudio.fixed`. It does not replace, uninstall, clear, or migrate `com.hatsunama.captionstudio`, so projects and drafts in the existing app remain untouched. The two apps have separate private storage.
+
+Use this build to exercise fixes from current `main` while preserving an older production-signed installation. Download and run the checked-in installer from PowerShell:
+
+```powershell
+$Installer = Join-Path $env:TEMP 'install-caption-studio-fixed.ps1'
+try {
+    Invoke-WebRequest `
+        -Uri 'https://raw.githubusercontent.com/Hatsunama/Caption-Studio/main/scripts/install-caption-studio-fixed.ps1' `
+        -OutFile $Installer
+    & $Installer
+}
+finally {
+    if (Test-Path -LiteralPath $Installer) {
+        Remove-Item -LiteralPath $Installer -Force
+    }
+}
+```
+
+The installer accepts exactly one authorized Android device, verifies that the release contains the integrated repair commit, verifies GitHub's APK SHA-256 digest, updates only the fixed side-by-side package, launches it, and removes its temporary download. It never issues `adb uninstall` or `pm clear`.
+
 ## What the current Android build includes
 
 - Multi-select Android video import that accepts any number of clips while keeping durable source links instead of duplicating full videos into app cache
