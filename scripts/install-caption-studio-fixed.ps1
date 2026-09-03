@@ -21,7 +21,12 @@ try {
     }
 
     $Headers = @{ Accept = 'application/vnd.github+json' }
-    $Releases = @(Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases?per_page=100" -Headers $Headers)
+    $ReleasePayload = Invoke-RestMethod `
+        -Uri "https://api.github.com/repos/$Repository/releases?per_page=100" `
+        -Headers $Headers
+    # PowerShell 7 can preserve a JSON top-level array as one pipeline object.
+    # Force element enumeration before filtering individual releases.
+    $Releases = @($ReleasePayload | ForEach-Object { $_ })
     $Release = @($Releases | Where-Object {
         -not $_.draft -and
         $_.prerelease -and
