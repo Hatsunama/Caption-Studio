@@ -1,5 +1,5 @@
 import { mergeStyle } from '@/lib/style-resolver';
-import { synchronizeCaptionTracks } from '@/lib/caption-tracks';
+import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { applyCaptionTextChanges, type CaptionTextChanges } from '@/lib/caption-text-edits';
 import { constrainAudioClips } from '@/lib/audio-timeline';
 import { captionSpokenTokenSpans } from '@/lib/caption-text-breaks';
@@ -601,11 +601,13 @@ function rebuildAfterLayoutEdit(
     clips,
     words,
   );
+  const captions = [...remapped, ...unanchored].sort((left, right) => left.startMs - right.startMs);
   const layers = remapVisualLayers(anchorVisualLayers(sourceLayers, project.clips), clips, splice);
   return updateProject(project, {
     clips,
     transcription: { ...project.transcription, words },
-    captions: [...remapped, ...unanchored].sort((left, right) => left.startMs - right.startMs),
+    captions,
+    captionTracks: remapTranslationTrackTimings(project.captionTracks, project.captions, captions),
     layers,
     audioClips: constrainAudioClips(project.audioClips, totalClipDuration(clips)),
   });

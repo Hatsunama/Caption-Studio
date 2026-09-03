@@ -231,8 +231,8 @@ internal class TimelineVideoExporter(private val context: Context) {
       .setRemoveAudio(true)
       .build()
     val sequences = mutableListOf<EditedMediaItemSequence>()
-    sequences += EditedMediaItemSequence.withVideoFrom(listOf(baseVideo))
     sequences += buildNativeVideoSequence(plan)
+    sequences += EditedMediaItemSequence.withVideoFrom(listOf(baseVideo))
     sequences += buildOriginalAudioSequences(plan, task)
     plan.audioClips.mapNotNull { buildInsertedAudioSequence(it, plan.durationMs) }.forEach(sequences::add)
     return Composition.Builder(sequences)
@@ -552,7 +552,7 @@ internal class TimelineVideoCompositorSettings(
   }
 
   private companion object {
-    const val VIDEO_SEQUENCE_INDEX = 1
+    const val VIDEO_SEQUENCE_INDEX = 0
   }
 }
 

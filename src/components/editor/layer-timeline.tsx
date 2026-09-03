@@ -41,6 +41,7 @@ export function LayerTimeline(props: {
   onSelectLayer: (id: string) => void;
   onSelectCaption: (caption: CaptionBlock) => void;
   onSelectTranslationCaption: (trackId: string, pair: CaptionPair) => void;
+  onTranslationCaptionTimingChange: (trackId: string, sourceCaptionId: string, edge: 'start' | 'end' | 'move', startMs: number, endMs: number) => void;
   onSelectClip: (clipId: string) => void;
   onTrimClip: (clipId: string, edge: 'start' | 'end', targetSourceMs: number) => void;
   onSetClipGap: (clipId: string, gapMs: number, edge?: 'before' | 'after') => void;
@@ -329,21 +330,25 @@ export function LayerTimeline(props: {
                     onPressTrack={(x) => props.onSeek(x / trackWidth * duration)}
                     trackWidth={trackWidth}
                     height={captionRowHeight}
-                    controls={<Text style={{ color: track.visible ? '#19D98B' : '#7B8591', fontSize: 7, fontWeight: '900' }}>{track.visible ? 'VISIBLE · LINKED' : 'HIDDEN · LINKED'}</Text>}>
+                    controls={<Text style={{ color: track.visible ? '#19D98B' : '#7B8591', fontSize: 7, fontWeight: '900' }}>{track.visible ? 'VISIBLE · INDEPENDENT' : 'HIDDEN · INDEPENDENT'}</Text>}>
                     {track.pairs.filter((pair) => pair.timelineVisible && isVisible(pair.startMs, pair.endMs)).map((pair, pairIndex) => (
-                      <LinkedCaptionBlock
+                      <TimedBlock
                         key={pair.translation.id}
                         label={pair.translation.text || 'Translation pending'}
                         startMs={pair.startMs}
                         endMs={pair.endMs}
                         durationMs={duration}
                         trackWidth={trackWidth}
-                        lane={captionLayout.laneById.get(pair.source.id) ?? 0}
+                        lane={0}
                         color={pair.translation.status === 'stale' || pair.translation.status === 'pending'
                           ? '#A66220'
                           : NEON_CAPTION_COLORS[(pairIndex + trackIndex + 1) % NEON_CAPTION_COLORS.length]}
                         selected={props.selectedLayerId === track.id && props.selectedCaptionId === pair.source.id}
+                        movable
                         onPress={() => props.onSelectTranslationCaption(track.id, pair)}
+                        onChangeStart={beginBlockGesture}
+                        onChange={(edge, startMs, endMs) => props.onTranslationCaptionTimingChange(track.id, pair.source.id, edge, startMs, endMs)}
+                        onEnd={endBlockGesture}
                       />
                     ))}
                   </TimelineRow>
@@ -567,32 +572,6 @@ function TimedBlock(props: { label: string; startMs: number; endMs: number; dura
         </>
       ) : null}
     </View>
-  );
-}
-
-function LinkedCaptionBlock(props: { label: string; startMs: number; endMs: number; durationMs: number; trackWidth: number; lane: number; color: string; selected: boolean; onPress: () => void }) {
-  const width = Math.max(2, (props.endMs - props.startMs) / props.durationMs * props.trackWidth - 2);
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${props.label}. Timing is linked to the primary subtitle.`}
-      onPress={props.onPress}
-      style={{
-        position: 'absolute',
-        left: props.startMs / props.durationMs * props.trackWidth,
-        width,
-        top: props.lane * LANE_HEIGHT + 3,
-        height: LANE_HEIGHT - 6,
-        justifyContent: 'center',
-        paddingHorizontal: 9,
-        borderRadius: 7,
-        borderWidth: props.selected ? 2 : 1,
-        borderColor: props.selected ? '#FFFFFF' : `${props.color}CC`,
-        backgroundColor: `${props.color}B8`,
-      }}>
-      <Text numberOfLines={1} style={{ color: '#FFFFFF', fontSize: 8, fontWeight: '900' }}>{props.label}</Text>
-      <View pointerEvents="none" style={{ position: 'absolute', right: 4, top: 4, width: 5, height: 5, borderRadius: 3, backgroundColor: '#64D2FF' }} />
-    </Pressable>
   );
 }
 

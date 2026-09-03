@@ -45,6 +45,7 @@ import {
   removeTranslationCaptionTrack,
   resolveCaptionPairs,
   setTranslationCueStyle,
+  setTranslationCueTiming,
   setTranslationStackGap,
   setTranslationTrackStyle,
   setTranslationTrackVisibility,
@@ -1116,6 +1117,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
+  const updateTranslationCaptionTiming = (trackId: string, sourceCaptionId: string, edge: 'start' | 'end' | 'move', startMs: number, endMs: number) => {
+    setProject((current) => {
+      const next = setTranslationCueTiming(current, trackId, sourceCaptionId, edge, startMs, endMs, new Date().toISOString());
+      projectRef.current = next;
+      return next;
+    });
+  };
+
   const updateLayerTiming = (layerId: string, startMs: number, endMs: number) => {
     setProject((current) => {
       const next = setLayerTiming(current, layerId, startMs, endMs);
@@ -1895,6 +1904,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onSetClipLeadingGap={setClipLeadingGap}
           onLayerTimingChange={updateLayerTiming}
           onCaptionTimingChange={updateCaptionTiming}
+          onTranslationCaptionTimingChange={updateTranslationCaptionTiming}
           onTimingChangeStart={beginHistoryInteraction}
           onTimingChangeEnd={finishHistoryInteraction}
           onMoveLayer={moveLayer}
@@ -2179,6 +2189,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         busy={Boolean(translationProgress) || translationCancelling}
         progressLabel={translationCancelling ? 'Cancelling local translation…' : translationProgressLabel(translationProgress)}
         errorMessage={translationController.error}
+        onDismissError={translationController.clearError}
         onClose={() => {
           if (!translationProgress && !translationCancelling) setDualCaptionEditorOpen(false);
         }}

@@ -36,15 +36,14 @@ class TimelineVideoCompositorSettingsTest {
     val settings = TimelineVideoCompositorSettings(plan)
 
     assertEquals(Size(720, 1_280), settings.getOutputSize(listOf(Size(10, 10))))
-    assertEquals(1f, settings.getOverlaySettings(0, 500_000).alphaScale)
-    val active = settings.getOverlaySettings(1, 500_000)
+    val active = settings.getOverlaySettings(0, 500_000)
     assertEquals(1f, active.alphaScale)
     assertEquals(0.5f, active.backgroundFrameAnchor.first)
     assertEquals(0.5f, active.backgroundFrameAnchor.second)
     assertEquals(1.5f, active.scale.first)
     assertEquals(-30f, active.rotationDegrees)
-    assertEquals(0f, settings.getOverlaySettings(1, 1_500_000).alphaScale)
-    assertEquals(1f, settings.getOverlaySettings(0, 1_500_000).alphaScale)
+    assertEquals(0f, settings.getOverlaySettings(0, 1_500_000).alphaScale)
+    assertEquals(1f, settings.getOverlaySettings(1, 1_500_000).alphaScale)
   }
 
   private fun transform(x: Double, y: Double, scale: Double, rotation: Double) = mapOf<String, Any>(

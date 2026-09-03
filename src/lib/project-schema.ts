@@ -387,6 +387,9 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
           text,
           status,
           reviewed,
+          startMs: optionalFiniteNumber(cue.startMs, `translation cue ${cueIndex + 1} start`, 0, Number.MAX_SAFE_INTEGER),
+          endMs: optionalFiniteNumber(cue.endMs, `translation cue ${cueIndex + 1} end`, 1, Number.MAX_SAFE_INTEGER),
+          timelineVisible: cue.timelineVisible === undefined ? undefined : booleanValue(cue.timelineVisible, `translation cue ${cueIndex + 1} timeline visibility`),
           styleOverride: decodeCaptionStylePatch(cue.styleOverride, `translation cue ${cueIndex + 1} style override`),
         };
       });
@@ -429,15 +432,7 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
     if (languageTags.has(normalized)) throw new Error('Translation caption tracks contain duplicate languages');
     languageTags.add(normalized);
   });
-  let visibleTrackFound = false;
-  const normalizedTranslations = translations.map((track) => {
-    if (!track.visible) return track;
-    if (!visibleTrackFound) {
-      visibleTrackFound = true;
-      return track;
-    }
-    return { ...track, visible: false };
-  });
+  const normalizedTranslations = translations;
   return synchronizeCaptionTracks({
     captions,
     captionTracks: { schemaVersion: 1, primaryTrackId: 'captions', translations: normalizedTranslations },

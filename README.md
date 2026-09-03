@@ -130,7 +130,7 @@ finally {
 }
 ```
 
-The installer accepts exactly one authorized Android device, verifies that the release contains the integrated repair commit, verifies GitHub's APK SHA-256 digest, updates only the fixed side-by-side package, launches it, and removes its temporary download. It never issues `adb uninstall` or `pm clear`.
+The installer accepts exactly one authorized Android device, verifies that the release contains the multilingual, independent-timing, and visible-video export repair commit, verifies GitHub's APK SHA-256 digest, updates only the fixed side-by-side package with `adb install -r`, launches it, and removes its temporary download. It never issues `adb uninstall` or `pm clear`, so projects already stored in **Caption Studio Fixed** remain in place during an update. If Android rejects the update because the signing certificate differs, the installer stops without uninstalling either app.
 
 ## What the current Android build includes
 
@@ -145,8 +145,9 @@ The installer accepts exactly one authorized Android device, verifies that the r
 - Responsive preparation feedback that reaches 5% after 3 seconds, advances from 6% through 10% in 22-second steps, then follows real decoding progress
 - Safe **Generate again** control for replacing caption text/timing while preserving the project style and added layers
 - Downloadable Fast, Balanced, and Accurate Whisper model tiers
-- Optional English + Simplified Chinese or English + Traditional Chinese subtitle tracks, generated entirely on-device after one approximately 1.6 GB Qwen model download
-- The same optional translation model handles English-to-Chinese and Chinese-to-English; editing either language marks its linked partner stale and can refresh the affected lines without replacing the rest of the script
+- Optional second-language subtitle tracks for every language in the in-app language picker, generated entirely on-device after one approximately 1.6 GB Qwen model download
+- A centered model-download and translation dialog that clearly tells users to keep Caption Studio visible and the phone unlocked; leaving the app cancels safely and produces a plain-English retry message instead of exposing a native error
+- Independently owned language tracks: editing, moving, or trimming one translated cue does not rewrite or reposition its primary cue or neighboring translated cues; explicit AI Refresh replaces only the requested translated lines
 - Caption grouping from word timestamps
 - A fixed-scale layered timeline: trimming either video edge visibly replaces removed source time with playable black space instead of rescaling the ruler or snapping the clip back to zero
 - Magnetic clip packing by default, explicit removable gaps when wanted, and reorderable caption, added-text, and image/sticker tracks
@@ -177,7 +178,7 @@ The installer accepts exactly one authorized Android device, verifies that the r
 - Confirmed project deletion from a trash control on every project card; linked source videos are never deleted
 - Local SQLite project snapshots
 
-The native timeline renderer exports multiple trimmed clips, deliberate black gaps, per-clip speed and gain, inserted audio, background replacement, person motion, ordered text/image layers, caption styling and speech-timed animations, and all transition families into an H.264/AAC MP4. It publishes finished videos to `Movies/Caption Studio` on Android 7 and newer; Android 7–9 ask for legacy write access only when an export needs to enter the public media library. SRT and styled ASS subtitle files are available from the same Export menu. Production APKs use the dedicated Caption Studio release identity described below. Editing and exporting never rewrite the source videos.
+The native timeline renderer exports multiple trimmed clips, deliberate black gaps, per-clip speed and gain, inserted audio, background replacement, person motion, ordered text/image layers, caption styling and speech-timed animations, and all transition families into an H.264/AAC MP4. Real footage is registered above the opaque canvas in Media3's compositor; the canvas appears only where a project intentionally has no visible video. The exporter validates the MP4 before publishing it to `Movies/Caption Studio` on Android 7 and newer, then opens Android's share sheet. Android 7–9 ask for legacy write access only when an export needs to enter the public media library. SRT and styled ASS subtitle files are available from the same Export menu. Production APKs use the dedicated Caption Studio release identity described below. Editing and exporting never rewrite the source videos.
 
 ## Architecture
 
@@ -186,7 +187,7 @@ The native timeline renderer exports multiple trimmed clips, deliberate black ga
 - `expo-video` for hardware-backed preview
 - `whisper.rn` for local inference
 - Local Expo Kotlin module for Android media metadata, audio decoding, lossless audio-track extraction, MediaPipe multiclass person segmentation, timeline audio mixing, and frame compositing
-- Isolated Expo Android translation module using LiteRT-LM and one pinned Qwen model for all supported English–Chinese directions
+- Isolated Expo Android translation module using LiteRT-LM and one pinned Qwen model for every supported source-target language pair
 - Expo SQLite for nondestructive project state
 
 Caption appearance resolves in this order:

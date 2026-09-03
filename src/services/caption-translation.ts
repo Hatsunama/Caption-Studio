@@ -5,9 +5,10 @@ import CaptionTranslation, {
 } from 'caption-translation';
 
 import {
+  canonicalCaptionLanguageTag,
   isLikelyUntranslatedCaption,
-  normalizeEnglishChineseCaptionLanguage,
-  type EnglishChineseCaptionLanguage,
+  resolveCaptionLanguage,
+  type CaptionLanguageTag,
 } from '@/lib/caption-languages';
 import {
   captionTextHead,
@@ -18,12 +19,12 @@ import { requireFreeSpace } from '@/services/storage-policy';
 
 export const NATURAL_TRANSLATION_MODEL = {
   id: 'qwen2.5-1.5b-q8',
-  label: 'Natural English–Chinese',
+  label: 'Natural multilingual',
   fileName: 'Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
   downloadBytes: 1_597_931_520,
   sha256: 'faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9',
   revision: '19edb84c69a0212f29a6ef17ba0d6f278b6a1614',
-  promptVersion: 1,
+  promptVersion: 2,
   downloadUrl: 'https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/19edb84c69a0212f29a6ef17ba0d6f278b6a1614/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
 } as const;
 
@@ -82,6 +83,13 @@ export class CaptionTranslationCancelledError extends Error {
   }
 }
 
+export class CaptionTranslationDownloadError extends Error {
+  constructor() {
+    super('The language-model download stopped before it finished. Keep Caption Studio open on this screen with the phone unlocked, then tap Retry.');
+    this.name = 'CaptionTranslationDownloadError';
+  }
+}
+
 type ActiveTranslation = {
   id: symbol;
   cancelled: boolean;
@@ -91,7 +99,12 @@ type ActiveTranslation = {
 let activeTranslation: ActiveTranslation | undefined;
 let modelDownload: Promise<File> | undefined;
 
-export const normalizeNaturalCaptionLanguage = normalizeEnglishChineseCaptionLanguage;
+export function normalizeNaturalCaptionLanguage(languageTag: string): CaptionLanguageTag {
+  const canonical = canonicalCaptionLanguageTag(languageTag);
+  const resolved = resolveCaptionLanguage(canonical);
+  if (!resolved?.automaticTranslation) throw new Error('Caption Studio cannot translate this language on this phone.');
+  return resolved.tag;
+}
 
 export async function listDownloadedNaturalTranslationModel(): Promise<DownloadedNaturalTranslationModel[]> {
   const file = translationModelFile();
@@ -157,8 +170,8 @@ export async function translateNaturalCaptionOperations(options: {
       throw new Error('Natural translation operation identifiers must be valid and unique.');
     }
     operationIds.add(id);
-    const sourceLanguage: EnglishChineseCaptionLanguage = normalizeNaturalCaptionLanguage(operation.sourceLanguage);
-    const targetLanguage: EnglishChineseCaptionLanguage = normalizeNaturalCaptionLanguage(operation.targetLanguage);
+    const sourceLanguage = normalizeNaturalCaptionLanguage(operation.sourceLanguage);
+    const targetLanguage = normalizeNaturalCaptionLanguage(operation.targetLanguage);
     if (sourceLanguage === targetLanguage) throw new Error('Choose a different language for the second subtitle track.');
     const originalCaptions = validateTranslationUnits(operation.captions);
     const originalContext = operation.allCaptions?.length
@@ -236,7 +249,7 @@ export async function translateNaturalCaptionOperations(options: {
         result.offline !== true
         || result.backend !== 'cpu'
         || result.modelId !== NATURAL_TRANSLATION_MODEL.id
-        || result.promptContract !== 'qwen2.5-caption-json-v1'
+        || result.promptContract !== 'qwen2.5-caption-json-v2'
         || result.batchCount !== totalBatches
         || result.operations.length !== prepared.length
       ) {
@@ -329,7 +342,7 @@ async function downloadNaturalTranslationModel(
 ) {
   await requireFreeSpace(
     NATURAL_TRANSLATION_MODEL.downloadBytes + 384 * 1024 * 1024,
-    'download the optional natural English–Chinese translation model',
+    'download the optional natural multilingual translation model',
   );
   throwIfCancelled(run);
   const directory = translationModelDirectory();
@@ -339,7 +352,7 @@ async function downloadNaturalTranslationModel(
   if (temporary.exists) temporary.delete();
   const controller = new AbortController();
   run.downloadController = controller;
-  onProgress?.({ stage: 'downloading-model', progress: 0, detail: 'Downloading the optional natural English–Chinese model once' });
+  onProgress?.({ stage: 'downloading-model', progress: 0, detail: 'Downloading the optional natural multilingual model once. Keep this screen open.' });
   try {
     await File.downloadFileAsync(NATURAL_TRANSLATION_MODEL.downloadUrl, temporary, {
       idempotent: true,
@@ -354,10 +367,10 @@ async function downloadNaturalTranslationModel(
         });
       },
     });
-  } catch (error) {
+  } catch {
     if (temporary.exists) temporary.delete();
     if (run.cancelled || controller.signal.aborted) throw new CaptionTranslationCancelledError();
-    throw error;
+    throw new CaptionTranslationDownloadError();
   } finally {
     if (run.downloadController === controller) run.downloadController = undefined;
   }
@@ -457,8 +470,8 @@ async function repairUntranslatedCaptions(
   run: ActiveTranslation,
   modelUri: string,
   prepared: {
-    sourceLanguage: EnglishChineseCaptionLanguage;
-    targetLanguage: EnglishChineseCaptionLanguage;
+    sourceLanguage: CaptionLanguageTag;
+    targetLanguage: CaptionLanguageTag;
     captions: NaturalCaptionTranslationInput[];
   }[],
   translatedById: Map<string, string>,
@@ -509,8 +522,8 @@ async function translateWithNative(
   modelUri: string,
   operations: {
     id: string;
-    sourceLanguage: EnglishChineseCaptionLanguage;
-    targetLanguage: EnglishChineseCaptionLanguage;
+    sourceLanguage: CaptionLanguageTag;
+    targetLanguage: CaptionLanguageTag;
     batches: { captions: NaturalCaptionTranslationInput[]; contextBefore?: string; contextAfter?: string; }[];
   }[],
 ) {
@@ -519,7 +532,7 @@ async function translateWithNative(
     result.offline !== true
     || result.backend !== 'cpu'
     || result.modelId !== NATURAL_TRANSLATION_MODEL.id
-    || result.promptContract !== 'qwen2.5-caption-json-v1'
+    || result.promptContract !== 'qwen2.5-caption-json-v2'
   ) {
     throw new Error('The local model returned an incomplete translation. No captions were changed.');
   }

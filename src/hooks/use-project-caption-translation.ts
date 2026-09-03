@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 
 import {
   cancelNaturalCaptionTranslation,
@@ -17,11 +18,17 @@ type ControllerOptions = {
   commitProject: (baseline: CaptionProject, next: CaptionProject) => Promise<void>;
 };
 
+function interruptedOperationLabel(stage: CaptionTranslationProgress['stage'] | undefined) {
+  return stage === 'downloading-model' ? 'language-model download' : 'translation';
+}
+
 export function useProjectCaptionTranslation(options: ControllerOptions) {
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const mountedRef = useRef(true);
   const activeOperationRef = useRef<symbol | undefined>(undefined);
+  const activeStageRef = useRef<CaptionTranslationProgress['stage'] | undefined>(undefined);
+  const interruptedRef = useRef(false);
   const [progress, setProgress] = useState<CaptionTranslationProgress>();
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string>();
@@ -29,6 +36,16 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
   useEffect(() => () => {
     mountedRef.current = false;
     if (activeOperationRef.current) void cancelNaturalCaptionTranslation();
+  }, []);
+
+  useEffect(() => {
+    const onAppStateChange = (state: AppStateStatus) => {
+      if (state === 'active' || !activeOperationRef.current) return;
+      interruptedRef.current = true;
+      void cancelNaturalCaptionTranslation();
+    };
+    const subscription = AppState.addEventListener('change', onAppStateChange);
+    return () => subscription.remove();
   }, []);
 
   const run = useCallback(async (
@@ -41,11 +58,14 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     }
     const operationId = Symbol('project-caption-translation');
     activeOperationRef.current = operationId;
+    activeStageRef.current = 'loading-model';
+    interruptedRef.current = false;
     setError(undefined);
     setCancelling(false);
     setProgress({ stage: 'loading-model', progress: 0, detail: 'Preparing local natural translation' });
     try {
       const next = await operation((nextProgress) => {
+        activeStageRef.current = nextProgress.stage;
         if (mountedRef.current && activeOperationRef.current === operationId) setProgress(nextProgress);
       });
       if (!mountedRef.current || activeOperationRef.current !== operationId) return false;
@@ -55,7 +75,10 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
       if (next !== baseline) await optionsRef.current.commitProject(baseline, next);
       return true;
     } catch (caught) {
-      if (
+      if (mountedRef.current && activeOperationRef.current === operationId && interruptedRef.current) {
+        const action = interruptedOperationLabel(activeStageRef.current);
+        setError(`The ${action} stopped because Caption Studio left the foreground. Keep this screen open and the phone unlocked, then tap Retry.`);
+      } else if (
         mountedRef.current
         && activeOperationRef.current === operationId
         && !(caught instanceof CaptionTranslationCancelledError)
@@ -66,6 +89,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     } finally {
       if (activeOperationRef.current === operationId) {
         activeOperationRef.current = undefined;
+        activeStageRef.current = undefined;
         if (mountedRef.current) {
           setCancelling(false);
           setProgress(undefined);

@@ -9,19 +9,25 @@ import type { CaptionBlock, CaptionProject, CaptionStyle, WordToken } from '@/ty
 
 export function serializeSrt(project: CaptionProject) {
   const translations = translationsByCaption(project);
-  const events = visibleCaptions(project).map((caption, index) => {
+  const events = visibleCaptions(project).flatMap((caption) => {
     const timing = srtRange(caption.startMs, caption.endMs);
-    const lines = [
-      normalizeLineEndings(caption.text).trim(),
-      ...(translations.get(caption.id) ?? []).map((pair) => normalizeLineEndings(pair.translation.text).trim()),
-    ];
-    return [
-      String(index + 1),
-      `${srtTime(timing.startMs)} --> ${srtTime(timing.endMs)}`,
-      lines.join('\n'),
-    ].join('\n');
-  });
-  return events.length > 0 ? `${events.join('\n\n')}\n` : '';
+    const pairs = translations.get(caption.id) ?? [];
+    const aligned = pairs.filter((pair) => Math.round(pair.startMs) === timing.startMs && Math.round(pair.endMs) === timing.endMs);
+    const independent = pairs.filter((pair) => !aligned.includes(pair));
+    return [{
+      startMs: timing.startMs,
+      endMs: timing.endMs,
+      text: [normalizeLineEndings(caption.text).trim(), ...aligned.map((pair) => normalizeLineEndings(pair.translation.text).trim())].join('\n'),
+    }, ...independent.map((pair) => ({
+      ...srtRange(pair.startMs, pair.endMs),
+      text: normalizeLineEndings(pair.translation.text).trim(),
+    }))];
+  }).sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+  return events.length > 0 ? `${events.map((event, index) => [
+    String(index + 1),
+    `${srtTime(event.startMs)} --> ${srtTime(event.endMs)}`,
+    event.text,
+  ].join('\n')).join('\n\n')}\n` : '';
 }
 
 export function serializeAss(project: CaptionProject) {
@@ -51,7 +57,7 @@ export function serializeAss(project: CaptionProject) {
       assDialogue(0, timing, style, width, height, scale, assCaptionText(project, caption, style, scale)),
       ...(translations.get(caption.id) ?? []).map((pair, index) => assDialogue(
         index + 1,
-        timing,
+        assRange(pair.startMs, pair.endMs),
         pair.style,
         width,
         height,

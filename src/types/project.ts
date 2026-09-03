@@ -150,6 +150,9 @@ export type TranslationCaptionCue = {
   text: string;
   status: TranslationCaptionStatus;
   reviewed: boolean;
+  startMs?: number;
+  endMs?: number;
+  timelineVisible?: boolean;
   styleOverride?: CaptionStylePatch;
 };
 

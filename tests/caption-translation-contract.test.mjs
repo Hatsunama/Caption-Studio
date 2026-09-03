@@ -29,7 +29,7 @@ test('natural caption translation is isolated in its own offline Expo module', a
   assert.doesNotMatch(kotlin, /captionstudio\.media|CaptionMedia/);
   assert.match(kotlin, /synchronized\(lifecycleLock\)/);
   assert.doesNotMatch(kotlin, /lazy\(LazyThreadSafetyMode/);
-  assert.match(types, /'en' \| 'zh-Hans' \| 'zh-Hant'/);
+  assert.match(types, /'en' \| 'zh-Hans' \| 'zh-Hant'.*'pl'/s);
   assert.match(types, /operations: NaturalCaptionTranslationOperation\[\]/);
   assert.match(types, /offline: true/);
 });
@@ -71,7 +71,7 @@ test('release shrinking preserves the LiteRT-LM JNI contract', async () => {
   assert.match(rules, /-keep class com\.google\.ai\.edge\.litertlm\.\*\* \{ \*; \}/);
 });
 
-test('one pinned local model owns every supported English-Chinese direction', async () => {
+test('one pinned local model owns every supported multilingual direction', async () => {
   const [service, languages, catalog] = await Promise.all([
     readFile(new URL('src/services/caption-translation.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/lib/caption-languages.ts', repositoryRoot), 'utf8'),
@@ -82,7 +82,7 @@ test('one pinned local model owns every supported English-Chinese direction', as
   assert.match(service, /downloadBytes: 1_597_931_520/);
   assert.match(service, /faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9/);
   assert.match(service, /19edb84c69a0212f29a6ef17ba0d6f278b6a1614/);
-  assert.match(service, /normalizeEnglishChineseCaptionLanguage/);
+  assert.match(service, /normalizeNaturalCaptionLanguage/);
   assert.match(languages, /if \(normalized === 'en'/);
   assert.match(languages, /return 'zh-Hant'/);
   assert.match(languages, /return 'zh-Hans'/);
@@ -94,7 +94,7 @@ test('one pinned local model owns every supported English-Chinese direction', as
   assert.match(service, /operations: prepared\.map/);
   assert.match(service, /result\.offline !== true/);
   assert.match(service, /result\.backend !== 'cpu'/);
-  assert.match(service, /result\.promptContract !== 'qwen2\.5-caption-json-v1'/);
+  assert.match(service, /result\.promptContract !== 'qwen2\.5-caption-json-v2'/);
   assert.doesNotMatch(service, /com\.google\.mlkit|Google Translate|translation API/i);
   assert.match(catalog, /ggml-tiny-q5_1\.bin/);
   assert.match(catalog, /ggml-base-q5_1\.bin/);
@@ -122,22 +122,22 @@ test('project translation orchestration owns concurrency, provenance, and mixed-
   assert.match(editor, /DualLanguagePicker/);
   assert.match(editor, /sourceLanguageTag=\{primaryCaptionLanguage\}/);
   assert.match(editor, /canAutomaticallyTranslatePair\(primaryCaptionLanguage/);
-  assert.match(editor, /English and Chinese can be translated on this phone as a whole/);
+  assert.match(editor, /canAutomaticallyTranslatePair\(primaryCaptionLanguage/);
   assert.doesNotMatch(editor, /mixes English and Chinese clips/);
   assert.match(controller, /activeOperationRef\.current === operationId/);
   assert.match(controller, /getCurrentProject\(\) !== baseline/);
-  assert.match(workflow, /projectEnglishChineseCaptionLanguage/);
+  assert.doesNotMatch(workflow, /projectEnglishChineseCaptionLanguage/);
   assert.match(workflow, /projectPrimaryCaptionLanguage/);
   assert.match(workflow, /packCaptionDocuments/);
   assert.match(workflow, /cutTranslatedDocument/);
-  assert.match(workflow, /usableAutomaticTranslation/);
+  assert.doesNotMatch(workflow, /usableAutomaticTranslation/);
   assert.match(workflow, /translatedSliceReviewFlags/);
   assert.match(workflow, /assertAutomaticTranslationWroteText/);
   assert.doesNotMatch(workflow, /if \(documentNeedsReview\) needsReview\.add\(id\)/);
   assert.doesNotMatch(workflow, /translatedText: translated\.captions\.get\(caption\.id\) \?\? caption\.text/);
   assert.match(workflow, /provider: \{ id: 'manual' \}/);
   assert.match(workflow, /translated\.provider/);
-  assert.match(workflow, /session\.provider/);
+  assert.doesNotMatch(workflow, /sourceLanguage: track\.languageTag/);
   assert.doesNotMatch(workflow, /modelRevision:|promptVersion:/);
 });
 
@@ -153,7 +153,7 @@ test('timeline identities are mapped to short model-session keys and pending dua
   assert.match(editor, /translationController\.refresh\(existing\.id, pendingIds, projectRef\.current\)/);
 });
 
-test('dual-subtitle language ownership stays canonical and does not overclaim typed translation', async () => {
+test('dual-subtitle language ownership stays canonical and advertises local generation truthfully', async () => {
   const [picker, editor, schema, grouping, transcription, projectTranscription, dualEditor, renderPlan] = await Promise.all([
     readFile(new URL('src/components/editor/dual-language-picker.tsx', repositoryRoot), 'utf8'),
     readFile(new URL('src/app/editor.tsx', repositoryRoot), 'utf8'),
@@ -165,7 +165,8 @@ test('dual-subtitle language ownership stays canonical and does not overclaim ty
     readFile(new URL('modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineRenderPlan.kt', repositoryRoot), 'utf8'),
   ]);
 
-  assert.match(picker, /Type or paste \$\{choice\.displayName\} to follow your current subtitle blocks/);
+  assert.match(picker, /Keep this screen open while the whole/);
+  assert.doesNotMatch(picker, /Type or paste/);
   assert.doesNotMatch(picker, /aware subtitle cuts/);
   assert.match(editor, /resolvedProjectCaptionLanguage/);
   assert.match(schema, /sameCaptionLanguageFamily\(sourceLanguageTag, primaryLanguage\)/);
@@ -178,6 +179,7 @@ test('dual-subtitle language ownership stays canonical and does not overclaim ty
   assert.match(dualEditor, /useSafeAreaInsets/);
   assert.match(dualEditor, /adoptCommittedDualCaptionDrafts/);
   assert.match(dualEditor, /props\.busy/);
+  assert.match(dualEditor, /Keep Caption Studio open on this screen/);
   assert.match(dualEditor, /committedDualCaptionText/);
   assert.match(editor, /translatedText\.trim\(\) \|\| committedTranslation/);
   assert.match(renderPlan, /activeWordColor", "#64D2FF"/);

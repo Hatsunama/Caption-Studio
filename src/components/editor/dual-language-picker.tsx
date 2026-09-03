@@ -36,21 +36,21 @@ export function DualLanguagePicker(props: {
             <Pressable
               key={choice.tag}
               accessibilityRole="button"
-              accessibilityLabel={`Add ${choice.displayName} subtitles${choice.automatic ? ', translated on this phone' : ', typed by you'}`}
+              accessibilityLabel={`Add ${choice.displayName} subtitles, generated on this phone`}
               onPress={() => props.onChoose(choice)}
               style={{ gap: 6, paddingHorizontal: 16, paddingVertical: 14, borderRadius: chrome.radius.lg, backgroundColor: chrome.surface }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                 <Text style={{ flex: 1, color: chrome.text, fontSize: 17, fontWeight: '700' }}>{choice.displayName}</Text>
                 <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: chrome.radius.pill, backgroundColor: choice.automatic ? chrome.accent : chrome.fill }}>
                   <Text style={{ color: choice.automatic ? chrome.accentInk : chrome.muted, fontSize: 11, fontWeight: '700' }}>
-                    {choice.automatic ? 'On this phone' : 'Type it'}
+                    {choice.automatic ? 'On this phone' : 'Unavailable'}
                   </Text>
                 </View>
               </View>
               <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 18 }}>
                 {choice.automatic
-                  ? `Uses the ${props.automaticModelLabel} model after a one-time download. The whole ${props.sourceLanguageLabel} script is translated, then cut to your current subtitle blocks.`
-                  : `Automatic translation does not cover this pair yet. Type or paste ${choice.displayName} to follow your current subtitle blocks.`}
+                  ? `Uses the ${props.automaticModelLabel} model after a one-time download. Keep this screen open while the whole ${props.sourceLanguageLabel} script is translated.`
+                  : `${choice.displayName} is unavailable for this source language.`}
               </Text>
             </Pressable>
           ))}
