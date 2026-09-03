@@ -82,7 +82,20 @@ try {
 
     Invoke-Adb @('-s', $Serial, 'install', '-r', '--no-streaming', $Apk)
     Invoke-Adb @('-s', $Serial, 'shell', 'pm', 'enable', $Package)
-    Invoke-Adb @('-s', $Serial, 'shell', 'monkey', '-p', $Package, '-c', 'android.intent.category.LAUNCHER', '1')
+    $LaunchOutput = @(
+        adb -s $Serial shell cmd package resolve-activity --brief `
+            -a android.intent.action.MAIN `
+            -c android.intent.category.LAUNCHER `
+            $Package
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not resolve the launcher activity for $Package."
+    }
+    $LaunchComponent = ([string]($LaunchOutput | Select-Object -Last 1)).Trim()
+    if ($LaunchComponent -notmatch "^$([regex]::Escape($Package))/") {
+        throw "Resolved launcher activity does not belong to ${Package}: $LaunchComponent"
+    }
+    Invoke-Adb @('-s', $Serial, 'shell', 'am', 'start', '-W', '-n', $LaunchComponent)
 
     adb -s $Serial shell dumpsys package $Package |
         Select-String 'versionName=|versionCode=|targetSdk='
