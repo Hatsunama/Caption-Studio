@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -18,12 +18,11 @@ export function DualLanguagePicker(props: {
   const [pendingTag, setPendingTag] = useState<string>();
   const [selectionError, setSelectionError] = useState<string>();
 
-  useEffect(() => {
-    if (!props.visible) {
-      setPendingTag(undefined);
-      setSelectionError(undefined);
-    }
-  }, [props.visible]);
+  const close = () => {
+    if (pendingTag) return;
+    setSelectionError(undefined);
+    props.onClose();
+  };
 
   const choose = async (choice: DualCaptionLanguageChoice) => {
     if (pendingTag) return;
@@ -39,7 +38,7 @@ export function DualLanguagePicker(props: {
   };
 
   return (
-    <Modal visible={props.visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => { if (!pendingTag) props.onClose(); }}>
+    <Modal visible={props.visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
       <View style={{ flex: 1, backgroundColor: chrome.background, paddingTop: insets.top }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -49,7 +48,7 @@ export function DualLanguagePicker(props: {
                 Spoken captions stay in {props.sourceLanguageLabel}. Choose any language below to generate it privately on this phone.
               </Text>
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close language picker" disabled={Boolean(pendingTag)} onPress={props.onClose} hitSlop={10} style={{ opacity: pendingTag ? 0.4 : 1 }}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close language picker" disabled={Boolean(pendingTag)} onPress={close} hitSlop={10} style={{ opacity: pendingTag ? 0.4 : 1 }}>
               <Text style={{ color: chrome.accent, fontSize: 17, fontWeight: '700' }}>Close</Text>
             </Pressable>
           </View>
