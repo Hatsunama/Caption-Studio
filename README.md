@@ -111,6 +111,8 @@ If that still fails, uninstall Caption Studio from the phone first, then run the
 
 ### Fixed side-by-side build when the production signing key is unavailable
 
+Current fixed build: **1.4.5** (`v1.4.5-fixed.1`).
+
 The fixed side-by-side release installs as **Caption Studio Fixed** with package `com.hatsunama.captionstudio.fixed`. It does not replace, uninstall, clear, or migrate `com.hatsunama.captionstudio`, so projects and drafts in the existing app remain untouched. The two apps have separate private storage.
 
 Use this build to exercise fixes from current `main` while preserving an older production-signed installation. Download and run the checked-in installer from PowerShell:

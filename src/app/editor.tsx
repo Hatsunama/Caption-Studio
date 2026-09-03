@@ -823,7 +823,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
     Alert.alert(
       'Finish spoken subtitles first',
-      'English and Chinese can be translated on this phone as a whole, then cut to the same subtitle rhythm. Other languages are typed or pasted by you. Add missed words and fix splits in the spoken language first. Changing those captions later can force a full retranslation.',
+      'Every language in the picker can be generated privately on this phone. Add missed words and fix splits in the spoken language first. Changing those captions later marks translations for an explicit refresh.',
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Edit captions first', onPress: beginEditCaption },
@@ -854,7 +854,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       if (pendingIds.length === 0) return;
       void translationController.refresh(prepared.trackId, pendingIds, translationBaseline);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Dual subtitles could not be enabled.');
+      throw new Error(caught instanceof Error ? caught.message : 'Dual subtitles could not be enabled.');
     }
   };
 
@@ -873,8 +873,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
     if (!canAutomaticallyTranslatePair(sourceLanguage, track.languageTag)) {
       Alert.alert(
-        'Type this language yourself',
-        `${track.displayName} is not covered by the on-device translator yet. Edit the second column directly. Automatic translation currently covers English and Chinese.`,
+        'Translation unavailable',
+        `${track.displayName} cannot be generated from the current caption language. Choose a different source or target language.`,
       );
       return;
     }
@@ -2205,7 +2205,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         sourceLanguageLabel={captionLanguageLabel(primaryCaptionLanguage)}
         automaticModelLabel={NATURAL_TRANSLATION_MODEL.label}
         onClose={() => setDualLanguagePickerOpen(false)}
-        onChoose={(choice) => { void enableDualCaptions(choice.tag); }}
+        onChoose={(choice) => enableDualCaptions(choice.tag)}
       />
       <EditTextLayerModal
         visible={Boolean(editingLayerId)}
