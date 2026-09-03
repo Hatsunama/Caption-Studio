@@ -156,7 +156,7 @@ export function createTranslationCaptionTrack(project: CaptionProject, options: 
   return withCaptionTracks(project, {
     ...tracks,
     translations: [
-      ...tracks.translations.map((existing) => track.visible ? { ...existing, visible: false } : existing),
+      ...tracks.translations,
       track,
     ],
   }, options.updatedAt);
@@ -266,6 +266,42 @@ export function setTranslationCueStyle(
   }, updatedAt);
 }
 
+export function setTranslationCueTiming(
+  project: CaptionProject,
+  trackId: string,
+  sourceCaptionId: string,
+  edge: 'start' | 'end' | 'move',
+  startMs: number,
+  endMs: number,
+  updatedAt = project.updatedAt,
+) {
+  const timelineEndMs = Math.max(80, project.clips.reduce(
+    (total, clip) => total + clip.gapBeforeMs + (clip.sourceEndMs - clip.sourceStartMs) / clip.playbackRate,
+    0,
+  ));
+  return mapTranslationTrack(project, trackId, (track) => ({
+    ...track,
+    cues: track.cues.map((cue) => {
+      if (cue.sourceCaptionId !== sourceCaptionId) return cue;
+      const source = project.captions.find((caption) => caption.id === sourceCaptionId);
+      const currentStart = cue.startMs ?? source?.startMs ?? 0;
+      const currentEnd = cue.endMs ?? source?.endMs ?? currentStart + 80;
+      const currentDuration = Math.max(80, currentEnd - currentStart);
+      const safeStart = edge === 'start'
+        ? Math.max(0, Math.min(startMs, currentEnd - 80))
+        : edge === 'move'
+          ? Math.max(0, Math.min(startMs, timelineEndMs - currentDuration))
+          : currentStart;
+      const safeEnd = edge === 'start'
+        ? currentEnd
+        : edge === 'move'
+          ? safeStart + currentDuration
+          : Math.min(timelineEndMs, Math.max(endMs, currentStart + 80));
+      return { ...cue, startMs: safeStart, endMs: safeEnd, timelineVisible: true };
+    }),
+  }), updatedAt);
+}
+
 export function setTranslationTrackVisibility(
   project: CaptionProject,
   trackId: string,
@@ -279,10 +315,7 @@ export function setTranslationTrackVisibility(
   }
   return withCaptionTracks(project, {
     ...tracks,
-    translations: tracks.translations.map((track) => ({
-      ...track,
-      visible: track.id === trackId ? visible : visible ? false : track.visible,
-    })),
+    translations: tracks.translations.map((track) => track.id === trackId ? { ...track, visible } : track),
   }, updatedAt);
 }
 
@@ -411,9 +444,9 @@ export function resolveCaptionPairs(project: CaptionProject, trackId: string): C
       trackId: track.id,
       languageTag: track.languageTag,
       visible: track.visible,
-      startMs: source.startMs,
-      endMs: source.endMs,
-      timelineVisible: source.timelineVisible !== false,
+      startMs: translation.startMs ?? source.startMs,
+      endMs: translation.endMs ?? source.endMs,
+      timelineVisible: translation.timelineVisible ?? source.timelineVisible !== false,
       source,
       translation,
       style,
@@ -443,6 +476,32 @@ export function synchronizeCaptionTracks(
         }),
       };
     }),
+  };
+}
+
+export function remapTranslationTrackTimings(
+  captionTracks: CaptionTrackCollection | undefined,
+  beforeCaptions: readonly CaptionBlock[],
+  afterCaptions: readonly CaptionBlock[],
+) {
+  const tracks = captionTracks ?? emptyCaptionTrackCollection();
+  const beforeById = new Map(beforeCaptions.map((caption) => [caption.id, caption]));
+  const afterById = new Map(afterCaptions.map((caption) => [caption.id, caption]));
+  return {
+    ...tracks,
+    translations: tracks.translations.map((track) => ({
+      ...track,
+      cues: track.cues.map((cue) => {
+        const before = beforeById.get(cue.sourceCaptionId);
+        const after = afterById.get(cue.sourceCaptionId);
+        if (!before || !after) return cue;
+        return {
+          ...cue,
+          startMs: (cue.startMs ?? before.startMs) + after.startMs - before.startMs,
+          endMs: (cue.endMs ?? before.endMs) + after.endMs - before.endMs,
+        };
+      }),
+    })),
   };
 }
 
@@ -507,6 +566,9 @@ function createCue(trackId: string, source: CaptionBlock, translatedText: string
     text,
     status: text ? 'translated' : 'pending',
     reviewed: false,
+    startMs: source.startMs,
+    endMs: source.endMs,
+    timelineVisible: source.timelineVisible !== false,
   };
 }
 

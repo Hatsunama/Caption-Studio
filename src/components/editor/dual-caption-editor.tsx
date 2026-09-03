@@ -43,6 +43,7 @@ export function DualCaptionEditor(props: {
   busy: boolean;
   progressLabel?: string;
   errorMessage?: string;
+  onDismissError: () => void;
   onClose: () => void;
   onSave: (edits: DualCaptionTextEdit[]) => Promise<boolean>;
   onRefresh: (sourceCaptionIds: string[]) => void;
@@ -194,8 +195,7 @@ export function DualCaptionEditor(props: {
             <View style={{ flex: 1 }}>
               <Text style={{ color: chrome.text, fontSize: 28, fontWeight: '700' }}>Dual subtitles</Text>
               <Text style={{ marginTop: 4, color: chrome.muted, fontSize: 13, lineHeight: 18 }}>
-                {props.sourceLanguageLabel} + {props.targetLanguageLabel} · same timing
-                {props.automaticTranslation ? ', translated as a whole then cut to this rhythm' : ''}
+                {props.sourceLanguageLabel} + {props.targetLanguageLabel} · independent text and timing
               </Text>
             </View>
             <Pressable accessibilityRole="button" accessibilityLabel="Close dual subtitle editor" disabled={props.busy} onPress={requestClose} hitSlop={10}>
@@ -208,19 +208,15 @@ export function DualCaptionEditor(props: {
               disabled={props.busy || dirty}
               onPress={props.onToggleVisibility}
             />
-            {props.automaticTranslation ? (
-              <HeaderAction
+            <HeaderAction
                 label={needsRefresh.length > 0 ? `Refresh ${needsRefresh.length}` : 'Refresh all'}
                 disabled={props.busy || dirty || props.pairs.length === 0}
                 onPress={() => props.onRefresh((needsRefresh.length > 0 ? needsRefresh : props.pairs).map((pair) => pair.source.id))}
               />
-            ) : null}
             <HeaderAction label="Remove second language" danger disabled={props.busy || dirty} onPress={props.onRemove} />
           </View>
           <Text style={{ marginTop: 11, color: chrome.muted, fontSize: 12, lineHeight: 17 }}>
-            {props.automaticTranslation
-              ? 'Finish your spoken-language edits before refreshing. Saving one column updates its partner locally. If you edit both columns, Caption Studio keeps both exactly as written.'
-              : 'Type the second language yourself. Automatic translation currently covers English and Chinese only. Saving keeps both columns exactly as written.'}
+            Generate the second language with on-device AI. Typed corrections change only the language you edit; use Refresh when you want AI to replace a translation.
           </Text>
         </View>
 
@@ -268,28 +264,29 @@ export function DualCaptionEditor(props: {
           })}
         </ScrollView>
 
+        {props.busy || props.errorMessage ? (
+          <View style={{ position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.78)' }}>
+            <View style={{ width: '100%', maxWidth: 380, gap: 14, padding: 22, borderRadius: chrome.radius.xl, backgroundColor: chrome.surfaceRaised }}>
+              {props.busy ? <ActivityIndicator color={chrome.accent} size="large" /> : null}
+              <Text accessibilityRole={props.errorMessage ? 'alert' : undefined} selectable style={{ color: props.errorMessage ? chrome.dangerText : chrome.text, fontSize: 17, lineHeight: 24, fontWeight: '700', textAlign: 'center' }}>
+                {props.errorMessage ?? props.progressLabel ?? 'Translating locally…'}
+              </Text>
+              <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 19, textAlign: 'center' }}>
+                Keep Caption Studio open on this screen and keep the phone unlocked until this finishes.
+              </Text>
+              <Pressable accessibilityRole="button" onPress={props.errorMessage ? props.onDismissError : props.onCancelBusy} style={{ alignItems: 'center', paddingVertical: 11, borderRadius: chrome.radius.md, backgroundColor: chrome.fill }}>
+                <Text style={{ color: props.errorMessage ? chrome.text : chrome.dangerText, fontWeight: '800' }}>{props.errorMessage ? 'Close' : 'Cancel'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
         <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: 14, paddingBottom: Math.max(14, insets.bottom), borderTopWidth: 1, borderTopColor: chrome.hairline, backgroundColor: chrome.background }}>
           {journalError ? (
             <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
               {journalError}
             </Text>
           ) : null}
-          {props.errorMessage ? (
-            <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
-              {props.errorMessage}
-            </Text>
-          ) : null}
-          {props.busy ? (
-            <View style={{ gap: 10 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 7, justifyContent: 'center' }}>
-                <ActivityIndicator color={chrome.accent} />
-                <Text style={{ flexShrink: 1, color: chrome.text, fontSize: 13, fontWeight: '600' }}>{props.progressLabel ?? 'Translating locally…'}</Text>
-              </View>
-              <Pressable accessibilityRole="button" accessibilityLabel="Cancel local translation" onPress={props.onCancelBusy} style={{ alignItems: 'center', paddingVertical: 9 }}>
-                <Text style={{ color: chrome.dangerText, fontSize: 12, fontWeight: '900' }}>CANCEL</Text>
-              </Pressable>
-            </View>
-          ) : (
+          {!props.busy ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Save dual subtitle edits"
@@ -298,11 +295,11 @@ export function DualCaptionEditor(props: {
               style={{ alignItems: 'center', paddingVertical: 16, borderRadius: chrome.radius.lg, backgroundColor: edits.length > 0 ? chrome.accent : chrome.fill }}>
               <Text style={{ color: edits.length > 0 ? chrome.accentInk : chrome.muted, fontSize: 16, fontWeight: '700' }}>
                 {edits.length > 0
-                  ? `Save ${edits.length} change${edits.length === 1 ? '' : 's'}${props.automaticTranslation ? ' + sync' : ''}`
+                  ? `Save ${edits.length} change${edits.length === 1 ? '' : 's'}`
                   : 'No unsaved changes'}
               </Text>
             </Pressable>
-          )}
+          ) : null}
         </View>
       </View>
     </Modal>

@@ -1,4 +1,6 @@
-export type NaturalCaptionLanguage = 'en' | 'zh-Hans' | 'zh-Hant';
+export type NaturalCaptionLanguage =
+  | 'en' | 'zh-Hans' | 'zh-Hant' | 'hi' | 'es' | 'fr' | 'ar' | 'bn' | 'pt' | 'ru'
+  | 'ur' | 'id' | 'de' | 'ja' | 'ko' | 'tr' | 'vi' | 'th' | 'it' | 'pl';
 
 export type NaturalCaptionTranslationInput = {
   id: string;
@@ -42,7 +44,7 @@ export type NaturalCaptionTranslationResult = {
   backend: 'cpu';
   offline: true;
   modelId: 'qwen2.5-1.5b-q8';
-  promptContract: 'qwen2.5-caption-json-v1';
+  promptContract: 'qwen2.5-caption-json-v2';
   batchCount: number;
 };
 

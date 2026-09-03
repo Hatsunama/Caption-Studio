@@ -11,6 +11,7 @@ import {
   projectPrimaryCaptionLanguage,
   resolveCaptionPairs,
   setTranslationCueStyle,
+  setTranslationCueTiming,
   setTranslationStackGap,
   setTranslationTrackStyle,
   setTranslationTrackProvider,
@@ -36,7 +37,7 @@ test('new projects expose a backward-compatible versioned caption-track collecti
   assert.equal(project.captions.length, 2);
 });
 
-test('English and Chinese cues pair by stable caption identity without duplicating timing', () => {
+test('translation cues own independent persisted timing while retaining stable source identity', () => {
   const project = projectFixture();
   const bilingual = createEnglishChineseCaptionTrack(project, { c1: '你好，世界' });
   const track = bilingual.captionTracks.translations[0];
@@ -55,8 +56,8 @@ test('English and Chinese cues pair by stable caption identity without duplicati
     ['c1', '你好，世界', 'translated'],
     ['c2', '', 'pending'],
   ]);
-  assert.equal(Object.hasOwn(track.cues[0], 'startMs'), false);
-  assert.equal(Object.hasOwn(track.cues[0], 'endMs'), false);
+  assert.equal(Object.hasOwn(track.cues[0], 'startMs'), true);
+  assert.equal(Object.hasOwn(track.cues[0], 'endMs'), true);
   assert.equal(project.captionTracks.translations.length, 0);
 
   const retimed = {
@@ -66,8 +67,8 @@ test('English and Chinese cues pair by stable caption identity without duplicati
       : caption),
   };
   const pair = resolveCaptionPairs(retimed, track.id)[0];
-  assert.equal(pair.startMs, 700);
-  assert.equal(pair.endMs, 2_400);
+  assert.equal(pair.startMs, track.cues[0].startMs);
+  assert.equal(pair.endMs, track.cues[0].endMs);
   assert.equal(pair.translation.text, '你好，世界');
   assert.ok(pair.style.position.y > bilingual.projectStyle.position.y);
   assert.ok(pair.style.position.y + pair.style.box.height / 2 <= 1);
@@ -83,6 +84,17 @@ test('English and Chinese cues pair by stable caption identity without duplicati
     movedPair.style.position.y - movedPair.style.box.height / 2
     >= 0.44 + moved.projectStyle.box.height / 2 - 0.001,
   );
+});
+
+test('moving one translated cue changes neither its neighbor nor the primary language', () => {
+  const bilingual = createEnglishChineseCaptionTrack(projectFixture(), { c1: '你好', c2: '再见' });
+  const beforePrimary = bilingual.captions.map((caption) => [caption.startMs, caption.endMs]);
+  const beforeSecond = bilingual.captionTracks.translations[0].cues[1];
+  const moved = setTranslationCueTiming(bilingual, CHINESE_SIMPLIFIED_TRACK_ID, 'c1', 'move', 900, 2_300);
+  const cues = moved.captionTracks.translations[0].cues;
+  assert.deepEqual([cues[0].startMs, cues[0].endMs], [900, 2_300]);
+  assert.deepEqual(cues[1], beforeSecond);
+  assert.deepEqual(moved.captions.map((caption) => [caption.startMs, caption.endMs]), beforePrimary);
 });
 
 test('English-Chinese pairing supports Traditional Chinese and Chinese-primary English tracks', () => {

@@ -47,10 +47,19 @@ public final class NaturalCaptionTranslatorTest {
   }
 
   @Test
-  public void rejectsUnsupportedDirectionAndDuplicateIds() {
+  public void acceptsMultilingualDirectionsAndRejectsInvalidRequests() throws Exception {
+    NaturalCaptionTranslator.ValidatedRequest multilingual =
+        NaturalCaptionTranslator.validateRequest(request("fr", "ja", "one", "Bonjour"));
+    assertEquals("fr", multilingual.sourceLanguage);
+    assertEquals("ja", multilingual.targetLanguage);
+
     assertThrows(
         NaturalCaptionTranslator.TranslationFailure.class,
-        () -> NaturalCaptionTranslator.validateRequest(request("zh-Hans", "zh-Hant", "one", "你好"))
+        () -> NaturalCaptionTranslator.validateRequest(request("fr", "fr", "one", "Bonjour"))
+    );
+    assertThrows(
+        NaturalCaptionTranslator.TranslationFailure.class,
+        () -> NaturalCaptionTranslator.validateRequest(request("xx", "en", "one", "Hello"))
     );
 
     Map<String, Object> request = request("en", "zh-Hant", "same", "First");
@@ -235,7 +244,7 @@ public final class NaturalCaptionTranslatorTest {
     assertEquals(1, first.deliveries.get());
     assertEquals(1, second.deliveries.get());
     assertEquals("qwen2.5-1.5b-q8", first.result.get().get("modelId"));
-    assertEquals("qwen2.5-caption-json-v1", first.result.get().get("promptContract"));
+    assertEquals("qwen2.5-caption-json-v2", first.result.get().get("promptContract"));
     assertEquals("completed", translator.getProgress().get("stage"));
     translator.close();
     assertTrue(model.delete());

@@ -13,24 +13,25 @@ import {
 } from '../src/lib/caption-languages.ts';
 import { cutTranslatedDocument, packCaptionDocuments } from '../src/lib/caption-translation-cut.ts';
 
-test('the spoken-language catalog covers twenty languages without claiming fake translation providers', () => {
+test('the spoken-language catalog exposes the verified local model for every listed language', () => {
   assert.equal(TOP_SPOKEN_CAPTION_LANGUAGES.length, 20);
-  assert.equal(TOP_SPOKEN_CAPTION_LANGUAGES.filter((language) => language.automaticTranslation).length, 3);
+  assert.equal(TOP_SPOKEN_CAPTION_LANGUAGES.filter((language) => language.automaticTranslation).length, 20);
   assert.equal(captionLanguageLabel('es'), 'Spanish');
   assert.equal(captionLanguageLabel('zh-CN'), 'Chinese (Simplified)');
   assert.equal(captionGroupingProfile('ko'), 'hangul');
   assert.equal(captionGroupingProfile('th'), 'thai');
-  assert.deepEqual(automaticTranslationTargetTags('en'), ['zh-Hans', 'zh-Hant']);
-  assert.deepEqual(automaticTranslationTargetTags('zh-TW'), ['en']);
+  assert.equal(automaticTranslationTargetTags('en').length, 19);
+  assert.equal(automaticTranslationTargetTags('zh-TW').includes('zh-Hans'), false);
+  assert.equal(automaticTranslationTargetTags('zh-TW').includes('en'), true);
   const englishChoices = dualCaptionLanguageChoices('en');
   assert.equal(englishChoices.some((choice) => choice.tag === 'en'), false);
   assert.equal(englishChoices.find((choice) => choice.tag === 'zh-Hans')?.automatic, true);
-  assert.equal(englishChoices.find((choice) => choice.tag === 'es')?.automatic, false);
+  assert.equal(englishChoices.find((choice) => choice.tag === 'es')?.automatic, true);
   assert.equal(canAutomaticallyTranslatePair('en', 'zh-Hans'), true);
-  assert.equal(canAutomaticallyTranslatePair('es', 'en'), false);
+  assert.equal(canAutomaticallyTranslatePair('es', 'en'), true);
   const spanishChoices = dualCaptionLanguageChoices('es');
   assert.equal(spanishChoices.some((choice) => choice.tag === 'es'), false);
-  assert.equal(spanishChoices.every((choice) => choice.automatic === false), true);
+  assert.equal(spanishChoices.every((choice) => choice.automatic === true), true);
 });
 
 test('untranslated English-Chinese output is detected in both directions', () => {

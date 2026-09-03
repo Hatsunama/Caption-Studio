@@ -1,6 +1,6 @@
 import type { CaptionBlock, CaptionProject, VideoClip, VisualLayer, WordToken } from '@/types/project';
 import { audioClipEnd, constrainAudioClips } from '@/lib/audio-timeline';
-import { synchronizeCaptionTracks } from '@/lib/caption-tracks';
+import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { captionLayoutText } from '@/lib/caption-text-breaks';
 import { effectiveVideoTransition } from '@/lib/video-transitions';
 
@@ -328,13 +328,14 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
     project.audioClips.map((clip) => clip.startMs >= entry.endMs ? { ...clip, startMs: clip.startMs + delta } : clip),
     totalClipDuration(project.clips.map((clip) => clip.id === clipId ? replacement : clip)),
   );
+  const synchronizedCaptionTracks = synchronizeCaptionTracks(project, captions);
   return {
     ...project,
     updatedAt: new Date().toISOString(),
     clips: project.clips.map((clip) => clip.id === clipId ? replacement : clip),
     transcription: { ...project.transcription, words },
     captions,
-    captionTracks: synchronizeCaptionTracks(project, captions),
+    captionTracks: remapTranslationTrackTimings(synchronizedCaptionTracks, project.captions, captions),
     layers,
     audioClips,
   };

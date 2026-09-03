@@ -36,23 +36,23 @@ export const TOP_SPOKEN_CAPTION_LANGUAGES: readonly CaptionLanguageDefinition[] 
   { tag: 'en', displayName: 'English', family: 'en', grouping: 'spaced', automaticTranslation: true },
   { tag: 'zh-Hans', displayName: 'Chinese (Simplified)', family: 'zh', grouping: 'cjk', automaticTranslation: true },
   { tag: 'zh-Hant', displayName: 'Chinese (Traditional)', family: 'zh', grouping: 'cjk', automaticTranslation: true },
-  { tag: 'hi', displayName: 'Hindi', family: 'hi', grouping: 'spaced', automaticTranslation: false },
-  { tag: 'es', displayName: 'Spanish', family: 'es', grouping: 'spaced', automaticTranslation: false },
-  { tag: 'fr', displayName: 'French', family: 'fr', grouping: 'spaced', automaticTranslation: false },
-  { tag: 'ar', displayName: 'Arabic', family: 'ar', grouping: 'arabic', automaticTranslation: false },
-  { tag: 'bn', displayName: 'Bengali', family: 'bn', grouping: 'spaced', automaticTranslation: false },
-  { tag: 'pt', displayName: 'Portuguese', family: 'pt', grouping: 'spaced', automaticTranslation: false },
-  { tag: 'ru', displayName: 'Russian', family: 'ru', grouping: 'spaced', automaticTranslation: false },
-  { tag: 'ur', displayName: 'Urdu', family: 'ur', grouping: 'arabic', automaticTranslation: false },
-  { tag: 'id', displayName: 'Indonesian', family: 'id', grouping: 'spaced', automaticTranslation: false },
-  { tag: 'de', displayName: 'German', family: 'de', grouping: 'spaced', automaticTranslation: false },
-  { tag: 'ja', displayName: 'Japanese', family: 'ja', grouping: 'cjk', automaticTranslation: false },
-  { tag: 'ko', displayName: 'Korean', family: 'ko', grouping: 'hangul', automaticTranslation: false },
-  { tag: 'tr', displayName: 'Turkish', family: 'tr', grouping: 'spaced', automaticTranslation: false },
-  { tag: 'vi', displayName: 'Vietnamese', family: 'vi', grouping: 'spaced', automaticTranslation: false },
-  { tag: 'th', displayName: 'Thai', family: 'th', grouping: 'thai', automaticTranslation: false },
-  { tag: 'it', displayName: 'Italian', family: 'it', grouping: 'spaced', automaticTranslation: false },
-  { tag: 'pl', displayName: 'Polish', family: 'pl', grouping: 'spaced', automaticTranslation: false },
+  { tag: 'hi', displayName: 'Hindi', family: 'hi', grouping: 'spaced', automaticTranslation: true },
+  { tag: 'es', displayName: 'Spanish', family: 'es', grouping: 'spaced', automaticTranslation: true },
+  { tag: 'fr', displayName: 'French', family: 'fr', grouping: 'spaced', automaticTranslation: true },
+  { tag: 'ar', displayName: 'Arabic', family: 'ar', grouping: 'arabic', automaticTranslation: true },
+  { tag: 'bn', displayName: 'Bengali', family: 'bn', grouping: 'spaced', automaticTranslation: true },
+  { tag: 'pt', displayName: 'Portuguese', family: 'pt', grouping: 'spaced', automaticTranslation: true },
+  { tag: 'ru', displayName: 'Russian', family: 'ru', grouping: 'spaced', automaticTranslation: true },
+  { tag: 'ur', displayName: 'Urdu', family: 'ur', grouping: 'arabic', automaticTranslation: true },
+  { tag: 'id', displayName: 'Indonesian', family: 'id', grouping: 'spaced', automaticTranslation: true },
+  { tag: 'de', displayName: 'German', family: 'de', grouping: 'spaced', automaticTranslation: true },
+  { tag: 'ja', displayName: 'Japanese', family: 'ja', grouping: 'cjk', automaticTranslation: true },
+  { tag: 'ko', displayName: 'Korean', family: 'ko', grouping: 'hangul', automaticTranslation: true },
+  { tag: 'tr', displayName: 'Turkish', family: 'tr', grouping: 'spaced', automaticTranslation: true },
+  { tag: 'vi', displayName: 'Vietnamese', family: 'vi', grouping: 'spaced', automaticTranslation: true },
+  { tag: 'th', displayName: 'Thai', family: 'th', grouping: 'thai', automaticTranslation: true },
+  { tag: 'it', displayName: 'Italian', family: 'it', grouping: 'spaced', automaticTranslation: true },
+  { tag: 'pl', displayName: 'Polish', family: 'pl', grouping: 'spaced', automaticTranslation: true },
 ];
 
 const LANGUAGE_BY_TAG = new Map(TOP_SPOKEN_CAPTION_LANGUAGES.map((language) => [language.tag, language]));
@@ -92,21 +92,18 @@ export function supportsAutomaticCaptionTranslation(languageTag: string) {
 }
 
 export function canAutomaticallyTranslatePair(sourceLanguageTag: string, targetLanguageTag: string) {
-  try {
-    const source = normalizeEnglishChineseCaptionLanguage(sourceLanguageTag);
-    const target = normalizeEnglishChineseCaptionLanguage(targetLanguageTag);
-    return source !== target
-      && supportsAutomaticCaptionTranslation(source)
-      && supportsAutomaticCaptionTranslation(target);
-  } catch {
-    return false;
-  }
+  const source = resolveCaptionLanguage(sourceLanguageTag);
+  const target = resolveCaptionLanguage(targetLanguageTag);
+  return Boolean(source && target && source.family !== target.family
+    && source.automaticTranslation && target.automaticTranslation);
 }
 
-export function automaticTranslationTargetTags(sourceLanguageTag: string): EnglishChineseCaptionLanguage[] {
-  const source = normalizeEnglishChineseCaptionLanguage(sourceLanguageTag);
-  if (source === 'en') return ['zh-Hans', 'zh-Hant'];
-  return ['en'];
+export function automaticTranslationTargetTags(sourceLanguageTag: string): CaptionLanguageTag[] {
+  const source = resolveCaptionLanguage(sourceLanguageTag);
+  if (!source) throw new Error('Caption Studio cannot translate an unknown source language.');
+  return TOP_SPOKEN_CAPTION_LANGUAGES
+    .filter((language) => language.automaticTranslation && language.family !== source.family)
+    .map((language) => language.tag);
 }
 
 export function dualCaptionLanguageChoices(sourceLanguageTag: string): DualCaptionLanguageChoice[] {
@@ -151,6 +148,17 @@ export function isLikelyUntranslatedCaption(sourceText: string, translatedText: 
   const source = sourceText.normalize('NFC').trim();
   const translated = translatedText.normalize('NFC').trim();
   if (!translated || source === translated) return true;
+  const multilingualTarget = resolveCaptionLanguage(targetLanguage)?.tag;
+  if (multilingualTarget && multilingualTarget !== 'en' && multilingualTarget !== 'zh-Hans' && multilingualTarget !== 'zh-Hant') {
+    if (multilingualTarget === 'ja') return !/[\u3040-\u30FF\u3400-\u9FFF]/.test(translated);
+    if (multilingualTarget === 'ko') return !/[\uAC00-\uD7AF]/.test(translated);
+    if (multilingualTarget === 'th') return !/[\u0E00-\u0E7F]/.test(translated);
+    if (multilingualTarget === 'ar' || multilingualTarget === 'ur') return !/[\u0600-\u06FF]/.test(translated);
+    if (multilingualTarget === 'hi') return !/[\u0900-\u097F]/.test(translated);
+    if (multilingualTarget === 'bn') return !/[\u0980-\u09FF]/.test(translated);
+    if (multilingualTarget === 'ru') return !/[\u0400-\u04FF]/.test(translated);
+    return !/[A-Za-z\u00C0-\u024F]/.test(translated);
+  }
   try {
     const target = normalizeEnglishChineseCaptionLanguage(targetLanguage);
     if (target === 'en') return containsChineseCaptionText(translated);
