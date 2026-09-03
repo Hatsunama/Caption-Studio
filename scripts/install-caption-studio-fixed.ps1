@@ -21,7 +21,12 @@ try {
     }
 
     $Headers = @{ Accept = 'application/vnd.github+json' }
-    $Releases = @(Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases?per_page=100" -Headers $Headers)
+    $ReleasePayload = Invoke-RestMethod `
+        -Uri "https://api.github.com/repos/$Repository/releases?per_page=100" `
+        -Headers $Headers
+    # PowerShell 7 can preserve a JSON top-level array as one pipeline object.
+    # Force element enumeration before filtering individual releases.
+    $Releases = @($ReleasePayload | ForEach-Object { $_ })
     $Release = @($Releases | Where-Object {
         -not $_.draft -and
         $_.prerelease -and
@@ -77,7 +82,20 @@ try {
 
     Invoke-Adb @('-s', $Serial, 'install', '-r', '--no-streaming', $Apk)
     Invoke-Adb @('-s', $Serial, 'shell', 'pm', 'enable', $Package)
-    Invoke-Adb @('-s', $Serial, 'shell', 'monkey', '-p', $Package, '-c', 'android.intent.category.LAUNCHER', '1')
+    $LaunchOutput = @(
+        adb -s $Serial shell cmd package resolve-activity --brief `
+            -a android.intent.action.MAIN `
+            -c android.intent.category.LAUNCHER `
+            $Package
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not resolve the launcher activity for $Package."
+    }
+    $LaunchComponent = ([string]($LaunchOutput | Select-Object -Last 1)).Trim()
+    if ($LaunchComponent -notmatch "^$([regex]::Escape($Package))/") {
+        throw "Resolved launcher activity does not belong to ${Package}: $LaunchComponent"
+    }
+    Invoke-Adb @('-s', $Serial, 'shell', 'am', 'start', '-W', '-n', $LaunchComponent)
 
     adb -s $Serial shell dumpsys package $Package |
         Select-String 'versionName=|versionCode=|targetSdk='
