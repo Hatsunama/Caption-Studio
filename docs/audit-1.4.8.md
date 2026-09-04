@@ -1,5 +1,7 @@
 # Caption Studio 1.4.8 audit
 
+Release published: [v1.4.8-fixed.1](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.8-fixed.1), Android version code 20, source commit `886079e4070de90b45657b6d3daed4c275114cf7`. [Release CI](https://github.com/Hatsunama/Caption-Studio/actions/runs/33919939426) passed clean dependency verification, native media/translation tests, APK signing/alignment verification, and publication. APK SHA-256: `31f74ce3bfc45bc5964accdc318541fa291b4812f10bf3786a2e75288d62fa99`. The APK was not installed on the phone by this audit; updated-device translation and export playback remain user acceptance checks.
+
 ## Device evidence
 
 Seeker SM02G4061962301, Fixed 1.4.7: a 37-cue Chinese translation returned with 12 cues requiring refresh. Choosing Rendered MP4 returned to the timeline without a visible error. This reproduced a preflight failure, not proof of a native encoder crash.
