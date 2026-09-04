@@ -623,7 +623,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       } else {
         const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
         const refreshIds = visibleTranslation?.cues
-          .filter((cue) => cue.status === 'pending' || cue.status === 'stale')
+          .filter((cue) => cue.status === 'pending' || cue.status === 'stale' || cue.status === 'failed')
           .map((cue) => cue.sourceCaptionId) ?? [];
         if (visibleTranslation && refreshIds.length > 0) {
           requestTranslationRefresh(refreshIds, visibleTranslation);
@@ -810,7 +810,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       setSelectedTranslationTrackId(existing.id);
       setDualCaptionEditorOpen(true);
       const pendingIds = existing.cues
-        .filter((cue) => !cue.text.trim() && (cue.status === 'pending' || cue.status === 'stale'))
+        .filter((cue) => !cue.text.trim() && (cue.status === 'pending' || cue.status === 'stale' || cue.status === 'failed'))
         .map((cue) => cue.sourceCaptionId);
       if (
         pendingIds.length > 0
@@ -1459,7 +1459,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       Alert.alert('Export complete', `Saved to Movies/Caption Studio.\n${result.width} × ${result.height}`);
     } catch (caught) {
       if (!(caught instanceof VideoExportCancelledError)) {
-        setError(userFacingExportError(caught));
+        const message = userFacingExportError(caught);
+        setError(message);
+        Alert.alert('Export failed', message);
       }
     } finally {
       setExporting(false);
@@ -1476,7 +1478,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     try {
       await exportSubtitleFile(projectRef.current, format);
     } catch (caught) {
-      setError(userFacingExportError(caught, 'The subtitle file could not be exported.'));
+      const message = userFacingExportError(caught, 'The subtitle file could not be exported.');
+      setError(message);
+      Alert.alert('Subtitle export failed', message);
     } finally {
       setExporting(false);
       setExportProgress(undefined);

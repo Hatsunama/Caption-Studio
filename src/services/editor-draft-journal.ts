@@ -1,3 +1,4 @@
+import { createKeyedOperationQueue } from '@/lib/keyed-operation-queue';
 import * as FileSystem from 'expo-file-system/legacy';
 
 export type EditorDraftKind = 'caption-script' | `dual-captions-${string}`;
@@ -12,14 +13,15 @@ export type EditorDraftJournal = {
 };
 
 const MAX_JOURNAL_BYTES = 4 * 1024 * 1024;
+const journalOperations = createKeyedOperationQueue();
 
-export async function readEditorDraftJournal(projectId: string, kind: EditorDraftKind) {
+async function readEditorDraftJournalUnqueued(projectId: string, kind: EditorDraftKind) {
   const uri = journalUri(projectId, kind);
   if (!uri) return null;
   const info = await FileSystem.getInfoAsync(uri);
   if (!info.exists || info.isDirectory || (info.size ?? 0) > MAX_JOURNAL_BYTES) return null;
+  const raw = await FileSystem.readAsStringAsync(uri);
   try {
-    const raw = await FileSystem.readAsStringAsync(uri);
     if (raw.length > MAX_JOURNAL_BYTES) return null;
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== 'object') return null;
@@ -32,7 +34,7 @@ export async function readEditorDraftJournal(projectId: string, kind: EditorDraf
   }
 }
 
-export async function writeEditorDraftJournal(
+async function writeEditorDraftJournalUnqueued(
   projectId: string,
   kind: EditorDraftKind,
   baseRevision: string,
@@ -40,7 +42,7 @@ export async function writeEditorDraftJournal(
 ) {
   const directory = journalDirectoryUri();
   const uri = journalUri(projectId, kind);
-  if (!directory || !uri) return;
+  if (!directory || !uri) throw new Error('Recovery draft storage is unavailable. Keep the editor open and retry saving.');
   const encoded = JSON.stringify({
     schemaVersion: 1,
     projectId,
@@ -56,7 +58,7 @@ export async function writeEditorDraftJournal(
   await FileSystem.moveAsync({ from: staging, to: uri });
 }
 
-export async function clearEditorDraftJournal(projectId: string, kind: EditorDraftKind) {
+async function clearEditorDraftJournalUnqueued(projectId: string, kind: EditorDraftKind) {
   const uri = journalUri(projectId, kind);
   if (uri) await FileSystem.deleteAsync(uri, { idempotent: true });
 }
@@ -72,4 +74,14 @@ function journalUri(projectId: string, kind: EditorDraftKind) {
 
 function safe(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160);
+}
+
+export function readEditorDraftJournal(projectId: string, kind: EditorDraftKind) {
+  return journalOperations(journalUri(projectId, kind) ?? projectId, () => readEditorDraftJournalUnqueued(projectId, kind));
+}
+export function writeEditorDraftJournal(projectId: string, kind: EditorDraftKind, baseRevision: string, payload: unknown) {
+  return journalOperations(journalUri(projectId, kind) ?? projectId, () => writeEditorDraftJournalUnqueued(projectId, kind, baseRevision, payload));
+}
+export function clearEditorDraftJournal(projectId: string, kind: EditorDraftKind) {
+  return journalOperations(journalUri(projectId, kind) ?? projectId, () => clearEditorDraftJournalUnqueued(projectId, kind));
 }

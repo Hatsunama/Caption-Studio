@@ -128,11 +128,11 @@ test('project translation orchestration owns concurrency, provenance, and mixed-
   assert.match(controller, /getCurrentProject\(\) !== baseline/);
   assert.doesNotMatch(workflow, /projectEnglishChineseCaptionLanguage/);
   assert.match(workflow, /projectPrimaryCaptionLanguage/);
-  assert.match(workflow, /packCaptionDocuments/);
-  assert.match(workflow, /cutTranslatedDocument/);
+  assert.doesNotMatch(workflow, /packCaptionDocuments/);
+  assert.doesNotMatch(workflow, /cutTranslatedDocument/);
   assert.doesNotMatch(workflow, /usableAutomaticTranslation/);
   assert.match(workflow, /translatedSliceReviewFlags/);
-  assert.match(workflow, /assertAutomaticTranslationWroteText/);
+  assert.match(workflow, /commitTranslationAttempt/);
   assert.doesNotMatch(workflow, /if \(documentNeedsReview\) needsReview\.add\(id\)/);
   assert.doesNotMatch(workflow, /translatedText: translated\.captions\.get\(caption\.id\) \?\? caption\.text/);
   assert.match(workflow, /provider: \{ id: 'manual' \}/);
@@ -200,7 +200,7 @@ test('dual-subtitle refresh commits translated text instead of leaving a pending
   assert.match(dualEditor, /Keep current translation/);
   assert.match(dualEditor, /pendingEmpty/);
   assert.doesNotMatch(dualEditor, /props\.baseRevision, props\.pairs, props\.projectId, props\.visible, sourceDrafts/);
-  assert.match(editor, /!cue\.text\.trim\(\) && \(cue\.status === 'pending' \|\| cue\.status === 'stale'\)/);
+  assert.match(editor, /!cue\.text\.trim\(\) && \(cue\.status === 'pending' \|\| cue\.status === 'stale' \|\| cue\.status === 'failed'\)/);
   assert.match(editor, /setTranslationStackGap/);
   assert.match(editor, /key=\{selectedTranslationTrack\?\.id \?\? 'none'\}/);
   assert.doesNotMatch(editor, /cues\.map\(\(cue\) => `\$\{cue\.sourceCaptionId\}:\$\{cue\.text\}`\)/);
@@ -210,7 +210,7 @@ test('dual-subtitle refresh commits translated text instead of leaving a pending
   assert.match(editor, /filter\(\(cue\) => !cue\.text\.trim\(\)\)/);
   assert.match(editor, /position: _ignoredPosition/);
   assert.doesNotMatch(editor, /onSelectTranslationCaption[\s\S]{0,280}setDualCaptionEditorOpen\(true\)/);
-  assert.match(workflow, /assertAutomaticTranslationWroteText\(captions, previousById, writes\)/);
+  assert.match(workflow, /commitTranslationAttempt\(providerProject, track.id, captions, writes\)/);
   assert.match(commit, /second language is still empty/);
   assert.match(controller, /setError\(caught instanceof Error \? caught\.message/);
 });

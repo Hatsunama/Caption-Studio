@@ -1,5 +1,5 @@
 import { resolveCaptionStyle } from '@/lib/style-resolver';
-import { assertVisibleTranslationTracksCompatible, resolveCaptionPairs } from '@/lib/caption-tracks';
+import { exportCaptionPairs } from '@/lib/export-caption-pairs';
 import { buildClipTimeline, totalClipDuration } from '@/lib/video-timeline';
 import { effectiveVideoTransition } from '@/lib/video-transitions';
 import { resolveVideoTransform } from '@/lib/video-transform';
@@ -92,7 +92,7 @@ export function buildTimelineRenderPlan(
 ): TimelineRenderPlan {
   const durationMs = totalClipDuration(project.clips);
   if (durationMs <= 0) throw new Error('Add at least one visible video clip before exporting.');
-  assertVisibleTranslationTracksCompatible(project);
+  const captionsEnabled = project.export.burnCaptions && project.layers.some((layer) => layer.kind === 'captions' && layer.visible);
   const activeSources = activeProjectVideoSources(project);
   const { width, height } = outputDimensions(project, activeSources);
   const frameRate = selectExportFrameRate(activeSources);
@@ -114,7 +114,7 @@ export function buildTimelineRenderPlan(
 
   const wordsById = new Map(project.transcription.words.map((word) => [word.id, word]));
   const captions: TimelineRenderPlan['captions'] = [];
-  for (const caption of project.captions) {
+  for (const caption of captionsEnabled ? project.captions : []) {
     if (caption.timelineVisible === false || !caption.text.trim()) continue;
     const interval = boundedInterval(caption.startMs, caption.endMs, durationMs);
     if (!interval) continue;
@@ -141,31 +141,11 @@ export function buildTimelineRenderPlan(
     });
   }
 
-  for (const track of project.captionTracks?.translations ?? []) {
-    if (!track.visible) continue;
-    const pairs = resolveCaptionPairs(project, track.id)
-      .filter((pair) => pair.timelineVisible && pair.source.text.trim());
-    const unresolved = pairs.filter((pair) => (
-      pair.translation.status === 'pending'
-      || pair.translation.status === 'stale'
-      || !pair.translation.text.trim()
-    ));
-    if (unresolved.length > 0) {
-      throw new Error(
-        `${track.displayName} has ${unresolved.length} subtitle${unresolved.length === 1 ? '' : 's'} that need translation. Refresh them or hide the second language before exporting.`,
-      );
-    }
-    for (const pair of pairs) {
-      const interval = boundedInterval(pair.startMs, pair.endMs, durationMs);
-      if (!interval) continue;
-      captions.push({
-        id: pair.translation.id,
-        text: pair.translation.text,
-        ...interval,
-        style: renderStyle(pair.style),
-        words: [],
-      });
-    }
+  for (const pair of captionsEnabled ? exportCaptionPairs(project) : []) {
+    const interval = boundedInterval(pair.startMs, pair.endMs, durationMs);
+    if (!interval) continue;
+    captions.push({ id: pair.translation.id, text: pair.translation.text, ...interval,
+      style: renderStyle(pair.style), words: [] });
   }
 
   const layers: TimelineRenderPlan['layers'] = [];

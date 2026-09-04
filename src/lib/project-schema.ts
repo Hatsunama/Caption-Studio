@@ -368,7 +368,7 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
         const text = boundedString(cue.text, `translation cue ${cueIndex + 1} text`, 100_000);
         const status = enumValue(
           cue.status,
-          ['pending', 'translated', 'reviewed', 'stale'] as const,
+          ['pending', 'translated', 'reviewed', 'stale', 'failed'] as const,
           `translation cue ${cueIndex + 1} status`,
         );
         if (!text.trim() && (status === 'translated' || status === 'reviewed')) {

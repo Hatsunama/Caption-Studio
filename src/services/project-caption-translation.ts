@@ -6,14 +6,10 @@ import {
 } from '@/lib/caption-languages';
 import { captionTextLength } from '@/lib/caption-text-breaks';
 import {
-  assertAutomaticTranslationWroteText,
   automaticTranslationCueWrites,
   translatedSliceReviewFlags,
 } from '@/lib/caption-translation-commit';
-import {
-  cutTranslatedDocument,
-  packCaptionDocuments,
-} from '@/lib/caption-translation-cut';
+import { commitTranslationAttempt } from '@/lib/translation-attempt';
 import {
   createTranslationCaptionTrack,
   projectPrimaryCaptionLanguage,
@@ -107,7 +103,7 @@ export async function refreshProjectCaptionTranslation(options: {
     needsReviewById: translated.needsReview,
     targetLanguage: track.languageTag,
   });
-  assertAutomaticTranslationWroteText(captions, previousById, writes);
+
   const updatedAt = new Date().toISOString();
   const providerProject = setTranslationTrackProvider(
     options.project,
@@ -116,12 +112,7 @@ export async function refreshProjectCaptionTranslation(options: {
     qwenSource,
     updatedAt,
   );
-  return updatePairedCaptionTexts(providerProject, writes.map((write) => ({
-    trackId: track.id,
-    sourceCaptionId: write.sourceCaptionId,
-    translatedText: write.translatedText,
-    translationStatus: write.translationStatus,
-  })), updatedAt);
+  return commitTranslationAttempt(providerProject, track.id, captions, writes);
 }
 
 export async function synchronizeProjectDualCaptionEdits(options: {
@@ -202,29 +193,17 @@ async function translateCaptionDocument(options: {
   captions: CaptionBlock[];
   onProgress?: (progress: CaptionTranslationProgress) => void;
 }): Promise<NaturalCaptionTranslation> {
-  const chunks = packCaptionDocuments(options.captions.map((caption) => ({ id: caption.id, text: caption.text })));
+  // Keep cue identities intact; proportional text cutting cannot align meanings.
   const translated = await translateNaturalCaptionBatch({
     sourceLanguage: options.sourceLanguage,
     targetLanguage: options.targetLanguage,
-    captions: chunks.map((chunk) => ({ id: chunk.id, text: chunk.text })),
+    captions: options.captions.map(({ id, text }) => ({ id, text })),
+    allCaptions: options.captions.map(({ id, text }) => ({ id, text })),
     onProgress: options.onProgress,
   });
-  const captions = new Map<string, string>();
-  const needsReview = new Set<string>();
-  const byId = new Map(options.captions.map((caption) => [caption.id, caption]));
-  for (const chunk of chunks) {
-    const sources = chunk.sourceIds.flatMap((id) => {
-      const caption = byId.get(id);
-      return caption ? [{ id: caption.id, text: caption.text, startMs: caption.startMs, endMs: caption.endMs }] : [];
-    });
-    const cut = cutTranslatedDocument(
-      translated.captions.get(chunk.id) ?? '',
-      sources,
-      options.targetLanguage,
-    );
-    const sourceById = new Map(sources.map((source) => [source.id, source.text]));
-    translatedSliceReviewFlags(cut, sourceById, options.targetLanguage).forEach((id) => needsReview.add(id));
-    cut.forEach((text, id) => captions.set(id, text));
-  }
-  return { captions, needsReview, provider: translated.provider };
+  const sources = new Map(options.captions.map((caption) => [caption.id, caption.text]));
+  const needsReview = new Set(translated.needsReview);
+  translatedSliceReviewFlags(translated.captions, sources, options.targetLanguage)
+    .forEach((id) => needsReview.add(id));
+  return { ...translated, needsReview };
 }

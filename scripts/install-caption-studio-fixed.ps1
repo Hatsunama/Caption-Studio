@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $Repository = 'Hatsunama/Caption-Studio'
-$RequiredCommit = 'ddb316c6c5f483ba0131b464c30850ab838cac1e'
+$RequiredCommit = 'v1.4.8-fixed.1'
 $Package = 'com.hatsunama.captionstudio.fixed'
 $AssetName = 'caption-studio-fixed-android.apk'
 $TempDir = Join-Path $env:TEMP ("CaptionStudioFixedInstaller-" + [Guid]::NewGuid().ToString('N'))

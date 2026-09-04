@@ -276,6 +276,7 @@ export async function translateNaturalCaptionOperations(options: {
         new Map(translated.map((caption) => [caption.id, caption.text])),
         options.onProgress,
       );
+      throwIfCancelled(run);
       const translatedById = repaired.translatedById;
       const translatedOperations = new Map<string, ReadonlyMap<string, string>>();
       const needsReviewByOperation = new Map<string, ReadonlySet<string>>();
@@ -480,7 +481,7 @@ async function repairUntranslatedCaptions(
   let updated = new Map(translatedById);
   const needsReview = new Set<string>();
   for (const operation of prepared) {
-    if (run.cancelled) return { translatedById: updated, needsReview };
+    throwIfCancelled(run);
 
     let questionables = operation.captions.filter((caption) => isLikelyUntranslatedCaption(
       caption.text,
@@ -497,7 +498,8 @@ async function repairUntranslatedCaptions(
         targetLanguage: operation.targetLanguage,
         batches: createBatches(questionables).map((captions) => ({ captions })),
       }]);
-    } catch {
+    } catch (error) {
+      if (run.cancelled || translationCancelled(error)) throw new CaptionTranslationCancelledError();
       for (const caption of questionables) needsReview.add(caption.id);
       continue;
     }

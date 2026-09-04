@@ -112,7 +112,7 @@ export function DualCaptionEditor(props: {
     if (!props.visible || !journalReady || props.busy) return;
     const pendingEmpty = props.pairs.some((pair) => (
       !pair.translation.text.trim()
-      && (pair.translation.status === 'pending' || pair.translation.status === 'stale')
+      && (pair.translation.status === 'pending' || pair.translation.status === 'stale' || pair.translation.status === 'failed')
     ));
     if (pendingEmpty) return;
     if (dualCaptionDraftsMatch(displayDrafts, sourceDrafts)) {
@@ -148,7 +148,7 @@ export function DualCaptionEditor(props: {
   }), [displayDrafts, props.pairs]);
 
   const needsRefresh = props.pairs.filter((pair) => (
-    pair.translation.status === 'pending' || pair.translation.status === 'stale'
+    pair.translation.status === 'pending' || pair.translation.status === 'stale' || pair.translation.status === 'failed'
   ));
   const dirty = edits.length > 0;
 
@@ -223,7 +223,7 @@ export function DualCaptionEditor(props: {
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 10, padding: 14, paddingBottom: 120 }}>
           {props.pairs.map((pair, index) => {
             const draft = displayDrafts[pair.source.id] ?? { primaryText: pair.source.text, translatedText: pair.translation.text };
-            const refreshRequired = pair.translation.status === 'pending' || pair.translation.status === 'stale';
+            const refreshRequired = pair.translation.status === 'pending' || pair.translation.status === 'stale' || pair.translation.status === 'failed';
             return (
               <View key={pair.source.id} style={{ gap: 9, padding: 14, borderRadius: chrome.radius.lg, borderWidth: 1, borderColor: refreshRequired ? chrome.warning : chrome.hairline, backgroundColor: chrome.surface }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -349,6 +349,7 @@ function statusLabel(status: CaptionPair['translation']['status']) {
   if (status === 'reviewed') return 'REVIEWED';
   if (status === 'translated') return 'READY';
   if (status === 'stale') return 'NEEDS REFRESH';
+  if (status === 'failed') return 'FAILED - RETRY';
   return 'PENDING';
 }
 

@@ -1,5 +1,6 @@
 import { resolveCaptionStyle } from '@/lib/style-resolver';
-import { assertVisibleTranslationTracksCompatible, resolveCaptionPairs, type CaptionPair } from '@/lib/caption-tracks';
+import type { CaptionPair } from '@/lib/caption-tracks';
+import { exportCaptionPairs } from '@/lib/export-caption-pairs';
 import {
   captionLayoutText,
   captionSpokenTokenSpans,
@@ -23,6 +24,13 @@ export function serializeSrt(project: CaptionProject) {
       text: normalizeLineEndings(pair.translation.text).trim(),
     }))];
   }).sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+  const primaryIds = new Set(visibleCaptions(project).map((caption) => caption.id));
+  for (const [id, pairs] of translations) {
+    if (primaryIds.has(id)) continue;
+    pairs.forEach((pair) => events.push({ ...srtRange(pair.startMs, pair.endMs),
+      text: normalizeLineEndings(pair.translation.text).trim() }));
+  }
+  events.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
   return events.length > 0 ? `${events.map((event, index) => [
     String(index + 1),
     `${srtTime(event.startMs)} --> ${srtTime(event.endMs)}`,
@@ -66,6 +74,13 @@ export function serializeAss(project: CaptionProject) {
       )),
     ];
   });
+  const primaryIds = new Set(visibleCaptions(project).map((caption) => caption.id));
+  for (const [id, pairs] of translations) {
+    if (primaryIds.has(id)) continue;
+    pairs.forEach((pair, index) => events.push(assDialogue(index + 1,
+      assRange(pair.startMs, pair.endMs), pair.style, width, height, scale,
+      assText(transformText(normalizeLineEndings(pair.translation.text).trim(), pair.style.textTransform)))));
+  }
   return [...header, ...events, ''].join('\n');
 }
 
@@ -93,26 +108,11 @@ function assDialogue(
 }
 
 function translationsByCaption(project: CaptionProject) {
-  assertVisibleTranslationTracksCompatible(project);
   const pairs = new Map<string, CaptionPair[]>();
-  for (const track of project.captionTracks?.translations ?? []) {
-    if (!track.visible) continue;
-    const resolved = resolveCaptionPairs(project, track.id).filter((pair) => pair.timelineVisible);
-    const unresolved = resolved.filter((pair) => (
-      pair.translation.status === 'pending'
-      || pair.translation.status === 'stale'
-      || !pair.translation.text.trim()
-    ));
-    if (unresolved.length > 0) {
-      throw new Error(
-        `${track.displayName} has ${unresolved.length} subtitle${unresolved.length === 1 ? '' : 's'} that need translation. Refresh them or hide the second language before exporting.`,
-      );
-    }
-    for (const pair of resolved) {
-      const current = pairs.get(pair.source.id) ?? [];
-      current.push(pair);
-      pairs.set(pair.source.id, current);
-    }
+  for (const pair of exportCaptionPairs(project)) {
+    const current = pairs.get(pair.source.id) ?? [];
+    current.push(pair);
+    pairs.set(pair.source.id, current);
   }
   return pairs;
 }

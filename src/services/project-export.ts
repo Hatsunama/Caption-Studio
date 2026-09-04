@@ -1,3 +1,4 @@
+import { exportCaptionPairs } from '@/lib/export-caption-pairs';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import CaptionMedia from 'caption-media';
@@ -71,7 +72,7 @@ export function getProjectVideoExportProgress(): Promise<TimelineVideoExportProg
 
 export async function exportSubtitleFile(project: CaptionProject, format: 'srt' | 'ass') {
   if (!FileSystem.cacheDirectory) throw new Error('Export storage is unavailable on this device.');
-  if (visibleCaptions(project).length === 0) throw new Error('Generate or add a visible caption before exporting subtitles.');
+  if (visibleCaptions(project).length === 0 && exportCaptionPairs(project).length === 0) throw new Error('Generate or add a visible caption before exporting subtitles.');
   const directory = await prepareCaptionStudioExportCache();
   const uri = `${directory}${createExportCacheFileName(project.name, format)}`;
   const content = format === 'srt' ? serializeSrt(project) : serializeAss(project);
@@ -99,8 +100,8 @@ export function userFacingExportError(caught: unknown, fallback = 'The video cou
     return fallback;
   }
   const cleaned = firstLine.replace(/^\[[\w.]+\]\s*/, '');
-  if (!cleaned || cleaned.length > 180) return fallback;
-  return cleaned;
+  if (!cleaned) return fallback;
+  return cleaned.slice(0, 1000);
 }
 
 async function confirmLocalExportFile(outputUri: string, sizeBytes: number) {

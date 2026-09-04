@@ -340,7 +340,7 @@ export function LayerTimeline(props: {
                         durationMs={duration}
                         trackWidth={trackWidth}
                         lane={0}
-                        color={pair.translation.status === 'stale' || pair.translation.status === 'pending'
+                        color={pair.translation.status === 'stale' || pair.translation.status === 'pending' || pair.translation.status === 'failed'
                           ? '#A66220'
                           : NEON_CAPTION_COLORS[(pairIndex + trackIndex + 1) % NEON_CAPTION_COLORS.length]}
                         selected={props.selectedLayerId === track.id && props.selectedCaptionId === pair.source.id}

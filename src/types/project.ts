@@ -141,7 +141,7 @@ export type CaptionBlock = {
   styleOverride?: CaptionStylePatch;
 };
 
-export type TranslationCaptionStatus = 'pending' | 'translated' | 'reviewed' | 'stale';
+export type TranslationCaptionStatus = 'pending' | 'translated' | 'reviewed' | 'stale' | 'failed';
 
 export type TranslationCaptionCue = {
   id: Identifier;

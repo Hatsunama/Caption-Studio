@@ -6,8 +6,8 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/latest) on the phone.
-2. Tap **caption-studio-android.apk**.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.8-fixed.1) on the phone.
+2. Tap **caption-studio-fixed-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
 5. Tap **Install**, then open **Caption Studio**.
@@ -24,9 +24,9 @@ This downloads the same release APK; it does not compile the app on the phone.
 pkg update
 pkg install curl
 termux-setup-storage
-curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/latest/download/caption-studio-android.apk
-termux-open ~/storage/downloads/caption-studio-android.apk
+curl -L -o ~/storage/downloads/caption-studio-fixed-android.apk \
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.8-fixed.1/caption-studio-fixed-android.apk
+termux-open ~/storage/downloads/caption-studio-fixed-android.apk
 ```
 
 When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a chooser, select Android's package installer. Then allow **Install unknown apps** for Termux when Android asks.
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio Fixed 1.4.5 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing Fixed installation is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio Fixed 1.4.8 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing Fixed installation is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -67,13 +67,17 @@ The first time `adb devices` runs, unlock the phone. Tap **Allow** on **Allow US
 
 If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, stop. The installed app uses a different signing identity. Do not uninstall it if its local projects or drafts matter; an uninstall can make that data unrecoverable.
 
-The current Seeker installation is production-signed with certificate SHA-256 `CB58765460B1C4BD30F0FC86331B37D7F27640034509C0690E63EF6A24EA2A8A`. Do not install the legacy debug-lineage prerelease `v1.4.2-export-fix-seeker.1` over it. A data-preserving update must be signed by the same production key; the certificate-checking installer intentionally refuses every mismatch before running `adb install -r`. Never uninstall or clear the app to bypass that refusal when local projects matter.
+The original production app and Caption Studio Fixed have different package identities. The installer updates only Caption Studio Fixed. Android verifies the signing identity and rejects mismatches without uninstalling or clearing either app.
 
 Never uninstall or clear either app to bypass an installation failure. Keep the error output for diagnosis; uninstalling deletes local drafts and projects.
 
 ### Fixed side-by-side build when the production signing key is unavailable
 
-Current fixed build: **1.4.7** (`v1.4.7-fixed.1`, Android version code 19).
+Current fixed build: **1.4.8** (`v1.4.8-fixed.1`, Android version code 20).
+
+Version 1.4.8 preserves individual subtitle identities through AI translation. Unusable results are marked FAILED - RETRY, successful translations and existing text are saved, and incomplete runs show a summary. Open Edit both languages and tap Refresh to repair an incomplete track. Export errors appear in a dialog; disabled and off-timeline captions no longer block MP4 export. Independent translations remain in subtitle-file output, and draft recovery operations are serialized.
+
+The installer requires the 1.4.8 repair tag and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
 
 Version 1.4.7 replaces the translation model's false transient-memory rejection with hardware-based capability checks. Eligible 64-bit devices with at least 4 GiB physical RAM now attempt the memory-mapped model load even when Android temporarily reports memory pressure. If the runtime genuinely cannot allocate enough memory, the app keeps captions unchanged and tells the user to close other apps, keep Caption Studio open, and retry.
 

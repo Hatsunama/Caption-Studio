@@ -298,3 +298,73 @@ function deferred() {
   });
   return { promise, resolve, reject };
 }
+
+// Release regressions: translation completion and export visibility are behavioral contracts.
+import { automaticTranslationCueWrites } from '../src/lib/caption-translation-commit.ts';
+import { commitTranslationAttempt, translationAttemptMessage } from '../src/lib/translation-attempt.ts';
+import { createKeyedOperationQueue } from '../src/lib/keyed-operation-queue.ts';
+
+test('partial AI results persist successes and failures without dropping existing text', () => {
+  const project = createEnglishChineseCaptionTrack(exportProject({ captions: [
+    { id: 'c1', text: 'Hello', startMs: 0, endMs: 1000, wordIds: [] },
+    { id: 'c2', text: 'Goodbye', startMs: 1000, endMs: 2000, wordIds: [] },
+  ] }));
+  const track = project.captionTracks.translations[0];
+  const writes = automaticTranslationCueWrites({ captions: project.captions,
+    translatedById: new Map([['c1', '\u4f60\u597d'], ['c2', 'Goodbye']]), previousById: new Map(), targetLanguage: 'zh-Hans' });
+  const next = commitTranslationAttempt(project, track.id, project.captions, writes);
+  assert.deepEqual(next.captionTracks.translations[0].cues.map(c => c.status), ['translated', 'failed']);
+  assert.equal(next.captionTracks.translations[0].cues[0].text, '\u4f60\u597d');
+  assert.equal(track.cues[0].text, '');
+  assert.match(translationAttemptMessage(next, track.id, ['c1', 'c2']), /1 subtitles could not/);
+  assert.throws(() => buildTimelineRenderPlan(next), /need translation/);
+  const retry = commitTranslationAttempt(next, track.id, [project.captions[1]], [
+    { sourceCaptionId: 'c2', translatedText: '\u518d\u89c1', translationStatus: 'translated' },
+  ]);
+  assert.equal(translationAttemptMessage(retry, track.id, ['c2']), undefined);
+  assert.equal(buildTimelineRenderPlan(retry).captions.length, 4);
+  const failedAgain = commitTranslationAttempt(retry, track.id, [project.captions[1]], []);
+  assert.equal(failedAgain.captionTracks.translations[0].cues[1].text, '\u518d\u89c1');
+  assert.equal(failedAgain.captionTracks.translations[0].cues[1].status, 'failed');
+});
+
+test('disabled caption rendering and off-timeline incomplete translations do not block video', () => {
+  const project = createEnglishChineseCaptionTrack(exportProject({ captions: [
+    { id: 'c1', text: 'Hello', startMs: 0, endMs: 1000, wordIds: [] },
+  ] }));
+  assert.equal(buildTimelineRenderPlan({ ...project, export: { ...project.export, burnCaptions: false } }).captions.length, 0);
+  assert.equal(buildTimelineRenderPlan({ ...project, layers: project.layers.map(l => ({ ...l, visible: false })) }).captions.length, 0);
+  const outside = structuredClone(project);
+  outside.captionTracks.translations[0].cues[0].startMs = 5000;
+  outside.captionTracks.translations[0].cues[0].endMs = 6000;
+  assert.equal(buildTimelineRenderPlan(outside).captions.length, 1);
+  assert.doesNotThrow(() => serializeSrt(outside));
+  assert.doesNotThrow(() => serializeAss(outside));
+});
+
+test('independent translated captions export even when their primary caption is hidden', () => {
+  const project = createEnglishChineseCaptionTrack(exportProject({ captions: [
+    { id: 'c1', text: 'Hello', startMs: 0, endMs: 1000, wordIds: [] },
+  ] }), { c1: '\u4f60\u597d' });
+  project.captions[0].timelineVisible = false;
+  project.captionTracks.translations[0].cues[0].timelineVisible = true;
+  assert.match(serializeSrt(project), /\u4f60\u597d/);
+  assert.match(serializeAss(project), /\u4f60\u597d/);
+  assert.doesNotMatch(serializeSrt(project), /Hello/);
+  assert.equal(buildTimelineRenderPlan(project).captions.length, 1);
+});
+
+test('journal operations serialize write then clear and continue after failures', async () => {
+  const queue = createKeyedOperationQueue();
+  const gate = deferred();
+  const events = [];
+  const first = queue('draft', async () => { await gate.promise; events.push('write'); });
+  const second = queue('draft', async () => { events.push('clear'); });
+  await queue('other', async () => { events.push('other'); });
+  assert.deepEqual(events, ['other']);
+  gate.resolve();
+  await Promise.all([first, second]);
+  assert.deepEqual(events, ['other', 'write', 'clear']);
+  await assert.rejects(queue('draft', async () => { throw Error('storage failure'); }));
+  assert.equal(await queue('draft', async () => 'retry'), 'retry');
+});

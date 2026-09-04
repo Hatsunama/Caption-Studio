@@ -1,3 +1,5 @@
+import { Alert } from 'react-native';
+import { translationAttemptMessage } from '@/lib/translation-attempt';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 
@@ -33,9 +35,12 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string>();
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    if (activeOperationRef.current) void cancelNaturalCaptionTranslation();
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (activeOperationRef.current) void cancelNaturalCaptionTranslation();
+    };
   }, []);
 
   useEffect(() => {
@@ -51,6 +56,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
   const run = useCallback(async (
     baseline: CaptionProject,
     operation: (onProgress: (next: CaptionTranslationProgress) => void) => Promise<CaptionProject>,
+    completionMessage?: (next: CaptionProject) => string | undefined,
   ) => {
     if (activeOperationRef.current) {
       if (mountedRef.current) setError('Finish or cancel the current local translation before starting another.');
@@ -73,6 +79,12 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
         throw new Error('The project changed while both languages were synchronizing. Save again to avoid overwriting newer edits.');
       }
       if (next !== baseline) await optionsRef.current.commitProject(baseline, next);
+      const message = completionMessage?.(next);
+      if (message && mountedRef.current) {
+        setError(message);
+        Alert.alert('Translation incomplete', message);
+        return false;
+      }
       return true;
     } catch (caught) {
       if (mountedRef.current && activeOperationRef.current === operationId && interruptedRef.current) {
@@ -110,6 +122,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
       sourceCaptionIds,
       onProgress,
     }),
+    (next) => translationAttemptMessage(next, trackId, sourceCaptionIds),
   ), [run]);
 
   const synchronize = useCallback((
