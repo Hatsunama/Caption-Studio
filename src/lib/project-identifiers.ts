@@ -3,7 +3,8 @@
 export const PROJECT_IDENTIFIER_MAX_LENGTH = 256;
 export const TRANSLATION_CUE_IDENTIFIER_MAX_LENGTH = PROJECT_IDENTIFIER_MAX_LENGTH * 2 + 1;
 
-const IDENTIFIER_CHARACTERS = /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/;
+// Require the absolute end, not `$`, which also matches before a final newline.
+const IDENTIFIER_CHARACTERS = /^[a-zA-Z0-9][a-zA-Z0-9._:-]*(?![\s\S])/;
 
 export function isProjectIdentifier(value: unknown): value is string {
   return isIdentifier(value, PROJECT_IDENTIFIER_MAX_LENGTH);
