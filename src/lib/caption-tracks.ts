@@ -1,4 +1,5 @@
 import { mergePatch, mergeStyle } from '@/lib/style-resolver';
+import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
 import {
   canonicalCaptionLanguageTag,
   captionLanguageFamily,
@@ -557,8 +558,10 @@ function withCaptionTracks(
 
 function createCue(trackId: string, source: CaptionBlock, translatedText: string): TranslationCaptionCue {
   const text = translatedText.trim();
+  requiredIdentifier(trackId, 'Caption track');
+  requiredIdentifier(source.id, 'Primary caption');
   const id = `${trackId}:${source.id}`;
-  requiredIdentifier(id, 'Translation cue');
+  if (!isTranslationCueIdentifier(id)) throw new Error('Translation cue identifier is invalid.');
   return {
     id,
     sourceCaptionId: source.id,
@@ -592,7 +595,7 @@ function requiredText(value: string, label: string) {
 }
 
 function requiredIdentifier(value: string, label: string) {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(value)) throw new Error(`${label} identifier is invalid.`);
+  if (!isProjectIdentifier(value)) throw new Error(`${label} identifier is invalid.`);
   return value;
 }
 

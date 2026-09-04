@@ -1,4 +1,5 @@
 import { ANIMATION_PRESETS } from '@/lib/animation-presets';
+import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
 import { emptyCaptionTrackCollection, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { sameCaptionLanguageFamily } from '@/lib/caption-languages';
 import { hydrateVideoTransition } from '@/lib/video-transitions';
@@ -29,7 +30,6 @@ import {
 const ANIMATION_IDS = new Set(ANIMATION_PRESETS.map((preset) => preset.id));
 const COLOR_PATTERN = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
-const IDENTIFIER_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/;
 
 export function decodeVersionTwoProject(candidate: Record<string, unknown>): CaptionProject {
   if (candidate.schemaVersion !== 2) throw new Error('Project data uses an unsupported version');
@@ -381,7 +381,7 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
           throw new Error(`Translation cue ${cueIndex + 1} has inconsistent review state`);
         }
         return {
-          id: identifierValue(cue.id, `translation cue ${cueIndex + 1} identifier`),
+          id: translationCueIdentifierValue(cue.id, `translation cue ${cueIndex + 1} identifier`),
           sourceCaptionId: identifierValue(cue.sourceCaptionId, `translation cue ${cueIndex + 1} source caption`),
           sourceTextSnapshot: boundedString(cue.sourceTextSnapshot, `translation cue ${cueIndex + 1} source snapshot`, 100_000),
           text,
@@ -906,7 +906,13 @@ function nonEmptyString(value: unknown, label: string) {
 
 function identifierValue(value: unknown, label: string) {
   const identifier = nonEmptyString(value, label);
-  if (!IDENTIFIER_PATTERN.test(identifier)) throw new Error(`${label} is invalid`);
+  if (!isProjectIdentifier(identifier)) throw new Error(`${label} is invalid`);
+  return identifier;
+}
+
+function translationCueIdentifierValue(value: unknown, label: string) {
+  const identifier = nonEmptyString(value, label);
+  if (!isTranslationCueIdentifier(identifier)) throw new Error(`${label} is invalid`);
   return identifier;
 }
 

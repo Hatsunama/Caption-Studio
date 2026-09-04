@@ -73,7 +73,9 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Fixed side-by-side build when the production signing key is unavailable
 
-Current fixed build: **1.4.5** (`v1.4.5-fixed.1`).
+Current fixed build: **1.4.6** (`v1.4.6-fixed.1`, Android version code 18).
+
+Version 1.4.6 fixes second-language creation for existing projects with long caption identifiers. Cue creation and project loading share an identifier contract that accounts for the language-track prefix, without renaming source captions or discarding saved translations.
 
 The fixed side-by-side release installs as **Caption Studio Fixed** with package `com.hatsunama.captionstudio.fixed`. It does not replace, uninstall, clear, or migrate `com.hatsunama.captionstudio`, so projects and drafts in the existing app remain untouched. The two apps have separate private storage.
 
