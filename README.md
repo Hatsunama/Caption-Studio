@@ -37,66 +37,28 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It accepts exactly one authorized Android device and never uninstalls the app or clears its data.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio Fixed 1.4.5 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing Fixed installation is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
 
-$Version = '1.4.2'
-$FileName = 'caption-studio-android.apk'
-$Url = "https://github.com/Hatsunama/Caption-Studio/releases/download/v$Version/$FileName"
-$ExpectedHash = 'BEB3A1A86A16152ED6E09F3574E9E0E0FE6D8A519544B81351F12B2354886038'
-$Package = 'com.hatsunama.captionstudio'
-$TempDir = Join-Path $env:TEMP "CaptionStudioInstaller-$PID"
-$Apk = Join-Path $TempDir $FileName
+$Installer = Join-Path $env:TEMP ("install-caption-studio-" + [Guid]::NewGuid().ToString('N') + '.ps1')
 
 try {
-    if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
-        throw 'adb was not found. Install Android SDK Platform Tools and add it to PATH.'
-    }
-
-    adb start-server | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw 'adb could not start.'
-    }
-
-    $Devices = @(adb devices | ForEach-Object {
-        if ($_ -match '^(\S+)\s+device(?:\s|$)') { $Matches[1] }
-    })
-    if ($Devices.Count -eq 0) {
-        throw 'No authorized Android device is ready. Unlock the phone, enable USB debugging, and approve this computer.'
-    }
-    if ($Devices.Count -gt 1) {
-        throw "Multiple authorized Android devices are connected: $($Devices -join ', '). Disconnect all but the intended phone."
-    }
-
-    $Serial = $Devices[0]
-    $state = (adb -s $Serial get-state).Trim()
-    if ($state -ne 'device') {
-        throw "Device $Serial is not ready (state: $state)."
-    }
-
-    New-Item -ItemType Directory -Path $TempDir | Out-Null
-    Invoke-WebRequest -Uri $Url -OutFile $Apk
-
-    $ActualHash = (Get-FileHash -LiteralPath $Apk -Algorithm SHA256).Hash
-    if ($ActualHash -ne $ExpectedHash) {
-        throw "Checksum mismatch. Refusing installation."
-    }
-
-    adb -s $Serial install -r --no-streaming $Apk
-    if ($LASTEXITCODE -ne 0) {
-        throw 'ADB update failed. The existing app was not uninstalled and its data was not cleared.'
-    }
-
-    adb -s $Serial shell pm enable $Package | Out-Null
-    adb -s $Serial shell monkey -p $Package -c android.intent.category.LAUNCHER 1 | Out-Null
-    adb -s $Serial shell dumpsys package $Package |
-        Select-String 'versionName=|versionCode=|targetSdk='
+    Invoke-WebRequest -UseBasicParsing `
+        -Uri 'https://raw.githubusercontent.com/Hatsunama/Caption-Studio/main/scripts/install-caption-studio-fixed.ps1' `
+        -OutFile $Installer
+    & $Installer
 }
 finally {
-    if (Test-Path -LiteralPath $TempDir) {
-        Remove-Item -LiteralPath $TempDir -Recurse -Force
+    if (Test-Path -LiteralPath $Installer) {
+        try {
+            Remove-Item -LiteralPath $Installer -Force -ErrorAction Stop
+            Write-Host 'Temporary installer script removed.'
+        }
+        catch {
+            Write-Warning "Could not remove temporary installer ${Installer}: $($_.Exception.Message)"
+        }
     }
 }
 ```
@@ -107,7 +69,7 @@ If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, stop. The installed app
 
 The current Seeker installation is production-signed with certificate SHA-256 `CB58765460B1C4BD30F0FC86331B37D7F27640034509C0690E63EF6A24EA2A8A`. Do not install the legacy debug-lineage prerelease `v1.4.2-export-fix-seeker.1` over it. A data-preserving update must be signed by the same production key; the certificate-checking installer intentionally refuses every mismatch before running `adb install -r`. Never uninstall or clear the app to bypass that refusal when local projects matter.
 
-If that still fails, uninstall Caption Studio from the phone first, then run the recommended script again. A clean uninstall removes that phone's local Caption Studio drafts and projects.
+Never uninstall or clear either app to bypass an installation failure. Keep the error output for diagnosis; uninstalling deletes local drafts and projects.
 
 ### Fixed side-by-side build when the production signing key is unavailable
 
@@ -115,24 +77,11 @@ Current fixed build: **1.4.5** (`v1.4.5-fixed.1`).
 
 The fixed side-by-side release installs as **Caption Studio Fixed** with package `com.hatsunama.captionstudio.fixed`. It does not replace, uninstall, clear, or migrate `com.hatsunama.captionstudio`, so projects and drafts in the existing app remain untouched. The two apps have separate private storage.
 
-Use this build to exercise fixes from current `main` while preserving an older production-signed installation. Download and run the checked-in installer from PowerShell:
-
-```powershell
-$Installer = Join-Path $env:TEMP 'install-caption-studio-fixed.ps1'
-try {
-    Invoke-WebRequest `
-        -Uri 'https://raw.githubusercontent.com/Hatsunama/Caption-Studio/main/scripts/install-caption-studio-fixed.ps1' `
-        -OutFile $Installer
-    & $Installer
-}
-finally {
-    if (Test-Path -LiteralPath $Installer) {
-        Remove-Item -LiteralPath $Installer -Force
-    }
-}
-```
+Use the recommended Windows PowerShell installer above to exercise integrated fixes while preserving an older production-signed installation.
 
 The installer accepts exactly one authorized Android device, verifies that the release contains the multilingual, independent-timing, and visible-video export repair commit, verifies GitHub's APK SHA-256 digest, updates only the fixed side-by-side package with `adb install -r`, launches it, and removes its temporary download. It never issues `adb uninstall` or `pm clear`, so projects already stored in **Caption Studio Fixed** remain in place during an update. If Android rejects the update because the signing certificate differs, the installer stops without uninstalling either app.
+
+The release must also contain the 1.4.5 language-picker repair. ADB output is captured with Windows PowerShell 5.1-compatible handling: normal stderr transfer progress is not treated as installation failure; the native exit code and install success response are checked. Cleanup runs on success or failure and removes only this run's APK, empty temporary download directory, and downloaded installer script. Cleanup failures are reported, not presented as successful deletion. It does not clean phone storage or unrelated files on C:.
 
 ## What the current Android build includes
 

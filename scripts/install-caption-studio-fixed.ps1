@@ -1,18 +1,33 @@
 $ErrorActionPreference = 'Stop'
 
 $Repository = 'Hatsunama/Caption-Studio'
-$RequiredCommit = '37e07afe2f1c9fed4b8d5ba7933eed25e6cfea42'
+$RequiredCommit = '4f7af734a31074449cfb222d41028d007b3addc6'
 $Package = 'com.hatsunama.captionstudio.fixed'
 $AssetName = 'caption-studio-fixed-android.apk'
-$TempDir = Join-Path $env:TEMP "CaptionStudioFixedInstaller-$PID"
+$TempDir = Join-Path $env:TEMP ("CaptionStudioFixedInstaller-" + [Guid]::NewGuid().ToString('N'))
+$Apk = Join-Path $TempDir $AssetName
+$OwnsTempDir = $false
 
 function Invoke-Adb {
     param([Parameter(Mandatory)][string[]]$Arguments)
 
-    & adb @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "ADB failed: adb $($Arguments -join ' ')"
+    # Windows PowerShell 5.1 wraps native stderr (including normal ADB
+    # progress) in ErrorRecords. Capture it without terminating early;
+    # native exit status, not the stream used, decides success.
+    $PreviousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $PSNativeCommandUseErrorActionPreference = $false
+        $Output = @(& adb @Arguments 2>&1 | ForEach-Object { $_.ToString() })
+        $ExitCode = $LASTEXITCODE
     }
+    finally {
+        $ErrorActionPreference = $PreviousPreference
+    }
+    if ($ExitCode -ne 0) {
+        throw "ADB failed (exit $ExitCode). No uninstall or data clearing was attempted.`n$($Output -join [Environment]::NewLine)"
+    }
+    $Output
 }
 
 try {
@@ -52,27 +67,33 @@ try {
         throw "Release $($Release.tag_name) does not provide a valid APK SHA-256 digest."
     }
 
-    Invoke-Adb @('start-server')
-    $Devices = @(adb devices | ForEach-Object {
-        if ($_ -match '^(\S+)\s+device(?:\s|$)') { $Matches[1] }
+    Invoke-Adb @('start-server') | Out-Host
+    $Devices = @(Invoke-Adb @('devices') | ForEach-Object {
+        if ($_ -match '^(\S+)\s+(device|unauthorized|offline)(?:\s|$)') {
+            [PSCustomObject]@{ Serial = $Matches[1]; State = $Matches[2] }
+        }
     })
     if ($Devices.Count -eq 0) {
         throw 'No authorized Android device is ready. Unlock the phone and approve USB debugging.'
     }
     if ($Devices.Count -gt 1) {
-        throw "Multiple authorized Android devices are connected: $($Devices -join ', '). Disconnect all but the intended phone."
+        throw "Multiple Android devices are connected: $($Devices.Serial -join ', '). Disconnect all but the intended phone."
     }
 
-    $Serial = $Devices[0]
-    if ((adb -s $Serial get-state).Trim() -ne 'device') {
+    $Serial = $Devices[0].Serial
+    if ($Devices[0].State -ne 'device') {
+        throw "Device $Serial is $($Devices[0].State). Unlock the phone and approve USB debugging, then retry."
+    }
+    if ((Invoke-Adb @('-s', $Serial, 'get-state') | Out-String).Trim() -ne 'device') {
         throw "Device $Serial is not ready."
     }
-    if ((adb -s $Serial shell getprop sys.boot_completed).Trim() -ne '1') {
+    if ((Invoke-Adb @('-s', $Serial, 'shell', 'getprop', 'sys.boot_completed') | Out-String).Trim() -ne '1') {
         throw "Device $Serial has not finished booting."
     }
 
     New-Item -ItemType Directory -Path $TempDir | Out-Null
-    $Apk = Join-Path $TempDir $AssetName
+    $OwnsTempDir = $true
+    Write-Host "Device: $Serial. Downloading $($Release.tag_name)..."
     Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $Apk
 
     $ActualHash = (Get-FileHash -LiteralPath $Apk -Algorithm SHA256).Hash
@@ -80,28 +101,38 @@ try {
         throw 'APK checksum mismatch. Refusing installation.'
     }
 
-    Invoke-Adb @('-s', $Serial, 'install', '-r', '--no-streaming', $Apk)
-    Invoke-Adb @('-s', $Serial, 'shell', 'pm', 'enable', $Package)
-    $LaunchOutput = @(
-        adb -s $Serial shell cmd package resolve-activity --brief `
-            -a android.intent.action.MAIN `
-            -c android.intent.category.LAUNCHER `
-            $Package
-    )
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not resolve the launcher activity for $Package."
+    $InstallOutput = @(Invoke-Adb @('-s', $Serial, 'install', '-r', '--no-streaming', $Apk))
+    $InstallOutput | Out-Host
+    if (-not ($InstallOutput | Where-Object { $_.Trim() -eq 'Success' })) {
+        throw 'ADB did not confirm installation success. No uninstall or data clearing was attempted.'
     }
+    Invoke-Adb @('-s', $Serial, 'shell', 'pm', 'enable', $Package) | Out-Host
+    $LaunchOutput = @(
+        Invoke-Adb @('-s', $Serial, 'shell', 'cmd', 'package', 'resolve-activity', '--brief',
+            '-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.LAUNCHER', $Package)
+    )
     $LaunchComponent = ([string]($LaunchOutput | Select-Object -Last 1)).Trim()
     if ($LaunchComponent -notmatch "^$([regex]::Escape($Package))/") {
         throw "Resolved launcher activity does not belong to ${Package}: $LaunchComponent"
     }
-    Invoke-Adb @('-s', $Serial, 'shell', 'am', 'start', '-W', '-n', $LaunchComponent)
+    Invoke-Adb @('-s', $Serial, 'shell', 'am', 'start', '-W', '-n', $LaunchComponent) | Out-Host
 
-    adb -s $Serial shell dumpsys package $Package |
+    Invoke-Adb @('-s', $Serial, 'shell', 'dumpsys', 'package', $Package) |
         Select-String 'versionName=|versionCode=|targetSdk='
+    Write-Host 'Update installed. Neither app was uninstalled or cleared.'
 }
 finally {
-    if (Test-Path -LiteralPath $TempDir) {
-        Remove-Item -LiteralPath $TempDir -Recurse -Force
+    if ($OwnsTempDir) {
+        try {
+            if (Test-Path -LiteralPath $Apk) {
+                Remove-Item -LiteralPath $Apk -Force -ErrorAction Stop
+            }
+            # Delete only our empty directory, never a recursive tree.
+            [IO.Directory]::Delete($TempDir, $false)
+            Write-Host 'Temporary APK and installer download directory removed.'
+        }
+        catch {
+            Write-Warning "Temporary cleanup failed at ${TempDir}: $($_.Exception.Message)"
+        }
     }
 }
