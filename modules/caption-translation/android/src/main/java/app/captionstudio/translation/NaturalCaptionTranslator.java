@@ -837,9 +837,14 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       TranslationFailure failure = (TranslationFailure) error;
       return new TranslationError(failure.code, failure.getMessage(), null);
     }
-    if (error instanceof OutOfMemoryError
-        || error instanceof LinkageError
-        || "loading-model".equals(stage)) {
+    if (error instanceof OutOfMemoryError) {
+      return new TranslationError(
+          FAILED,
+          "Android could not free enough memory to load the translation model. Close other apps, keep Caption Studio open, and retry. Your captions were not changed.",
+          sanitizedCause("Local translation ran out of memory")
+      );
+    }
+    if (error instanceof LinkageError || "loading-model".equals(stage)) {
       return new TranslationError(
           UNSUPPORTED,
           "This model or device cannot run local caption translation.",

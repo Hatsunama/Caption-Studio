@@ -8,9 +8,7 @@ import java.io.File;
 import java.util.Objects;
 
 final class AndroidTranslationEnvironment implements TranslationEnvironment {
-  private static final long MEBIBYTE = 1024L * 1024L;
-  private static final long GIBIBYTE = 1024L * MEBIBYTE;
-  private static final long MEMORY_HEADROOM_BYTES = 768L * MEBIBYTE;
+  private static final long GIBIBYTE = 1024L * 1024L * 1024L;
   private static final long MINIMUM_TOTAL_MEMORY_BYTES = 4L * GIBIBYTE;
   private final Context context;
 
@@ -34,7 +32,8 @@ final class AndroidTranslationEnvironment implements TranslationEnvironment {
 
   @Override
   public void verifyDeviceCapacity(File model) throws NaturalCaptionTranslator.TranslationFailure {
-    if (Build.SUPPORTED_64_BIT_ABIS.length == 0) {
+    boolean supports64Bit = Build.SUPPORTED_64_BIT_ABIS.length > 0;
+    if (!supports64Bit) {
       throw unsupported("This device cannot run the local natural-language model.");
     }
     ActivityManager activityManager =
@@ -44,15 +43,28 @@ final class AndroidTranslationEnvironment implements TranslationEnvironment {
     }
     ActivityManager.MemoryInfo memoryInfo = new ActivityManager.MemoryInfo();
     activityManager.getMemoryInfo(memoryInfo);
-    long requiredAvailableBytes = saturatedAdd(model.length(), MEMORY_HEADROOM_BYTES);
-    if (activityManager.isLowRamDevice()
-        || memoryInfo.lowMemory
-        || memoryInfo.totalMem < MINIMUM_TOTAL_MEMORY_BYTES
-        || memoryInfo.availMem < requiredAvailableBytes) {
+    if (!hasHardwareCapacity(
+        supports64Bit,
+        activityManager.isLowRamDevice(),
+        memoryInfo.totalMem
+    )) {
       throw unsupported(
-          "This device does not currently have enough memory for local caption translation."
+          "Local caption translation requires a 64-bit Android device with at least 4 GB of RAM."
       );
     }
+  }
+
+  static boolean hasHardwareCapacity(
+      boolean supports64Bit,
+      boolean lowRamDevice,
+      long totalMemoryBytes
+  ) {
+    // Do not reject on MemoryInfo.lowMemory or availMem. Both are transient,
+    // and the LiteRT-LM model is memory-mapped rather than copied wholesale
+    // into resident RAM. The runtime is the authoritative allocation test.
+    return supports64Bit
+        && !lowRamDevice
+        && totalMemoryBytes >= MINIMUM_TOTAL_MEMORY_BYTES;
   }
 
   private static NaturalCaptionTranslator.TranslationFailure unsupported(String message) {
@@ -62,8 +74,4 @@ final class AndroidTranslationEnvironment implements TranslationEnvironment {
     );
   }
 
-  private static long saturatedAdd(long left, long right) {
-    if (left > Long.MAX_VALUE - right) return Long.MAX_VALUE;
-    return left + right;
-  }
 }
