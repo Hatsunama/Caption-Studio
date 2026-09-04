@@ -49,7 +49,8 @@ test('fixed release workflow uses stable secrets and publishes a verified immuta
 
 test('fixed installer is fail-closed and cannot delete the production app', async () => {
   const installer = await readFile(new URL('scripts/install-caption-studio-fixed.ps1', root), 'utf8');
-  assert.match(installer, /Multiple authorized Android devices are connected/);
+  assert.match(installer, /Multiple Android devices are connected/);
+  assert.match(installer, /device\|unauthorized\|offline/);
   assert.match(installer, /Get-FileHash -LiteralPath \$Apk -Algorithm SHA256/);
   assert.match(installer, /'install', '-r', '--no-streaming'/);
   assert.match(installer, /com\.hatsunama\.captionstudio\.fixed/);
