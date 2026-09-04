@@ -94,7 +94,7 @@ try {
     New-Item -ItemType Directory -Path $TempDir | Out-Null
     $OwnsTempDir = $true
     Write-Host "Device: $Serial. Downloading $($Release.tag_name)..."
-    Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $Apk
+    Invoke-WebRequest -UseBasicParsing -Uri $Asset.browser_download_url -OutFile $Apk
 
     $ActualHash = (Get-FileHash -LiteralPath $Apk -Algorithm SHA256).Hash
     if ($ActualHash -ne $ExpectedHash) {
