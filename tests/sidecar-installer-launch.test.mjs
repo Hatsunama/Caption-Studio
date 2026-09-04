@@ -8,7 +8,7 @@ const installer = readFileSync(
 );
 
 test('PowerShell installer resolves and explicitly starts only the fixed launcher activity', () => {
-  assert.match(installer, /cmd package resolve-activity --brief/);
+  assert.match(installer, /'cmd', 'package', 'resolve-activity', '--brief'/);
   assert.match(installer, /\$LaunchComponent -notmatch/);
   assert.match(installer, /'am', 'start', '-W', '-n', \$LaunchComponent/);
   assert.doesNotMatch(installer, /shell', 'monkey'/);
