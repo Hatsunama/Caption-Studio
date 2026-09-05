@@ -22,6 +22,7 @@ export type NaturalCaptionTranslationOperation = {
 
 export type NaturalCaptionTranslationRequest = {
   operations: NaturalCaptionTranslationOperation[];
+  reuseCheckpoints?: boolean;
 };
 
 export type NaturalCaptionTranslationOutput = {
@@ -55,6 +56,7 @@ export type NaturalCaptionTranslationStage =
   | 'loading-model'
   | 'translating'
   | 'validating-output'
+  | 'restoring'
   | 'completed'
   | 'cancelling'
   | 'cancelled'

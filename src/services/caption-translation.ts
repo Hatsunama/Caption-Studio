@@ -497,7 +497,7 @@ async function repairUntranslatedCaptions(
         sourceLanguage: operation.sourceLanguage,
         targetLanguage: operation.targetLanguage,
         batches: createBatches(questionables).map((captions) => ({ captions })),
-      }]);
+      }], false);
     } catch (error) {
       if (run.cancelled || translationCancelled(error)) throw new CaptionTranslationCancelledError();
       for (const caption of questionables) needsReview.add(caption.id);
@@ -528,8 +528,9 @@ async function translateWithNative(
     targetLanguage: CaptionLanguageTag;
     batches: { captions: NaturalCaptionTranslationInput[]; contextBefore?: string; contextAfter?: string; }[];
   }[],
+  reuseCheckpoints = true,
 ) {
-  const result = await CaptionTranslation.translateNaturalCaptions(modelUri, { operations });
+  const result = await CaptionTranslation.translateNaturalCaptions(modelUri, { operations, reuseCheckpoints });
   if (
     result.offline !== true
     || result.backend !== 'cpu'
@@ -545,49 +546,26 @@ function pollNativeProgress(
   run: ActiveTranslation,
   onProgress?: (progress: CaptionTranslationProgress) => void,
 ) {
-  const startedAt = Date.now();
-  let nativeProgress = 0;
-  let syntheticProgress = 0;
-  let lastEmittedProgress = -1;
+  let polling = false;
   return setInterval(() => {
-    if (run.cancelled) return;
+    if (run.cancelled || polling) return;
+    polling = true;
     void CaptionTranslation.getNaturalCaptionTranslationProgress().then((native) => {
-      if (run.cancelled) return;
-      const stage = native.stage === 'verifying-model'
-        ? 'verifying-model'
-        : native.stage === 'loading-model'
-          ? 'loading-model'
-          : 'translating';
-      const batchDetail = native.totalBatches > 1 && native.stage !== 'verifying-model' && native.stage !== 'loading-model'
-        ? ` · batch ${Math.min(native.completedBatches + 1, native.totalBatches)} of ${native.totalBatches}`
-        : '';
-      const reported = native.percent == null ? 0 : Math.min(1, Math.max(0, native.percent / 100));
-      nativeProgress = Math.max(nativeProgress, reported);
-      const progress = Math.max(nativeProgress, syntheticProgress);
+      if (run.cancelled || activeTranslation?.id !== run.id) return;
+      const stage = native.stage === 'verifying-model' ? 'verifying-model'
+        : native.stage === 'loading-model' ? 'loading-model' : 'translating';
+      const detail = native.stage === 'restoring' ? 'Restoring saved translations'
+        : stage === 'verifying-model' ? 'Verifying the local natural-language model'
+          : stage === 'loading-model' ? 'Loading the local natural-language model' : 'Translating locally';
+      const batchDetail = stage === 'translating' && native.totalBatches > 1
+        ? ' - batch ' + Math.min(native.completedBatches + 1, native.totalBatches) + ' of ' + native.totalBatches : '';
       onProgress?.({
         stage,
-        progress,
-        detail: native.stage === 'verifying-model'
-          ? 'Verifying the local natural-language model'
-          : native.stage === 'loading-model'
-            ? 'Loading the local natural-language model once'
-            : `Translating locally${batchDetail}`,
+        // Model verification reaching 100% must not make translation appear complete.
+        progress: native.percent == null ? null : Math.min(0.99, Math.max(0, native.percent / 100)),
+        detail: detail + batchDetail,
       });
-    }).catch(() => undefined);
-
-    const elapsedSinceStart = Date.now() - startedAt;
-    if (elapsedSinceStart >= 3_000 && syntheticProgress < 0.10) {
-      syntheticProgress = Math.min(0.10, 0.05 + Math.floor((elapsedSinceStart - 3_000) / 4_000) * 0.01);
-    }
-    const progress = Math.max(nativeProgress, syntheticProgress);
-    if (progress > lastEmittedProgress && onProgress != null) {
-      lastEmittedProgress = progress;
-      onProgress?.({
-        stage: 'translating',
-        progress,
-        detail: 'Translating locally',
-      });
-    }
+    }).catch(() => undefined).finally(() => { polling = false; });
   }, 500);
 }
 

@@ -51,6 +51,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final int MAX_OUTPUT_TEXT_CHARACTERS = 2_000;
   static final int MAX_TOTAL_OUTPUT_CHARACTERS = 16_000;
   static final String PROMPT_CONTRACT = "qwen2.5-caption-json-v2";
+  // Bump when the runtime version, backend, token limits, or sampler changes.
+  static final String CHECKPOINT_PROFILE = "v1;litertlm-0.16.1;cpu;4096;1536;topk1;topp1;temperature0;seed0";
 
   static final String INVALID_REQUEST = "E_TRANSLATION_INVALID_REQUEST";
   static final String BUSY = "E_TRANSLATION_BUSY";
@@ -259,6 +261,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     try {
       checkCancelled(run);
       ValidatedSession session = validateSessionRequest(run.rawRequest);
+      TranslationCheckpointStore checkpoints = openCheckpoints(run);
       File model = resolveModelFile(run.modelLocation);
       environment.verifyDeviceCapacity(model);
       updateProgress(
@@ -294,19 +297,6 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       );
       checkCancelled(run);
 
-      int threadCount = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors()));
-      runtime = runtimeFactory.open(
-          model,
-          environment.prepareCacheDirectory(),
-          threadCount,
-          SYSTEM_INSTRUCTION
-      );
-      run.nativeLifecycleLock.lock();
-      try {
-        run.runtime.set(runtime);
-      } finally {
-        run.nativeLifecycleLock.unlock();
-      }
       List<Caption> translated = new ArrayList<>(session.totalCaptions);
       for (int batchIndex = 0; batchIndex < session.batches.size(); batchIndex += 1) {
         checkCancelled(run);
@@ -320,8 +310,30 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
             batchIndex,
             session.batches.size()
         );
-        String modelResponse = runtime.translate(buildUserPrompt(request));
-        checkCancelled(run);
+        String prompt = buildUserPrompt(request);
+        String checkpointKey = TranslationCheckpointStore.key(
+            OfficialQwenModelVerifier.EXPECTED_MODEL_SHA256 + "\n" + CHECKPOINT_PROFILE
+                + "\n" + PROMPT_CONTRACT + "\n" + SYSTEM_INSTRUCTION + "\n" + prompt
+        );
+        String modelResponse = readCheckpoint(checkpoints, checkpointKey);
+        boolean restored = modelResponse != null;
+        if (!restored) {
+          if (runtime == null) {
+            checkCancelled(run);
+            int threadCount = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors()));
+            runtime = runtimeFactory.open(
+                model, environment.prepareCacheDirectory(), threadCount, SYSTEM_INSTRUCTION
+            );
+            run.nativeLifecycleLock.lock();
+            try {
+              run.runtime.set(runtime);
+            } finally {
+              run.nativeLifecycleLock.unlock();
+            }
+            checkCancelled(run);
+          }
+          modelResponse = runtime.translate(prompt);
+        }
         updateProgress(
             run,
             "validating-output",
@@ -331,10 +343,16 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
             batchIndex,
             session.batches.size()
         );
-        translated.addAll(parseStrictResponse(modelResponse, request.captions));
+        List<Caption> batchResult = parseStrictResponse(modelResponse, request.captions);
+        if (!restored && hasTranslatedText(batchResult, request.captions)) {
+          // Persist complete validated output before cancellation can discard it.
+          writeCheckpoint(checkpoints, checkpointKey, modelResponse);
+        }
+        checkCancelled(run);
+        translated.addAll(batchResult);
         updateProgress(
             run,
-            "translating",
+            restored ? "restoring" : "translating",
             sessionPercent(batchIndex + 1, session.batches.size()),
             translated.size(),
             session.totalCaptions,
@@ -376,6 +394,47 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     }
 
     finish(run, result, error);
+  }
+
+  private TranslationCheckpointStore openCheckpoints(ActiveRun run) throws TranslationFailure {
+    if (!Boolean.TRUE.equals(run.rawRequest.get("reuseCheckpoints"))) return null;
+    File directory = environment.prepareCheckpointDirectory();
+    if (directory == null) return null;
+    try {
+      return new TranslationCheckpointStore(directory);
+    } catch (IOException | SecurityException error) {
+      throw checkpointFailure();
+    }
+  }
+
+  private static String readCheckpoint(TranslationCheckpointStore store, String key) throws TranslationFailure {
+    try {
+      return store == null ? null : store.read(key);
+    } catch (IOException | SecurityException error) {
+      throw checkpointFailure();
+    }
+  }
+
+  private static void writeCheckpoint(TranslationCheckpointStore store, String key, String response)
+      throws TranslationFailure {
+    if (store == null) return;
+    try {
+      store.write(key, response);
+    } catch (IOException | SecurityException error) {
+      throw checkpointFailure();
+    }
+  }
+
+  private static TranslationFailure checkpointFailure() {
+    return new TranslationFailure(FAILED,
+        "Translation progress could not be saved or restored. Free some phone storage and tap Refresh. Previously saved translations were kept.");
+  }
+
+  private static boolean hasTranslatedText(List<Caption> result, List<Caption> source) {
+    for (int index = 0; index < result.size(); index += 1) {
+      if (!result.get(index).text.equals(source.get(index).text)) return true;
+    }
+    return false;
   }
 
   private void finish(

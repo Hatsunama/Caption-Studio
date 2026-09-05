@@ -54,6 +54,13 @@ final class AndroidTranslationEnvironment implements TranslationEnvironment {
     }
   }
 
+  @Override
+  public File prepareCheckpointDirectory() {
+    // Unlike cacheDir, this survives process death and Android cache eviction.
+    // noBackupFilesDir keeps subtitle text out of cloud/device backups.
+    return new File(context.getNoBackupFilesDir(), "caption-translation-checkpoints-v1");
+  }
+
   static boolean hasHardwareCapacity(
       boolean supports64Bit,
       boolean lowRamDevice,
