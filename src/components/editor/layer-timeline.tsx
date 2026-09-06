@@ -119,10 +119,12 @@ export function LayerTimeline(props: {
   ) + props.translationTracks.length * captionRowHeight;
 
   const [peakCache, setPeakCache] = useState<Record<string, number[]>>({});
+  const peakCacheRef = useRef(peakCache);
+  peakCacheRef.current = peakCache;
   useEffect(() => {
     let cancelled = false;
     const missing = props.audioSources.filter((source) => {
-      const existing = source.waveformPeaks ?? peakCache[source.id];
+      const existing = source.waveformPeaks ?? peakCacheRef.current[source.id];
       return !existing || existing.length < 8;
     });
     if (!missing.length) return undefined;
@@ -581,34 +583,23 @@ function ClipFrameThumb(props: {
   contentFit: 'cover' | 'contain';
 }) {
   const cacheKey = `${props.projectId}:${props.clipId}:${Math.round(props.sourceStartMs)}`;
-  const [uri, setUri] = useState<string | undefined>(() => clipThumbCache.get(cacheKey) ?? props.fallbackUri);
+  const [generatedUri, setGeneratedUri] = useState<string | undefined>(() => clipThumbCache.get(cacheKey));
   useEffect(() => {
     let cancelled = false;
-    const cached = clipThumbCache.get(cacheKey);
-    if (cached) {
-      setUri(cached);
-      return undefined;
-    }
-    if (!props.sourceUri) {
-      setUri(props.fallbackUri);
-      return undefined;
-    }
+    if (clipThumbCache.has(cacheKey) || !props.sourceUri) return undefined;
     void ensureClipFrameThumbnail({
       projectId: props.projectId,
       clipId: props.clipId,
       videoUri: props.sourceUri,
       sourceStartMs: props.sourceStartMs,
     }).then((generated) => {
-      if (cancelled) return;
-      if (generated) {
-        clipThumbCache.set(cacheKey, generated);
-        setUri(generated);
-      } else {
-        setUri(props.fallbackUri);
-      }
+      if (cancelled || !generated) return;
+      clipThumbCache.set(cacheKey, generated);
+      setGeneratedUri(generated);
     });
     return () => { cancelled = true; };
-  }, [cacheKey, props.clipId, props.fallbackUri, props.projectId, props.sourceStartMs, props.sourceUri]);
+  }, [cacheKey, props.clipId, props.projectId, props.sourceStartMs, props.sourceUri]);
+  const uri = clipThumbCache.get(cacheKey) ?? generatedUri ?? props.fallbackUri;
   if (!uri) return <View style={props.style} />;
   return <Image source={{ uri }} contentFit={props.contentFit} style={props.style} />;
 }
