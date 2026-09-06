@@ -1,7 +1,7 @@
 import { mergeStyle } from '@/lib/style-resolver';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { applyCaptionTextChanges, type CaptionTextChanges } from '@/lib/caption-text-edits';
-import { constrainAudioClips } from '@/lib/audio-timeline';
+
 import { captionSpokenTokenSpans } from '@/lib/caption-text-breaks';
 import {
   canApplyVideoTransition,
@@ -18,6 +18,7 @@ import {
   buildClipTimeline,
   mapSourceWordsToTimeline,
   MINIMUM_CLIP_TIMELINE_MS,
+  remapAudioClipsAcrossClipLayout,
   remapCaptionsToTimeline,
   sourceTimeAt,
   timelineEntryAt,
@@ -486,12 +487,10 @@ export function previewVideoClipTrim(clip: VideoClip, edge: 'start' | 'end', tar
   const rate = validClipPlaybackRate(clip.playbackRate);
   const minimumSourceDuration = MINIMUM_CLIP_TIMELINE_MS * rate;
   if (edge === 'start') {
-    // Allow restoring unused head media even after the leading gap was removed; growth past gapBefore slides this clip's body later neighbors via timeline layout.
     const sourceStartMs = clamp(targetSourceMs, clip.availableSourceStartMs, clip.sourceEndMs - minimumSourceDuration);
     const gapBeforeMs = Math.max(0, clip.gapBeforeMs + (sourceStartMs - clip.sourceStartMs) / rate);
     return { ...clip, sourceStartMs, gapBeforeMs };
   }
-  // Same for the tail: eat gapAfter first, then grow into remaining source and auto-slide following clips.
   const sourceEndMs = clamp(targetSourceMs, clip.sourceStartMs + minimumSourceDuration, clip.availableSourceEndMs);
   const gapAfterMs = Math.max(0, clip.gapAfterMs + (clip.sourceEndMs - sourceEndMs) / rate);
   return { ...clip, sourceEndMs, gapAfterMs };
@@ -633,7 +632,7 @@ function rebuildAfterLayoutEdit(
     captions,
     captionTracks: remapTranslationTrackTimings(project.captionTracks, project.captions, captions),
     layers,
-    audioClips: constrainAudioClips(project.audioClips, totalClipDuration(clips)),
+    audioClips: remapAudioClipsAcrossClipLayout(project.clips, clips, project.audioClips),
   });
 }
 

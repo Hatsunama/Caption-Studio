@@ -388,13 +388,14 @@ test('clips magnetically pack by default while intentional gaps remain explicit 
 test('video clip body owns Android drag arbitration instead of competing with a parent pressable', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   const clipBlock = timeline.slice(timeline.indexOf('function VideoClipBlock'), timeline.indexOf('function VideoTrimGrip'));
-  const moveGrip = timeline.slice(timeline.indexOf('function VideoMoveGrip'), timeline.indexOf('function VideoReorderStrip'));
+  const moveGrip = timeline.slice(timeline.indexOf('function VideoMoveGrip'), timeline.indexOf('function VideoReorderBanner'));
   assert.match(clipBlock, /<View[\s\S]*<VideoMoveGrip/);
   assert.doesNotMatch(clipBlock, /<Pressable/);
   assert.match(moveGrip, /onStartShouldSetPanResponder: \(\) => true/);
   assert.match(moveGrip, /modeRef/);
   assert.match(moveGrip, /'reorder'/);
-  assert.match(timeline, /function VideoReorderStrip/);
+  assert.match(timeline, /function VideoReorderBanner/);
+  assert.match(timeline, /longPressTimerRef/);
   assert.match(timeline, /onReorderClip/);
 });
 
@@ -550,11 +551,16 @@ test('packed cropped clips can extend into remaining source and auto-slide neigh
   ]);
 });
 
-test('vertical clip reorder uses a simplified drop-between strip and preserves caption ownership', () => {
+test('hold-drag clip reorder keeps the filmstrip mounted and remaps captions plus related audio', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
-  assert.match(timeline, /VideoReorderStrip/);
-  assert.match(timeline, /Drag vertically to reorder/);
+  assert.match(timeline, /VideoReorderBanner/);
+  assert.doesNotMatch(timeline, /VideoReorderStrip/);
+  assert.match(timeline, /Hold then drag to reorder/);
+  assert.match(timeline, /longPressTimerRef/);
+  assert.match(timeline, /HOLD-DRAG/);
   assert.match(timeline, /Between CLIP/);
+  assert.match(timeline, /reorderDrag \? \(/);
+  assert.match(timeline, /clipPositions\.map/);
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   assert.match(editor, /onReorderClip=\{reorderClipToIndex\}/);
   assert.match(editor, /reorderVideoClip/);
@@ -569,6 +575,13 @@ test('vertical clip reorder uses a simplified drop-between strip and preserves c
       { id: 'c1', text: 'one', textMode: 'manual', startMs: 100, endMs: 400, wordIds: [], timelineVisible: true, sourceAnchor: { clipId: 'one', sourceStartMs: 100, sourceEndMs: 400, wordIds: [] } },
       { id: 'c3', text: 'three', textMode: 'manual', startMs: 3_100, endMs: 3_400, wordIds: [], timelineVisible: true, sourceAnchor: { clipId: 'three', sourceStartMs: 100, sourceEndMs: 400, wordIds: [] } },
     ],
+    audioClips: [
+      { id: 'a3', sourceId: 'audio', anchor: 'timeline', startMs: 3_050, sourceStartMs: 0, sourceEndMs: 400, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0 },
+      { id: 'a1', sourceId: 'audio', anchor: 'timeline', startMs: 50, sourceStartMs: 0, sourceEndMs: 200, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0 },
+    ],
+    audioSources: [
+      { id: 'audio', uri: 'file://audio.m4a', storageMode: 'copied', displayName: 'Audio', durationMs: 10_000, origin: 'video-audio' },
+    ],
   });
   const preview = previewVideoClipReorder(project.clips, 'three', 0);
   assert.deepEqual(preview.map((item) => item.id), ['three', 'one', 'two']);
@@ -578,6 +591,9 @@ test('vertical clip reorder uses a simplified drop-between strip and preserves c
   const byId = Object.fromEntries(reordered.project.captions.map((caption) => [caption.id, caption]));
   assert.deepEqual([byId.c3.startMs, byId.c3.endMs], [100, 400]);
   assert.deepEqual([byId.c1.startMs, byId.c1.endMs], [1_600, 1_900]);
+  const audioById = Object.fromEntries(reordered.project.audioClips.map((item) => [item.id, item]));
+  assert.equal(audioById.a3.startMs, 50);
+  assert.equal(audioById.a1.startMs, 1_550);
 });
 
 test('text and image overlays hidden by a trim return with their transforms intact', () => {
@@ -1235,6 +1251,7 @@ test('timeline selection does not move or snap the playhead', () => {
   assert.match(timeline, /scrollEnabled=\{!gestureLock\}/);
   assert.match(timeline, /gestureLockRef/);
   assert.match(timeline, /if \(scrubEndTimer\.current\) clearTimeout\(scrubEndTimer\.current\);[\s\S]*scrubbingRef\.current = false;[\s\S]*setItemGestureLock\(true\)/);
+  assert.match(timeline, /gestureLockRef\.current = false;[\s\S]*setReorderDrag\(undefined\)/);
 });
 
 test('every subtitle body captures selection while only the selected subtitle exposes trim handles', () => {
@@ -1268,13 +1285,19 @@ test('timeline keeps a fixed playhead, scrubs its content, renders a ruler, and 
   assert.match(timeline, /onAddVideos/);
 });
 
-test('video transport has one source of runtime truth and advances across native end events', () => {
+test('video transport has dual primed players for seamless clip handoff', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
-  assert.equal((editor.match(/<VideoView/g) ?? []).length, 1);
-  assert.doesNotMatch(editor, /currentMs\s*<=\s*50|activeSourceIdRef|sourceLoadVersionRef/);
+  assert.match(editor, /timeline-player-a/);
+  assert.match(editor, /timeline-player-b/);
+  assert.match(editor, /players\.map/);
   assert.match(editor, /surfaceType="textureView"/);
-  assert.match(editor, /useExoShutter/);
+  assert.match(editor, /useExoShutter=\{false\}/);
+  assert.match(controller, /playerA/);
+  assert.match(controller, /playerB/);
+  assert.match(controller, /primeStandby/);
+  assert.match(controller, /swapToStandby/);
+  assert.match(controller, /clipHandoffPrimeAt/);
   assert.match(controller, /playIntentRef/);
   assert.match(controller, /desiredRef/);
   assert.match(controller, /processingRef/);
@@ -1307,12 +1330,12 @@ test('emoji reactions change with the spoken word', () => {
 test('an unexpected native pause while playback is intended resumes instead of killing the timeline', () => {
   const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
   const playingChange = controller.slice(
-    controller.indexOf("useEventListener(player, 'playingChange'"),
-    controller.indexOf("useEventListener(player, 'statusChange'"),
+    controller.indexOf('const onActivePlayingChange'),
+    controller.indexOf('const onStatusChange'),
   );
   assert.match(playingChange, /if \(!playIntentRef\.current/);
   assert.match(playingChange, /player\.play\(\)/);
-  assert.doesNotMatch(playingChange, /stopTransport\(\);\s*$/);
+  assert.doesNotMatch(playingChange, /stopTransport\(/);
 });
 
 test('extract audio offers project videos by first frame before the system picker', () => {

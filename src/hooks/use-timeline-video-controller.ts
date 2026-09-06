@@ -1,5 +1,5 @@
 import { useEventListener } from 'expo';
-import { useVideoPlayer } from 'expo-video';
+import { useVideoPlayer, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -10,12 +10,25 @@ import {
   timelineTimeAt,
   type ClipTimelineEntry,
 } from '@/lib/video-timeline';
-import { configureTimelinePlayer } from '@/lib/video-playback-policy';
+import {
+  CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS,
+  canSeamlessSwapToClip,
+  clipHandoffPrimeAt,
+  configureTimelinePlayer,
+  oppositeTimelineSlot,
+  type TimelinePlayerSlot,
+} from '@/lib/video-playback-policy';
 import type { CaptionProject } from '@/types/project';
 
 type Target = {
   generation: number;
   timelineMs: number;
+};
+
+type PrimedStandby = {
+  clipId: string;
+  sourceId: string;
+  sourceUri: string;
 };
 
 export function useTimelineVideoController(
@@ -27,11 +40,14 @@ export function useTimelineVideoController(
   const initialSourceRef = useRef(
     project.sources.find((source) => source.id === initialEntryRef.current?.clip.sourceId) ?? project.sources[0],
   );
-  const player = useVideoPlayer(initialSourceRef.current?.uri ?? null, (instance) => {
+  const playerA = useVideoPlayer(initialSourceRef.current?.uri ?? null, (instance) => {
     configureTimelinePlayer(instance);
     if (initialEntryRef.current) instance.currentTime = initialEntryRef.current.clip.sourceStartMs / 1000;
   });
+  const playerB = useVideoPlayer(null, configureTimelinePlayer);
+  const players = useMemo(() => [playerA, playerB] as const, [playerA, playerB]);
 
+  const [activeSlot, setActiveSlotState] = useState<TimelinePlayerSlot>(0);
   const [currentMs, setCurrentMsState] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [phase, setPhaseState] = useState<'loading' | 'ready' | 'gap' | 'ended'>(initialEntryRef.current ? 'loading' : 'ended');
@@ -40,10 +56,12 @@ export function useTimelineVideoController(
   const entriesRef = useRef(entries);
   const currentMsRef = useRef(0);
   const playIntentRef = useRef(false);
-  const nativePlayingRef = useRef(false);
   const phaseRef = useRef<'loading' | 'ready' | 'gap' | 'ended'>(initialEntryRef.current ? 'loading' : 'ended');
+  const activeSlotRef = useRef<TimelinePlayerSlot>(0);
   const confirmedSourceIdRef = useRef<string | undefined>(initialSourceRef.current?.id);
   const activeClipIdRef = useRef<string | undefined>(initialEntryRef.current?.clip.id);
+  const primedRef = useRef<PrimedStandby | undefined>(undefined);
+  const primingRef = useRef<Promise<void> | undefined>(undefined);
   const desiredRef = useRef<Target | undefined>(undefined);
   const processingRef = useRef<Promise<void> | undefined>(undefined);
   const drainTargetsRef = useRef<() => Promise<void>>(async () => {});
@@ -63,6 +81,11 @@ export function useTimelineVideoController(
     if (mountedRef.current) setPhaseState(next);
   };
 
+  const setActiveSlot = (slot: TimelinePlayerSlot) => {
+    activeSlotRef.current = slot;
+    if (mountedRef.current) setActiveSlotState(slot);
+  };
+
   const setCurrentMs = (value: number) => {
     const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
     const next = clamp(value, 0, duration);
@@ -70,9 +93,23 @@ export function useTimelineVideoController(
     if (mountedRef.current) setCurrentMsState(next);
   };
 
+  const activePlayer = () => players[activeSlotRef.current];
+  const standbyPlayer = () => players[oppositeTimelineSlot(activeSlotRef.current)];
+
   const cancelGapClock = () => {
     if (gapFrameRef.current != null) cancelAnimationFrame(gapFrameRef.current);
     gapFrameRef.current = undefined;
+  };
+
+  const clearStandbyPrime = () => {
+    primedRef.current = undefined;
+  };
+
+  const releaseStandbySurface = () => {
+    clearStandbyPrime();
+    const standby = standbyPlayer();
+    standby.pause();
+    void standby.replaceAsync(null).catch(() => undefined);
   };
 
   const stopTransport = useCallback(() => {
@@ -80,9 +117,13 @@ export function useTimelineVideoController(
     boundaryClipIdRef.current = undefined;
     internalPauseGenerationRef.current = undefined;
     cancelGapClock();
-    player.pause();
+    clearStandbyPrime();
+    players[0].pause();
+    players[1].pause();
+    const standby = players[oppositeTimelineSlot(activeSlotRef.current)];
+    void standby.replaceAsync(null).catch(() => undefined);
     if (mountedRef.current) setIsPlaying(false);
-  }, [player]);
+  }, [players]);
 
   const sourceForEntry = (entry: ClipTimelineEntry) => {
     const source = projectRef.current.sources.find((candidate) => candidate.id === entry.clip.sourceId);
@@ -90,12 +131,21 @@ export function useTimelineVideoController(
     return source;
   };
 
+  const applyClipToPlayer = (player: VideoPlayer, entry: ClipTimelineEntry, timelineMs: number) => {
+    player.playbackRate = entry.clip.playbackRate;
+    player.muted = entry.clip.muted;
+    player.volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
+    player.currentTime = sourceTimeAt(entry, timelineMs) / 1000;
+  };
+
   const runGap = (startMs: number, endMs: number, next: ClipTimelineEntry | undefined, generation: number) => {
     cancelGapClock();
     internalPauseGenerationRef.current = generation;
-    player.pause();
+    players[0].pause();
+    players[1].pause();
     activeClipIdRef.current = undefined;
     boundaryClipIdRef.current = undefined;
+    clearStandbyPrime();
     setPhase('gap');
     setCurrentMs(startMs);
     if (!playIntentRef.current) return;
@@ -120,14 +170,74 @@ export function useTimelineVideoController(
     gapFrameRef.current = requestAnimationFrame(tick);
   };
 
+  const primeStandby = async (entry: ClipTimelineEntry) => {
+    const source = sourceForEntry(entry);
+    if (
+      primedRef.current?.clipId === entry.clip.id
+      && primedRef.current.sourceId === source.id
+    ) return;
+    const generation = generationRef.current;
+    const standby = standbyPlayer();
+    standby.pause();
+    await standby.replaceAsync(source.uri);
+    if (!mountedRef.current || generation !== generationRef.current) return;
+    applyClipToPlayer(standby, entry, entry.startMs);
+    standby.pause();
+    primedRef.current = { clipId: entry.clip.id, sourceId: source.id, sourceUri: source.uri };
+  };
+
+  const schedulePrime = (entry: ClipTimelineEntry) => {
+    if (primingRef.current) return;
+    const operation = primeStandby(entry)
+      .catch((error) => {
+        if (!mountedRef.current) return;
+        clearStandbyPrime();
+        onErrorRef.current(error instanceof Error ? error.message : 'The next video clip could not be prepared.');
+      })
+      .finally(() => {
+        primingRef.current = undefined;
+      });
+    primingRef.current = operation;
+  };
+
+  const swapToStandby = (entry: ClipTimelineEntry, timelineMs: number, generation: number) => {
+    const standby = standbyPlayer();
+    const outgoing = activePlayer();
+    applyClipToPlayer(standby, entry, timelineMs);
+    internalPauseGenerationRef.current = generation;
+    outgoing.pause();
+    setActiveSlot(oppositeTimelineSlot(activeSlotRef.current));
+    confirmedSourceIdRef.current = sourceForEntry(entry).id;
+    activeClipIdRef.current = entry.clip.id;
+    boundaryClipIdRef.current = undefined;
+    clearStandbyPrime();
+    setCurrentMs(timelineMs);
+    setPhase('ready');
+    if (playIntentRef.current) standby.play();
+  };
+
   const applyClipTarget = async (entry: ClipTimelineEntry, timelineMs: number, generation: number) => {
     cancelGapClock();
     const source = sourceForEntry(entry);
+    const seamless = canSeamlessSwapToClip({
+      primedClipId: primedRef.current?.clipId,
+      primedSourceId: primedRef.current?.sourceId,
+      targetClipId: entry.clip.id,
+      targetSourceId: source.id,
+    });
+    if (seamless) {
+      swapToStandby(entry, timelineMs, generation);
+      return;
+    }
+
+    const player = activePlayer();
     const sourceChanged = confirmedSourceIdRef.current !== source.id;
     internalPauseGenerationRef.current = generation;
     player.pause();
+    standbyPlayer().pause();
     if (sourceChanged) {
       setPhase('loading');
+      clearStandbyPrime();
       await player.replaceAsync(source.uri);
       if (!mountedRef.current) return;
       confirmedSourceIdRef.current = source.id;
@@ -135,10 +245,7 @@ export function useTimelineVideoController(
     if (generation !== generationRef.current) return;
     activeClipIdRef.current = entry.clip.id;
     boundaryClipIdRef.current = undefined;
-    player.playbackRate = entry.clip.playbackRate;
-    player.muted = entry.clip.muted;
-    player.volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
-    player.currentTime = sourceTimeAt(entry, timelineMs) / 1000;
+    applyClipToPlayer(player, entry, timelineMs);
     setCurrentMs(timelineMs);
     setPhase('ready');
     if (playIntentRef.current) player.play();
@@ -180,6 +287,7 @@ export function useTimelineVideoController(
     const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
     const targetMs = clamp(timelineMs, 0, duration);
     setCurrentMs(targetMs);
+    releaseStandbySurface();
     desiredRef.current = { generation: ++generationRef.current, timelineMs: targetMs };
     void drainTargetsRef.current();
   }, []);
@@ -205,6 +313,7 @@ export function useTimelineVideoController(
     const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
     const timelineMs = clamp(currentMsRef.current, 0, duration);
     setCurrentMs(timelineMs);
+    releaseStandbySurface();
     desiredRef.current = { generation: ++generationRef.current, timelineMs };
     void drainTargetsRef.current();
   }, []);
@@ -216,7 +325,7 @@ export function useTimelineVideoController(
     const index = currentEntries.findIndex((candidate) => candidate.clip.id === entry.clip.id);
     const next = currentEntries[index + 1];
     const gapEndMs = next?.startMs ?? entry.afterGapEndMs;
-    if (gapEndMs > entry.endMs) {
+    if (gapEndMs > entry.endMs + CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS) {
       runGap(entry.endMs, gapEndMs, next, ++generationRef.current);
       return;
     }
@@ -226,33 +335,45 @@ export function useTimelineVideoController(
       setPhase('ended');
       return;
     }
-    setPhase('loading');
     setCurrentMs(next.startMs);
     desiredRef.current = { generation: ++generationRef.current, timelineMs: next.startMs };
     void drainTargetsRef.current();
   };
 
-  useEventListener(player, 'timeUpdate', ({ currentTime }) => {
+  const onActiveTimeUpdate = (player: VideoPlayer, currentTime: number) => {
+    if (player !== activePlayer()) return;
     if (!playIntentRef.current || processingRef.current) return;
     const entry = entriesRef.current.find((candidate) => candidate.clip.id === activeClipIdRef.current);
     if (!entry) return;
     const sourceMs = currentTime * 1000;
     const tolerance = Math.max(4, entry.clip.playbackRate * 12);
+    const timelineMs = clamp(timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
+    setCurrentMs(timelineMs);
+    player.volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
+
+    const prime = clipHandoffPrimeAt(
+      entriesRef.current,
+      entry.clip.id,
+      timelineMs,
+      playIntentRef.current,
+    );
+    if (prime && primedRef.current?.clipId !== prime.next.clip.id) {
+      schedulePrime(prime.next);
+    }
+
     if (sourceMs >= entry.clip.sourceEndMs - tolerance) {
       advanceFrom(entry);
-      return;
     }
-    player.volume = clipPlaybackVolume(entry.clip, timelineTimeAt(entry, sourceMs) - entry.startMs);
-    setCurrentMs(clamp(timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs));
-  });
+  };
 
-  useEventListener(player, 'playToEnd', () => {
+  const onActivePlayToEnd = (player: VideoPlayer) => {
+    if (player !== activePlayer()) return;
     const entry = entriesRef.current.find((candidate) => candidate.clip.id === activeClipIdRef.current);
     if (entry) advanceFrom(entry);
-  });
+  };
 
-  useEventListener(player, 'playingChange', ({ isPlaying: nativePlaying }) => {
-    nativePlayingRef.current = nativePlaying;
+  const onActivePlayingChange = (player: VideoPlayer, nativePlaying: boolean) => {
+    if (player !== activePlayer()) return;
     if (nativePlaying) {
       internalPauseGenerationRef.current = undefined;
       return;
@@ -265,14 +386,24 @@ export function useTimelineVideoController(
       return;
     }
     player.play();
-  });
+  };
 
-  useEventListener(player, 'statusChange', ({ status, error }) => {
+  const onStatusChange = (player: VideoPlayer, status: string, error?: { message?: string }) => {
+    if (player !== activePlayer()) return;
     if (status === 'error') {
       stopTransport();
       onErrorRef.current(error?.message ?? 'The current video could not be decoded.');
     }
-  });
+  };
+
+  useEventListener(playerA, 'timeUpdate', ({ currentTime }) => onActiveTimeUpdate(playerA, currentTime));
+  useEventListener(playerB, 'timeUpdate', ({ currentTime }) => onActiveTimeUpdate(playerB, currentTime));
+  useEventListener(playerA, 'playToEnd', () => onActivePlayToEnd(playerA));
+  useEventListener(playerB, 'playToEnd', () => onActivePlayToEnd(playerB));
+  useEventListener(playerA, 'playingChange', ({ isPlaying: nativePlaying }) => onActivePlayingChange(playerA, nativePlaying));
+  useEventListener(playerB, 'playingChange', ({ isPlaying: nativePlaying }) => onActivePlayingChange(playerB, nativePlaying));
+  useEventListener(playerA, 'statusChange', ({ status, error }) => onStatusChange(playerA, status, error));
+  useEventListener(playerB, 'statusChange', ({ status, error }) => onStatusChange(playerB, status, error));
 
   useEffect(() => {
     mountedRef.current = true;
@@ -284,12 +415,15 @@ export function useTimelineVideoController(
       desiredRef.current = undefined;
       generationRef.current += 1;
       boundaryClipIdRef.current = undefined;
+      clearStandbyPrime();
       cancelGapClock();
     };
-  }, [player]);
+  }, [playerA, playerB]);
 
   return {
-    player,
+    player: players[activeSlot],
+    players,
+    activeSlot,
     currentMs,
     isPlaying,
     phase,

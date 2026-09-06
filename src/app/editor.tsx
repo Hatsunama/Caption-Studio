@@ -342,7 +342,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const transport = useTimelineVideoController(project, setError);
-  const { player, currentMs, isPlaying } = transport;
+  const { players, activeSlot, currentMs, isPlaying } = transport;
+  const player = players[activeSlot];
   useTimelineAudioController(project, currentMs, isPlaying, runtimePolicy.mediaAdmitted);
   const pauseTransport = transport.pause;
 
@@ -1685,14 +1686,21 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 { rotate: `${currentVideoTransform.rotation}deg` },
               ],
             }}>
-            <VideoView
-              style={{ flex: 1, opacity: personProcessingActive ? 0 : 1 }}
-              player={player}
-              nativeControls={false}
-              contentFit={currentVideoTransform.fit === 'fill' ? 'cover' : 'contain'}
-              surfaceType="textureView"
-              useExoShutter
-            />
+            {players.map((slotPlayer, slot) => (
+              <VideoView
+                key={slot === 0 ? 'timeline-player-a' : 'timeline-player-b'}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  opacity: personProcessingActive || slot !== activeSlot ? 0 : 1,
+                }}
+                player={slotPlayer}
+                nativeControls={false}
+                contentFit={currentVideoTransform.fit === 'fill' ? 'cover' : 'contain'}
+                surfaceType="textureView"
+                useExoShutter={false}
+              />
+            ))}
           </View>
           {personProcessingActive && currentClipEntry && personPreviewUri ? (
             <Image
