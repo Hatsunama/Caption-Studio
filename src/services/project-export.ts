@@ -23,10 +23,10 @@ import type { CaptionProject } from '@/types/project';
 
 const videoExportSession = createVideoExportSession(() => CaptionMedia.cancelTimelineVideoExport());
 
-export async function exportProjectVideo(project: CaptionProject) {
+export async function exportProjectVideo(project: CaptionProject, allowIncompleteTranslations = false) {
   return videoExportSession.run(async (session) => {
     if (!FileSystem.cacheDirectory) throw new Error('Export storage is unavailable on this device.');
-    const unresolvedPlan = buildTimelineRenderPlan(project);
+    const unresolvedPlan = buildTimelineRenderPlan(project, undefined, allowIncompleteTranslations);
     const directory = await session.waitFor(prepareCaptionStudioExportCache());
     await session.waitFor(requireFreeSpace(
       estimateVideoExportStorageBytes(unresolvedPlan),
@@ -39,7 +39,7 @@ export async function exportProjectVideo(project: CaptionProject) {
     if (!canPublish) throw new Error('Allow storage access so Caption Studio can save the export to your media library.');
 
     const fontUris = await session.waitFor(resolveExportFontUris(collectUnresolvedFontFamilies(unresolvedPlan)));
-    const renderPlan = fontUris.size > 0 ? buildTimelineRenderPlan(project, fontUris) : unresolvedPlan;
+    const renderPlan = fontUris.size > 0 ? buildTimelineRenderPlan(project, fontUris, allowIncompleteTranslations) : unresolvedPlan;
     const outputUri = `${directory}${createExportCacheFileName(project.name, 'mp4')}`;
     const releaseArtifactProtection = protectTemporaryVideoExportArtifacts(outputUri);
     try {
@@ -70,12 +70,12 @@ export function getProjectVideoExportProgress(): Promise<TimelineVideoExportProg
   return CaptionMedia.getTimelineVideoExportProgress();
 }
 
-export async function exportSubtitleFile(project: CaptionProject, format: 'srt' | 'ass') {
+export async function exportSubtitleFile(project: CaptionProject, format: 'srt' | 'ass', allowIncompleteTranslations = false) {
   if (!FileSystem.cacheDirectory) throw new Error('Export storage is unavailable on this device.');
-  if (visibleCaptions(project).length === 0 && exportCaptionPairs(project).length === 0) throw new Error('Generate or add a visible caption before exporting subtitles.');
+  if (visibleCaptions(project).length === 0 && exportCaptionPairs(project, allowIncompleteTranslations).length === 0) throw new Error('Generate or add a visible caption before exporting subtitles.');
   const directory = await prepareCaptionStudioExportCache();
   const uri = `${directory}${createExportCacheFileName(project.name, format)}`;
-  const content = format === 'srt' ? serializeSrt(project) : serializeAss(project);
+  const content = format === 'srt' ? serializeSrt(project, allowIncompleteTranslations) : serializeAss(project, allowIncompleteTranslations);
   await requireFreeSpace(Math.max(1 * 1024 * 1024, content.length * 8), 'export these subtitles');
   try {
     await FileSystem.writeAsStringAsync(uri, content, { encoding: FileSystem.EncodingType.UTF8 });

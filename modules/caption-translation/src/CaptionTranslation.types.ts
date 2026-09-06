@@ -23,11 +23,13 @@ export type NaturalCaptionTranslationOperation = {
 export type NaturalCaptionTranslationRequest = {
   operations: NaturalCaptionTranslationOperation[];
   reuseCheckpoints?: boolean;
+  repairUnusableOutputs?: boolean;
 };
 
 export type NaturalCaptionTranslationOutput = {
   id: string;
   text: string;
+  valid?: boolean;
 };
 
 export type NaturalCaptionTranslationOperationResult = {

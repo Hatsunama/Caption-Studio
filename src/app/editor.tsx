@@ -46,6 +46,7 @@ import {
   resolveCaptionPairs,
   setTranslationCueStyle,
   setTranslationCueTiming,
+  setTranslationCueSkipped,
   setTranslationStackGap,
   setTranslationTrackStyle,
   setTranslationTrackVisibility,
@@ -138,6 +139,7 @@ import {
 } from '@/services/project-persistence';
 import { VideoExportCancelledError } from '@/services/video-export-session';
 import { chrome } from '@/lib/ui-theme';
+import { confirmOptionalTranslationExport } from '@/services/translation-export-choice';
 import type { TranscriptionProgress } from '@/services/transcription';
 import {
   type CaptionAnimationId,
@@ -785,7 +787,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       });
       const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
       if (visibleTranslation && changedCaptionIds.length > 0) {
-        requestTranslationRefresh(changedCaptionIds, visibleTranslation);
+        offerTranslationRefresh(changedCaptionIds, visibleTranslation);
       }
     }
     setScriptEditorOpen(false);
@@ -796,9 +798,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       Alert.alert('Generate captions first', 'Dual subtitles need a primary caption script to translate.');
       return;
     }
-    let sourceLanguage;
     try {
-      sourceLanguage = projectPrimaryCaptionLanguage(projectRef.current);
+      projectPrimaryCaptionLanguage(projectRef.current);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'This caption language is not ready for dual subtitles.');
       return;
@@ -809,16 +810,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       transport.pause();
       setSelectedTranslationTrackId(existing.id);
       setDualCaptionEditorOpen(true);
-      const pendingIds = existing.cues
-        .filter((cue) => !cue.text.trim() && (cue.status === 'pending' || cue.status === 'stale' || cue.status === 'failed'))
-        .map((cue) => cue.sourceCaptionId);
-      if (
-        pendingIds.length > 0
-        && !translationController.busy
-        && canAutomaticallyTranslatePair(sourceLanguage, existing.languageTag)
-      ) {
-        void translationController.refresh(existing.id, pendingIds, projectRef.current);
-      }
+      // Opening an editor is not permission to replace text or restart inference.
       return;
     }
     Alert.alert(
@@ -849,7 +841,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       const translationBaseline = projectRef.current;
       const track = translationBaseline.captionTracks.translations.find((candidate) => candidate.id === prepared.trackId);
       const pendingIds = (track?.cues ?? [])
-        .filter((cue) => !cue.text.trim())
+        .filter((cue) => !cue.text.trim() && !cue.translationSkipped)
         .map((cue) => cue.sourceCaptionId);
       if (pendingIds.length === 0) return;
       void translationController.refresh(prepared.trackId, pendingIds, translationBaseline);
@@ -912,17 +904,42 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       }] : [];
     });
     if (resolved.length === 0) return true;
-    if (resolved.some((edit) => !edit.primaryText || !edit.translatedText)) {
-      Alert.alert('Both lines need text', 'Enter both the primary and translated subtitle before saving this row.');
+    if (resolved.some((edit) => edit.primaryChanged && !edit.primaryText)) {
+      Alert.alert('Primary subtitle is empty', 'Enter primary text, or delete that subtitle. The second language may stay empty.');
       return false;
     }
-    const reviewedById = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue.reviewed]));
-    const overwritesReviewed = resolved.some((edit) => edit.primaryChanged && !edit.translatedChanged && reviewedById.get(edit.sourceCaptionId));
-    if (overwritesReviewed) {
-      const confirmed = await confirmReviewedTranslationReplacement(track.displayName);
-      if (!confirmed) return false;
+    const saved = await translationController.synchronize(track.id, resolved);
+    if (saved) {
+      offerTranslationRefresh(resolved.map((edit) => edit.sourceCaptionId), track);
     }
-    return translationController.synchronize(track.id, resolved);
+    return saved;
+  };
+
+  const offerTranslationRefresh = (sourceCaptionIds: string[], track: NonNullable<typeof selectedTranslationTrack>) => {
+    const ids = sourceCaptionIds.filter((id) => !track.cues.find((cue) => cue.sourceCaptionId === id)?.translationSkipped);
+    if (!ids.length) return;
+    Alert.alert('Check the matching translation',
+      `Text changed in ${ids.length} subtitle${ids.length === 1 ? '' : 's'}. The other language was not rewritten. You may keep it, review it, or refresh these ${track.displayName} lines. Refresh replaces second-language text, including typed edits. Export remains available.`,
+      [
+        { text: 'Keep current text', style: 'cancel' },
+        { text: 'Review lines', onPress: () => { setSelectedTranslationTrackId(track.id); setDualCaptionEditorOpen(true); } },
+        { text: 'Refresh these lines', onPress: () => requestTranslationRefresh(ids, track) },
+      ], { cancelable: true });
+  };
+
+  const setSelectedTranslationSkipped = async (sourceCaptionId: string, skipped: boolean) => {
+    if (!selectedTranslationTrack || translationController.busy) return;
+    const before = projectRef.current;
+    try {
+      const next = setTranslationCueSkipped(before, selectedTranslationTrack.id, sourceCaptionId, skipped, new Date().toISOString());
+      await commitPersistedProject(next, (persisted) => {
+        pushUndo(before);
+        projectRef.current = persisted;
+        setProject(persisted);
+      });
+    } catch (caught) {
+      Alert.alert('Subtitle choice not saved', caught instanceof Error ? caught.message : 'Try again. Saved text is unchanged.');
+    }
   };
 
   const toggleSelectedTranslationTrack = async () => {
@@ -996,7 +1013,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
     const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
     if (visibleTranslation && changedCaptionIds.length > 0) {
-      requestTranslationRefresh(changedCaptionIds, visibleTranslation);
+      offerTranslationRefresh(changedCaptionIds, visibleTranslation);
     }
   };
 
@@ -1444,6 +1461,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const exportVideo = async () => {
     if (exporting) return;
+    const snapshot = projectRef.current;
     if (
       projectRef.current.backgroundReplacement.enabled
       && projectRef.current.backgroundReplacement.source
@@ -1455,7 +1473,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setExportProgress({ stage: 'preparing', percent: 0 });
     setExporting(true);
     try {
-      const result = await exportProjectVideo(projectRef.current);
+      if (!await confirmOptionalTranslationExport(snapshot, true)) return;
+      const result = await exportProjectVideo(snapshot, true);
       Alert.alert('Export complete', `Saved to Movies/Caption Studio.\n${result.width} × ${result.height}`);
     } catch (caught) {
       if (!(caught instanceof VideoExportCancelledError)) {
@@ -1470,13 +1489,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const exportSubtitles = async (format: 'srt' | 'ass') => {
     if (exporting) return;
+    const snapshot = projectRef.current;
     transport.pause();
     setError(undefined);
     setExportKind('subtitle');
     setExportProgress(undefined);
     setExporting(true);
     try {
-      await exportSubtitleFile(projectRef.current, format);
+      if (!await confirmOptionalTranslationExport(snapshot, false)) return;
+      await exportSubtitleFile(snapshot, format, true);
     } catch (caught) {
       const message = userFacingExportError(caught, 'The subtitle file could not be exported.');
       setError(message);
@@ -2184,7 +2205,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         trackId={selectedTranslationTrack?.id ?? 'none'}
         sourceLanguageLabel={captionLanguageLabel(primaryCaptionLanguage)}
         targetLanguageLabel={selectedTranslationTrack?.displayName ?? 'Second language'}
-        pairs={selectedTranslationPairs}
+        pairs={selectedTranslationTrack ? resolveCaptionPairs(project, selectedTranslationTrack.id).filter((pair) => pair.timelineVisible || (pair.translation.translationSkipped && (pair.translation.timelineVisible ?? pair.source.timelineVisible !== false))) : []}
         trackVisible={selectedTranslationTrack?.visible ?? false}
         automaticTranslation={Boolean(
           selectedTranslationTrack
@@ -2199,6 +2220,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         }}
         onSave={saveDualCaptionEdits}
         onRefresh={requestTranslationRefresh}
+        onSkip={(id, skipped) => { void setSelectedTranslationSkipped(id, skipped); }}
         onToggleVisibility={() => { void toggleSelectedTranslationTrack(); }}
         onRemove={confirmRemoveSelectedTranslationTrack}
         onCancelBusy={() => { void cancelDualCaptionTranslation(); }}
@@ -2411,20 +2433,6 @@ function translationProgressLabel(progress?: CaptionTranslationProgress) {
   if (!progress) return undefined;
   if (progress.progress == null) return progress.detail;
   return `${progress.detail} · ${Math.round(progress.progress * 100)}%`;
-}
-
-function confirmReviewedTranslationReplacement(languageName: string) {
-  return new Promise<boolean>((resolve) => {
-    Alert.alert(
-      'Replace reviewed translation?',
-      `At least one ${languageName} line was edited by a person. Automatic sync will replace it; Undo can restore both languages.`,
-      [
-        { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-        { text: 'Replace + sync', style: 'destructive', onPress: () => resolve(true) },
-      ],
-      { cancelable: true, onDismiss: () => resolve(false) },
-    );
-  });
 }
 
 function exportProgressLabel(progress: TimelineVideoExportProgress) {

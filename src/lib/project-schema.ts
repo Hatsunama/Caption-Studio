@@ -377,13 +377,15 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
         const reviewed = cue.reviewed === undefined
           ? status === 'reviewed'
           : booleanValue(cue.reviewed, `translation cue ${cueIndex + 1} review state`);
-        if (reviewed !== (status === 'reviewed')) {
+        // A source edit makes reviewed text stale without erasing its human provenance.
+        if ((status === 'reviewed' && !reviewed) || (reviewed && status !== 'reviewed' && status !== 'stale')) {
           throw new Error(`Translation cue ${cueIndex + 1} has inconsistent review state`);
         }
         return {
           id: translationCueIdentifierValue(cue.id, `translation cue ${cueIndex + 1} identifier`),
           sourceCaptionId: identifierValue(cue.sourceCaptionId, `translation cue ${cueIndex + 1} source caption`),
           sourceTextSnapshot: boundedString(cue.sourceTextSnapshot, `translation cue ${cueIndex + 1} source snapshot`, 100_000),
+          translationSkipped: cue.translationSkipped === undefined ? undefined : booleanValue(cue.translationSkipped, `translation cue ${cueIndex + 1} skipped state`),
           text,
           status,
           reviewed,

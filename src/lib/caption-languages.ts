@@ -1,3 +1,5 @@
+import { isInvariantTranslation } from '@/lib/translation-invariants';
+
 export type EnglishChineseCaptionLanguage = 'en' | 'zh-Hans' | 'zh-Hant';
 
 export type CaptionLanguageTag =
@@ -147,17 +149,18 @@ export function normalizeEnglishChineseCaptionLanguage(languageTag: string): Eng
 export function isLikelyUntranslatedCaption(sourceText: string, translatedText: string, targetLanguage: string) {
   const source = sourceText.normalize('NFC').trim();
   const translated = translatedText.normalize('NFC').trim();
+  if (isInvariantTranslation(source, translated, targetLanguage)) return false;
   if (!translated || source === translated) return true;
   const multilingualTarget = resolveCaptionLanguage(targetLanguage)?.tag;
   if (multilingualTarget && multilingualTarget !== 'en' && multilingualTarget !== 'zh-Hans' && multilingualTarget !== 'zh-Hant') {
-    if (multilingualTarget === 'ja') return !/[\u3040-\u30FF\u3400-\u9FFF]/.test(translated);
-    if (multilingualTarget === 'ko') return !/[\uAC00-\uD7AF]/.test(translated);
-    if (multilingualTarget === 'th') return !/[\u0E00-\u0E7F]/.test(translated);
-    if (multilingualTarget === 'ar' || multilingualTarget === 'ur') return !/[\u0600-\u06FF]/.test(translated);
-    if (multilingualTarget === 'hi') return !/[\u0900-\u097F]/.test(translated);
-    if (multilingualTarget === 'bn') return !/[\u0980-\u09FF]/.test(translated);
-    if (multilingualTarget === 'ru') return !/[\u0400-\u04FF]/.test(translated);
-    return !/[A-Za-z\u00C0-\u024F]/.test(translated);
+    if (multilingualTarget === 'ja') return !/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(translated);
+    if (multilingualTarget === 'ko') return !/\p{Script=Hangul}/u.test(translated);
+    if (multilingualTarget === 'th') return !/\p{Script=Thai}/u.test(translated);
+    if (multilingualTarget === 'ar' || multilingualTarget === 'ur') return !/\p{Script=Arabic}/u.test(translated);
+    if (multilingualTarget === 'hi') return !/\p{Script=Devanagari}/u.test(translated);
+    if (multilingualTarget === 'bn') return !/\p{Script=Bengali}/u.test(translated);
+    if (multilingualTarget === 'ru') return !/\p{Script=Cyrillic}/u.test(translated);
+    return !/\p{Script=Latin}/u.test(translated);
   }
   try {
     const target = normalizeEnglishChineseCaptionLanguage(targetLanguage);
@@ -173,7 +176,7 @@ export function isLikelyUntranslatedCaption(sourceText: string, translatedText: 
 }
 
 function containsChineseCaptionText(value: string) {
-  return /[\u3400-\u4DBF\u4E00-\u9FFF]/.test(value);
+  return /\p{Script=Han}/u.test(value);
 }
 
 function inferGroupingProfile(languageTag: string): CaptionGroupingProfile {

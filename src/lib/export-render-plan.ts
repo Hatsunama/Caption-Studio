@@ -89,6 +89,7 @@ export type RenderStyle = Omit<CaptionStyle, 'font'> & {
 export function buildTimelineRenderPlan(
   project: CaptionProject,
   resolvedFontUris: ResolvedFontUris = new Map(),
+  allowIncompleteTranslations = false,
 ): TimelineRenderPlan {
   const durationMs = totalClipDuration(project.clips);
   if (durationMs <= 0) throw new Error('Add at least one visible video clip before exporting.');
@@ -141,7 +142,7 @@ export function buildTimelineRenderPlan(
     });
   }
 
-  for (const pair of captionsEnabled ? exportCaptionPairs(project) : []) {
+  for (const pair of captionsEnabled ? exportCaptionPairs(project, allowIncompleteTranslations) : []) {
     const interval = boundedInterval(pair.startMs, pair.endMs, durationMs);
     if (!interval) continue;
     captions.push({ id: pair.translation.id, text: pair.translation.text, ...interval,

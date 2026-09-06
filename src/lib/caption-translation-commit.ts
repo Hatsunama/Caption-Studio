@@ -18,7 +18,7 @@ export function usableAutomaticTranslation(
   if (
     needsReview
     || !translated
-    || translated === source
+    || (!targetLanguage && translated === source)
     || captionTextLength(translated) > 500
     || (targetLanguage ? isLikelyUntranslatedCaption(source, translated, targetLanguage) : false)
   ) return undefined;

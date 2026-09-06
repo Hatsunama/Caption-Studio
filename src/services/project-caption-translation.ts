@@ -13,6 +13,7 @@ import { commitTranslationAttempt } from '@/lib/translation-attempt';
 import {
   createTranslationCaptionTrack,
   projectPrimaryCaptionLanguage,
+  resolveCaptionPairs,
   setTranslationTrackProvider,
   setTranslationTrackVisibility,
   translationTrackDisplayName,
@@ -87,12 +88,15 @@ export async function refreshProjectCaptionTranslation(options: {
   const qwenSource = sourceLanguage;
   const selectedIds = new Set(options.sourceCaptionIds);
   const allCaptions = visibleTimelineCaptions(options.project.captions);
-  const captions = allCaptions.filter((caption) => selectedIds.has(caption.id));
+  const eligibleIds = new Set(resolveCaptionPairs(options.project, track.id)
+    .filter((pair) => pair.timelineVisible).map((pair) => pair.source.id));
+  const captions = options.project.captions.filter((caption) => selectedIds.has(caption.id) && eligibleIds.has(caption.id) && caption.text.trim());
   if (captions.length === 0) return options.project;
   const translated = await translateCaptionDocument({
     sourceLanguage: qwenSource,
     targetLanguage: track.languageTag,
     captions,
+    allCaptions,
     onProgress: options.onProgress,
   });
   const previousById = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue.text]));
@@ -161,7 +165,8 @@ function validateEdits(
     seen.add(edit.sourceCaptionId);
     const primaryText = edit.primaryText.normalize('NFC').trim();
     const translatedText = edit.translatedText.normalize('NFC').trim();
-    if (!primaryText || !translatedText) throw new Error('Both subtitle lines need text before they can be synchronized.');
+    if (edit.primaryChanged && !primaryText) throw new Error('Enter text for the primary subtitle, or delete that subtitle.');
+    if (edit.translatedChanged && !translatedText) throw new Error('Use Skip second line to omit a translation without deleting saved text.');
     if (captionTextLength(primaryText) > 500 || captionTextLength(translatedText) > 500) {
       throw new Error('A subtitle is too long. Split it before synchronizing both languages.');
     }
@@ -191,6 +196,7 @@ async function translateCaptionDocument(options: {
   sourceLanguage: string;
   targetLanguage: string;
   captions: CaptionBlock[];
+  allCaptions: CaptionBlock[];
   onProgress?: (progress: CaptionTranslationProgress) => void;
 }): Promise<NaturalCaptionTranslation> {
   // Keep cue identities intact; proportional text cutting cannot align meanings.
@@ -198,7 +204,7 @@ async function translateCaptionDocument(options: {
     sourceLanguage: options.sourceLanguage,
     targetLanguage: options.targetLanguage,
     captions: options.captions.map(({ id, text }) => ({ id, text })),
-    allCaptions: options.captions.map(({ id, text }) => ({ id, text })),
+    allCaptions: options.allCaptions.map(({ id, text }) => ({ id, text })),
     onProgress: options.onProgress,
   });
   const sources = new Map(options.captions.map((caption) => [caption.id, caption.text]));

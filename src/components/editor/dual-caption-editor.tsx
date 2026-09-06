@@ -47,6 +47,7 @@ export function DualCaptionEditor(props: {
   onClose: () => void;
   onSave: (edits: DualCaptionTextEdit[]) => Promise<boolean>;
   onRefresh: (sourceCaptionIds: string[]) => void;
+  onSkip: (sourceCaptionId: string, skipped: boolean) => void;
   onToggleVisibility: () => void;
   onRemove: () => void;
   onCancelBusy: () => void;
@@ -56,6 +57,7 @@ export function DualCaptionEditor(props: {
   const [journalReady, setJournalReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [journalError, setJournalError] = useState<string>();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const openSessionRef = useRef<string | undefined>(undefined);
   const committedRef = useRef<Record<string, DualCaptionDraft>>(dualCaptionDraftsFromPairs(props.pairs));
   const sourceDraftsRef = useRef<Record<string, DualCaptionDraft>>(committedRef.current);
@@ -79,6 +81,7 @@ export function DualCaptionEditor(props: {
     void Promise.resolve().then(() => {
       if (!active) return undefined;
       setDrafts(openingDrafts);
+      setSelectedIds(new Set());
       setJournalReady(false);
       setJournalError(undefined);
       return readEditorDraftJournal(props.projectId, journalKind);
@@ -87,7 +90,7 @@ export function DualCaptionEditor(props: {
       const recovered = decodeDualDraft(journal?.payload, allowedIds);
       const nextCommitted = sourceDraftsRef.current;
       if (!recovered || !shouldRestoreDualCaptionJournal(recovered, nextCommitted)) {
-        if (recovered) void clearEditorDraftJournal(props.projectId, journalKind);
+        if (recovered) void clearEditorDraftJournal(props.projectId, journalKind).catch(() => setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'));
         setJournalReady(true);
         return;
       }
@@ -95,7 +98,7 @@ export function DualCaptionEditor(props: {
         'Restore unsaved dual-subtitle edits?',
         'Caption Studio found typed edits that were not saved. Keeping the current translation leaves the second language as it is now.',
         [
-          { text: 'Keep current translation', style: 'cancel', onPress: () => { void clearEditorDraftJournal(props.projectId, journalKind); setJournalReady(true); } },
+          { text: 'Keep current translation', style: 'cancel', onPress: () => { void clearEditorDraftJournal(props.projectId, journalKind).catch(() => setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.')); setJournalReady(true); } },
           { text: 'Restore unsaved typing', onPress: () => { setDrafts(mergeRecoveredDualCaptionDrafts(recovered, sourceDraftsRef.current)); setJournalReady(true); } },
         ],
       );
@@ -110,13 +113,8 @@ export function DualCaptionEditor(props: {
 
   useEffect(() => {
     if (!props.visible || !journalReady || props.busy) return;
-    const pendingEmpty = props.pairs.some((pair) => (
-      !pair.translation.text.trim()
-      && (pair.translation.status === 'pending' || pair.translation.status === 'stale' || pair.translation.status === 'failed')
-    ));
-    if (pendingEmpty) return;
     if (dualCaptionDraftsMatch(displayDrafts, sourceDrafts)) {
-      void clearEditorDraftJournal(props.projectId, journalKind);
+      void clearEditorDraftJournal(props.projectId, journalKind).catch(() => setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'));
       return;
     }
     let active = true;
@@ -147,20 +145,29 @@ export function DualCaptionEditor(props: {
     }] : [];
   }), [displayDrafts, props.pairs]);
 
-  const needsRefresh = props.pairs.filter((pair) => (
-    pair.translation.status === 'pending' || pair.translation.status === 'stale' || pair.translation.status === 'failed'
+  const includedPairs = props.pairs.filter((pair) => !pair.translation.translationSkipped);
+  const missingCount = includedPairs.filter((pair) => !pair.translation.text.trim()).length;
+  const needsRefresh = includedPairs.filter((pair) => (
+    !pair.translation.text.trim() || pair.translation.status === 'pending' || pair.translation.status === 'stale' || pair.translation.status === 'failed'
   ));
+  const selectedPairs = includedPairs.filter((pair) => selectedIds.has(pair.source.id));
+  const skippedCount = props.pairs.length - includedPairs.length;
   const dirty = edits.length > 0;
+
+  const closeAfterClearingJournal = () => {
+    void clearEditorDraftJournal(props.projectId, journalKind).then(props.onClose)
+      .catch(() => setJournalError('Recovery data could not be cleared. Your edits are still here; try Save or Close again.'));
+  };
 
   const requestClose = () => {
     if (props.busy || saving) return;
     if (!dirty) {
-      void clearEditorDraftJournal(props.projectId, journalKind).finally(props.onClose);
+      closeAfterClearingJournal();
       return;
     }
     Alert.alert('Discard unsaved subtitle edits?', 'Your changes in both language columns have not been saved.', [
       { text: 'Keep editing', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: () => { void clearEditorDraftJournal(props.projectId, journalKind).finally(props.onClose); } },
+      { text: 'Discard', style: 'destructive', onPress: closeAfterClearingJournal },
     ]);
   };
 
@@ -169,6 +176,8 @@ export function DualCaptionEditor(props: {
     setSaving(true);
     try {
       if (await props.onSave(edits)) await clearEditorDraftJournal(props.projectId, journalKind);
+    } catch (caught) {
+      setJournalError(caught instanceof Error ? caught.message : 'These edits could not be saved. They are still in this editor.');
     } finally {
       setSaving(false);
     }
@@ -209,14 +218,20 @@ export function DualCaptionEditor(props: {
               onPress={props.onToggleVisibility}
             />
             <HeaderAction
-                label={needsRefresh.length > 0 ? `Refresh ${needsRefresh.length}` : 'Refresh all'}
-                disabled={props.busy || dirty || props.pairs.length === 0}
-                onPress={() => props.onRefresh((needsRefresh.length > 0 ? needsRefresh : props.pairs).map((pair) => pair.source.id))}
+                label={`Refresh unfinished (${needsRefresh.length})`}
+                disabled={props.busy || dirty || needsRefresh.length === 0}
+                onPress={() => props.onRefresh(needsRefresh.map((pair) => pair.source.id))}
               />
+            <HeaderAction label={`Refresh selected (${selectedPairs.length})`} disabled={props.busy || dirty || selectedPairs.length === 0}
+              onPress={() => props.onRefresh(selectedPairs.map((pair) => pair.source.id))} />
+            <HeaderAction label={`Refresh all (${includedPairs.length})`} disabled={props.busy || dirty || includedPairs.length === 0}
+              onPress={() => props.onRefresh(includedPairs.map((pair) => pair.source.id))} />
+            <HeaderAction label={selectedPairs.length === includedPairs.length && includedPairs.length > 0 ? 'Clear selection' : 'Select all'} disabled={props.busy || includedPairs.length === 0}
+              onPress={() => setSelectedIds(selectedPairs.length === includedPairs.length ? new Set() : new Set(includedPairs.map((pair) => pair.source.id)))} />
             <HeaderAction label="Remove second language" danger disabled={props.busy || dirty} onPress={props.onRemove} />
           </View>
           <Text style={{ marginTop: 11, color: chrome.muted, fontSize: 12, lineHeight: 17 }}>
-            Generate the second language with on-device AI. Typed corrections change only the language you edit; use Refresh when you want AI to replace a translation.
+            {missingCount} need translation; {needsRefresh.length - missingCount} have text to review; {skippedCount} skipped. You can export available text anyway. Save typed edits before refreshing. Refresh replaces only the selected second-language text.
           </Text>
         </View>
 
@@ -224,19 +239,26 @@ export function DualCaptionEditor(props: {
           {props.pairs.map((pair, index) => {
             const draft = displayDrafts[pair.source.id] ?? { primaryText: pair.source.text, translatedText: pair.translation.text };
             const refreshRequired = pair.translation.status === 'pending' || pair.translation.status === 'stale' || pair.translation.status === 'failed';
+            const skipped = Boolean(pair.translation.translationSkipped);
+            const textChanged = draft.primaryText.trim() !== pair.source.text.trim() || draft.translatedText.trim() !== pair.translation.text.trim();
             return (
               <View key={pair.source.id} style={{ gap: 9, padding: 14, borderRadius: chrome.radius.lg, borderWidth: 1, borderColor: refreshRequired ? chrome.warning : chrome.hairline, backgroundColor: chrome.surface }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <Text style={{ color: chrome.accent, fontSize: 12, fontWeight: '700' }}>#{index + 1} · {formatTime(pair.startMs)}</Text>
+                  <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selectedIds.has(pair.source.id), disabled: props.busy || skipped }}
+                    accessibilityLabel={`Select subtitle ${index + 1} for refresh`} disabled={props.busy || skipped}
+                    onPress={() => setSelectedIds((current) => { const next = new Set(current); if (next.has(pair.source.id)) next.delete(pair.source.id); else next.add(pair.source.id); return next; })}
+                    hitSlop={8} style={{ paddingVertical: 8 }}>
+                    <Text style={{ color: chrome.accent, fontSize: 12, fontWeight: '700' }}>{selectedIds.has(pair.source.id) ? '[x]' : '[ ]'} #{index + 1} · {formatTime(pair.startMs)}</Text>
+                  </Pressable>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
                     <Text style={{ color: statusColor(pair.translation.status), fontSize: 10, fontWeight: '900' }}>
-                      {statusLabel(pair.translation.status)}
+                      {skipped ? 'SKIPPED' : statusLabel(pair.translation.status)}
                     </Text>
                     {props.automaticTranslation ? (
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`Refresh translation for subtitle ${index + 1}`}
-                        disabled={props.busy || dirty}
+                        disabled={props.busy || dirty || skipped}
                         onPress={() => props.onRefresh([pair.source.id])}
                         hitSlop={8}>
                         <Text style={{ color: chrome.accent, fontSize: 13, fontWeight: '700' }}>Refresh</Text>
@@ -244,6 +266,13 @@ export function DualCaptionEditor(props: {
                     ) : null}
                   </View>
                 </View>
+                <HeaderAction label={skipped ? 'Include second line' : 'Skip second line'} disabled={props.busy || dirty}
+                  onPress={() => props.onSkip(pair.source.id, !skipped)} />
+                {textChanged || pair.translation.status === 'stale' || pair.translation.status === 'reviewed' ? (
+                  <Text accessibilityRole="alert" style={{ color: chrome.warning, fontSize: 12, lineHeight: 17 }}>
+                    Text was edited. Check whether the other language still matches. Refresh is optional and replaces {props.targetLanguageLabel}; keeping your text is fine.
+                  </Text>
+                ) : null}
                 <LanguageInput
                   label={props.sourceLanguageLabel}
                   value={draft.primaryText}
@@ -348,7 +377,7 @@ function HeaderAction(props: { label: string; disabled: boolean; danger?: boolea
 function statusLabel(status: CaptionPair['translation']['status']) {
   if (status === 'reviewed') return 'REVIEWED';
   if (status === 'translated') return 'READY';
-  if (status === 'stale') return 'NEEDS REFRESH';
+  if (status === 'stale') return 'CHECK TRANSLATION';
   if (status === 'failed') return 'FAILED - RETRY';
   return 'PENDING';
 }

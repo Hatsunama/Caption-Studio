@@ -303,6 +303,23 @@ export function setTranslationCueTiming(
   }), updatedAt);
 }
 
+export function setTranslationCueSkipped(
+  project: CaptionProject,
+  trackId: string,
+  sourceCaptionId: string,
+  skipped: boolean,
+  updatedAt = project.updatedAt,
+) {
+  if (typeof skipped !== 'boolean') throw new Error('Translation skipped state is invalid.');
+  return mapTranslationTrack(project, trackId, (track) => {
+    if (!track.cues.some((cue) => cue.sourceCaptionId === sourceCaptionId)) {
+      throw new Error('This subtitle no longer exists. Reopen the editor.');
+    }
+    return { ...track, cues: track.cues.map((cue) => cue.sourceCaptionId === sourceCaptionId
+      ? { ...cue, translationSkipped: skipped } : cue) };
+  }, updatedAt);
+}
+
 export function setTranslationTrackVisibility(
   project: CaptionProject,
   trackId: string,
@@ -447,7 +464,7 @@ export function resolveCaptionPairs(project: CaptionProject, trackId: string): C
       visible: track.visible,
       startMs: translation.startMs ?? source.startMs,
       endMs: translation.endMs ?? source.endMs,
-      timelineVisible: translation.timelineVisible ?? source.timelineVisible !== false,
+      timelineVisible: !translation.translationSkipped && (translation.timelineVisible ?? source.timelineVisible !== false),
       source,
       translation,
       style,

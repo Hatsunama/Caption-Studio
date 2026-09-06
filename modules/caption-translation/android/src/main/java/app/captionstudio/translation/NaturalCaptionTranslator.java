@@ -41,7 +41,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
 
   static final int MAX_CAPTIONS = 32;
   static final int MAX_OPERATIONS = 8;
-  static final int MAX_BATCHES = 128;
+  static final int MAX_BATCHES = 1_024;
   static final int MAX_SESSION_CAPTIONS = 3_072;
   static final int MAX_CAPTION_CHARACTERS = 1_000;
   static final int MAX_TOTAL_CAPTION_CHARACTERS = 8_000;
@@ -52,7 +52,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final int MAX_TOTAL_OUTPUT_CHARACTERS = 16_000;
   static final String PROMPT_CONTRACT = "qwen2.5-caption-json-v2";
   // Bump when the runtime version, backend, token limits, or sampler changes.
-  static final String CHECKPOINT_PROFILE = "v1;litertlm-0.16.1;cpu;4096;1536;topk1;topp1;temperature0;seed0";
+  static final String CHECKPOINT_PROFILE = "v2;litertlm-0.16.1;cpu;4096;1536;topk1;topp1;temperature0;seed0;single-cue-repair";
 
   static final String INVALID_REQUEST = "E_TRANSLATION_INVALID_REQUEST";
   static final String BUSY = "E_TRANSLATION_BUSY";
@@ -76,6 +76,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           + "Translate the whole passage first so grammar, pronouns, and names stay consistent, then keep newline breaks only when they remain natural breath or sentence boundaries in the target language. "
           + "Use surrounding captions and the optional before/after context to resolve pronouns, names, idioms, and sentence flow, "
           + "but never omit, reorder, explain, censor, or add facts. Preserve meaning, tone, punctuation, numbers, and proper nouns. "
+          + "Write natural conversational subtitles, using target-language idioms and colloquialisms where they match the speaker's register. Preserve internet slang when present, without inventing slang, profanity, or a regional dialect. "
+          + "Short acknowledgements are complete utterances. On retry, translate the single requested cue using its context; do not translate the context itself. "
           + "Do not leave source-language words untranslated unless they are code-like tokens, URLs, brands, or proper names that have no natural translation. "
           + "Return exactly one JSON array and nothing else. Every array item must be an object with exactly two string fields named id and text. "
           + "The item count, item order, and every id must exactly match the input. Never use Markdown or code fences. "
@@ -261,6 +263,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     try {
       checkCancelled(run);
       ValidatedSession session = validateSessionRequest(run.rawRequest);
+      boolean repairOutputs = Boolean.TRUE.equals(run.rawRequest.get("repairUnusableOutputs"));
       TranslationCheckpointStore checkpoints = openCheckpoints(run);
       File model = resolveModelFile(run.modelLocation);
       environment.verifyDeviceCapacity(model);
@@ -313,25 +316,13 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         String prompt = buildUserPrompt(request);
         String checkpointKey = TranslationCheckpointStore.key(
             OfficialQwenModelVerifier.EXPECTED_MODEL_SHA256 + "\n" + CHECKPOINT_PROFILE
-                + "\n" + PROMPT_CONTRACT + "\n" + SYSTEM_INSTRUCTION + "\n" + prompt
+                + "\n" + PROMPT_CONTRACT + "\n" + SYSTEM_INSTRUCTION + "\n" + repairOutputs + "\n" + prompt
         );
         String modelResponse = readCheckpoint(checkpoints, checkpointKey);
         boolean restored = modelResponse != null;
         if (!restored) {
-          if (runtime == null) {
-            checkCancelled(run);
-            int threadCount = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors()));
-            runtime = runtimeFactory.open(
-                model, environment.prepareCacheDirectory(), threadCount, SYSTEM_INSTRUCTION
-            );
-            run.nativeLifecycleLock.lock();
-            try {
-              run.runtime.set(runtime);
-            } finally {
-              run.nativeLifecycleLock.unlock();
-            }
-            checkCancelled(run);
-          }
+          if (runtime == null) runtime = openRuntime(run, model);
+          checkCancelled(run);
           modelResponse = runtime.translate(prompt);
         }
         updateProgress(
@@ -347,6 +338,24 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         if (!restored && hasTranslatedText(batchResult, request.captions)) {
           // Persist complete validated output before cancellation can discard it.
           writeCheckpoint(checkpoints, checkpointKey, modelResponse);
+        }
+        if (repairOutputs) {
+          for (int cueIndex = 0; cueIndex < request.captions.size(); cueIndex += 1) {
+            Caption source = request.captions.get(cueIndex);
+            Caption candidate = batchResult.get(cueIndex);
+            if (candidate.valid && !TranslationOutputQuality.needsReview(source.text, candidate.text, request.targetLanguage)) continue;
+            checkCancelled(run);
+            if (runtime == null) runtime = openRuntime(run, model);
+            checkCancelled(run);
+            // One bounded retry per failed cue, sharing this operation's engine.
+            String response = runtime.translate(buildRetryPrompt(request, cueIndex));
+            Caption retry = parseStrictResponse(response, List.of(source)).get(0);
+            boolean valid = retry.valid && !TranslationOutputQuality.needsReview(source.text, retry.text, request.targetLanguage);
+            batchResult.set(cueIndex, new Caption(source.id, retry.text, valid));
+            // Save each repair before observing cancellation; never cache a fabricated fallback.
+            writeCheckpoint(checkpoints, checkpointKey, checkpointResponse(batchResult));
+            checkCancelled(run);
+          }
         }
         checkCancelled(run);
         translated.addAll(batchResult);
@@ -396,6 +405,45 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     finish(run, result, error);
   }
 
+  private TranslationRuntime openRuntime(ActiveRun run, File model) throws Exception {
+    checkCancelled(run);
+    int threadCount = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors()));
+    TranslationRuntime opened = runtimeFactory.open(model, environment.prepareCacheDirectory(), threadCount, SYSTEM_INSTRUCTION);
+    run.nativeLifecycleLock.lock();
+    try { run.runtime.set(opened); }
+    finally { run.nativeLifecycleLock.unlock(); }
+    return opened;
+  }
+
+  static String buildRetryPrompt(ValidatedRequest request, int index) {
+    StringBuilder before = new StringBuilder(request.contextBefore);
+    StringBuilder after = new StringBuilder();
+    for (int i = 0; i < index; i += 1) before.append('\n').append(request.captions.get(i).text);
+    for (int i = index + 1; i < request.captions.size(); i += 1) after.append(request.captions.get(i).text).append('\n');
+    after.append(request.contextAfter);
+    String left = before.toString();
+    String right = after.toString();
+    int leftCount = textCharacterCount(left);
+    if (leftCount > 250) left = left.substring(left.offsetByCodePoints(0, leftCount - 250));
+    if (textCharacterCount(right) > 250) right = right.substring(0, right.offsetByCodePoints(0, 250));
+    ValidatedRequest single = new ValidatedRequest(request.sourceLanguage, request.targetLanguage, List.of(request.captions.get(index)), left, right);
+    JsonObject payload = com.google.gson.JsonParser.parseString(buildUserPrompt(single)).getAsJsonObject();
+    payload.addProperty("retry", true);
+    return payload.toString();
+  }
+
+  private static String checkpointResponse(List<Caption> captions) {
+    JsonArray response = new JsonArray();
+    for (Caption caption : captions) {
+      if (!caption.valid) continue;
+      JsonObject item = new JsonObject();
+      item.addProperty("id", caption.id);
+      item.addProperty("text", caption.text);
+      response.add(item);
+    }
+    return response.toString();
+  }
+
   private TranslationCheckpointStore openCheckpoints(ActiveRun run) throws TranslationFailure {
     if (!Boolean.TRUE.equals(run.rawRequest.get("reuseCheckpoints"))) return null;
     File directory = environment.prepareCheckpointDirectory();
@@ -432,7 +480,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
 
   private static boolean hasTranslatedText(List<Caption> result, List<Caption> source) {
     for (int index = 0; index < result.size(); index += 1) {
-      if (!result.get(index).text.equals(source.get(index).text)) return true;
+      if (result.get(index).valid) return true;
     }
     return false;
   }
@@ -589,10 +637,10 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       }
       List<?> rawBatches = (List<?>) batchesValue;
       if (rawBatches.isEmpty() || rawBatches.size() > MAX_BATCHES) {
-        throw invalidRequest("A translation operation must contain between 1 and 128 batches.");
+        throw invalidRequest("A translation operation must contain between 1 and 1024 batches.");
       }
       if (batches.size() + rawBatches.size() > MAX_BATCHES) {
-        throw invalidRequest("A translation session cannot contain more than 128 total batches.");
+        throw invalidRequest("A translation session cannot contain more than 1024 total batches.");
       }
 
       List<ValidatedRequest> operationBatches = new ArrayList<>(rawBatches.size());
@@ -839,14 +887,14 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     }
     List<Caption> resolved = new ArrayList<>(expectedCaptions.size());
     for (Caption expected : expectedCaptions) {
-      resolved.add(validById.getOrDefault(expected.id, new Caption(expected.id, expected.text)));
+      resolved.add(validById.getOrDefault(expected.id, new Caption(expected.id, expected.text, false)));
     }
     return resolved;
   }
 
   private static List<Caption> sourceFallback(List<Caption> expectedCaptions) {
     List<Caption> fallback = new ArrayList<>(expectedCaptions.size());
-    for (Caption expected : expectedCaptions) fallback.add(new Caption(expected.id, expected.text));
+    for (Caption expected : expectedCaptions) fallback.add(new Caption(expected.id, expected.text, false));
     return fallback;
   }
 
@@ -860,6 +908,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       LinkedHashMap<String, Object> item = new LinkedHashMap<>();
       item.put("id", caption.id);
       item.put("text", caption.text);
+      item.put("valid", caption.valid);
       captions.add(item);
     }
     LinkedHashMap<String, Object> result = new LinkedHashMap<>();
@@ -1067,10 +1116,16 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final class Caption {
     final String id;
     final String text;
+    final boolean valid;
 
     Caption(String id, String text) {
+      this(id, text, true);
+    }
+
+    Caption(String id, String text, boolean valid) {
       this.id = id;
       this.text = text;
+      this.valid = valid;
     }
   }
 

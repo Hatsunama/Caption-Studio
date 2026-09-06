@@ -37,5 +37,5 @@ export function translationAttemptMessage(project: CaptionProject, trackId: stri
   const selected = new Set(ids);
   const track = project.captionTracks.translations.find((candidate) => candidate.id === trackId);
   const failed = track?.cues.filter((cue) => selected.has(cue.sourceCaptionId) && cue.status === 'failed').length ?? 0;
-  return failed ? `${failed} subtitles could not be translated reliably. Successful translations were saved; existing text was kept. Tap Refresh to retry the failed lines before exporting.` : undefined;
+  return failed ? `${failed} subtitles could not be translated reliably. Successful translations were saved; existing text was kept. Refresh any or all failed lines, skip them, or export available text anyway.` : undefined;
 }

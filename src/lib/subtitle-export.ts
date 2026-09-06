@@ -8,8 +8,8 @@ import {
 } from '@/lib/caption-text-breaks';
 import type { CaptionBlock, CaptionProject, CaptionStyle, WordToken } from '@/types/project';
 
-export function serializeSrt(project: CaptionProject) {
-  const translations = translationsByCaption(project);
+export function serializeSrt(project: CaptionProject, allowIncompleteTranslations = false) {
+  const translations = translationsByCaption(project, allowIncompleteTranslations);
   const events = visibleCaptions(project).flatMap((caption) => {
     const timing = srtRange(caption.startMs, caption.endMs);
     const pairs = translations.get(caption.id) ?? [];
@@ -38,7 +38,7 @@ export function serializeSrt(project: CaptionProject) {
   ].join('\n')).join('\n\n')}\n` : '';
 }
 
-export function serializeAss(project: CaptionProject) {
+export function serializeAss(project: CaptionProject, allowIncompleteTranslations = false) {
   const { width, height } = subtitleCanvasSize(project);
   const scale = width / 360;
   const header = [
@@ -57,7 +57,7 @@ export function serializeAss(project: CaptionProject) {
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
-  const translations = translationsByCaption(project);
+  const translations = translationsByCaption(project, allowIncompleteTranslations);
   const events = visibleCaptions(project).flatMap((caption) => {
     const style = resolveCaptionStyle(project.projectStyle, caption);
     const timing = assRange(caption.startMs, caption.endMs);
@@ -107,9 +107,9 @@ function assDialogue(
   return `Dialogue: ${layer},${assTime(timing.startCs)},${assTime(timing.endCs)},Default,,0,0,0,,{${tags}}${text}`;
 }
 
-function translationsByCaption(project: CaptionProject) {
+function translationsByCaption(project: CaptionProject, allowIncompleteTranslations = false) {
   const pairs = new Map<string, CaptionPair[]>();
-  for (const pair of exportCaptionPairs(project)) {
+  for (const pair of exportCaptionPairs(project, allowIncompleteTranslations)) {
     const current = pairs.get(pair.source.id) ?? [];
     current.push(pair);
     pairs.set(pair.source.id, current);

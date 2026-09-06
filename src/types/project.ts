@@ -144,6 +144,7 @@ export type CaptionBlock = {
 export type TranslationCaptionStatus = 'pending' | 'translated' | 'reviewed' | 'stale' | 'failed';
 
 export type TranslationCaptionCue = {
+  translationSkipped?: boolean;
   id: Identifier;
   sourceCaptionId: Identifier;
   sourceTextSnapshot: string;
