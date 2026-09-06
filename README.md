@@ -117,7 +117,7 @@ The release must also contain the 1.4.5 language-picker repair. ADB output is ca
 - Independently owned language tracks: editing, moving, or trimming one translated cue does not rewrite or reposition its primary cue or neighboring translated cues; explicit AI Refresh replaces only the requested translated lines
 - Caption grouping from word timestamps
 - A fixed-scale layered timeline: trimming either video edge visibly replaces removed source time with playable black space instead of rescaling the ruler or snapping the clip back to zero
-- Magnetic clip packing by default, explicit removable gaps when wanted, and reorderable caption, added-text, and image/sticker tracks
+- Magnetic clip packing by default, explicit removable gaps when wanted, drag-to-reorder video clips via a simplified drop-between strip (vertical drag), and reorderable caption, added-text, and image/sticker tracks
 - Automatic playhead-follow scrolling, fractional-second ruler markings, pinch/buttons for much wider zoom ranges, and a visible zoom percentage
 - A floating timeline add button for appending one or many videos to the end
 - Neon pink/blue/green subtitle blocks that stay end-to-end on one lane; genuine overlaps automatically move to additional visible lanes so no subtitle can hide underneath another
@@ -134,7 +134,7 @@ The release must also contain the 1.4.5 language-picker repair. ADB output is ca
 - Source, 9:16, 16:9, 1:1, and 4:5 canvases
 - Fit and Fill framing for making a wide clip fill a TikTok canvas
 - Direct video drag, pinch-to-resize, two-finger rotation, size buttons, 90-degree rotation, and a precise free-angle scrubber
-- Nondestructive video split, reversible two-sided edge trimming with caption restoration, speed, volume, mute, and audio fades; cropped ranges and their captions hide inside explicit removable black gaps
+- Nondestructive video split, reversible two-sided edge trimming with caption restoration, speed, volume, mute, and audio fades; cropped ranges and their captions hide inside explicit removable black gaps; after a gap is removed, either edge can still extend a packed clip back out to unused source media and auto-slide following clips
 - A dedicated audio timeline: import audio from the phone or extract the audio track from a selected video, then trim, restore, move, duplicate, mute, fade, and adjust each audio clip independently
 - 43 data-driven transition treatments with adjustable timing, including dissolves, directional and diagonal wipes, slides, pushes, irises, splits, blinds, tile reveals, folds, color washes, shutter, spin, flash, ripple, and glitch
 - On-device person-background removal preview and native MP4 render using the Apache-licensed MediaPipe multiclass person model; video frames and masks stay on the phone, while the optional Google SDKs send the operational metrics described in the privacy policy when the feature is enabled

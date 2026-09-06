@@ -16,7 +16,7 @@ import { humanVideoName, isMachineVideoName } from '../src/lib/project-presentat
 import { applyCaptionTextChanges } from '../src/lib/caption-text-edits.ts';
 import { serializeAss, serializeSrt } from '../src/lib/subtitle-export.ts';
 import { mergeCaptionScriptBlock, splitCaptionScriptBlock, splitCaptionScriptBlockAtTime } from '../src/lib/caption-script.ts';
-import { deleteVideoClip, moveVideoClip, previewVideoClipLeadingGap, previewVideoClipTrim, setCaptionTiming, setVideoClipGap, setVideoClipLeadingGap, setVideoTransition, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
+import { deleteVideoClip, moveVideoClip, previewVideoClipLeadingGap, previewVideoClipReorder, previewVideoClipTrim, reorderVideoClip, setCaptionTiming, setVideoClipGap, setVideoClipLeadingGap, setVideoTransition, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
 import { addAudioSourceToProject, audioClipEnd, audioClipVolume, deleteAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '../src/lib/audio-timeline.ts';
 import {
   buildClipTimeline,
@@ -388,11 +388,14 @@ test('clips magnetically pack by default while intentional gaps remain explicit 
 test('video clip body owns Android drag arbitration instead of competing with a parent pressable', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   const clipBlock = timeline.slice(timeline.indexOf('function VideoClipBlock'), timeline.indexOf('function VideoTrimGrip'));
-  const moveGrip = timeline.slice(timeline.indexOf('function VideoMoveGrip'), timeline.indexOf('function VideoGapBlock'));
+  const moveGrip = timeline.slice(timeline.indexOf('function VideoMoveGrip'), timeline.indexOf('function VideoReorderStrip'));
   assert.match(clipBlock, /<View[\s\S]*<VideoMoveGrip/);
   assert.doesNotMatch(clipBlock, /<Pressable/);
   assert.match(moveGrip, /onStartShouldSetPanResponder: \(\) => true/);
-  assert.match(moveGrip, /draggedRef/);
+  assert.match(moveGrip, /modeRef/);
+  assert.match(moveGrip, /'reorder'/);
+  assert.match(timeline, /function VideoReorderStrip/);
+  assert.match(timeline, /onReorderClip/);
 });
 
 test('both clip handles can restore trimmed media without losing edited captions', () => {
@@ -478,6 +481,103 @@ test('trim previews keep a fixed timeline duration and do not move neighboring c
   assert.equal(tailPreview.gapAfterMs, 2_000);
   assert.equal(tailTimeline.at(-1).afterGapEndMs, before.at(-1).afterGapEndMs);
   assert.equal(tailTimeline[1].startMs, before[1].startMs);
+});
+
+test('packed cropped clips can extend into remaining source and auto-slide neighbors', () => {
+  const project = projectFixture({
+    clips: [
+      clip({ id: 'first', sourceEndMs: 2_000, availableSourceEndMs: 5_000, gapAfterMs: 0 }),
+      clip({
+        id: 'second',
+        sourceStartMs: 0,
+        sourceEndMs: 2_000,
+        availableSourceStartMs: 0,
+        availableSourceEndMs: 2_000,
+      }),
+    ],
+    captions: [
+      {
+        id: 'on-second',
+        text: 'follow me',
+        textMode: 'manual',
+        startMs: 2_200,
+        endMs: 2_800,
+        wordIds: [],
+        timelineVisible: true,
+        sourceAnchor: { clipId: 'second', sourceStartMs: 200, sourceEndMs: 800, wordIds: [] },
+      },
+    ],
+  });
+
+  const blockedBefore = previewVideoClipTrim(project.clips[0], 'end', 4_000);
+  assert.equal(blockedBefore.sourceEndMs, 4_000);
+  assert.equal(blockedBefore.gapAfterMs, 0);
+
+  const extended = trimVideoClip(project, 'first', 'end', 4_000);
+  assert.ok(extended);
+  assert.equal(extended.project.clips[0].sourceEndMs, 4_000);
+  assert.equal(extended.project.clips[0].gapAfterMs, 0);
+  assert.deepEqual(buildClipTimeline(extended.project.clips).map(({ startMs, endMs }) => [startMs, endMs]), [
+    [0, 4_000],
+    [4_000, 6_000],
+  ]);
+  assert.equal(totalClipDuration(extended.project.clips), 6_000);
+  const caption = extended.project.captions.find((item) => item.id === 'on-second');
+  assert.deepEqual([caption.startMs, caption.endMs], [4_200, 4_800]);
+
+  const withinGap = projectFixture({
+    clips: [clip({ id: 'solo', sourceEndMs: 2_000, availableSourceEndMs: 5_000, gapAfterMs: 1_500 })],
+  });
+  const restoredIntoGap = trimVideoClip(withinGap, 'solo', 'end', 3_500);
+  assert.ok(restoredIntoGap);
+  assert.equal(restoredIntoGap.project.clips[0].sourceEndMs, 3_500);
+  assert.equal(restoredIntoGap.project.clips[0].gapAfterMs, 0);
+  assert.equal(totalClipDuration(restoredIntoGap.project.clips), 3_500);
+
+  const headPacked = projectFixture({
+    clips: [
+      clip({ id: 'lead', sourceStartMs: 1_000, sourceEndMs: 3_000, availableSourceStartMs: 0, availableSourceEndMs: 3_000 }),
+      clip({ id: 'trail', sourceEndMs: 1_000, availableSourceEndMs: 1_000 }),
+    ],
+  });
+  const headExtended = trimVideoClip(headPacked, 'lead', 'start', 0);
+  assert.ok(headExtended);
+  assert.equal(headExtended.project.clips[0].sourceStartMs, 0);
+  assert.equal(headExtended.project.clips[0].gapBeforeMs, 0);
+  assert.deepEqual(buildClipTimeline(headExtended.project.clips).map(({ startMs, endMs }) => [startMs, endMs]), [
+    [0, 3_000],
+    [3_000, 4_000],
+  ]);
+});
+
+test('vertical clip reorder uses a simplified drop-between strip and preserves caption ownership', () => {
+  const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
+  assert.match(timeline, /VideoReorderStrip/);
+  assert.match(timeline, /Drag vertically to reorder/);
+  assert.match(timeline, /Between CLIP/);
+  const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
+  assert.match(editor, /onReorderClip=\{reorderClipToIndex\}/);
+  assert.match(editor, /reorderVideoClip/);
+
+  const project = projectFixture({
+    clips: [
+      clip({ id: 'one', sourceEndMs: 1_000, availableSourceEndMs: 1_000 }),
+      clip({ id: 'two', sourceEndMs: 2_000, availableSourceEndMs: 2_000 }),
+      clip({ id: 'three', sourceEndMs: 1_500, availableSourceEndMs: 1_500 }),
+    ],
+    captions: [
+      { id: 'c1', text: 'one', textMode: 'manual', startMs: 100, endMs: 400, wordIds: [], timelineVisible: true, sourceAnchor: { clipId: 'one', sourceStartMs: 100, sourceEndMs: 400, wordIds: [] } },
+      { id: 'c3', text: 'three', textMode: 'manual', startMs: 3_100, endMs: 3_400, wordIds: [], timelineVisible: true, sourceAnchor: { clipId: 'three', sourceStartMs: 100, sourceEndMs: 400, wordIds: [] } },
+    ],
+  });
+  const preview = previewVideoClipReorder(project.clips, 'three', 0);
+  assert.deepEqual(preview.map((item) => item.id), ['three', 'one', 'two']);
+  const reordered = reorderVideoClip(project, 'three', 0);
+  assert.ok(reordered);
+  assert.deepEqual(reordered.project.clips.map((item) => item.id), ['three', 'one', 'two']);
+  const byId = Object.fromEntries(reordered.project.captions.map((caption) => [caption.id, caption]));
+  assert.deepEqual([byId.c3.startMs, byId.c3.endMs], [100, 400]);
+  assert.deepEqual([byId.c1.startMs, byId.c1.endMs], [1_600, 1_900]);
 });
 
 test('text and image overlays hidden by a trim return with their transforms intact', () => {

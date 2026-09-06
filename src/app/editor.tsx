@@ -91,6 +91,7 @@ import {
   setVideoClipTransform,
   setVideoTransition,
   moveVideoClip,
+  reorderVideoClip,
   splitVideoClip,
   trimVideoClip,
   updateVideoClip,
@@ -1459,6 +1460,18 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     persistProjectInBackground(next);
   };
 
+  const reorderClipToIndex = (clipId: string, toIndex: number) => {
+    const result = reorderVideoClip(projectRef.current, clipId, toIndex);
+    if (!result) return;
+    pushUndo();
+    projectRef.current = result.project;
+    transport.synchronizeProject(result.project);
+    setProject(result.project);
+    persistProjectInBackground(result.project);
+    transport.pause();
+    queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, totalClipDuration(result.project.clips) - 1))));
+  };
+
   const exportVideo = async () => {
     if (exporting) return;
     const snapshot = projectRef.current;
@@ -1927,6 +1940,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onTrimClip={trimClipEdge}
           onSetClipGap={setClipGap}
           onSetClipLeadingGap={setClipLeadingGap}
+          onReorderClip={reorderClipToIndex}
           onLayerTimingChange={updateLayerTiming}
           onCaptionTimingChange={updateCaptionTiming}
           onTranslationCaptionTimingChange={updateTranslationCaptionTiming}

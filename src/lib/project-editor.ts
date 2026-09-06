@@ -279,9 +279,26 @@ export function moveVideoClip(project: CaptionProject, clipId: string, direction
   const index = project.clips.findIndex((clip) => clip.id === clipId);
   const destination = index + direction;
   if (index < 0 || destination < 0 || destination >= project.clips.length) return project;
-  const clips = [...project.clips];
-  [clips[index], clips[destination]] = [clips[destination], clips[index]];
-  return rebuildAfterLayoutEdit(project, clips, project.captions, { atMs: 0, removeMs: 0, insertMs: 0 });
+  return reorderVideoClip(project, clipId, destination)?.project ?? project;
+}
+
+export function previewVideoClipReorder(clips: VideoClip[], clipId: string, toIndex: number) {
+  const fromIndex = clips.findIndex((clip) => clip.id === clipId);
+  if (fromIndex < 0 || !Number.isFinite(toIndex)) return null;
+  const destination = clamp(Math.round(toIndex), 0, clips.length - 1);
+  if (fromIndex === destination) return clips;
+  const next = [...clips];
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(destination, 0, moved);
+  return next;
+}
+
+export function reorderVideoClip(project: CaptionProject, clipId: string, toIndex: number) {
+  const clips = previewVideoClipReorder(project.clips, clipId, toIndex);
+  if (!clips || clips.every((clip, index) => clip.id === project.clips[index]?.id)) return null;
+  const next = rebuildAfterLayoutEdit(project, clips, project.captions, { atMs: 0, removeMs: 0, insertMs: 0 });
+  const entry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId);
+  return { project: next, seekMs: entry?.startMs ?? 0 };
 }
 
 export function deleteVideoClip(project: CaptionProject, clipId: string) {
@@ -442,14 +459,22 @@ export function trimVideoClip(project: CaptionProject, clipId: string, edge: 'st
   if (
     Math.abs(replacement.sourceStartMs - entry.clip.sourceStartMs) < 1
     && Math.abs(replacement.sourceEndMs - entry.clip.sourceEndMs) < 1
+    && Math.abs(replacement.gapBeforeMs - entry.clip.gapBeforeMs) < 1
+    && Math.abs(replacement.gapAfterMs - entry.clip.gapAfterMs) < 1
   ) return null;
   const clips = project.clips.map((clip) => clip.id === clipId ? replacement : clip);
-  const next = rebuildAfterLayoutEdit(
-    project,
-    clips,
-    project.captions,
-    { atMs: entry.startMs, removeMs: 0, insertMs: 0 },
-  );
+  const previewEntry = buildClipTimeline(clips).find((candidate) => candidate.clip.id === clipId)!;
+  const delta = previewEntry.afterGapEndMs - entry.afterGapEndMs;
+  const splice = delta > 0
+    ? { atMs: edge === 'start' ? entry.startMs : entry.endMs, removeMs: 0, insertMs: delta }
+    : delta < 0
+      ? {
+        atMs: edge === 'start' ? entry.gapStartMs : Math.min(entry.afterGapEndMs + delta, entry.afterGapEndMs),
+        removeMs: -delta,
+        insertMs: 0,
+      }
+      : { atMs: entry.startMs, removeMs: 0, insertMs: 0 };
+  const next = rebuildAfterLayoutEdit(project, clips, project.captions, splice);
   const nextEntry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId)!;
   return {
     project: next,
@@ -458,23 +483,22 @@ export function trimVideoClip(project: CaptionProject, clipId: string, edge: 'st
 }
 
 export function previewVideoClipTrim(clip: VideoClip, edge: 'start' | 'end', targetSourceMs: number) {
-  const minimumSourceDuration = MINIMUM_CLIP_TIMELINE_MS * clip.playbackRate;
+  const rate = validClipPlaybackRate(clip.playbackRate);
+  const minimumSourceDuration = MINIMUM_CLIP_TIMELINE_MS * rate;
   if (edge === 'start') {
-    const recoverableStartMs = Math.max(
-      clip.availableSourceStartMs,
-      clip.sourceStartMs - clip.gapBeforeMs * clip.playbackRate,
-    );
-    const sourceStartMs = clamp(targetSourceMs, recoverableStartMs, clip.sourceEndMs - minimumSourceDuration);
-    const gapBeforeMs = Math.max(0, clip.gapBeforeMs + (sourceStartMs - clip.sourceStartMs) / clip.playbackRate);
+    // Allow restoring unused head media even after the leading gap was removed; growth past gapBefore slides this clip's body later neighbors via timeline layout.
+    const sourceStartMs = clamp(targetSourceMs, clip.availableSourceStartMs, clip.sourceEndMs - minimumSourceDuration);
+    const gapBeforeMs = Math.max(0, clip.gapBeforeMs + (sourceStartMs - clip.sourceStartMs) / rate);
     return { ...clip, sourceStartMs, gapBeforeMs };
   }
-  const recoverableEndMs = Math.min(
-    clip.availableSourceEndMs,
-    clip.sourceEndMs + clip.gapAfterMs * clip.playbackRate,
-  );
-  const sourceEndMs = clamp(targetSourceMs, clip.sourceStartMs + minimumSourceDuration, recoverableEndMs);
-  const gapAfterMs = Math.max(0, clip.gapAfterMs + (clip.sourceEndMs - sourceEndMs) / clip.playbackRate);
+  // Same for the tail: eat gapAfter first, then grow into remaining source and auto-slide following clips.
+  const sourceEndMs = clamp(targetSourceMs, clip.sourceStartMs + minimumSourceDuration, clip.availableSourceEndMs);
+  const gapAfterMs = Math.max(0, clip.gapAfterMs + (clip.sourceEndMs - sourceEndMs) / rate);
   return { ...clip, sourceEndMs, gapAfterMs };
+}
+
+function validClipPlaybackRate(rate: number) {
+  return clamp(Number.isFinite(rate) ? rate : 1, 0.25, 4);
 }
 
 export function setVideoClipGap(

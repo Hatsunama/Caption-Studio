@@ -3,7 +3,7 @@ import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { chrome } from '@/lib/ui-theme';
 import { packTimelineLanes } from '@/lib/timeline-layout';
-import { previewVideoClipLeadingGap, previewVideoClipTrim } from '@/lib/project-editor';
+import { previewVideoClipLeadingGap, previewVideoClipReorder, previewVideoClipTrim } from '@/lib/project-editor';
 import {
   clampTimelineScale,
   minimumTimelineScale,
@@ -46,6 +46,7 @@ export function LayerTimeline(props: {
   onTrimClip: (clipId: string, edge: 'start' | 'end', targetSourceMs: number) => void;
   onSetClipGap: (clipId: string, gapMs: number, edge?: 'before' | 'after') => void;
   onSetClipLeadingGap: (clipId: string, gapMs: number) => void;
+  onReorderClip: (clipId: string, toIndex: number) => void;
   onLayerTimingChange: (layerId: string, startMs: number, endMs: number) => void;
   onCaptionTimingChange: (captionId: string, edge: 'start' | 'end' | 'move', startMs: number, endMs: number) => void;
   onTimingChangeStart: () => void;
@@ -59,6 +60,7 @@ export function LayerTimeline(props: {
   const horizontalRef = useRef<ScrollView>(null);
   const [viewportWidth, setViewportWidth] = useState(360);
   const [clipPreview, setClipPreview] = useState<VideoClip[]>();
+  const [reorderDrag, setReorderDrag] = useState<{ clipId: string; toIndex: number }>();
   const [gestureLock, setGestureLock] = useState(false);
   const gestureLockRef = useRef(false);
   const previewClips = useMemo(
@@ -222,13 +224,22 @@ export function LayerTimeline(props: {
           <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
           <ScrollView style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}>
             <TimelineRow label="VIDEO" labelColor={chrome.accent} selected={Boolean(props.selectedClipId)} trackWidth={trackWidth} height={46} onPressTrack={(x) => props.onSeek(x / trackWidth * duration)} controls={<Text style={{ color: chrome.muted, fontSize: 8 }}>{props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}</Text>}>
-              {clipPositions.map((entry, index) => ({ ...entry, index })).filter(({ gapStartMs, afterGapEndMs }) => isVisible(gapStartMs, afterGapEndMs)).map(({ clip, gapStartMs, startMs, endMs, afterGapEndMs, index }) => {
+              {reorderDrag ? (
+                <VideoReorderStrip
+                  clips={previewClips}
+                  originalClips={props.clips}
+                  activeClipId={reorderDrag.clipId}
+                  trackWidth={trackWidth}
+                />
+              ) : clipPositions.map((entry, index) => ({ ...entry, index })).filter(({ gapStartMs, afterGapEndMs }) => isVisible(gapStartMs, afterGapEndMs)).map(({ clip, gapStartMs, startMs, endMs, afterGapEndMs, index }) => {
                 const previousEndMs = index === 0 ? 0 : clipPositions[index - 1].endMs;
                 const leadingGapMs = startMs - previousEndMs;
                 return (
                 <Fragment key={clip.id}>
                   <VideoClipBlock
                     clip={clip}
+                    clipIndex={index}
+                    clipCount={previewClips.length}
                     leadingGapMs={leadingGapMs}
                     label={`CLIP ${index + 1}`}
                     startMs={startMs}
@@ -242,7 +253,7 @@ export function LayerTimeline(props: {
                     onTrimPreview={(edge, targetSourceMs) => {
                       setItemGestureLock(true);
                       const preview = previewVideoClipTrim(clip, edge, targetSourceMs);
-                      setClipPreview(previewClips.map((candidate) => candidate.id === clip.id ? preview : candidate));
+                      setClipPreview(props.clips.map((candidate) => candidate.id === clip.id ? preview : candidate));
                     }}
                     onTrimCommit={(edge, targetSourceMs) => {
                       setItemGestureLock(false);
@@ -258,6 +269,23 @@ export function LayerTimeline(props: {
                       setItemGestureLock(false);
                       setClipPreview(undefined);
                       props.onSetClipLeadingGap(clip.id, gapBeforeMs);
+                    }}
+                    onReorderPreview={(toIndex) => {
+                      setItemGestureLock(true);
+                      setReorderDrag({ clipId: clip.id, toIndex });
+                      const preview = previewVideoClipReorder(props.clips, clip.id, toIndex);
+                      if (preview) setClipPreview(preview);
+                    }}
+                    onReorderCommit={(toIndex) => {
+                      setItemGestureLock(false);
+                      setReorderDrag(undefined);
+                      setClipPreview(undefined);
+                      props.onReorderClip(clip.id, toIndex);
+                    }}
+                    onReorderCancel={() => {
+                      setItemGestureLock(false);
+                      setReorderDrag(undefined);
+                      setClipPreview(undefined);
                     }}
                   />
                   {startMs > gapStartMs ? (
@@ -379,6 +407,8 @@ function TimelineRuler(props: { durationMs: number; trackWidth: number; pixelsPe
 
 function VideoClipBlock(props: {
   clip: VideoClip;
+  clipIndex: number;
+  clipCount: number;
   leadingGapMs: number;
   label: string;
   startMs: number;
@@ -393,6 +423,9 @@ function VideoClipBlock(props: {
   onTrimCommit: (edge: 'start' | 'end', targetSourceMs: number) => void;
   onGapPreview: (gapBeforeMs: number) => void;
   onGapCommit: (gapBeforeMs: number) => void;
+  onReorderPreview: (toIndex: number) => void;
+  onReorderCommit: (toIndex: number) => void;
+  onReorderCancel: () => void;
 }) {
   const clipDuration = Math.max(120, props.endMs - props.startMs);
   return (
@@ -476,7 +509,8 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0]) {
   propsRef.current = props;
   const gapRef = useRef(props.leadingGapMs);
   const initialGapRef = useRef(props.leadingGapMs);
-  const draggedRef = useRef(false);
+  const reorderIndexRef = useRef(props.clipIndex);
+  const modeRef = useRef<'none' | 'gap' | 'reorder'>('none');
   const responder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
@@ -487,23 +521,40 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0]) {
       propsRef.current.onGestureLock(true);
       initialGapRef.current = propsRef.current.leadingGapMs;
       gapRef.current = initialGapRef.current;
-      draggedRef.current = false;
+      reorderIndexRef.current = propsRef.current.clipIndex;
+      modeRef.current = 'none';
     },
     onPanResponderMove: (_event, gesture) => {
-      if (Math.abs(gesture.dx) <= 6 || Math.abs(gesture.dx) <= Math.abs(gesture.dy)) return;
-      draggedRef.current = true;
+      if (modeRef.current === 'none') {
+        if (Math.abs(gesture.dx) <= 6 && Math.abs(gesture.dy) <= 6) return;
+        // Vertical-dominant drag opens the simplified reorder strip; horizontal drag still edits leading gap.
+        modeRef.current = Math.abs(gesture.dy) > Math.abs(gesture.dx) ? 'reorder' : 'gap';
+      }
+      if (modeRef.current === 'reorder') {
+        if (propsRef.current.clipCount <= 1) return;
+        const span = Math.max(64, propsRef.current.trackWidth * 0.55);
+        const deltaIndex = Math.round(gesture.dx / (span / Math.max(1, propsRef.current.clipCount - 1)));
+        const toIndex = clamp(propsRef.current.clipIndex + deltaIndex, 0, propsRef.current.clipCount - 1);
+        reorderIndexRef.current = toIndex;
+        propsRef.current.onReorderPreview(toIndex);
+        return;
+      }
       const delta = gesture.dx / Math.max(1, propsRef.current.trackWidth) * propsRef.current.durationMs;
       const gap = clamp(initialGapRef.current + delta, 0, 60 * 60_000);
       gapRef.current = gap;
       propsRef.current.onGapPreview(gap);
     },
     onPanResponderRelease: () => {
-      if (draggedRef.current) propsRef.current.onGapCommit(gapRef.current);
+      if (modeRef.current === 'reorder') propsRef.current.onReorderCommit(reorderIndexRef.current);
+      else if (modeRef.current === 'gap') propsRef.current.onGapCommit(gapRef.current);
       else propsRef.current.onGestureLock(false);
+      modeRef.current = 'none';
     },
     onPanResponderTerminate: () => {
-      if (draggedRef.current) propsRef.current.onGapCommit(gapRef.current);
+      if (modeRef.current === 'reorder') propsRef.current.onReorderCancel();
+      else if (modeRef.current === 'gap') propsRef.current.onGapCommit(gapRef.current);
       else propsRef.current.onGestureLock(false);
+      modeRef.current = 'none';
     },
   }), []);
   return (
@@ -511,9 +562,61 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0]) {
       {...responder.panHandlers}
       accessible
       accessibilityRole="adjustable"
-      accessibilityLabel={`${props.label}. Tap to select. Drag horizontally to add or remove empty space before this clip.`}
+      accessibilityLabel={`${props.label}. Tap to select. Drag horizontally to add or remove empty space before this clip. Drag vertically to reorder with a simplified drop-between view.`}
       style={{ position: 'absolute', left: props.selected ? 16 : 0, right: props.selected ? 16 : 0, top: 0, bottom: 0 }}
     />
+  );
+}
+
+function VideoReorderStrip(props: {
+  clips: VideoClip[];
+  originalClips: VideoClip[];
+  activeClipId: string;
+  trackWidth: number;
+}) {
+  const originalNumber = (clipId: string) => {
+    const index = props.originalClips.findIndex((clip) => clip.id === clipId);
+    return index >= 0 ? index + 1 : 0;
+  };
+  const activeIndex = props.clips.findIndex((clip) => clip.id === props.activeClipId);
+  const before = activeIndex > 0 ? props.clips[activeIndex - 1] : undefined;
+  const after = activeIndex >= 0 && activeIndex < props.clips.length - 1 ? props.clips[activeIndex + 1] : undefined;
+  const placement = !before && !after
+    ? 'Only clip'
+    : !before
+      ? `Before CLIP ${originalNumber(after!.id)}`
+      : !after
+        ? `After CLIP ${originalNumber(before.id)}`
+        : `Between CLIP ${originalNumber(before.id)} and CLIP ${originalNumber(after.id)}`;
+  return (
+    <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, paddingHorizontal: 6, justifyContent: 'center', gap: 4, backgroundColor: '#12171C' }}>
+      <Text style={{ color: '#64D2FF', fontSize: 8, fontWeight: '900' }}>REORDER · {placement}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        {props.clips.map((clip, index) => {
+          const active = clip.id === props.activeClipId;
+          return (
+            <View
+              key={clip.id}
+              style={{
+                flex: 1,
+                minWidth: 36,
+                maxWidth: Math.max(48, props.trackWidth / Math.max(1, props.clips.length) - 4),
+                height: 26,
+                borderRadius: 8,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: active ? 2 : 1,
+                borderColor: active ? '#64D2FF' : '#5A6570',
+                backgroundColor: active ? '#1D3A2A' : index % 2 ? '#2A323B' : '#343D47',
+              }}>
+              <Text numberOfLines={1} style={{ color: '#F2F5F8', fontSize: 8, fontWeight: '900' }}>
+                {active ? '● ' : ''}CLIP {originalNumber(clip.id)}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 
