@@ -238,7 +238,7 @@ export function LayerTimeline(props: {
                   activeClipId={reorderDrag.clipId}
                 />
               ) : null}
-              {clipPositions.map((entry, index) => ({ ...entry, index })).filter(({ gapStartMs, afterGapEndMs }) => isVisible(gapStartMs, afterGapEndMs) || reorderDrag?.clipId === entry.clip.id).map(({ clip, gapStartMs, startMs, endMs, afterGapEndMs, index }) => {
+              {clipPositions.map((entry, index) => ({ ...entry, index })).filter(({ clip, gapStartMs, afterGapEndMs }) => isVisible(gapStartMs, afterGapEndMs) || reorderDrag?.clipId === clip.id).map(({ clip, gapStartMs, startMs, endMs, afterGapEndMs, index }) => {
                 const previousEndMs = index === 0 ? 0 : clipPositions[index - 1].endMs;
                 const leadingGapMs = startMs - previousEndMs;
                 const reordering = reorderDrag?.clipId === clip.id;
