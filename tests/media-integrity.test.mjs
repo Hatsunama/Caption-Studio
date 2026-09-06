@@ -83,3 +83,18 @@ test('durable media and font imports validate staging before atomic promotion', 
   assert.match(transcription, /model\.downloadBytes \+ MODEL_REPLACEMENT_HEADROOM_BYTES/);
   assert.match(transcription, /planOverlappingPcmChunks[\s\S]*session\?\.throwIfCancelled\(\)/);
 });
+
+test('extracted video audio remux skips codec-config samples and re-probes duration', () => {
+  const native = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/CaptionMediaModule.kt', import.meta.url), 'utf8');
+  const helper = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/AudioTrackExtraction.kt', import.meta.url), 'utf8');
+  const mediaImport = readFileSync(new URL('../src/services/media-import.ts', import.meta.url), 'utf8');
+
+  assert.match(helper, /shouldCopyRemuxSample/);
+  assert.match(helper, /resolveExtractedDurationMs/);
+  assert.match(native, /BUFFER_FLAG_CODEC_CONFIG/);
+  assert.match(native, /shouldCopyRemuxSample\(sampleFlags, MediaCodec\.BUFFER_FLAG_CODEC_CONFIG\)/);
+  assert.match(native, /extractedAudioLooksPlayable/);
+  assert.match(native, /transcodeAudioTrackToAac/);
+  assert.match(native, /probeExtractedAudioDurationMs/);
+  assert.match(mediaImport, /extractAudioTrack\([\s\S]*getMediaInfo\(outputUri\)/);
+});
