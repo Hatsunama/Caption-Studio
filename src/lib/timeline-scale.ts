@@ -36,3 +36,68 @@ export function clampTimelineScale(scale: number, minimum: number) {
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
+
+/** Equal-tile filmstrip width used while hold-drag reordering video clips. */
+export function reorderFilmstripWidth(clipCount: number, tileSize: number, tileGap: number) {
+  const count = Math.max(0, clipCount);
+  return count * (tileSize + tileGap) + tileGap;
+}
+
+/** Track width in reorder mode: filmstrip-sized, never stretched to the full timeline. */
+export function reorderTrackWidth(filmstripWidth: number, viewportContentWidth: number) {
+  return Math.max(Math.max(0, filmstripWidth), Math.max(1, viewportContentWidth));
+}
+
+export function reorderTileLeft(index: number, tileSize: number, tileGap: number) {
+  return Math.max(0, index) * (tileSize + tileGap);
+}
+
+/**
+ * Scroll offset that keeps a filmstrip tile on-screen under the centered playhead.
+ * Short filmstrips pin to the start (offset 0); longer ones center the active tile.
+ */
+export function reorderScrollOffsetForTile(
+  tileIndex: number,
+  tileSize: number,
+  tileGap: number,
+  trackWidth: number,
+  viewportContentWidth: number,
+) {
+  const maxScroll = Math.max(0, trackWidth);
+  // When the filmstrip is no wider than the content viewport, pin to start so tiles stay visible.
+  if (trackWidth <= Math.max(1, viewportContentWidth) + 1) {
+    return 0;
+  }
+  const tileCenter = reorderTileLeft(tileIndex, tileSize, tileGap) + tileSize / 2;
+  return clamp(tileCenter, 0, maxScroll);
+}
+
+/**
+ * Nudge scroll when the drop index approaches the visible edges during reorder drag.
+ * Returns the current offset when the tile is comfortably inside the viewport.
+ */
+export function reorderAutoScrollOffset(
+  currentScrollX: number,
+  dropIndex: number,
+  tileSize: number,
+  tileGap: number,
+  trackWidth: number,
+  viewportWidth: number,
+  edgePx = 56,
+) {
+  const maxScroll = Math.max(0, trackWidth);
+  const scrollX = clamp(currentScrollX, 0, maxScroll);
+  // Visible track window around the centered playhead.
+  const half = Math.max(1, viewportWidth) / 2;
+  const visibleStart = scrollX - half;
+  const visibleEnd = scrollX + half;
+  const tileLeft = reorderTileLeft(dropIndex, tileSize, tileGap);
+  const tileRight = tileLeft + tileSize;
+  if (tileLeft < visibleStart + edgePx) {
+    return clamp(tileLeft + tileSize / 2, 0, maxScroll);
+  }
+  if (tileRight > visibleEnd - edgePx) {
+    return clamp(tileLeft + tileSize / 2, 0, maxScroll);
+  }
+  return scrollX;
+}

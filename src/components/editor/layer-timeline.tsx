@@ -8,6 +8,10 @@ import { previewVideoClipLeadingGap, previewVideoClipReorder, previewVideoClipTr
 import {
   clampTimelineScale,
   minimumTimelineScale,
+  reorderAutoScrollOffset,
+  reorderFilmstripWidth,
+  reorderScrollOffsetForTile,
+  reorderTrackWidth,
   timelineScrollOffset,
   timelineTickInterval,
   timelineTimeAtScroll,
@@ -94,9 +98,14 @@ export function LayerTimeline(props: {
   const minimumScale = minimumTimelineScale(duration, Math.max(1, viewportWidth - LABEL_WIDTH));
   const [pixelsPerSecond, setPixelsPerSecond] = useState(() => Math.max(16, minimumScale));
   const effectiveScale = clampTimelineScale(pixelsPerSecond, minimumScale);
-  const baseTrackWidth = timelineWidth(duration, effectiveScale, Math.max(1, viewportWidth - LABEL_WIDTH));
-  const filmstripWidth = previewClips.length * (REORDER_TILE + REORDER_GAP) + REORDER_GAP;
-  const trackWidth = reorderDrag ? Math.max(baseTrackWidth, filmstripWidth) : baseTrackWidth;
+  const viewportContentWidth = Math.max(1, viewportWidth - LABEL_WIDTH);
+  const baseTrackWidth = timelineWidth(duration, effectiveScale, viewportContentWidth);
+  const reorderMode = Boolean(reorderDrag);
+  const filmstripWidth = reorderFilmstripWidth(previewClips.length, REORDER_TILE, REORDER_GAP);
+  // Reorder owns a filmstrip-sized track — never keep the full duration-proportional width.
+  const trackWidth = reorderMode
+    ? reorderTrackWidth(filmstripWidth, viewportContentWidth)
+    : baseTrackWidth;
   const zoomPercent = timelineZoomPercent(effectiveScale, minimumScale);
   const [zoomNotice, setZoomNotice] = useState<number>();
   const zoomTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -110,7 +119,6 @@ export function LayerTimeline(props: {
   const captionRowHeight = captionLayout.laneCount * LANE_HEIGHT + 10;
   const audioLayout = useMemo(() => packTimelineLanes(props.audioClips.map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [props.audioClips]);
   const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10;
-  const reorderMode = Boolean(reorderDrag);
   const videoRowHeight = reorderMode ? REORDER_TILE + 18 : 46;
   const sourceById = useMemo(() => new Map(props.sources.map((source) => [source.id, source])), [props.sources]);
   const totalRowsHeight = videoRowHeight + audioRowHeight + props.layers.reduce(
@@ -149,7 +157,9 @@ export function LayerTimeline(props: {
       endMs: clamp((visibleCenterX + buffer) / trackWidth * duration, 0, duration),
     };
   }, [duration, trackWidth, viewportWidth, visibleCenterX]);
-  const isVisible = (startMs: number, endMs: number) => endMs >= visibleRange.startMs && startMs <= visibleRange.endMs;
+  // In reorder mode filmstrip coords replace duration-based culling — keep rows mounted.
+  const isVisible = (startMs: number, endMs: number) =>
+    reorderMode || (endMs >= visibleRange.startMs && startMs <= visibleRange.endMs);
 
   useEffect(() => () => {
     if (zoomTimer.current) clearTimeout(zoomTimer.current);
@@ -170,6 +180,32 @@ export function LayerTimeline(props: {
     setVisibleCenterX(x);
     horizontalRef.current?.scrollTo({ x, animated: false });
   }, [duration, gestureLock, props.currentMs, trackWidth, viewportWidth]);
+
+  // Reorder mode owns scroll: pin/center the filmstrip as soon as reorderDrag is set, and
+  // auto-scroll when the drop index nears the viewport edges. Playhead sync resumes on exit.
+  useEffect(() => {
+    if (!reorderDrag) return;
+    const activeIndex = previewClips.findIndex((clip) => clip.id === reorderDrag.clipId);
+    const focusIndex = activeIndex >= 0 ? activeIndex : reorderDrag.toIndex;
+    const enterOffset = reorderScrollOffsetForTile(
+      focusIndex,
+      REORDER_TILE,
+      REORDER_GAP,
+      trackWidth,
+      viewportContentWidth,
+    );
+    const x = reorderAutoScrollOffset(
+      enterOffset,
+      reorderDrag.toIndex,
+      REORDER_TILE,
+      REORDER_GAP,
+      trackWidth,
+      viewportWidth,
+    );
+    scrollXRef.current = x;
+    // Avoid setState here (lint: set-state-in-effect). Reorder culling ignores visibleRange.
+    horizontalRef.current?.scrollTo({ x, animated: false });
+  }, [previewClips, reorderDrag, trackWidth, viewportContentWidth, viewportWidth]);
 
   const seekFromScroll = (offset: number, force = false) => {
     const timeMs = timelineTimeAtScroll(offset, duration, trackWidth);

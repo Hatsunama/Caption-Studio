@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.14-fixed.1) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.15-fixed.1) on the phone.
 2. Tap **caption-studio-fixed-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-fixed-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.14-fixed.1/caption-studio-fixed-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.15-fixed.1/caption-studio-fixed-android.apk
 termux-open ~/storage/downloads/caption-studio-fixed-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio Fixed 1.4.14 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing Fixed installation is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio Fixed 1.4.15 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing Fixed installation is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -73,7 +73,9 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Fixed side-by-side build when the production signing key is unavailable
 
-Current fixed build: **1.4.14** (`v1.4.14-fixed.1`, Android version code 26).
+Current fixed build: **1.4.15** (`v1.4.15-fixed.1`, Android version code 27).
+
+Version 1.4.15 keeps hold-drag reorder filmstrip tiles on-screen: reorder mode shrinks the scrollable track to filmstrip width (not the full duration timeline), scrolls the active tile into view when the gesture starts, and auto-scrolls as the drop index nears the edges, then restores playhead-synced proportional scrolling on commit/cancel.
 
 Version 1.4.14 keeps positional CLIP # labels and adds a tiny first-frame thumbnail beside each CLIP # so clips stay identifiable after reorder. Hold-then-drag reorder now switches the video track into equal-sized filmstrip tiles (not duration-proportional bars) for the gesture, then restores the normal timeline on commit/cancel. Extracting audio always shows a local busy overlay from source choice through remux/encode. Timeline audio clips render cached amplitude waveforms. Opening the Audio tool no longer clears a selected video clip, so that clip’s embedded volume/mute/fade controls stay available alongside add/extract and separate audio-clip editors.
 

@@ -10,7 +10,7 @@ import { groupTimelineWordsByClip, groupWordsIntoCaptions } from '../src/lib/cap
 import { alignWordsToSpeech } from '../src/lib/speech-alignment.ts';
 import { coalesceWhisperWords } from '../src/lib/whisper-words.ts';
 import { packTimelineLanes } from '../src/lib/timeline-layout.ts';
-import { minimumTimelineScale, timelineScrollOffset, timelineTickInterval, timelineTimeAtScroll, timelineWidth } from '../src/lib/timeline-scale.ts';
+import { minimumTimelineScale, reorderAutoScrollOffset, reorderFilmstripWidth, reorderScrollOffsetForTile, reorderTileLeft, reorderTrackWidth, timelineScrollOffset, timelineTickInterval, timelineTimeAtScroll, timelineWidth } from '../src/lib/timeline-scale.ts';
 import { PREPARING_AUDIO_CUES } from '../src/lib/transcription-progress.ts';
 import { humanVideoName, isMachineVideoName } from '../src/lib/project-presentation.ts';
 import { applyCaptionTextChanges } from '../src/lib/caption-text-edits.ts';
@@ -562,6 +562,11 @@ test('hold-drag clip reorder keeps the filmstrip mounted and remaps captions plu
   assert.match(timeline, /reorderDrag \? \(/);
   assert.match(timeline, /filmstrip=\{reorderMode\}/);
   assert.match(timeline, /REORDER_TILE/);
+  assert.match(timeline, /reorderTrackWidth\(/);
+  assert.match(timeline, /reorderScrollOffsetForTile\(/);
+  assert.match(timeline, /reorderAutoScrollOffset\(/);
+  assert.match(timeline, /Reorder mode owns scroll/);
+  assert.doesNotMatch(timeline, /Math\.max\(baseTrackWidth, filmstripWidth\)/);
   assert.match(timeline, /ensureClipFrameThumbnail/);
   assert.match(timeline, /ClipFrameThumb/);
   assert.match(timeline, /AudioWaveform/);
@@ -927,6 +932,49 @@ test('fixed-center timeline scrolling maps exactly to the video playhead', () =>
   assert.equal(timelineTimeAtScroll(750, 200_000, 1_000), 150_000);
   assert.equal(timelineTimeAtScroll(2_000, 200_000, 1_000), 200_000);
 });
+
+test('reorder filmstrip track width and scroll stay on-screen (not full timeline)', () => {
+  const tile = 72;
+  const gap = 8;
+  const clips = 4;
+  const filmstrip = reorderFilmstripWidth(clips, tile, gap);
+  assert.equal(filmstrip, clips * (tile + gap) + gap);
+  assert.equal(reorderTileLeft(2, tile, gap), 2 * (tile + gap));
+
+  const viewportContent = 278; // 360 - 82 label
+  const fullTimelineWidth = 8_000;
+  // Bug: Math.max(fullTimeline, filmstrip) kept the huge track. Fixed width is filmstrip-sized.
+  assert.equal(reorderTrackWidth(filmstrip, viewportContent), Math.max(filmstrip, viewportContent));
+  assert.ok(reorderTrackWidth(filmstrip, viewportContent) < fullTimelineWidth);
+  assert.ok(reorderTrackWidth(filmstrip, viewportContent) !== Math.max(fullTimelineWidth, filmstrip));
+
+  // Short strip (fits in viewport content) pins to start so tiles stay on-screen.
+  const shortClips = 2;
+  const shortStrip = reorderFilmstripWidth(shortClips, tile, gap);
+  assert.ok(shortStrip <= viewportContent);
+  const shortTrack = reorderTrackWidth(shortStrip, viewportContent);
+  assert.equal(shortTrack, viewportContent);
+  assert.equal(reorderScrollOffsetForTile(1, tile, gap, shortTrack, viewportContent), 0);
+
+  // Long strip (many clips) centers the active tile instead of leaving scroll at playhead mid-timeline.
+  const many = 20;
+  const longStrip = reorderFilmstripWidth(many, tile, gap);
+  const longTrack = reorderTrackWidth(longStrip, viewportContent);
+  assert.ok(longTrack > viewportContent);
+  const centered = reorderScrollOffsetForTile(15, tile, gap, longTrack, viewportContent);
+  assert.equal(centered, reorderTileLeft(15, tile, gap) + tile / 2);
+  assert.ok(centered > 0);
+  assert.ok(centered < longTrack);
+
+  // Edge auto-scroll nudges when the drop index approaches the visible edge.
+  const mid = longTrack / 2;
+  const nudgedLeft = reorderAutoScrollOffset(mid, 0, tile, gap, longTrack, 360, 56);
+  assert.ok(nudgedLeft < mid);
+  const nudgedRight = reorderAutoScrollOffset(0, many - 1, tile, gap, longTrack, 360, 56);
+  assert.ok(nudgedRight > 0);
+});
+
+
 
 test('script caption edits commit atomically and preserve caption invariants', () => {
   const captions = [
