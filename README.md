@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.10-fixed.1) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.11-fixed.1) on the phone.
 2. Tap **caption-studio-fixed-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-fixed-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.10-fixed.1/caption-studio-fixed-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.11-fixed.1/caption-studio-fixed-android.apk
 termux-open ~/storage/downloads/caption-studio-fixed-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio Fixed 1.4.10 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing Fixed installation is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio Fixed 1.4.11 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing Fixed installation is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -73,7 +73,9 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Fixed side-by-side build when the production signing key is unavailable
 
-Current fixed build: **1.4.10** (`v1.4.10-fixed.1`, Android version code 22).
+Current fixed build: **1.4.11** (`v1.4.11-fixed.1`, Android version code 23).
+
+Version 1.4.11 improves timeline editing: vertical drag opens a simplified REORDER strip so you can drop a clip between neighbors without scrubbing the full ruler, and either trim edge can extend a packed (gapless) clip back out to unused source media while auto-sliding following clips. Shortening still inserts removable black gaps; extending past a gap grows the timeline instead of stopping at the gap boundary.
 
 Version 1.4.10 makes translation quality a choice, not an export lock. The dual editor shows missing, review and skipped counts. Refresh unfinished, Refresh all, individual Refresh, and checkbox-based Refresh selected are available. Skip second line is reversible and preserves saved text. MP4, SRT and ASS exports warn about missing or unreviewed lines and offer **Export anyway**, keeping available text and omitting blank or skipped second-language lines. Original captions and projects are not deleted or rewritten by export.
 
