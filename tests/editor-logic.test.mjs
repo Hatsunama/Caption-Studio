@@ -557,13 +557,23 @@ test('hold-drag clip reorder keeps the filmstrip mounted and remaps captions plu
   assert.doesNotMatch(timeline, /VideoReorderStrip/);
   assert.match(timeline, /Hold then drag to reorder/);
   assert.match(timeline, /longPressTimerRef/);
-  assert.match(timeline, /HOLD-DRAG/);
+  assert.match(timeline, /HOLD-DRAG TILES/);
   assert.match(timeline, /Between CLIP/);
   assert.match(timeline, /reorderDrag \? \(/);
+  assert.match(timeline, /filmstrip=\{reorderMode\}/);
+  assert.match(timeline, /REORDER_TILE/);
+  assert.match(timeline, /ensureClipFrameThumbnail/);
+  assert.match(timeline, /ClipFrameThumb/);
+  assert.match(timeline, /AudioWaveform/);
+  assert.match(timeline, /waveformPeaks/);
   assert.match(timeline, /clipPositions\.map/);
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   assert.match(editor, /onReorderClip=\{reorderClipToIndex\}/);
   assert.match(editor, /reorderVideoClip/);
+  assert.match(editor, /ExtractAudioBusyOverlay/);
+  assert.match(editor, /Extracting audio locally/);
+  assert.match(editor, /VIDEO CLIP AUDIO/);
+  assert.match(editor, /ToolbarItem label="Audio" active=\{activeTool === 'audio'\} onPress=\{\(\) => \{ setActiveTool\('audio'\); \}\} \/>/);
 
   const project = projectFixture({
     clips: [
@@ -1219,7 +1229,7 @@ test('the gap close control stays large and on the left of the gap', () => {
   assert.match(gapBlock, /fontSize:\s*22/);
   assert.doesNotMatch(gapBlock, /right:\s*2\b/);
   const clipIndex = timeline.indexOf('<VideoClipBlock');
-  const beforeGapIndex = timeline.indexOf('{startMs > gapStartMs ? (');
+  const beforeGapIndex = timeline.indexOf('{!reorderMode && startMs > gapStartMs ? (');
   assert.ok(clipIndex > 0 && beforeGapIndex > clipIndex);
   const videoRow = timeline.slice(timeline.indexOf('clipPositions.map'), timeline.indexOf('<TimelineRow label="AUDIO"'));
   assert.match(videoRow, /<Fragment key=\{clip\.id\}>/);
@@ -1403,3 +1413,20 @@ function projectFixture(overrides = {}) {
   };
   return { ...base, ...overrides };
 }
+
+test('audio sources persist waveform peaks and extract busy arms after a source is chosen', () => {
+  const schema = readFileSync(new URL('../src/lib/project-schema.ts', import.meta.url), 'utf8');
+  assert.match(schema, /decodeWaveformPeaks/);
+  assert.match(schema, /waveformPeaks/);
+  const mediaImport = readFileSync(new URL('../src/services/media-import.ts', import.meta.url), 'utf8');
+  assert.match(mediaImport, /generateAudioWaveformPeaks/);
+  assert.match(mediaImport, /onSourceChosen/);
+  const workflows = readFileSync(new URL('../src/services/project-workflows.ts', import.meta.url), 'utf8');
+  assert.match(workflows, /onExtractSourceChosen/);
+  const nativeModule = readFileSync(new URL('../modules/caption-media/src/CaptionMediaModule.ts', import.meta.url), 'utf8');
+  assert.match(nativeModule, /generateAudioPeaks/);
+  const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
+  assert.match(editor, /markExtractBusy/);
+  assert.match(editor, /appendAudioToProject\(before, currentMs, 'video-audio', markExtractBusy\)/);
+});
+

@@ -310,6 +310,8 @@ export type ProjectAudioSource = {
   durationMs: number;
   mimeType?: string;
   origin: 'audio-file' | 'video-audio';
+  /** Normalized 0..1 amplitude peaks for timeline waveform rendering. */
+  waveformPeaks?: number[];
 };
 
 export type AudioClip = {

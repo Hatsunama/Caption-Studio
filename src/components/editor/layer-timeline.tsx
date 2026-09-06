@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 
 import { chrome } from '@/lib/ui-theme';
 import { packTimelineLanes } from '@/lib/timeline-layout';
@@ -15,17 +16,23 @@ import {
 } from '@/lib/timeline-scale';
 import { buildClipTimeline, remapCaptionsToTimeline } from '@/lib/video-timeline';
 import { audioClipEnd } from '@/lib/audio-timeline';
+import { ensureClipFrameThumbnail, generateAudioWaveformPeaks } from '@/services/project-media';
 import type { CaptionPair } from '@/lib/caption-tracks';
-import type { AudioClip, CaptionBlock, ProjectAudioSource, VideoClip, VisualLayer } from '@/types/project';
+import type { AudioClip, CaptionBlock, ProjectAudioSource, ProjectVideoSource, VideoClip, VisualLayer } from '@/types/project';
 
 const LABEL_WIDTH = 82;
 const RULER_HEIGHT = 28;
 const LANE_HEIGHT = 32;
+const REORDER_TILE = 72;
+const REORDER_GAP = 8;
 const NEON_CAPTION_COLORS = ['#FF2FA9', '#00B8FF', '#19D98B', '#A855F7', '#FF4D6D', '#00D9C8'];
+const clipThumbCache = new Map<string, string>();
 
 export function LayerTimeline(props: {
+  projectId: string;
   durationMs: number;
   clips: VideoClip[];
+  sources: ProjectVideoSource[];
   layers: VisualLayer[];
   captions: CaptionBlock[];
   translationTracks: { id: string; name: string; visible: boolean; pairs: CaptionPair[] }[];
@@ -87,7 +94,9 @@ export function LayerTimeline(props: {
   const minimumScale = minimumTimelineScale(duration, Math.max(1, viewportWidth - LABEL_WIDTH));
   const [pixelsPerSecond, setPixelsPerSecond] = useState(() => Math.max(16, minimumScale));
   const effectiveScale = clampTimelineScale(pixelsPerSecond, minimumScale);
-  const trackWidth = timelineWidth(duration, effectiveScale, Math.max(1, viewportWidth - LABEL_WIDTH));
+  const baseTrackWidth = timelineWidth(duration, effectiveScale, Math.max(1, viewportWidth - LABEL_WIDTH));
+  const filmstripWidth = previewClips.length * (REORDER_TILE + REORDER_GAP) + REORDER_GAP;
+  const trackWidth = reorderDrag ? Math.max(baseTrackWidth, filmstripWidth) : baseTrackWidth;
   const zoomPercent = timelineZoomPercent(effectiveScale, minimumScale);
   const [zoomNotice, setZoomNotice] = useState<number>();
   const zoomTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -101,10 +110,33 @@ export function LayerTimeline(props: {
   const captionRowHeight = captionLayout.laneCount * LANE_HEIGHT + 10;
   const audioLayout = useMemo(() => packTimelineLanes(props.audioClips.map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [props.audioClips]);
   const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10;
-  const totalRowsHeight = 46 + audioRowHeight + props.layers.reduce(
+  const reorderMode = Boolean(reorderDrag);
+  const videoRowHeight = reorderMode ? REORDER_TILE + 18 : 46;
+  const sourceById = useMemo(() => new Map(props.sources.map((source) => [source.id, source])), [props.sources]);
+  const totalRowsHeight = videoRowHeight + audioRowHeight + props.layers.reduce(
     (sum, layer) => sum + (layer.kind === 'captions' ? captionRowHeight : 46),
     0,
   ) + props.translationTracks.length * captionRowHeight;
+
+  const [peakCache, setPeakCache] = useState<Record<string, number[]>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const missing = props.audioSources.filter((source) => {
+      const existing = source.waveformPeaks ?? peakCache[source.id];
+      return !existing || existing.length < 8;
+    });
+    if (!missing.length) return undefined;
+    void (async () => {
+      for (const source of missing) {
+        if (cancelled) return;
+        const peaks = await generateAudioWaveformPeaks(source.uri);
+        if (!cancelled && peaks?.length) {
+          setPeakCache((current) => current[source.id] ? current : { ...current, [source.id]: peaks });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [props.audioSources]);
   const leadingPadding = Math.max(0, viewportWidth / 2 - LABEL_WIDTH);
   const trailingPadding = viewportWidth / 2;
   const scrollContentWidth = leadingPadding + LABEL_WIDTH + trackWidth + trailingPadding;
@@ -230,22 +262,30 @@ export function LayerTimeline(props: {
         <View style={{ width: LABEL_WIDTH + trackWidth, height: '100%', marginLeft: leadingPadding }}>
           <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
           <ScrollView style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}>
-            <TimelineRow label="VIDEO" labelColor={chrome.accent} selected={Boolean(props.selectedClipId)} trackWidth={trackWidth} height={46} onPressTrack={(x) => props.onSeek(x / trackWidth * duration)} controls={<Text style={{ color: chrome.muted, fontSize: 8 }}>{props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}</Text>}>
+            <TimelineRow label="VIDEO" labelColor={chrome.accent} selected={Boolean(props.selectedClipId)} trackWidth={trackWidth} height={videoRowHeight} onPressTrack={(x) => props.onSeek(x / trackWidth * duration)} controls={<Text style={{ color: chrome.muted, fontSize: 8 }}>{props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}</Text>}>
               {reorderDrag ? (
                 <VideoReorderBanner
                   clips={previewClips}
                   originalClips={props.clips}
                   activeClipId={reorderDrag.clipId}
+                  dropIndex={reorderDrag.toIndex}
                 />
               ) : null}
-              {clipPositions.map((entry, index) => ({ ...entry, index })).filter(({ clip, gapStartMs, afterGapEndMs }) => isVisible(gapStartMs, afterGapEndMs) || reorderDrag?.clipId === clip.id).map(({ clip, gapStartMs, startMs, endMs, afterGapEndMs, index }) => {
+              {reorderMode ? (
+                <View pointerEvents="none" style={{ position: 'absolute', left: Math.max(0, (reorderDrag?.toIndex ?? 0) * (REORDER_TILE + REORDER_GAP) - 2), top: 4, bottom: 4, width: 3, borderRadius: 2, backgroundColor: '#FFFFFF', zIndex: 10 }} />
+              ) : null}
+              {clipPositions.map((entry, index) => ({ ...entry, index })).filter(({ clip, gapStartMs, afterGapEndMs }) => reorderMode || isVisible(gapStartMs, afterGapEndMs) || reorderDrag?.clipId === clip.id).map(({ clip, gapStartMs, startMs, endMs, afterGapEndMs, index }) => {
                 const previousEndMs = index === 0 ? 0 : clipPositions[index - 1].endMs;
                 const leadingGapMs = startMs - previousEndMs;
                 const reordering = reorderDrag?.clipId === clip.id;
+                const source = sourceById.get(clip.sourceId);
                 return (
                 <Fragment key={clip.id}>
                   <VideoClipBlock
+                    projectId={props.projectId}
                     clip={clip}
+                    sourceUri={source?.uri}
+                    fallbackThumbUri={source?.thumbnailUri}
                     clipIndex={index}
                     clipCount={previewClips.length}
                     leadingGapMs={leadingGapMs}
@@ -254,6 +294,9 @@ export function LayerTimeline(props: {
                     endMs={endMs}
                     durationMs={duration}
                     trackWidth={trackWidth}
+                    filmstrip={reorderMode}
+                    tileSize={REORDER_TILE}
+                    tileGap={REORDER_GAP}
                     selected={props.selectedClipId === clip.id || reordering}
                     reordering={reordering}
                     color={index % 2 ? '#38404A' : '#46515D'}
@@ -297,7 +340,7 @@ export function LayerTimeline(props: {
                       setClipPreview(undefined);
                     }}
                   />
-                  {startMs > gapStartMs ? (
+                  {!reorderMode && startMs > gapStartMs ? (
                     <VideoGapBlock
                       startMs={gapStartMs}
                       endMs={startMs}
@@ -307,7 +350,7 @@ export function LayerTimeline(props: {
                       onRemove={() => props.onSetClipGap(clip.id, 0)}
                     />
                   ) : null}
-                  {afterGapEndMs > endMs ? (
+                  {!reorderMode && afterGapEndMs > endMs ? (
                     <VideoGapBlock
                       startMs={endMs}
                       endMs={afterGapEndMs}
@@ -325,7 +368,27 @@ export function LayerTimeline(props: {
             <TimelineRow label="AUDIO" labelColor="#64E8FF" selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => props.onSeek(x / trackWidth * duration)} controls={<Text style={{ color: '#6F7985', fontSize: 8 }}>{props.audioClips.length} TRACK{props.audioClips.length === 1 ? '' : 'S'}</Text>}>
               {props.audioClips.filter((clip) => isVisible(clip.startMs, audioClipEnd(clip))).map((clip) => {
                 const source = props.audioSources.find((candidate) => candidate.id === clip.sourceId);
-                return <TimedBlock key={clip.id} label={`${clip.muted ? 'MUTED · ' : ''}${source?.displayName ?? 'AUDIO'}`} startMs={clip.startMs} endMs={audioClipEnd(clip)} durationMs={duration} trackWidth={trackWidth} lane={audioLayout.laneById.get(clip.id) ?? 0} color={clip.muted ? '#59636F' : '#00B8C7'} selected={props.selectedAudioClipId === clip.id} onPress={() => props.onSelectAudioClip(clip.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => { if (edge !== 'move') props.onAudioTimingChange(clip.id, edge, startMs, endMs); }} onEnd={endBlockGesture} />;
+                return (
+                  <TimedBlock
+                    key={clip.id}
+                    label={`${clip.muted ? 'MUTED · ' : ''}${source?.displayName ?? 'AUDIO'}`}
+                    startMs={clip.startMs}
+                    endMs={audioClipEnd(clip)}
+                    durationMs={duration}
+                    trackWidth={trackWidth}
+                    lane={audioLayout.laneById.get(clip.id) ?? 0}
+                    color={clip.muted ? '#59636F' : '#00B8C7'}
+                    selected={props.selectedAudioClipId === clip.id}
+                    waveformPeaks={source?.waveformPeaks ?? (source ? peakCache[source.id] : undefined)}
+                    sourceStartMs={clip.sourceStartMs}
+                    sourceEndMs={clip.sourceEndMs}
+                    sourceDurationMs={source?.durationMs}
+                    onPress={() => props.onSelectAudioClip(clip.id)}
+                    onChangeStart={beginBlockGesture}
+                    onChange={(edge, startMs, endMs) => { if (edge !== 'move') props.onAudioTimingChange(clip.id, edge, startMs, endMs); }}
+                    onEnd={endBlockGesture}
+                  />
+                );
               })}
             </TimelineRow>
             {props.layers.map((layer, layerIndex) => {
@@ -415,7 +478,10 @@ function TimelineRuler(props: { durationMs: number; trackWidth: number; pixelsPe
 }
 
 function VideoClipBlock(props: {
+  projectId: string;
   clip: VideoClip;
+  sourceUri?: string;
+  fallbackThumbUri?: string;
   clipIndex: number;
   clipCount: number;
   leadingGapMs: number;
@@ -424,6 +490,9 @@ function VideoClipBlock(props: {
   endMs: number;
   durationMs: number;
   trackWidth: number;
+  filmstrip?: boolean;
+  tileSize?: number;
+  tileGap?: number;
   selected: boolean;
   reordering?: boolean;
   color: string;
@@ -438,27 +507,61 @@ function VideoClipBlock(props: {
   onReorderCancel: () => void;
 }) {
   const clipDuration = Math.max(120, props.endMs - props.startMs);
+  const tile = props.tileSize ?? REORDER_TILE;
+  const gap = props.tileGap ?? REORDER_GAP;
+  const left = props.filmstrip
+    ? props.clipIndex * (tile + gap)
+    : props.startMs / props.durationMs * props.trackWidth;
+  const width = props.filmstrip
+    ? tile
+    : Math.max(2, clipDuration / props.durationMs * props.trackWidth - 2);
   return (
     <View
       style={{
         position: 'absolute',
-        left: props.startMs / props.durationMs * props.trackWidth,
-        width: Math.max(2, clipDuration / props.durationMs * props.trackWidth - 2),
-        top: props.reordering ? 0 : 3,
-        bottom: props.reordering ? 0 : 3,
+        left,
+        width,
+        top: props.filmstrip || props.reordering ? 4 : 3,
+        bottom: props.filmstrip || props.reordering ? 4 : 3,
         zIndex: props.reordering ? 8 : props.selected ? 5 : 1,
-        justifyContent: 'center',
-        paddingHorizontal: 16,
-        borderRadius: chrome.radius.sm,
-        borderWidth: props.selected || props.reordering ? 2 : 0,
-        borderColor: props.reordering ? '#FFFFFF' : chrome.accent,
+        justifyContent: props.filmstrip ? 'flex-end' : 'center',
+        paddingHorizontal: props.filmstrip ? 4 : 10,
+        paddingBottom: props.filmstrip ? 4 : 0,
+        overflow: 'hidden',
+        borderRadius: props.filmstrip ? 10 : chrome.radius.sm,
+        borderWidth: props.selected || props.reordering ? 2 : props.filmstrip ? 1 : 0,
+        borderColor: props.reordering ? '#FFFFFF' : props.selected ? chrome.accent : '#2A323A',
         backgroundColor: props.color,
-        opacity: props.reordering ? 0.96 : 1,
-        transform: props.reordering ? [{ scaleY: 1.08 }] : undefined,
+        opacity: props.reordering ? 0.98 : 1,
+        transform: props.reordering ? [{ scale: 1.04 }] : undefined,
       }}>
-      <Text pointerEvents="none" numberOfLines={1} style={{ color: '#F7F8FA', fontSize: 8, fontWeight: '800' }}>{props.label}</Text>
+      {props.filmstrip ? (
+        <ClipFrameThumb
+          projectId={props.projectId}
+          clipId={props.clip.id}
+          sourceUri={props.sourceUri}
+          fallbackUri={props.fallbackThumbUri}
+          sourceStartMs={props.clip.sourceStartMs}
+          style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}
+          contentFit="cover"
+        />
+      ) : null}
+      <View pointerEvents="none" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, zIndex: 2 }}>
+        <Text numberOfLines={1} style={{ color: '#F7F8FA', fontSize: props.filmstrip ? 9 : 8, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.75)', textShadowRadius: 3 }}>{props.label}</Text>
+        {!props.filmstrip ? (
+          <ClipFrameThumb
+            projectId={props.projectId}
+            clipId={props.clip.id}
+            sourceUri={props.sourceUri}
+            fallbackUri={props.fallbackThumbUri}
+            sourceStartMs={props.clip.sourceStartMs}
+            style={{ width: 18, height: 18, borderRadius: 3, backgroundColor: '#12161B' }}
+            contentFit="cover"
+          />
+        ) : null}
+      </View>
       <VideoMoveGrip {...props} />
-      {props.selected && !props.reordering ? (
+      {props.selected && !props.reordering && !props.filmstrip ? (
         <>
           <VideoTrimGrip side="start" {...props} />
           <VideoTrimGrip side="end" {...props} />
@@ -466,6 +569,48 @@ function VideoClipBlock(props: {
       ) : null}
     </View>
   );
+}
+
+function ClipFrameThumb(props: {
+  projectId: string;
+  clipId: string;
+  sourceUri?: string;
+  fallbackUri?: string;
+  sourceStartMs: number;
+  style: object;
+  contentFit: 'cover' | 'contain';
+}) {
+  const cacheKey = `${props.projectId}:${props.clipId}:${Math.round(props.sourceStartMs)}`;
+  const [uri, setUri] = useState<string | undefined>(() => clipThumbCache.get(cacheKey) ?? props.fallbackUri);
+  useEffect(() => {
+    let cancelled = false;
+    const cached = clipThumbCache.get(cacheKey);
+    if (cached) {
+      setUri(cached);
+      return undefined;
+    }
+    if (!props.sourceUri) {
+      setUri(props.fallbackUri);
+      return undefined;
+    }
+    void ensureClipFrameThumbnail({
+      projectId: props.projectId,
+      clipId: props.clipId,
+      videoUri: props.sourceUri,
+      sourceStartMs: props.sourceStartMs,
+    }).then((generated) => {
+      if (cancelled) return;
+      if (generated) {
+        clipThumbCache.set(cacheKey, generated);
+        setUri(generated);
+      } else {
+        setUri(props.fallbackUri);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [cacheKey, props.clipId, props.fallbackUri, props.projectId, props.sourceStartMs, props.sourceUri]);
+  if (!uri) return <View style={props.style} />;
+  return <Image source={{ uri }} contentFit={props.contentFit} style={props.style} />;
 }
 
 function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'start' | 'end' }) {
@@ -585,7 +730,7 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0]) {
       }
       if (modeRef.current === 'reorder') {
         if (propsRef.current.clipCount <= 1) return;
-        const slotWidth = Math.max(36, propsRef.current.trackWidth / Math.max(1, propsRef.current.clipCount));
+        const slotWidth = Math.max(24, (propsRef.current.tileSize ?? REORDER_TILE) + (propsRef.current.tileGap ?? REORDER_GAP));
         const deltaIndex = Math.round(gesture.dx / slotWidth);
         const toIndex = clamp(originIndexRef.current + deltaIndex, 0, propsRef.current.clipCount - 1);
         reorderIndexRef.current = toIndex;
@@ -620,6 +765,7 @@ function VideoReorderBanner(props: {
   clips: VideoClip[];
   originalClips: VideoClip[];
   activeClipId: string;
+  dropIndex?: number;
 }) {
   const originalNumber = (clipId: string) => {
     const index = props.originalClips.findIndex((clip) => clip.id === clipId);
@@ -638,7 +784,7 @@ function VideoReorderBanner(props: {
   return (
     <View pointerEvents="none" style={{ position: 'absolute', left: 4, right: 4, top: -14, zIndex: 9, alignItems: 'center' }}>
       <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: 'rgba(8,12,16,0.92)' }}>
-        <Text style={{ color: '#64D2FF', fontSize: 8, fontWeight: '900' }}>HOLD-DRAG · {placement}</Text>
+        <Text style={{ color: '#64D2FF', fontSize: 8, fontWeight: '900' }}>HOLD-DRAG TILES · {placement}</Text>
       </View>
     </View>
   );
@@ -684,11 +830,38 @@ function TimelineRow(props: { label: string; labelColor: string; selected?: bool
   );
 }
 
-function TimedBlock(props: { label: string; startMs: number; endMs: number; durationMs: number; trackWidth: number; lane: number; color: string; selected: boolean; movable?: boolean; onPress: () => void; onChangeStart: () => void; onChange: (edge: 'start' | 'end' | 'move', startMs: number, endMs: number) => void; onEnd: () => void }) {
+function TimedBlock(props: {
+  label: string;
+  startMs: number;
+  endMs: number;
+  durationMs: number;
+  trackWidth: number;
+  lane: number;
+  color: string;
+  selected: boolean;
+  movable?: boolean;
+  waveformPeaks?: number[];
+  sourceStartMs?: number;
+  sourceEndMs?: number;
+  sourceDurationMs?: number;
+  onPress: () => void;
+  onChangeStart: () => void;
+  onChange: (edge: 'start' | 'end' | 'move', startMs: number, endMs: number) => void;
+  onEnd: () => void;
+}) {
   const width = Math.max(2, (props.endMs - props.startMs) / props.durationMs * props.trackWidth - 2);
   return (
-    <View style={{ position: 'absolute', left: props.startMs / props.durationMs * props.trackWidth, width, top: props.lane * LANE_HEIGHT + 3, height: LANE_HEIGHT - 6, zIndex: props.selected ? 6 : 1, justifyContent: 'center', paddingHorizontal: 9, borderRadius: 7, borderWidth: props.selected ? 2 : 1, borderColor: props.selected ? '#FFFFFF' : `${props.color}CC`, backgroundColor: `${props.color}B8`, shadowColor: props.color, shadowOpacity: props.selected ? 0.8 : 0.35, shadowRadius: 5 }}>
-      <Text pointerEvents="none" numberOfLines={1} style={{ color: '#FFFFFF', fontSize: 8, fontWeight: '900' }}>{props.label}</Text>
+    <View style={{ position: 'absolute', left: props.startMs / props.durationMs * props.trackWidth, width, top: props.lane * LANE_HEIGHT + 3, height: LANE_HEIGHT - 6, zIndex: props.selected ? 6 : 1, justifyContent: 'center', paddingHorizontal: 9, overflow: 'hidden', borderRadius: 7, borderWidth: props.selected ? 2 : 1, borderColor: props.selected ? '#FFFFFF' : `${props.color}CC`, backgroundColor: `${props.color}B8`, shadowColor: props.color, shadowOpacity: props.selected ? 0.8 : 0.35, shadowRadius: 5 }}>
+      {props.waveformPeaks && props.waveformPeaks.length >= 8 ? (
+        <AudioWaveform
+          peaks={props.waveformPeaks}
+          sourceStartMs={props.sourceStartMs ?? 0}
+          sourceEndMs={props.sourceEndMs ?? props.sourceDurationMs ?? 1}
+          sourceDurationMs={props.sourceDurationMs ?? Math.max(1, (props.sourceEndMs ?? 1) - (props.sourceStartMs ?? 0))}
+          color={props.selected ? '#E8FDFF' : '#B8F7FF'}
+        />
+      ) : null}
+      <Text pointerEvents="none" numberOfLines={1} style={{ color: '#FFFFFF', fontSize: 8, fontWeight: '900', zIndex: 2 }}>{props.label}</Text>
       {props.movable ? <CaptionMoveGrip {...props} /> : (
         <Pressable onPress={props.onPress} style={{ position: 'absolute', left: props.selected ? 24 : 0, right: props.selected ? 24 : 0, top: 0, bottom: 0 }} />
       )}
@@ -698,6 +871,43 @@ function TimedBlock(props: { label: string; startMs: number; endMs: number; dura
           <TimingGrip side="end" {...props} />
         </>
       ) : null}
+    </View>
+  );
+}
+
+function AudioWaveform(props: {
+  peaks: number[];
+  sourceStartMs: number;
+  sourceEndMs: number;
+  sourceDurationMs: number;
+  color: string;
+}) {
+  const duration = Math.max(1, props.sourceDurationMs);
+  const startRatio = clamp(props.sourceStartMs / duration, 0, 1);
+  const endRatio = clamp(props.sourceEndMs / duration, startRatio + 0.001, 1);
+  const startIndex = Math.floor(startRatio * props.peaks.length);
+  const endIndex = Math.max(startIndex + 1, Math.ceil(endRatio * props.peaks.length));
+  const slice = props.peaks.slice(startIndex, endIndex);
+  const bars = slice.length > 0 ? slice : props.peaks;
+  const maxBar = LANE_HEIGHT - 12;
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', left: 4, right: 4, top: 3, bottom: 3, flexDirection: 'row', alignItems: 'center', gap: 1, opacity: 0.9 }}>
+      {bars.map((peak, index) => {
+        const height = Math.max(3, Math.round(peak * maxBar));
+        return (
+          <View
+            key={`${index}-${height}`}
+            style={{
+              flex: 1,
+              minWidth: 1,
+              height,
+              borderRadius: 1,
+              backgroundColor: props.color,
+              opacity: 0.35 + peak * 0.65,
+            }}
+          />
+        );
+      })}
     </View>
   );
 }

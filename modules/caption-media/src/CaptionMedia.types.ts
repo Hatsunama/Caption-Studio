@@ -57,3 +57,9 @@ export type TimelineVideoExportProgress = {
   stage: 'idle' | 'preparing' | 'rendering' | 'publishing';
   percent: number | null;
 };
+
+export type AudioPeaksResult = {
+  peaks: number[];
+  durationMs: number;
+  peakCount: number;
+};

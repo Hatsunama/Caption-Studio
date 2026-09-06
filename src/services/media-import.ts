@@ -6,6 +6,7 @@ import { classifyPickedMedia } from '@/lib/picked-media-kind';
 import { MINIMUM_CLIP_TIMELINE_MS } from '@/lib/video-timeline';
 import {
   deleteProjectOwnedFiles,
+  generateAudioWaveformPeaks,
   generateProjectThumbnail,
   prepareExtractedAudioUri,
   storeProjectAudio,
@@ -178,6 +179,7 @@ export async function pickAndStoreAudio(projectId: string, audioId: string): Pro
       fileName: asset.name,
     });
     const info = await CaptionMedia.getMediaInfo(uri);
+    const waveformPeaks = await generateAudioWaveformPeaks(uri);
     return {
       id: audioId,
       uri,
@@ -186,6 +188,7 @@ export async function pickAndStoreAudio(projectId: string, audioId: string): Pro
       durationMs: info.durationMs,
       mimeType: asset.mimeType,
       origin: 'audio-file',
+      ...(waveformPeaks ? { waveformPeaks } : {}),
     };
   } catch (error) {
     if (uri) await deleteProjectOwnedFiles(projectId, [uri]).catch(() => undefined);
@@ -193,7 +196,11 @@ export async function pickAndStoreAudio(projectId: string, audioId: string): Pro
   }
 }
 
-export async function pickVideoAndExtractAudio(projectId: string, audioId: string): Promise<ProjectAudioSource | null> {
+export async function pickVideoAndExtractAudio(
+  projectId: string,
+  audioId: string,
+  onSourceChosen?: () => void,
+): Promise<ProjectAudioSource | null> {
   const result = await DocumentPicker.getDocumentAsync({
     type: 'video/*',
     copyToCacheDirectory: false,
@@ -203,6 +210,7 @@ export async function pickVideoAndExtractAudio(projectId: string, audioId: strin
   const asset = result.assets[0];
   const sourceInfo = await probeVideoForImport(asset.uri, asset.name);
   await CaptionMedia.persistReadPermission(asset.uri);
+  onSourceChosen?.();
   try {
     return await extractAudioFromVideo(projectId, audioId, asset.uri, asset.name, sourceInfo);
   } finally {
@@ -233,6 +241,7 @@ async function extractAudioFromVideo(
   try {
     const extraction = await CaptionMedia.extractAudioTrack(sourceUri, outputUri);
     const storedInfo = await CaptionMedia.getMediaInfo(outputUri);
+    const waveformPeaks = await generateAudioWaveformPeaks(outputUri);
     return {
       id: audioId,
       uri: outputUri,
@@ -241,6 +250,7 @@ async function extractAudioFromVideo(
       durationMs: storedInfo.durationMs || extraction.durationMs,
       mimeType: extraction.mimeType,
       origin: 'video-audio' as const,
+      ...(waveformPeaks ? { waveformPeaks } : {}),
     };
   } catch (error) {
     await deleteProjectOwnedFiles(projectId, [outputUri]).catch(() => undefined);

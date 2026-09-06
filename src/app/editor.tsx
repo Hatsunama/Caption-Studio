@@ -1376,20 +1376,20 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const addProjectVideoAudio = async (sourceId?: string) => {
     transport.pause();
-    setExtractAudioBusy(true);
     setError(undefined);
+    const markExtractBusy = () => setExtractAudioBusy(true);
+    if (sourceId) markExtractBusy();
     try {
       const before = projectRef.current;
       const result = sourceId
         ? await appendProjectVideoAudioToProject(before, currentMs, sourceId)
-        : await appendAudioToProject(before, currentMs, 'video-audio');
+        : await appendAudioToProject(before, currentMs, 'video-audio', markExtractBusy);
       if (!result) return;
       trackSessionMedia(result.project);
       pushUndo(before);
       projectRef.current = result.project;
       setProject(result.project);
       setSelectedAudioClipId(result.clip.id);
-      setSelectedClipId(undefined);
       setSelectedCaptionId(undefined);
       setActiveTool('audio');
       setExtractAudioOpen(false);
@@ -1899,8 +1899,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         </View>
 
         <LayerTimeline
+          projectId={project.id}
           durationMs={timelineDurationMs}
           clips={project.clips}
+          sources={project.sources}
           layers={timelineLayers}
           captions={timelineCaptions}
           translationTracks={translationTimelineTracks}
@@ -2041,6 +2043,19 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               <Action label="Add audio file" onPress={() => void addAudio('audio-file')} />
               <Action label="Extract from video" onPress={() => void addAudio('video-audio')} />
             </ScrollView>
+            {selectedClip ? <>
+              <Text numberOfLines={1} style={{ color: chrome.accent, fontSize: 12, fontWeight: '900' }}>
+                VIDEO CLIP AUDIO · {project.sources.find((source) => source.id === selectedClip.sourceId)?.displayName ?? 'Video'}
+              </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                <Action label={selectedClip.muted ? 'Unmute clip audio' : 'Mute clip audio'} onPress={() => updateSelectedClip({ muted: !selectedClip.muted })} />
+                <Action label="Volume −" disabled={selectedClip.muted || selectedClip.volume <= 0} onPress={() => updateSelectedClip({ volume: clamp(selectedClip.volume - 0.1, 0, 1) })} />
+                <Action label={`${Math.round(selectedClip.volume * 100)}% volume`} color="#64E8FF" onPress={() => updateSelectedClip({ volume: 1, muted: false })} />
+                <Action label="Volume +" disabled={selectedClip.volume >= 1} onPress={() => updateSelectedClip({ volume: clamp(selectedClip.volume + 0.1, 0, 1) })} />
+                <Action label={selectedClip.fadeInMs ? 'Remove fade in' : 'Fade in'} onPress={() => updateSelectedClip({ fadeInMs: selectedClip.fadeInMs ? 0 : 500 })} />
+                <Action label={selectedClip.fadeOutMs ? 'Remove fade out' : 'Fade out'} onPress={() => updateSelectedClip({ fadeOutMs: selectedClip.fadeOutMs ? 0 : 500 })} />
+              </ScrollView>
+            </> : null}
             {selectedAudioClip ? <>
               <Text numberOfLines={1} style={{ color: '#64E8FF', fontSize: 12, fontWeight: '900' }}>SELECTED AUDIO · {project.audioSources.find((source) => source.id === selectedAudioClip.sourceId)?.displayName ?? 'Audio'}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
@@ -2055,7 +2070,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <Action label="Duplicate" onPress={copySelectedAudio} />
                 <Action label="Delete audio" danger onPress={removeSelectedAudio} />
               </ScrollView>
-            </> : <Text style={{ color: palette.muted, fontSize: 12 }}>Add audio, or tap an audio block in the timeline to edit it.</Text>}
+            </> : null}
+            {!selectedClip && !selectedAudioClip ? <Text style={{ color: palette.muted, fontSize: 12 }}>Select a video clip for its embedded audio, add audio, or tap an audio block in the timeline.</Text> : null}
           </View>
         ) : activeTool === 'animate' ? (
           <AnimationBrowser
@@ -2176,7 +2192,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           <ToolbarItem label="Fonts" active={activeTool === 'fonts'} onPress={() => { setSelectedClipId(undefined); setActiveTool('fonts'); setFontBrowserOpen(true); }} />
           <ToolbarItem label="Animate" active={activeTool === 'animate'} onPress={() => { setSelectedClipId(undefined); setActiveTool('animate'); }} />
           <ToolbarItem label="Video" active={activeTool === 'video'} onPress={() => setActiveTool('video')} />
-          <ToolbarItem label="Audio" active={activeTool === 'audio'} onPress={() => { setSelectedClipId(undefined); setActiveTool('audio'); }} />
+          <ToolbarItem label="Audio" active={activeTool === 'audio'} onPress={() => { setActiveTool('audio'); }} />
           <ToolbarItem label="Export" disabled={exporting} onPress={showExportMenu} />
         </View>
       </View>
@@ -2194,8 +2210,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         busy={extractAudioBusy}
         onChoose={(sourceId) => { void addProjectVideoAudio(sourceId); }}
         onChooseAnother={() => { void addProjectVideoAudio(); }}
-        onClose={() => setExtractAudioOpen(false)}
+        onClose={() => { if (!extractAudioBusy) setExtractAudioOpen(false); }}
       />
+      <ExtractAudioBusyOverlay visible={extractAudioBusy} />
       <FontBrowser
         visible={fontBrowserOpen}
         previewText={selectedTextLayer?.text ?? selectedTranslationPair?.translation.text ?? selectedCaption?.text ?? activeCaption?.text ?? 'Make every word count'}
@@ -2344,6 +2361,23 @@ function HistoryButton(props: { label: string; disabled: boolean; version: numbe
       style={{ minWidth: 108, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: chrome.radius.md, borderWidth: 0, backgroundColor: props.disabled ? chrome.surface : chrome.purpleFill, opacity: props.disabled ? 0.45 : 1 }}>
       <Text style={{ color: props.disabled ? chrome.muted : chrome.purpleText, fontSize: 15, fontWeight: '600' }}>{props.label}</Text>
     </Pressable>
+  );
+}
+
+function ExtractAudioBusyOverlay(props: { visible: boolean }) {
+  if (!props.visible) return null;
+  return (
+    <Modal visible transparent animationType="fade">
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: chrome.overlay }}>
+        <View style={{ width: '100%', maxWidth: 360, alignItems: 'center', gap: 14, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
+          <ActivityIndicator size="large" color={chrome.accent} />
+          <Text style={{ color: chrome.text, fontSize: 20, fontWeight: '700', textAlign: 'center' }}>Extracting audio locally</Text>
+          <Text style={{ color: chrome.muted, fontSize: 15, lineHeight: 21, textAlign: 'center' }}>
+            Remuxing the audio track on this phone. Keep Caption Studio open.
+          </Text>
+        </View>
+      </View>
+    </Modal>
   );
 }
 

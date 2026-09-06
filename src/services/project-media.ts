@@ -34,6 +34,39 @@ export async function generateProjectThumbnail(projectId: string, sourceId: stri
   }
 }
 
+/** First visible frame for a timeline clip at its sourceStartMs. Cached per clip+sourceStart. */
+export async function ensureClipFrameThumbnail(options: {
+  projectId: string;
+  clipId: string;
+  videoUri: string;
+  sourceStartMs: number;
+}): Promise<string | undefined> {
+  if (!FileSystem.documentDirectory) return undefined;
+  const timeMs = Math.max(0, Math.round(options.sourceStartMs));
+  const outputUri = `${FileSystem.documentDirectory}projects/${safePathSegment(options.projectId)}/clip-${safePathSegment(options.clipId)}-t${timeMs}-thumb.jpg`;
+  const existing = await FileSystem.getInfoAsync(outputUri);
+  if (existing.exists && !existing.isDirectory) return outputUri;
+  try {
+    await FileSystem.makeDirectoryAsync(`${FileSystem.documentDirectory}projects/${safePathSegment(options.projectId)}/`, { intermediates: true });
+    await CaptionMedia.generateVideoThumbnail(options.videoUri, outputUri, timeMs);
+    const generated = await FileSystem.getInfoAsync(outputUri);
+    return generated.exists && !generated.isDirectory ? outputUri : undefined;
+  } catch {
+    await FileSystem.deleteAsync(outputUri, { idempotent: true }).catch(() => undefined);
+    return undefined;
+  }
+}
+
+export async function generateAudioWaveformPeaks(audioUri: string, peakCount = 64): Promise<number[] | undefined> {
+  try {
+    const result = await CaptionMedia.generateAudioPeaks(audioUri, peakCount);
+    if (!Array.isArray(result.peaks) || result.peaks.length < 8) return undefined;
+    return result.peaks.map((peak) => Math.min(1, Math.max(0, Number(peak) || 0)));
+  } catch {
+    return undefined;
+  }
+}
+
 export async function deleteProjectFiles(projectId: string) {
   if (!FileSystem.documentDirectory) return;
   const projectUri = `${FileSystem.documentDirectory}projects/${safePathSegment(projectId)}/`;

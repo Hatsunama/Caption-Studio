@@ -146,12 +146,13 @@ export async function appendAudioToProject(
   project: CaptionProject,
   currentMs: number,
   origin: 'audio-file' | 'video-audio',
+  onExtractSourceChosen?: () => void,
 ) {
   const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const sourceId = `audio-source-${nonce}`;
   const source = origin === 'audio-file'
     ? await pickAndStoreAudio(project.id, sourceId)
-    : await pickVideoAndExtractAudio(project.id, sourceId);
+    : await pickVideoAndExtractAudio(project.id, sourceId, onExtractSourceChosen);
   if (!source) return null;
   const result = addAudioSourceToProject(
     project,

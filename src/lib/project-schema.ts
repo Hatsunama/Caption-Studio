@@ -175,6 +175,9 @@ function decodeAudioSource(value: unknown, index: number): ProjectAudioSource {
   const storageMode = source.storageMode === undefined
     ? 'copied'
     : enumValue(source.storageMode, ['copied'] as const, `audio source ${index + 1} storage mode`);
+  const waveformPeaks = source.waveformPeaks === undefined
+    ? undefined
+    : decodeWaveformPeaks(source.waveformPeaks, `audio source ${index + 1} waveform peaks`);
   return {
     id: identifierValue(source.id, `audio source ${index + 1} identifier`),
     uri: localFileUri(source.uri, `audio source ${index + 1} URI`),
@@ -185,7 +188,17 @@ function decodeAudioSource(value: unknown, index: number): ProjectAudioSource {
     origin: source.origin === undefined
       ? 'audio-file'
       : enumValue(source.origin, ['audio-file', 'video-audio'] as const, `audio source ${index + 1} origin`),
+    ...(waveformPeaks ? { waveformPeaks } : {}),
   };
+}
+
+function decodeWaveformPeaks(value: unknown, label: string): number[] {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
+  if (value.length < 8 || value.length > 256) throw new Error(`${label} must contain 8 to 256 peaks.`);
+  return value.map((entry, peakIndex) => {
+    const peak = finiteNumber(entry, `${label} entry ${peakIndex + 1}`, 0, 1);
+    return peak;
+  });
 }
 
 function decodeAudioClip(value: unknown, index: number): AudioClip {
