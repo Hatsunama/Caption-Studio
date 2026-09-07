@@ -1,6 +1,6 @@
 import { useEventListener } from 'expo';
 import { useVideoPlayer, type VideoPlayer } from 'expo-video';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import {
   buildClipTimeline,
@@ -14,10 +14,10 @@ import {
   CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS,
   canSeamlessSwapToClip,
   clipHandoffPrimeAt,
-  configureTimelinePlayer,
   oppositeTimelineSlot,
   type TimelinePlayerSlot,
 } from '@/lib/video-playback-policy';
+import { configureTimelinePlayer } from '@/services/video-player-runtime';
 import type { CaptionProject } from '@/types/project';
 
 type Target = {
@@ -36,13 +36,11 @@ export function useTimelineVideoController(
   onError: (message: string) => void,
 ) {
   const entries = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
-  const initialEntryRef = useRef<ClipTimelineEntry | undefined>(entries[0]);
-  const initialSourceRef = useRef(
-    project.sources.find((source) => source.id === initialEntryRef.current?.clip.sourceId) ?? project.sources[0],
-  );
-  const playerA = useVideoPlayer(initialSourceRef.current?.uri ?? null, (instance) => {
+  const initialEntry = entries[0];
+  const initialSource = project.sources.find((source) => source.id === initialEntry?.clip.sourceId) ?? project.sources[0];
+  const playerA = useVideoPlayer(initialSource?.uri ?? null, (instance) => {
     configureTimelinePlayer(instance);
-    if (initialEntryRef.current) instance.currentTime = initialEntryRef.current.clip.sourceStartMs / 1000;
+    if (initialEntry) instance.currentTime = initialEntry.clip.sourceStartMs / 1000;
   });
   const playerB = useVideoPlayer(null, configureTimelinePlayer);
   const players = useMemo(() => [playerA, playerB] as const, [playerA, playerB]);
@@ -50,16 +48,16 @@ export function useTimelineVideoController(
   const [activeSlot, setActiveSlotState] = useState<TimelinePlayerSlot>(0);
   const [currentMs, setCurrentMsState] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [phase, setPhaseState] = useState<'loading' | 'ready' | 'gap' | 'ended'>(initialEntryRef.current ? 'loading' : 'ended');
+  const [phase, setPhaseState] = useState<'loading' | 'ready' | 'gap' | 'ended'>(initialEntry ? 'loading' : 'ended');
 
   const projectRef = useRef(project);
   const entriesRef = useRef(entries);
   const currentMsRef = useRef(0);
   const playIntentRef = useRef(false);
-  const phaseRef = useRef<'loading' | 'ready' | 'gap' | 'ended'>(initialEntryRef.current ? 'loading' : 'ended');
+  const phaseRef = useRef<'loading' | 'ready' | 'gap' | 'ended'>(initialEntry ? 'loading' : 'ended');
   const activeSlotRef = useRef<TimelinePlayerSlot>(0);
-  const confirmedSourceIdRef = useRef<string | undefined>(initialSourceRef.current?.id);
-  const activeClipIdRef = useRef<string | undefined>(initialEntryRef.current?.clip.id);
+  const confirmedSourceIdRef = useRef<string | undefined>(initialSource?.id);
+  const activeClipIdRef = useRef<string | undefined>(initialEntry?.clip.id);
   const primedRef = useRef<PrimedStandby | undefined>(undefined);
   const primingRef = useRef<Promise<void> | undefined>(undefined);
   const desiredRef = useRef<Target | undefined>(undefined);
@@ -72,9 +70,11 @@ export function useTimelineVideoController(
   const mountedRef = useRef(true);
   const onErrorRef = useRef(onError);
 
-  projectRef.current = project;
-  entriesRef.current = entries;
-  onErrorRef.current = onError;
+  useLayoutEffect(() => {
+    projectRef.current = project;
+    entriesRef.current = entries;
+    onErrorRef.current = onError;
+  }, [entries, onError, project]);
 
   const setPhase = (next: 'loading' | 'ready' | 'gap' | 'ended') => {
     phaseRef.current = next;
@@ -105,12 +105,12 @@ export function useTimelineVideoController(
     primedRef.current = undefined;
   };
 
-  const releaseStandbySurface = () => {
-    clearStandbyPrime();
-    const standby = standbyPlayer();
+  const releaseStandbySurface = useCallback(() => {
+    primedRef.current = undefined;
+    const standby = players[oppositeTimelineSlot(activeSlotRef.current)];
     standby.pause();
     void standby.replaceAsync(null).catch(() => undefined);
-  };
+  }, [players]);
 
   const stopTransport = useCallback(() => {
     playIntentRef.current = false;
@@ -281,7 +281,10 @@ export function useTimelineVideoController(
     processingRef.current = operation;
     return operation;
   }
-  drainTargetsRef.current = drainTargets;
+
+  useLayoutEffect(() => {
+    drainTargetsRef.current = drainTargets;
+  });
 
   const seek = useCallback((timelineMs: number) => {
     const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
@@ -290,7 +293,7 @@ export function useTimelineVideoController(
     releaseStandbySurface();
     desiredRef.current = { generation: ++generationRef.current, timelineMs: targetMs };
     void drainTargetsRef.current();
-  }, []);
+  }, [releaseStandbySurface]);
 
   const play = useCallback(() => {
     const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
@@ -316,7 +319,7 @@ export function useTimelineVideoController(
     releaseStandbySurface();
     desiredRef.current = { generation: ++generationRef.current, timelineMs };
     void drainTargetsRef.current();
-  }, []);
+  }, [releaseStandbySurface]);
 
   const advanceFrom = (entry: ClipTimelineEntry) => {
     if (!playIntentRef.current || boundaryClipIdRef.current === entry.clip.id) return;

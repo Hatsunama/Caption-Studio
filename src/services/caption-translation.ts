@@ -17,7 +17,7 @@ import {
 } from '@/lib/caption-text-breaks';
 import { requireFreeSpace } from '@/services/storage-policy';
 
-export const NATURAL_TRANSLATION_MODEL = {
+const NATURAL_TRANSLATION_MODEL = {
   id: 'qwen2.5-1.5b-q8',
   label: 'Natural multilingual',
   fileName: 'Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
@@ -27,6 +27,8 @@ export const NATURAL_TRANSLATION_MODEL = {
   promptVersion: 3,
   downloadUrl: 'https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/19edb84c69a0212f29a6ef17ba0d6f278b6a1614/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
 } as const;
+
+export const NATURAL_TRANSLATION_MODEL_LABEL = NATURAL_TRANSLATION_MODEL.label;
 
 const NATURAL_TRANSLATION_SESSION_LIMITS = {
   operations: 8,

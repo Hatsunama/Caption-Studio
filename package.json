@@ -1,7 +1,7 @@
 {
   "name": "caption-studio",
   "main": "expo-router/entry",
-  "version": "1.4.15",
+  "version": "1.4.16",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -35,13 +35,13 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-web": "~0.21.0",
-    "whisper.rn": "^0.7.0"
+    "whisper.rn": "^0.7.4"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~57.0.2",
-    "tsx": "4.23.12",
+    "tsx": "4.23.13",
     "typescript": "~6.0.3"
   },
   "overrides": {
@@ -49,7 +49,9 @@
       "metro": "0.84.5",
       "metro-config": "0.84.5"
     },
-    "uuid": "11.1.1"
+    "uuid": "11.1.1",
+    "@xmldom/xmldom": "0.8.15",
+    "query-string": "9.5.1"
   },
   "scripts": {
     "postinstall": "node ./scripts/patch-react-native-gradle.js",
@@ -61,7 +63,7 @@
     "verify:android-config": "node ./scripts/verify-android-release-config.js",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint",
+    "lint": "expo lint --max-warnings=0",
     "test:logic": "tsx --test tests/*.test.mjs"
   },
   "private": true

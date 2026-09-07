@@ -1,6 +1,6 @@
 import { Alert } from 'react-native';
 import { translationAttemptMessage } from '@/lib/translation-attempt';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 
 import {
@@ -26,7 +26,6 @@ function interruptedOperationLabel(stage: CaptionTranslationProgress['stage'] | 
 
 export function useProjectCaptionTranslation(options: ControllerOptions) {
   const optionsRef = useRef(options);
-  optionsRef.current = options;
   const mountedRef = useRef(true);
   const activeOperationRef = useRef<symbol | undefined>(undefined);
   const activeStageRef = useRef<CaptionTranslationProgress['stage'] | undefined>(undefined);
@@ -34,6 +33,10 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
   const [progress, setProgress] = useState<CaptionTranslationProgress>();
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string>();
+
+  useLayoutEffect(() => {
+    optionsRef.current = options;
+  }, [options]);
 
   useEffect(() => {
     mountedRef.current = true;

@@ -102,7 +102,6 @@ export function LayerTimeline(props: {
   const baseTrackWidth = timelineWidth(duration, effectiveScale, viewportContentWidth);
   const reorderMode = Boolean(reorderDrag);
   const filmstripWidth = reorderFilmstripWidth(previewClips.length, REORDER_TILE, REORDER_GAP);
-  // Reorder owns a filmstrip-sized track — never keep the full duration-proportional width.
   const trackWidth = reorderMode
     ? reorderTrackWidth(filmstripWidth, viewportContentWidth)
     : baseTrackWidth;
@@ -127,12 +126,10 @@ export function LayerTimeline(props: {
   ) + props.translationTracks.length * captionRowHeight;
 
   const [peakCache, setPeakCache] = useState<Record<string, number[]>>({});
-  const peakCacheRef = useRef(peakCache);
-  peakCacheRef.current = peakCache;
   useEffect(() => {
     let cancelled = false;
     const missing = props.audioSources.filter((source) => {
-      const existing = source.waveformPeaks ?? peakCacheRef.current[source.id];
+      const existing = source.waveformPeaks ?? peakCache[source.id];
       return !existing || existing.length < 8;
     });
     if (!missing.length) return undefined;
@@ -146,7 +143,7 @@ export function LayerTimeline(props: {
       }
     })();
     return () => { cancelled = true; };
-  }, [props.audioSources]);
+  }, [peakCache, props.audioSources]);
   const leadingPadding = Math.max(0, viewportWidth / 2 - LABEL_WIDTH);
   const trailingPadding = viewportWidth / 2;
   const scrollContentWidth = leadingPadding + LABEL_WIDTH + trackWidth + trailingPadding;
@@ -157,7 +154,6 @@ export function LayerTimeline(props: {
       endMs: clamp((visibleCenterX + buffer) / trackWidth * duration, 0, duration),
     };
   }, [duration, trackWidth, viewportWidth, visibleCenterX]);
-  // In reorder mode filmstrip coords replace duration-based culling — keep rows mounted.
   const isVisible = (startMs: number, endMs: number) =>
     reorderMode || (endMs >= visibleRange.startMs && startMs <= visibleRange.endMs);
 
@@ -181,8 +177,6 @@ export function LayerTimeline(props: {
     horizontalRef.current?.scrollTo({ x, animated: false });
   }, [duration, gestureLock, props.currentMs, trackWidth, viewportWidth]);
 
-  // Reorder mode owns scroll: pin/center the filmstrip as soon as reorderDrag is set, and
-  // auto-scroll when the drop index nears the viewport edges. Playhead sync resumes on exit.
   useEffect(() => {
     if (!reorderDrag) return;
     const activeIndex = previewClips.findIndex((clip) => clip.id === reorderDrag.clipId);
@@ -203,7 +197,6 @@ export function LayerTimeline(props: {
       viewportWidth,
     );
     scrollXRef.current = x;
-    // Avoid setState here (lint: set-state-in-effect). Reorder culling ignores visibleRange.
     horizontalRef.current?.scrollTo({ x, animated: false });
   }, [previewClips, reorderDrag, trackWidth, viewportContentWidth, viewportWidth]);
 
@@ -700,29 +693,28 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0]) {
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressArmedRef = useRef(false);
 
-  const clearLongPress = () => {
-    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-    longPressTimerRef.current = null;
-  };
-
-  const finishGesture = (kind: 'release' | 'terminate') => {
-    clearLongPress();
-    const mode = modeRef.current;
-    modeRef.current = 'none';
-    longPressArmedRef.current = false;
-    if (mode === 'reorder') {
-      if (kind === 'release') propsRef.current.onReorderCommit(reorderIndexRef.current);
-      else propsRef.current.onReorderCancel();
-      return;
-    }
-    if (mode === 'gap') {
-      propsRef.current.onGapCommit(gapRef.current);
-      return;
-    }
-    propsRef.current.onGestureLock(false);
-  };
-
-  const responder = useMemo(() => PanResponder.create({
+  const responder = useMemo(() => {
+    const clearLongPress = () => {
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    };
+    const finishGesture = (kind: 'release' | 'terminate') => {
+      clearLongPress();
+      const mode = modeRef.current;
+      modeRef.current = 'none';
+      longPressArmedRef.current = false;
+      if (mode === 'reorder') {
+        if (kind === 'release') propsRef.current.onReorderCommit(reorderIndexRef.current);
+        else propsRef.current.onReorderCancel();
+        return;
+      }
+      if (mode === 'gap') {
+        propsRef.current.onGapCommit(gapRef.current);
+        return;
+      }
+      propsRef.current.onGestureLock(false);
+    };
+    return PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderTerminationRequest: () => false,
@@ -771,10 +763,12 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0]) {
     },
     onPanResponderRelease: () => finishGesture('release'),
     onPanResponderTerminate: () => finishGesture('terminate'),
-  }), []);
+    });
+  }, []);
 
   useEffect(() => () => {
-    clearLongPress();
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
   }, []);
 
   return (

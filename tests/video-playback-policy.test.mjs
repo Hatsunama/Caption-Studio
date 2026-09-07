@@ -3,15 +3,17 @@ import test from 'node:test';
 
 import {
   CLIP_HANDOFF_PRIME_MS,
-  TIMELINE_PLAYER_BUFFER_OPTIONS,
-  TRANSITION_PLAYER_BUFFER_OPTIONS,
   canSeamlessSwapToClip,
   clipHandoffPrimeAt,
-  configureTimelinePlayer,
-  configureTransitionPlayer,
   nextClipEntry,
   oppositeTimelineSlot,
 } from '../src/lib/video-playback-policy.ts';
+import {
+  TIMELINE_PLAYER_BUFFER_OPTIONS,
+  TRANSITION_PLAYER_BUFFER_OPTIONS,
+  configureTimelinePlayer,
+  configureTransitionPlayer,
+} from '../src/services/video-player-runtime.ts';
 
 test('editor playback has an explicit bounded Android buffer budget', () => {
   assert.equal(TIMELINE_PLAYER_BUFFER_OPTIONS.maxBufferBytes, 24 * 1024 * 1024);

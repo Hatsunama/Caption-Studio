@@ -10,6 +10,7 @@ export function useTimelineAudioController(
   currentMs: number,
   isPlaying: boolean,
   admitted = true,
+  onError: (message: string) => void = () => {},
 ) {
   const controllerRef = useRef<TimelineAudioPlaybackController | undefined>(undefined);
   const sourceById = useMemo(
@@ -37,14 +38,14 @@ export function useTimelineAudioController(
   useEffect(() => {
     const controller = new TimelineAudioPlaybackController(
       (uri) => createAudioPlayer(uri, { updateInterval: 250 }),
-      (error) => console.warn('Timeline audio preview could not synchronize.', error),
+      () => onError('Timeline audio preview could not synchronize. The exported audio is unchanged.'),
     );
     controllerRef.current = controller;
     return () => {
       if (controllerRef.current === controller) controllerRef.current = undefined;
       controller.dispose();
     };
-  }, []);
+  }, [onError]);
 
   useEffect(() => {
     controllerRef.current?.synchronize(targets);
