@@ -51,6 +51,16 @@ jobs:
             echo "Release $tag already exists; refusing replacement." >&2
             exit 1
           fi
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Protected release tag $tag must exist before dispatch." >&2
+            exit 1
+          fi
+          git fetch --no-tags --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
+          tag_commit="$(git rev-parse "$tag^{commit}")"
+          if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "Protected release tag $tag points to $tag_commit, expected $GITHUB_SHA." >&2
+            exit 1
+          fi
       - name: Install and verify locked project
         run: |
           npm ci
@@ -147,7 +157,6 @@ jobs:
           gh release create "$tag" \
             dist/caption-studio-fixed-android.apk \
             dist/caption-studio-fixed-android.apk.sha256 \
-            --target "$GITHUB_SHA" \
             --prerelease \
             --title "Caption Studio Fixed ${VERSION} (side-by-side)" \
             --notes "Side-by-side fixed build from main at $GITHUB_SHA. Installs as com.hatsunama.captionstudio.fixed and does not replace, uninstall, clear, or migrate the existing production app."
