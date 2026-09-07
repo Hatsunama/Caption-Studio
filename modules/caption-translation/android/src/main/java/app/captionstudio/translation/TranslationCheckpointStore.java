@@ -1,5 +1,9 @@
 package app.captionstudio.translation;
 
+import android.os.Build;
+import android.system.ErrnoException;
+import android.system.Os;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
@@ -8,6 +12,8 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
@@ -73,10 +79,37 @@ final class TranslationCheckpointStore {
       output.flush();
       stream.getFD().sync();
     }
-    // Android rename replaces the destination atomically on the same filesystem.
-    // Do not delete the previous checkpoint before attempting the rename.
-    if (!staging.renameTo(destination)) throw new IOException("Checkpoint commit failed");
+    commitStaging(staging, destination);
     prune();
+  }
+
+  private static void commitStaging(File staging, File destination) throws IOException {
+    if (!isAndroidRuntime() || Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      NioAtomicReplace.move(staging, destination);
+      return;
+    }
+    try {
+      Os.rename(staging.getAbsolutePath(), destination.getAbsolutePath());
+    } catch (ErrnoException error) {
+      throw new IOException("Checkpoint commit failed", error);
+    }
+  }
+
+  private static boolean isAndroidRuntime() {
+    return "Android Runtime".equals(System.getProperty("java.runtime.name"));
+  }
+
+  private static final class NioAtomicReplace {
+    private NioAtomicReplace() {}
+
+    static void move(File staging, File destination) throws IOException {
+      Files.move(
+          staging.toPath(),
+          destination.toPath(),
+          StandardCopyOption.ATOMIC_MOVE,
+          StandardCopyOption.REPLACE_EXISTING
+      );
+    }
   }
 
   private File ownedFile(String key, String suffix) throws IOException {

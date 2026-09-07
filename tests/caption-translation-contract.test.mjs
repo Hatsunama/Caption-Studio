@@ -195,7 +195,8 @@ test('dual-subtitle refresh commits translated text instead of leaving a pending
     readFile(new URL('src/lib/caption-translation-commit.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/hooks/use-project-caption-translation.ts', repositoryRoot), 'utf8'),
   ]);
-  assert.match(dualEditor, /displayDrafts = adoptCommittedDualCaptionDrafts/);
+  assert.match(dualEditor, /const displayDrafts = useMemo/);
+  assert.match(dualEditor, /adoptCommittedDualCaptionDrafts\(committedDrafts, sourceDrafts, drafts\)/);
   assert.match(dualEditor, /shouldRestoreDualCaptionJournal/);
   assert.match(dualEditor, /if \(!props\.visible \|\| !journalReady \|\| props\.busy\) return/);
   assert.match(dualEditor, /Keep current translation/);

@@ -2,6 +2,7 @@ package app.captionstudio.translation;
 
 import android.content.Context;
 import android.os.Process;
+import android.util.Log;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -65,6 +66,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   private static final int MAX_MODEL_LOCATION_CHARACTERS = 4_096;
   private static final Pattern CAPTION_ID = Pattern.compile("[A-Za-z0-9._:-]{1,64}");
   private static final Pattern URI_SCHEME = Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*:.*");
+  private static final String LOG_TAG = "CaptionTranslation";
 
   private static final String SYSTEM_INSTRUCTION =
       "You are the deterministic caption translation stage for Caption Studio. "
@@ -591,7 +593,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     try {
       TranslationRuntime runtime = run.runtime.get();
       if (runtime != null) runtime.cancel();
-    } catch (Throwable ignored) {
+    } catch (RuntimeException error) {
+      Log.w(LOG_TAG, "Native translation cancellation signal failed: " + error.getClass().getSimpleName());
     } finally {
       run.nativeLifecycleLock.unlock();
     }
@@ -1282,7 +1285,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           () -> {
             try {
               Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
-            } catch (SecurityException ignored) {
+            } catch (SecurityException error) {
+              Log.w(LOG_TAG, "Translation thread priority could not be lowered: " + error.getClass().getSimpleName());
             }
             runnable.run();
           },

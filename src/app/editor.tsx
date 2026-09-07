@@ -39,6 +39,7 @@ import { useEditorRuntimePolicy } from '@/hooks/use-editor-runtime-policy';
 import { deleteAudioClip, duplicateAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '@/lib/audio-timeline';
 import { findAnimationPreset } from '@/lib/animation-presets';
 import { canAutomaticallyTranslatePair, captionLanguageLabel, type CaptionLanguageTag } from '@/lib/caption-languages';
+import { exportTranslationSummary } from '@/lib/export-caption-pairs';
 import {
   projectPrimaryCaptionLanguage,
   resolvedProjectCaptionLanguage,
@@ -126,7 +127,7 @@ import {
 } from '@/services/project-workflows';
 import { CaptionGenerationCancelledError } from '@/services/caption-generation-session';
 import {
-  NATURAL_TRANSLATION_MODEL,
+  NATURAL_TRANSLATION_MODEL_LABEL,
   type CaptionTranslationProgress,
 } from '@/services/caption-translation';
 import {
@@ -140,7 +141,6 @@ import {
 } from '@/services/project-persistence';
 import { VideoExportCancelledError } from '@/services/video-export-session';
 import { chrome } from '@/lib/ui-theme';
-import { confirmOptionalTranslationExport } from '@/services/translation-export-choice';
 import type { TranscriptionProgress } from '@/services/transcription';
 import {
   type CaptionAnimationId,
@@ -151,6 +151,23 @@ import {
   type VideoTransformPatch,
   type AudioClip,
 } from '@/types/project';
+
+function confirmOptionalTranslationExport(project: CaptionProject, video: boolean): Promise<boolean> {
+  if (video && (!project.export.burnCaptions || !project.layers.some((layer) => layer.kind === 'captions' && layer.visible))) {
+    return Promise.resolve(true);
+  }
+  const { missing, needsReview } = exportTranslationSummary(project);
+  if (!missing && !needsReview) return Promise.resolve(true);
+  return new Promise((resolve) => Alert.alert(
+    'Export with unfinished translations?',
+    `${missing} second-language lines are missing. ${needsReview} existing translations may need review.\n\nExport anyway keeps available text and omits empty second-language lines. Original captions and saved projects are unchanged. You can refresh or skip lines later.`,
+    [
+      { text: 'Back to editing', style: 'cancel', onPress: () => resolve(false) },
+      { text: 'Export anyway', onPress: () => resolve(true) },
+    ],
+    { cancelable: true, onDismiss: () => resolve(false) },
+  ));
+}
 
 const palette = {
   background: chrome.background,
@@ -236,7 +253,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const undoStackRef = useRef<CaptionProject[]>([]);
   const redoStackRef = useRef<CaptionProject[]>([]);
   const interactionStartRef = useRef<CaptionProject | undefined>(undefined);
-  const [historyVersion, setHistoryVersion] = useState(0);
+  const [historyAvailability, setHistoryAvailability] = useState({ undo: false, redo: false });
   const workspaceMountedRef = useRef(true);
   const exitApprovedRef = useRef(false);
   const exitPromptOpenRef = useRef(false);
@@ -343,8 +360,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const transport = useTimelineVideoController(project, setError);
   const { players, activeSlot, currentMs, isPlaying } = transport;
-  const player = players[activeSlot];
-  useTimelineAudioController(project, currentMs, isPlaying, runtimePolicy.mediaAdmitted);
+  useTimelineAudioController(project, currentMs, isPlaying, runtimePolicy.mediaAdmitted, setError);
   const pauseTransport = transport.pause;
 
   useEffect(() => {
@@ -530,12 +546,19 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     };
   }, []);
 
+  const refreshHistoryAvailability = () => {
+    setHistoryAvailability({
+      undo: undoStackRef.current.length > 0,
+      redo: redoStackRef.current.length > 0,
+    });
+  };
+
   const pushUndo = (snapshot = projectRef.current) => {
     const stack = undoStackRef.current;
     if (stack.at(-1) !== snapshot) stack.push(snapshot);
     trimHistoryStack(stack);
     redoStackRef.current = [];
-    setHistoryVersion((value) => value + 1);
+    refreshHistoryAvailability();
   };
 
   const translationController = useProjectCaptionTranslation({
@@ -555,7 +578,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       } catch (caught) {
         projectRef.current = baseline;
         setProject(baseline);
-        if (undoStackRef.current.at(-1) === baseline) undoStackRef.current.pop();
+        if (undoStackRef.current.at(-1) === baseline) {
+          undoStackRef.current.pop();
+          refreshHistoryAvailability();
+        }
         throw caught;
       }
     },
@@ -579,13 +605,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     if (!previous) return;
     redoStackRef.current.push(projectRef.current);
     trimHistoryStack(redoStackRef.current);
+    refreshHistoryAvailability();
     interactionStartRef.current = undefined;
     projectRef.current = previous;
     transport.synchronizeProject(previous);
     setProject(previous);
     setSelectedCaptionId((id) => previous.captions.some((caption) => caption.id === id) ? id : previous.captions[0]?.id);
     setSelectedLayerId((id) => previous.layers.some((layer) => layer.id === id) ? id : 'captions');
-    setHistoryVersion((value) => value + 1);
     persistProjectInBackground(previous);
   };
 
@@ -594,13 +620,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     if (!next) return;
     undoStackRef.current.push(projectRef.current);
     trimHistoryStack(undoStackRef.current);
+    refreshHistoryAvailability();
     interactionStartRef.current = undefined;
     projectRef.current = next;
     transport.synchronizeProject(next);
     setProject(next);
     setSelectedCaptionId((id) => next.captions.some((caption) => caption.id === id) ? id : next.captions[0]?.id);
     setSelectedLayerId((id) => next.layers.some((layer) => layer.id === id) ? id : 'captions');
-    setHistoryVersion((value) => value + 1);
     persistProjectInBackground(next);
   };
 
@@ -1853,8 +1879,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           style={{ flex: 1 }}
           contentContainerStyle={{ gap: 12, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 18 }}>
         <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
-          <HistoryButton label="↶  Undo" disabled={undoStackRef.current.length === 0} version={historyVersion} onPress={undo} />
-          <HistoryButton label="Redo  ↷" disabled={redoStackRef.current.length === 0} version={historyVersion} onPress={redo} />
+          <HistoryButton label="↶  Undo" disabled={!historyAvailability.undo} onPress={undo} />
+          <HistoryButton label="Redo  ↷" disabled={!historyAvailability.redo} onPress={redo} />
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View style={{ flex: 1 }}>
@@ -2268,7 +2294,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         visible={dualLanguagePickerOpen}
         sourceLanguageTag={primaryCaptionLanguage}
         sourceLanguageLabel={captionLanguageLabel(primaryCaptionLanguage)}
-        automaticModelLabel={NATURAL_TRANSLATION_MODEL.label}
+        automaticModelLabel={NATURAL_TRANSLATION_MODEL_LABEL}
         onClose={() => setDualLanguagePickerOpen(false)}
         onChoose={(choice) => enableDualCaptions(choice.tag)}
       />
@@ -2351,7 +2377,7 @@ function Action(props: { label: string; color?: string; danger?: boolean; disabl
   );
 }
 
-function HistoryButton(props: { label: string; disabled: boolean; version: number; onPress: () => void }) {
+function HistoryButton(props: { label: string; disabled: boolean; onPress: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"

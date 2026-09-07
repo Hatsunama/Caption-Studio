@@ -6,7 +6,7 @@ import {
   videoTransitionPreviewFrameAt,
   type VideoTransitionPreviewWindow,
 } from '@/lib/video-transition-preview';
-import { configureTransitionPlayer } from '@/lib/video-playback-policy';
+import { configureTransitionPlayer } from '@/services/video-player-runtime';
 
 type PreviewPlayerLoad = {
   key?: string;
@@ -38,7 +38,10 @@ export function useVideoTransitionPreview(options: {
   const drainingRef = useRef(false);
   const mountedRef = useRef(true);
   const loadRef = useRef(load);
-  loadRef.current = load;
+
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
 
   useEffect(() => {
     desiredRef.current = preload;

@@ -83,6 +83,10 @@ public final class TranslationRepairTest {
     assertTrue(TranslationOutputQuality.needsReview("Hello", "Hello", "zh-Hans"));
     assertTrue(TranslationOutputQuality.needsReview("okay", "okay", "zh-Hans"));
     assertTrue(TranslationOutputQuality.needsReview("okay", "", "zh-Hans"));
+    assertFalse(TranslationOutputQuality.needsReview("We already arrived", "我们已经到了", "zh-Hans"));
+    assertTrue(TranslationOutputQuality.needsReview("We already arrived", "我們已經到了", "zh-Hans"));
+    assertFalse(TranslationOutputQuality.needsReview("We already arrived", "我們已經到了", "zh-Hant"));
+    assertTrue(TranslationOutputQuality.needsReview("We already arrived", "我们已经到了", "zh-Hant"));
   }
 
   private NaturalCaptionTranslator translator(File cache, File checkpoints, TranslationRuntimeFactory factory) {

@@ -18,6 +18,7 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.Promise
@@ -334,12 +335,12 @@ class CaptionMediaModule : Module() {
       val frame = decoded ?: return null
       decoded = null
       frame
-    } catch (error: Throwable) {
-      if (error is CancellationException || error is Error) throw error
+    } catch (error: Exception) {
+      if (error is CancellationException) throw error
       null
     } finally {
       decoded?.recycle()
-      retriever.release()
+      cleanupMediaResource("release background frame reader") { retriever.release() }
     }
   }
 
@@ -364,8 +365,8 @@ class CaptionMediaModule : Module() {
       openInputStream(input, "The selected background could not be opened").use { stream ->
         BitmapOrientation.fromExif(ExifInterface(stream))
       }
-    } catch (error: Throwable) {
-      if (error is CancellationException || error is Error) throw error
+    } catch (error: Exception) {
+      if (error is CancellationException) throw error
       BitmapOrientation.NORMAL
     }
     val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -867,22 +868,10 @@ class CaptionMediaModule : Module() {
         "trimmedOverlapMs" to trimmedOverlapSamples * 1_000L / TARGET_SAMPLE_RATE,
       )
     } finally {
-      try {
-        writer?.finish()
-      } catch (_: Throwable) {
-      }
-      try {
-        decoder?.stop()
-      } catch (_: Throwable) {
-      }
-      try {
-        decoder?.release()
-      } catch (_: Throwable) {
-      }
-      try {
-        extractor.release()
-      } catch (_: Throwable) {
-      }
+      cleanupMediaResource("finalize WAV output") { writer?.finish() }
+      cleanupMediaResource("stop audio decoder") { decoder?.stop() }
+      cleanupMediaResource("release audio decoder") { decoder?.release() }
+      cleanupMediaResource("release audio extractor") { extractor.release() }
       if (!completed) targetFile.delete()
     }
   }
@@ -905,7 +894,7 @@ class CaptionMediaModule : Module() {
     } catch (error: Error) {
       throw error
     } catch (error: Exception) {
-      val detail = sequenceOf(error.message, remuxError?.message)
+      val detail = sequenceOf(error.message, remuxError.message)
         .filterNotNull()
         .firstOrNull { it.isNotBlank() }
         ?: "unknown error"
@@ -993,19 +982,13 @@ class CaptionMediaModule : Module() {
         "mimeType" to AudioTrackExtraction.OUTPUT_MIME,
         "sourceCodec" to trackMime,
       )
-    } catch (error: Throwable) {
-      if (error is CancellationException || error is Error) throw error
+    } catch (error: Exception) {
+      if (error is CancellationException) throw error
       throw IllegalArgumentException("Lossless audio remux failed: ${error.message}", error)
     } finally {
-      try {
-        muxer?.stop()
-      } catch (_: Throwable) {
-      }
-      try {
-        muxer?.release()
-      } catch (_: Throwable) {
-      }
-      extractor.release()
+      cleanupMediaResource("stop audio muxer") { muxer?.stop() }
+      cleanupMediaResource("release audio muxer") { muxer?.release() }
+      cleanupMediaResource("release audio extractor") { extractor.release() }
       if (!completed) targetFile.delete()
     }
   }
@@ -1055,7 +1038,11 @@ class CaptionMediaModule : Module() {
 
       targetFile.parentFile?.mkdirs()
       if (targetFile.exists()) targetFile.delete()
-      muxer = MediaMuxer(targetFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+      val activeMuxer = MediaMuxer(
+        targetFile.absolutePath,
+        MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4,
+      )
+      muxer = activeMuxer
 
       val decoderInfo = MediaCodec.BufferInfo()
       val encoderInfo = MediaCodec.BufferInfo()
@@ -1073,7 +1060,7 @@ class CaptionMediaModule : Module() {
         if (Thread.currentThread().isInterrupted) throw CancellationException("Audio import was cancelled")
 
         if (!inputEnded) {
-          val inputIndex = decoder!!.dequeueInputBuffer(TIMEOUT_US)
+          val inputIndex = decoder.dequeueInputBuffer(TIMEOUT_US)
           if (inputIndex >= 0) {
             val inputBuffer = decoder.getInputBuffer(inputIndex)
               ?: throw IllegalStateException("Audio decoder input buffer missing")
@@ -1091,7 +1078,7 @@ class CaptionMediaModule : Module() {
         }
 
         if (!decoderEnded) {
-          val outputIndex = decoder!!.dequeueOutputBuffer(decoderInfo, TIMEOUT_US)
+          val outputIndex = decoder.dequeueOutputBuffer(decoderInfo, TIMEOUT_US)
           when {
             outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
             outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> Unit
@@ -1103,7 +1090,7 @@ class CaptionMediaModule : Module() {
                 decoded.position(decoderInfo.offset)
                 decoded.limit(decoderInfo.offset + decoderInfo.size)
                 feedPcmToAacEncoder(
-                  encoder!!,
+                  encoder,
                   decoded,
                   decoderInfo.presentationTimeUs,
                   sourceSampleRate,
@@ -1112,8 +1099,8 @@ class CaptionMediaModule : Module() {
                   encoderChannelCount,
                 ) {
                   drainAacEncoder(
-                    encoder = encoder!!,
-                    muxer = muxer!!,
+                    encoder = encoder,
+                    muxer = activeMuxer,
                     encoderInfo = encoderInfo,
                     state = encodeState,
                   )
@@ -1123,15 +1110,15 @@ class CaptionMediaModule : Module() {
               decoder.releaseOutputBuffer(outputIndex, false)
               if (decoderEos) {
                 decoderEnded = true
-                signalAacEncoderEndOfStream(encoder!!)
+                signalAacEncoderEndOfStream(encoder)
               }
             }
           }
         }
 
         drainAacEncoder(
-          encoder = encoder!!,
-          muxer = muxer!!,
+          encoder = encoder,
+          muxer = muxer,
           encoderInfo = encoderInfo,
           state = encodeState,
         )
@@ -1144,7 +1131,7 @@ class CaptionMediaModule : Module() {
       }
 
       require(encodedSamples > 0) { "AAC re-encode produced no audio samples" }
-      muxer!!.stop()
+      muxer.stop()
       muxer.release()
       muxer = null
       if (!extractedAudioLooksPlayable(targetFile)) {
@@ -1162,35 +1149,17 @@ class CaptionMediaModule : Module() {
         "mimeType" to AudioTrackExtraction.OUTPUT_MIME,
         "sourceCodec" to trackMime,
       )
-    } catch (error: Throwable) {
-      if (error is CancellationException || error is Error) throw error
+    } catch (error: Exception) {
+      if (error is CancellationException) throw error
       throw IllegalArgumentException("AAC audio re-encode failed: ${error.message}", error)
     } finally {
-      try {
-        muxer?.stop()
-      } catch (_: Throwable) {
-      }
-      try {
-        muxer?.release()
-      } catch (_: Throwable) {
-      }
-      try {
-        encoder?.stop()
-      } catch (_: Throwable) {
-      }
-      try {
-        encoder?.release()
-      } catch (_: Throwable) {
-      }
-      try {
-        decoder?.stop()
-      } catch (_: Throwable) {
-      }
-      try {
-        decoder?.release()
-      } catch (_: Throwable) {
-      }
-      extractor.release()
+      cleanupMediaResource("stop audio muxer") { muxer?.stop() }
+      cleanupMediaResource("release audio muxer") { muxer?.release() }
+      cleanupMediaResource("stop audio encoder") { encoder?.stop() }
+      cleanupMediaResource("release audio encoder") { encoder?.release() }
+      cleanupMediaResource("stop audio decoder") { decoder?.stop() }
+      cleanupMediaResource("release audio decoder") { decoder?.release() }
+      cleanupMediaResource("release audio extractor") { extractor.release() }
       if (!completed) targetFile.delete()
     }
   }
@@ -1358,10 +1327,10 @@ class CaptionMediaModule : Module() {
         extractor.advance()
       }
       readableSamples > 0
-    } catch (_: Throwable) {
+    } catch (_: Exception) {
       false
     } finally {
-      extractor.release()
+      cleanupMediaResource("release audio probe extractor") { extractor.release() }
     }
   }
 
@@ -1373,10 +1342,10 @@ class CaptionMediaModule : Module() {
         ?.toLongOrNull()
         ?.takeIf { it > 0L }
         ?: 0L
-    } catch (_: Throwable) {
+    } catch (_: Exception) {
       0L
     } finally {
-      retriever.release()
+      cleanupMediaResource("release audio metadata reader") { retriever.release() }
     }
   }
 
@@ -1487,18 +1456,9 @@ class CaptionMediaModule : Module() {
         "peakCount" to buckets,
       )
     } finally {
-      try {
-        decoder?.stop()
-      } catch (_: Throwable) {
-      }
-      try {
-        decoder?.release()
-      } catch (_: Throwable) {
-      }
-      try {
-        extractor.release()
-      } catch (_: Throwable) {
-      }
+      cleanupMediaResource("stop waveform decoder") { decoder?.stop() }
+      cleanupMediaResource("release waveform decoder") { decoder?.release() }
+      cleanupMediaResource("release waveform extractor") { extractor.release() }
     }
   }
 
@@ -1544,7 +1504,16 @@ class CaptionMediaModule : Module() {
     return target
   }
 
+  private inline fun cleanupMediaResource(action: String, cleanup: () -> Unit) {
+    try {
+      cleanup()
+    } catch (error: Exception) {
+      Log.w(LOG_TAG, "$action failed: ${error.javaClass.simpleName}")
+    }
+  }
+
   companion object {
+    private const val LOG_TAG = "CaptionMedia"
     private const val TARGET_SAMPLE_RATE = 16_000
     private const val AUDIO_DURATION_TOLERANCE_MS = 5_000L
     private const val MAX_AUDIO_OUTPUT_SAMPLES = 691_200_000L

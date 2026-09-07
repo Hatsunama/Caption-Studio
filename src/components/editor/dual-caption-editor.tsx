@@ -53,19 +53,24 @@ export function DualCaptionEditor(props: {
   onCancelBusy: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const [drafts, setDrafts] = useState<Record<string, DualCaptionDraft>>(() => dualCaptionDraftsFromPairs(props.pairs));
+  const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
+  const [drafts, setDrafts] = useState<Record<string, DualCaptionDraft>>(() => sourceDrafts);
+  const [committedDrafts, setCommittedDrafts] = useState<Record<string, DualCaptionDraft>>(() => sourceDrafts);
   const [journalReady, setJournalReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [journalError, setJournalError] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const openSessionRef = useRef<string | undefined>(undefined);
-  const committedRef = useRef<Record<string, DualCaptionDraft>>(dualCaptionDraftsFromPairs(props.pairs));
-  const sourceDraftsRef = useRef<Record<string, DualCaptionDraft>>(committedRef.current);
+  const sourceDraftsRef = useRef<Record<string, DualCaptionDraft>>(sourceDrafts);
   const journalKind = `dual-captions-${props.trackId}` as EditorDraftKind;
-  const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
-  sourceDraftsRef.current = sourceDrafts;
-  const displayDrafts = adoptCommittedDualCaptionDrafts(committedRef.current, sourceDrafts, drafts);
-  if (dualCaptionDraftsMatch(drafts, displayDrafts)) committedRef.current = sourceDrafts;
+  const displayDrafts = useMemo(
+    () => adoptCommittedDualCaptionDrafts(committedDrafts, sourceDrafts, drafts),
+    [committedDrafts, drafts, sourceDrafts],
+  );
+
+  useEffect(() => {
+    sourceDraftsRef.current = sourceDrafts;
+  }, [sourceDrafts]);
 
   useEffect(() => {
     if (!props.visible) {
@@ -75,11 +80,11 @@ export function DualCaptionEditor(props: {
     if (openSessionRef.current === props.trackId) return;
     openSessionRef.current = props.trackId;
     const openingDrafts = sourceDraftsRef.current;
-    committedRef.current = openingDrafts;
     const allowedIds = Object.keys(openingDrafts);
     let active = true;
     void Promise.resolve().then(() => {
       if (!active) return undefined;
+      setCommittedDrafts(openingDrafts);
       setDrafts(openingDrafts);
       setSelectedIds(new Set());
       setJournalReady(false);
@@ -90,6 +95,8 @@ export function DualCaptionEditor(props: {
       const recovered = decodeDualDraft(journal?.payload, allowedIds);
       const nextCommitted = sourceDraftsRef.current;
       if (!recovered || !shouldRestoreDualCaptionJournal(recovered, nextCommitted)) {
+        setCommittedDrafts(nextCommitted);
+        setDrafts((current) => adoptCommittedDualCaptionDrafts(openingDrafts, nextCommitted, current));
         if (recovered) void clearEditorDraftJournal(props.projectId, journalKind).catch(() => setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'));
         setJournalReady(true);
         return;
@@ -98,8 +105,8 @@ export function DualCaptionEditor(props: {
         'Restore unsaved dual-subtitle edits?',
         'Caption Studio found typed edits that were not saved. Keeping the current translation leaves the second language as it is now.',
         [
-          { text: 'Keep current translation', style: 'cancel', onPress: () => { void clearEditorDraftJournal(props.projectId, journalKind).catch(() => setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.')); setJournalReady(true); } },
-          { text: 'Restore unsaved typing', onPress: () => { setDrafts(mergeRecoveredDualCaptionDrafts(recovered, sourceDraftsRef.current)); setJournalReady(true); } },
+          { text: 'Keep current translation', style: 'cancel', onPress: () => { const current = sourceDraftsRef.current; setCommittedDrafts(current); setDrafts(current); void clearEditorDraftJournal(props.projectId, journalKind).catch(() => setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.')); setJournalReady(true); } },
+          { text: 'Restore unsaved typing', onPress: () => { const current = sourceDraftsRef.current; setCommittedDrafts(current); setDrafts(mergeRecoveredDualCaptionDrafts(recovered, current)); setJournalReady(true); } },
         ],
       );
     }).catch(() => {
@@ -184,15 +191,14 @@ export function DualCaptionEditor(props: {
   };
 
   const setDraft = (captionId: string, field: keyof DualCaptionDraft, value: string) => {
-    setDrafts((current) => {
-      const baseline = displayDrafts[captionId] ?? current[captionId] ?? { primaryText: '', translatedText: '' };
-      return {
-        ...current,
-        [captionId]: {
-          ...baseline,
-          [field]: value,
-        },
-      };
+    const baseline = displayDrafts[captionId] ?? { primaryText: '', translatedText: '' };
+    setCommittedDrafts(sourceDrafts);
+    setDrafts({
+      ...displayDrafts,
+      [captionId]: {
+        ...baseline,
+        [field]: value,
+      },
     });
   };
 

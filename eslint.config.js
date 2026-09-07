@@ -1,4 +1,3 @@
-// https://docs.expo.dev/guides/using-eslint/
 const { defineConfig } = require('eslint/config');
 const expoConfig = require("eslint-config-expo/flat");
 
@@ -7,10 +6,20 @@ module.exports = defineConfig([
   {
     ignores: ["dist/*", "scripts/*"],
     rules: {
-      // Gesture responders intentionally keep the latest callbacks in refs, and
-      // expo-video's player is a documented mutable native object.
-      "react-hooks/refs": "off",
-      "react-hooks/immutability": "off",
+      "react-hooks/refs": "error",
+      "react-hooks/immutability": "error",
     },
-  }
+  },
+  {
+    files: [
+      "src/components/editor/caption-overlay.tsx",
+      "src/components/editor/image-layer-overlay.tsx",
+      "src/components/editor/layer-timeline.tsx",
+      "src/components/editor/video-tools.tsx",
+      "src/components/editor/video-transform-overlay.tsx",
+    ],
+    rules: {
+      "react-hooks/refs": "off",
+    },
+  },
 ]);

@@ -565,7 +565,7 @@ test('hold-drag clip reorder keeps the filmstrip mounted and remaps captions plu
   assert.match(timeline, /reorderTrackWidth\(/);
   assert.match(timeline, /reorderScrollOffsetForTile\(/);
   assert.match(timeline, /reorderAutoScrollOffset\(/);
-  assert.match(timeline, /Reorder mode owns scroll/);
+  assert.match(timeline, /horizontalRef\.current\?\.scrollTo\(\{ x, animated: false \}\)/);
   assert.doesNotMatch(timeline, /Math\.max\(baseTrackWidth, filmstripWidth\)/);
   assert.match(timeline, /ensureClipFrameThumbnail/);
   assert.match(timeline, /ClipFrameThumb/);
@@ -1359,7 +1359,7 @@ test('video transport has dual primed players for seamless clip handoff', () => 
   assert.match(controller, /playIntentRef/);
   assert.match(controller, /desiredRef/);
   assert.match(controller, /processingRef/);
-  assert.match(controller, /initialSourceRef/);
+  assert.match(controller, /const initialSource =/);
   assert.match(controller, /generation !== generationRef\.current/);
   assert.match(controller, /if \(!mountedRef\.current\) return/);
   assert.match(controller, /synchronizeProject[\s\S]*desiredRef\.current/);
@@ -1477,4 +1477,3 @@ test('audio sources persist waveform peaks and extract busy arms after a source 
   assert.match(editor, /markExtractBusy/);
   assert.match(editor, /appendAudioToProject\(before, currentMs, 'video-audio', markExtractBusy\)/);
 });
-
