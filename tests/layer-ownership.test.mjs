@@ -50,3 +50,15 @@ test('export consent is UI-owned and native cleanup never swallows fatal errors'
   assert.doesNotMatch(nativeMedia, /catch \([^)]*Throwable/);
   assert.match(nativeMedia, /cleanupMediaResource/);
 });
+
+test('model transfer, lifecycle, and provider release truth stay in their owning layers', () => {
+  const transfer = readFileSync(join(root, 'src', 'services', 'verified-model-download.ts'), 'utf8');
+  const lifecycle = readFileSync(join(root, 'src', 'hooks', 'use-foreground-operation.ts'), 'utf8');
+  const editor = readFileSync(join(root, 'src', 'app', 'editor.tsx'), 'utf8');
+  assert.match(transfer, /DownloadTask\.fromSavable/);
+  assert.match(transfer, /verifySha256/);
+  assert.doesNotMatch(transfer, /\bAppState\b|\bAlert\.alert\(/);
+  assert.match(lifecycle, /AppState\.addEventListener/);
+  assert.doesNotMatch(lifecycle, /downloadUrl|sha256|downloadBytes/);
+  assert.doesNotMatch(editor, /DownloadTask|resumeData|downloadUrl|sha256/);
+});

@@ -92,7 +92,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     } catch (caught) {
       if (mountedRef.current && activeOperationRef.current === operationId && interruptedRef.current) {
         const action = interruptedOperationLabel(activeStageRef.current);
-        setError(`The ${action} stopped because Caption Studio left the foreground. Keep this screen open and the phone unlocked, then tap Retry.`);
+        setError(`The ${action} paused because Caption Studio left the foreground. Downloaded model bytes and completed translation checkpoints were kept. Keep this screen open and the phone unlocked, then tap Retry to continue unfinished lines.`);
       } else if (
         mountedRef.current
         && activeOperationRef.current === operationId

@@ -19,6 +19,12 @@ import {
 import { buildPcm16MonoWave, parseCaptionPcmWave, planOverlappingPcmChunks } from '@/lib/wav-chunking';
 import { requireFreeSpace } from '@/services/storage-policy';
 import type { CaptionGenerationSessionContext } from '@/services/caption-generation-session';
+import {
+  downloadVerifiedModel,
+  ModelDownloadIntegrityError,
+  ModelDownloadPausedError,
+  resumableModelDownloadReservation,
+} from '@/services/verified-model-download';
 import type { WordToken } from '@/types/project';
 
 export type TranscriptionStage =
@@ -88,7 +94,7 @@ export async function removeDownloadedTranscriptionModels() {
     VAD_MODEL.fileName,
   ];
   for (const fileName of fileNames) {
-    for (const suffix of ['', '.sha256', '.sha256.download', '.download']) {
+    for (const suffix of ['', '.sha256', '.sha256.download', '.download', '.download.resume.json', '.download.resume.json.writing']) {
       const file = new File(directory, `${fileName}${suffix}`);
       if (file.exists) file.delete();
     }
@@ -124,8 +130,9 @@ async function downloadModel(
   if (await verifyModelFile(modelFile, model.downloadBytes, model.sha256)) {
     return modelFile;
   }
+  const reservation = await resumableModelDownloadReservation(modelFile, model);
   await requireFreeSpace(
-    model.downloadBytes + MODEL_REPLACEMENT_HEADROOM_BYTES,
+    reservation + MODEL_REPLACEMENT_HEADROOM_BYTES,
     `replace the ${model.label} transcription model safely`,
   );
 
@@ -135,15 +142,13 @@ async function downloadModel(
     detail: `Downloading ${model.label} model once for offline use`,
   });
 
-  const temporaryFile = new File(modelDirectory, `${model.fileName}.download`);
-  if (temporaryFile.exists) temporaryFile.delete();
-  const controller = new AbortController();
-  const unregisterStopper = session?.registerStopper(async () => controller.abort('Caption generation cancelled.'));
   try {
-    await File.downloadFileAsync(model.downloadUrl, temporaryFile, {
-      idempotent: true,
-      signal: controller.signal,
-      onProgress: ({ bytesWritten, totalBytes }) => {
+    await downloadVerifiedModel({
+      target: modelFile,
+      descriptor: model,
+      verifySha256: (uri) => CaptionMedia.sha256(uri),
+      registerPauser: session ? (pause) => session.registerStopper(pause) : undefined,
+      onProgress: (bytesWritten, totalBytes) => {
         if (session?.isCancelled()) return;
         const denominator = totalBytes > 0 ? totalBytes : model.downloadBytes;
         onProgress?.({
@@ -152,23 +157,20 @@ async function downloadModel(
           detail: `Downloading ${model.label} model`,
         });
       },
+      onVerifying: () => onProgress?.({
+        stage: 'downloading-model',
+        progress: 1,
+        detail: `Verifying ${model.label} model`,
+      }),
     });
   } catch (error) {
-    if (temporaryFile.exists) temporaryFile.delete();
+    if (error instanceof ModelDownloadPausedError) session?.throwIfCancelled();
+    if (error instanceof ModelDownloadIntegrityError) {
+      throw new Error(`The ${model.label} model failed its security check. Delete it and try again.`);
+    }
     throw error;
-  } finally {
-    unregisterStopper?.();
   }
-  if (temporaryFile.size !== model.downloadBytes) {
-    temporaryFile.delete();
-    throw new Error(`The ${model.label} model download was incomplete. Try again on a stable connection.`);
-  }
-  if (await CaptionMedia.sha256(temporaryFile.uri) !== model.sha256) {
-    temporaryFile.delete();
-    throw new Error(`The ${model.label} model failed its security check. Delete it and try again.`);
-  }
-  if (modelFile.exists) modelFile.delete();
-  await temporaryFile.move(modelFile);
+  session?.throwIfCancelled();
   await writeModelVerificationMarker(modelFile, model.sha256);
   return modelFile;
 }
@@ -181,8 +183,9 @@ async function ensureVadModel(
   modelDirectory.create({ idempotent: true, intermediates: true });
   const modelFile = new File(modelDirectory, VAD_MODEL.fileName);
   if (await verifyModelFile(modelFile, VAD_MODEL.downloadBytes, VAD_MODEL.sha256)) return modelFile;
+  const reservation = await resumableModelDownloadReservation(modelFile, VAD_MODEL);
   await requireFreeSpace(
-    VAD_MODEL.downloadBytes + MODEL_REPLACEMENT_HEADROOM_BYTES,
+    reservation + MODEL_REPLACEMENT_HEADROOM_BYTES,
     'replace the offline silence-detector model safely',
   );
 
@@ -191,15 +194,13 @@ async function ensureVadModel(
     progress: 0,
     detail: 'Downloading the small offline silence detector once',
   });
-  const temporaryFile = new File(modelDirectory, `${VAD_MODEL.fileName}.download`);
-  if (temporaryFile.exists) temporaryFile.delete();
-  const controller = new AbortController();
-  const unregisterStopper = session?.registerStopper(async () => controller.abort('Caption generation cancelled.'));
   try {
-    await File.downloadFileAsync(VAD_MODEL.downloadUrl, temporaryFile, {
-      idempotent: true,
-      signal: controller.signal,
-      onProgress: ({ bytesWritten, totalBytes }) => {
+    await downloadVerifiedModel({
+      target: modelFile,
+      descriptor: VAD_MODEL,
+      verifySha256: (uri) => CaptionMedia.sha256(uri),
+      registerPauser: session ? (pause) => session.registerStopper(pause) : undefined,
+      onProgress: (bytesWritten, totalBytes) => {
         if (session?.isCancelled()) return;
         onProgress?.({
           stage: 'downloading-model',
@@ -207,19 +208,20 @@ async function ensureVadModel(
           detail: 'Downloading offline silence detector',
         });
       },
+      onVerifying: () => onProgress?.({
+        stage: 'downloading-model',
+        progress: 1,
+        detail: 'Verifying offline silence detector',
+      }),
     });
   } catch (error) {
-    if (temporaryFile.exists) temporaryFile.delete();
+    if (error instanceof ModelDownloadPausedError) session?.throwIfCancelled();
+    if (error instanceof ModelDownloadIntegrityError) {
+      throw new Error('The silence-detector model failed its security check. Try the download again.');
+    }
     throw error;
-  } finally {
-    unregisterStopper?.();
   }
-  if (temporaryFile.size !== VAD_MODEL.downloadBytes || await CaptionMedia.sha256(temporaryFile.uri) !== VAD_MODEL.sha256) {
-    if (temporaryFile.exists) temporaryFile.delete();
-    throw new Error('The silence-detector model failed its security check. Try the download again.');
-  }
-  if (modelFile.exists) modelFile.delete();
-  await temporaryFile.move(modelFile);
+  session?.throwIfCancelled();
   await writeModelVerificationMarker(modelFile, VAD_MODEL.sha256);
   return modelFile;
 }
@@ -265,13 +267,17 @@ function modelFileIdentity(file: File): ModelFileIdentity {
   };
 }
 
-async function modelReplacementReservation(file: File, expectedBytes: number, expectedSha256: string) {
-  if (!file.exists || file.size !== expectedBytes) return expectedBytes;
+async function modelReplacementReservation(
+  file: File,
+  descriptor: { downloadUrl: string; downloadBytes: number; sha256: string },
+) {
+  const { downloadBytes: expectedBytes, sha256: expectedSha256 } = descriptor;
+  if (!file.exists || file.size !== expectedBytes) {
+    return resumableModelDownloadReservation(file, descriptor);
+  }
   const marker = new File(file.parentDirectory, `${file.name}.sha256`);
-  if (!marker.exists) return expectedBytes;
-  return modelVerificationMarkerMatches(await marker.text(), modelFileIdentity(file), expectedSha256)
-    ? 0
-    : expectedBytes;
+  if (marker.exists && modelVerificationMarkerMatches(await marker.text(), modelFileIdentity(file), expectedSha256)) return 0;
+  return resumableModelDownloadReservation(file, descriptor);
 }
 
 export async function transcribeVideoLocally(options: {
@@ -293,8 +299,8 @@ export async function transcribeVideoLocally(options: {
   const vadModelFile = new File(new Directory(Paths.document, 'models'), VAD_MODEL.fileName);
   const estimatedWavBytes = Math.ceil(Math.max(0, options.durationMs) / 1000) * 32_000 + 44;
   const [modelBytes, vadModelBytes] = await Promise.all([
-    modelReplacementReservation(modelFile, model.downloadBytes, model.sha256),
-    modelReplacementReservation(vadModelFile, VAD_MODEL.downloadBytes, VAD_MODEL.sha256),
+    modelReplacementReservation(modelFile, model),
+    modelReplacementReservation(vadModelFile, VAD_MODEL),
   ]);
   await requireFreeSpace(
     estimatedWavBytes + modelBytes + vadModelBytes + 128 * 1024 * 1024,
