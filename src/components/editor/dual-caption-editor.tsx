@@ -43,7 +43,9 @@ export function DualCaptionEditor(props: {
   busy: boolean;
   progressLabel?: string;
   errorMessage?: string;
+  retryErrorAvailable: boolean;
   onDismissError: () => void;
+  onRetryError: () => void;
   onClose: () => void;
   onSave: (edits: DualCaptionTextEdit[]) => Promise<boolean>;
   onRefresh: (sourceCaptionIds: string[]) => void;
@@ -309,9 +311,16 @@ export function DualCaptionEditor(props: {
               <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 19, textAlign: 'center' }}>
                 Keep Caption Studio open on this screen and keep the phone unlocked until this finishes.
               </Text>
-              <Pressable accessibilityRole="button" onPress={props.errorMessage ? props.onDismissError : props.onCancelBusy} style={{ alignItems: 'center', paddingVertical: 11, borderRadius: chrome.radius.md, backgroundColor: chrome.fill }}>
-                <Text style={{ color: props.errorMessage ? chrome.text : chrome.dangerText, fontWeight: '800' }}>{props.errorMessage ? 'Close' : 'Cancel'}</Text>
-              </Pressable>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                {props.errorMessage && props.retryErrorAvailable ? (
+                  <Pressable accessibilityRole="button" accessibilityLabel="Retry interrupted translation" onPress={props.onRetryError} style={{ flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: chrome.radius.md, backgroundColor: chrome.accent }}>
+                    <Text style={{ color: chrome.accentInk, fontWeight: '800' }}>Retry</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable accessibilityRole="button" onPress={props.errorMessage ? props.onDismissError : props.onCancelBusy} style={{ flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: chrome.radius.md, backgroundColor: chrome.fill }}>
+                  <Text style={{ color: props.errorMessage ? chrome.text : chrome.dangerText, fontWeight: '800' }}>{props.errorMessage ? 'Close' : 'Cancel'}</Text>
+                </Pressable>
+              </View>
             </View>
           </View>
         ) : null}

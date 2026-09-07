@@ -2309,7 +2309,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         busy={Boolean(translationProgress) || translationCancelling}
         progressLabel={translationCancelling ? 'Cancelling local translation…' : translationProgressLabel(translationProgress)}
         errorMessage={translationController.error}
+        retryErrorAvailable={translationController.retryAvailable}
         onDismissError={translationController.clearError}
+        onRetryError={() => { void translationController.retry(); }}
         onClose={() => {
           if (!translationProgress && !translationCancelling) setDualCaptionEditorOpen(false);
         }}
