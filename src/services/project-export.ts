@@ -66,7 +66,9 @@ export function cancelProjectVideoExport() {
   return videoExportSession.cancel();
 }
 
-export function getProjectVideoExportProgress(): Promise<TimelineVideoExportProgress> {
+export type ProjectVideoExportProgress = TimelineVideoExportProgress;
+
+export function getProjectVideoExportProgress(): Promise<ProjectVideoExportProgress> {
   return CaptionMedia.getTimelineVideoExportProgress();
 }
 

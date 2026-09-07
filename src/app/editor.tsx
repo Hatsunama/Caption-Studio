@@ -4,7 +4,6 @@ import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { TimelineVideoExportProgress } from 'caption-media';
 import {
   ActivityIndicator,
   Alert,
@@ -35,6 +34,7 @@ import { VideoTransitionOverlay } from '@/components/editor/video-transition-ove
 import { useTimelineVideoController } from '@/hooks/use-timeline-video-controller';
 import { useTimelineAudioController } from '@/hooks/use-timeline-audio-controller';
 import { useProjectCaptionTranslation } from '@/hooks/use-project-caption-translation';
+import { useForegroundOperation } from '@/hooks/use-foreground-operation';
 import { useEditorRuntimePolicy } from '@/hooks/use-editor-runtime-policy';
 import { deleteAudioClip, duplicateAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '@/lib/audio-timeline';
 import { findAnimationPreset } from '@/lib/animation-presets';
@@ -70,7 +70,6 @@ import {
   type CaptionScriptMutation,
 } from '@/lib/caption-script';
 import { fontChoicePatch, type FontChoice } from '@/lib/font-catalog';
-import { TRANSCRIPTION_MODELS, type TranscriptionModel } from '@/lib/model-catalog';
 import { canApplyVideoTransition, VIDEO_TRANSITION_PRESETS } from '@/lib/video-transitions';
 import {
   addImageLayer as addImageLayerToProject,
@@ -112,7 +111,14 @@ import {
 } from '@/services/background-processing-consent';
 import { pickAndStoreImage, pickBackgroundMedia, type MediaImportProgress } from '@/services/media-import';
 import { releasePersonPreview, renderPersonPreview } from '@/services/person-compositor';
-import { cancelProjectVideoExport, exportProjectVideo, exportSubtitleFile, getProjectVideoExportProgress, userFacingExportError } from '@/services/project-export';
+import {
+  cancelProjectVideoExport,
+  exportProjectVideo,
+  exportSubtitleFile,
+  getProjectVideoExportProgress,
+  userFacingExportError,
+  type ProjectVideoExportProgress,
+} from '@/services/project-export';
 import { validateProjectSources } from '@/services/project-media';
 import {
   appendVideosToProject,
@@ -141,7 +147,11 @@ import {
 } from '@/services/project-persistence';
 import { VideoExportCancelledError } from '@/services/video-export-session';
 import { chrome } from '@/lib/ui-theme';
-import type { TranscriptionProgress } from '@/services/transcription';
+import {
+  TRANSCRIPTION_MODEL_OPTIONS,
+  type TranscriptionModelId,
+  type TranscriptionProgress,
+} from '@/services/transcription';
 import {
   type CaptionAnimationId,
   type CaptionProject,
@@ -246,7 +256,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [activeTool, setActiveTool] = useState<EditorTool>('captions');
   const [exporting, setExporting] = useState(false);
   const [exportKind, setExportKind] = useState<'video' | 'subtitle'>('video');
-  const [exportProgress, setExportProgress] = useState<TimelineVideoExportProgress>();
+  const [exportProgress, setExportProgress] = useState<ProjectVideoExportProgress>();
   const [animationScope, setAnimationScope] = useState<StyleScope>('all');
   const [extractAudioOpen, setExtractAudioOpen] = useState(false);
   const [extractAudioBusy, setExtractAudioBusy] = useState(false);
@@ -630,7 +640,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     persistProjectInBackground(next);
   };
 
-  const generateCaptions = async (modelId: TranscriptionModel['id']) => {
+  const generateCaptions = async (modelId: TranscriptionModelId) => {
     setError(undefined);
     setTranscriptionCancelling(false);
     try {
@@ -677,14 +687,34 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     if (!cancelled) setTranscriptionCancelling(false);
   };
 
+  const captionForeground = useForegroundOperation({
+    stage: progress?.stage,
+    interrupt: cancelCaptionGeneration,
+  });
+  const captionInterruption = captionForeground.interruption;
+  const captionInterruptionMessage = !captionInterruption
+    ? undefined
+    : captionInterruption.stage === 'downloading-model' && !captionInterruption.interruptionError
+      ? 'The caption-model download paused because Caption Studio left the foreground. Downloaded model bytes were saved. Keep this screen open and the phone unlocked, then choose the same quality to resume.'
+      : captionInterruption.interruptionError
+        ? `Caption generation stopped when Caption Studio left the foreground, but Android could not preserve the active transfer: ${captionInterruption.interruptionError}`
+        : 'Caption generation stopped because Caption Studio left the foreground. The project and previously saved captions were left unchanged. Keep this screen open and the phone unlocked, then try again.';
+
+  useEffect(() => {
+    if (!captionInterruptionMessage) return;
+    Alert.alert('Caption generation paused', captionInterruptionMessage, [
+      { text: 'OK', onPress: captionForeground.clearInterruption },
+    ]);
+  }, [captionForeground.clearInterruption, captionInterruptionMessage]);
+
   const chooseCaptionQuality = (replacingExisting: boolean) => {
-    const modelDescription = TRANSCRIPTION_MODELS
+    const modelDescription = TRANSCRIPTION_MODEL_OPTIONS
       .map((model) => `${model.label} · ${formatMegabytes(model.downloadBytes)} download\n${model.description}`)
       .join('\n\n');
     Alert.alert(
       replacingExisting ? 'Replace captions with which quality?' : 'Choose caption quality',
-      `${replacingExisting ? 'This replaces the current caption text and timing. Styles and extra layers stay unchanged.\n\n' : ''}${modelDescription}`,
-      TRANSCRIPTION_MODELS.map((model) => ({
+      `${replacingExisting ? 'This replaces the current caption text and timing. Styles and extra layers stay unchanged.\n\n' : ''}${modelDescription}\n\nKeep Caption Studio open and the phone unlocked until caption generation finishes. If Android interrupts a model download, downloaded bytes are saved and choosing the same quality resumes it.`,
+      TRANSCRIPTION_MODEL_OPTIONS.map((model) => ({
         text: model.id === 'balanced' ? `${model.label} (recommended)` : model.label,
         onPress: () => { void generateCaptions(model.id); },
       })),
@@ -2196,9 +2226,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           </ScrollView>
         )}
 
-        {error || persistenceError || translationController.error ? (
+        {captionInterruptionMessage || error || persistenceError || translationController.error ? (
           <View style={{ padding: 12, borderRadius: 13, backgroundColor: '#351D24' }}>
-            <Text selectable accessibilityRole="alert" style={{ color: '#FFBBC8', fontSize: 13 }}>{error ?? persistenceError ?? translationController.error}</Text>
+            <Text selectable accessibilityRole="alert" style={{ color: '#FFBBC8', fontSize: 13 }}>{captionInterruptionMessage ?? error ?? persistenceError ?? translationController.error}</Text>
           </View>
         ) : null}
 
@@ -2435,6 +2465,9 @@ function ProgressOverlay(props: {
             {stageTitle(props.progress.stage)}
           </Text>
           <Text style={{ color: palette.muted, textAlign: 'center', fontSize: 14 }}>{props.progress.detail}</Text>
+          <Text style={{ color: palette.text, textAlign: 'center', lineHeight: 20 }}>
+            Keep Caption Studio open and the phone unlocked. If Android interrupts a model download, downloaded bytes are saved for retry.
+          </Text>
           <View style={{ height: 8, overflow: 'hidden', borderRadius: chrome.radius.pill, backgroundColor: chrome.fill }}>
             <View style={{ width: `${percent}%`, height: '100%', backgroundColor: palette.accent }} />
           </View>
@@ -2517,7 +2550,7 @@ function translationProgressLabel(progress?: CaptionTranslationProgress) {
   return `${progress.detail} · ${Math.round(progress.progress * 100)}%`;
 }
 
-function exportProgressLabel(progress: TimelineVideoExportProgress) {
+function exportProgressLabel(progress: ProjectVideoExportProgress) {
   if (progress.stage === 'publishing') return 'Saving to media library · 99%';
   if (progress.stage === 'preparing') return 'Preparing renderer';
   if (progress.percent == null) return 'Rendering video';

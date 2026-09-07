@@ -16,6 +16,12 @@ import {
   captionTextTail,
 } from '@/lib/caption-text-breaks';
 import { requireFreeSpace } from '@/services/storage-policy';
+import {
+  downloadVerifiedModel,
+  ModelDownloadIntegrityError,
+  ModelDownloadPausedError,
+  resumableModelDownloadReservation,
+} from '@/services/verified-model-download';
 
 const NATURAL_TRANSLATION_MODEL = {
   id: 'qwen2.5-1.5b-q8',
@@ -87,7 +93,7 @@ export class CaptionTranslationCancelledError extends Error {
 
 export class CaptionTranslationDownloadError extends Error {
   constructor() {
-    super('The language-model download stopped before it finished. Keep Caption Studio open on this screen with the phone unlocked, then tap Retry.');
+    super('The language-model download stopped before it finished. Downloaded bytes were saved. Keep Caption Studio open with the phone unlocked, then tap Retry to resume.');
     this.name = 'CaptionTranslationDownloadError';
   }
 }
@@ -95,7 +101,7 @@ export class CaptionTranslationDownloadError extends Error {
 type ActiveTranslation = {
   id: symbol;
   cancelled: boolean;
-  downloadController?: AbortController;
+  pauseDownload?: () => Promise<void>;
 };
 
 let activeTranslation: ActiveTranslation | undefined;
@@ -120,7 +126,7 @@ export async function removeDownloadedNaturalTranslationModel() {
     throw new Error('Wait for caption translation to finish or cancel it before removing the language model.');
   }
   const directory = translationModelDirectory();
-  for (const suffix of ['', '.sha256', '.download']) {
+  for (const suffix of ['', '.sha256', '.download', '.download.resume.json', '.download.resume.json.writing']) {
     const file = new File(directory, `${NATURAL_TRANSLATION_MODEL.fileName}${suffix}`);
     if (file.exists) file.delete();
   }
@@ -316,8 +322,13 @@ export async function cancelNaturalCaptionTranslation() {
   const run = activeTranslation;
   if (!run) return false;
   run.cancelled = true;
-  run.downloadController?.abort('Caption translation cancelled.');
-  await CaptionTranslation.cancelNaturalCaptionTranslation().catch(() => undefined);
+  const pauseOperation = run.pauseDownload?.();
+  try {
+    await CaptionTranslation.cancelNaturalCaptionTranslation();
+  } catch (error) {
+    if (!pauseOperation) throw error;
+  }
+  await pauseOperation;
   return true;
 }
 
@@ -341,24 +352,28 @@ async function downloadNaturalTranslationModel(
   run: ActiveTranslation,
   onProgress?: (progress: CaptionTranslationProgress) => void,
 ) {
-  await requireFreeSpace(
-    NATURAL_TRANSLATION_MODEL.downloadBytes + 384 * 1024 * 1024,
-    'download the optional natural multilingual translation model',
-  );
-  throwIfCancelled(run);
   const directory = translationModelDirectory();
   directory.create({ idempotent: true, intermediates: true });
   const target = translationModelFile();
-  const temporary = new File(directory, `${NATURAL_TRANSLATION_MODEL.fileName}.download`);
-  if (temporary.exists) temporary.delete();
-  const controller = new AbortController();
-  run.downloadController = controller;
+  const reservation = await resumableModelDownloadReservation(target, NATURAL_TRANSLATION_MODEL);
+  await requireFreeSpace(
+    reservation + 384 * 1024 * 1024,
+    'download the optional natural multilingual translation model',
+  );
+  throwIfCancelled(run);
   onProgress?.({ stage: 'downloading-model', progress: 0, detail: 'Downloading the optional natural multilingual model once. Keep this screen open.' });
   try {
-    await File.downloadFileAsync(NATURAL_TRANSLATION_MODEL.downloadUrl, temporary, {
-      idempotent: true,
-      signal: controller.signal,
-      onProgress: ({ bytesWritten, totalBytes }) => {
+    await downloadVerifiedModel({
+      target,
+      descriptor: NATURAL_TRANSLATION_MODEL,
+      verifySha256: (uri) => CaptionMedia.sha256(uri),
+      registerPauser: (pause) => {
+        run.pauseDownload = pause;
+        return () => {
+          if (run.pauseDownload === pause) run.pauseDownload = undefined;
+        };
+      },
+      onProgress: (bytesWritten, totalBytes) => {
         if (run.cancelled) return;
         const denominator = totalBytes > 0 ? totalBytes : NATURAL_TRANSLATION_MODEL.downloadBytes;
         onProgress?.({
@@ -367,26 +382,16 @@ async function downloadNaturalTranslationModel(
           detail: `Downloading natural translation model · ${formatModelProgress(bytesWritten, denominator)}`,
         });
       },
+      onVerifying: () => onProgress?.({ stage: 'verifying-model', progress: null, detail: 'Verifying the downloaded model' }),
     });
-  } catch {
-    if (temporary.exists) temporary.delete();
-    if (run.cancelled || controller.signal.aborted) throw new CaptionTranslationCancelledError();
+  } catch (error) {
+    if (run.cancelled || error instanceof ModelDownloadPausedError) throw new CaptionTranslationCancelledError();
+    if (error instanceof ModelDownloadIntegrityError) {
+      throw new Error('The natural translation model failed its security check and was discarded.');
+    }
     throw new CaptionTranslationDownloadError();
-  } finally {
-    if (run.downloadController === controller) run.downloadController = undefined;
   }
   throwIfCancelled(run);
-  if (temporary.size !== NATURAL_TRANSLATION_MODEL.downloadBytes) {
-    temporary.delete();
-    throw new Error('The natural translation model download was incomplete. Try again on a stable connection.');
-  }
-  onProgress?.({ stage: 'verifying-model', progress: null, detail: 'Verifying the downloaded model' });
-  if (await CaptionMedia.sha256(temporary.uri) !== NATURAL_TRANSLATION_MODEL.sha256) {
-    temporary.delete();
-    throw new Error('The natural translation model failed its security check and was discarded.');
-  }
-  if (target.exists) target.delete();
-  await temporary.move(target);
   new File(directory, `${NATURAL_TRANSLATION_MODEL.fileName}.sha256`).write(NATURAL_TRANSLATION_MODEL.sha256);
   return target;
 }

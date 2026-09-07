@@ -1,4 +1,4 @@
-import reactionCatalogJson from '../../modules/caption-media/android/src/main/assets/emoji-reactions.json';
+import reactionCatalogJson from '../../shared/emoji-reactions.json';
 
 type ReactionCategory = {
   id: string;

@@ -9,7 +9,6 @@ import {
   type ProjectOwnedAssetLedger,
 } from '@/lib/media-lifecycle';
 import { totalClipDuration } from '@/lib/video-timeline';
-import type { TranscriptionModel } from '@/lib/model-catalog';
 import { humanVideoName } from '@/lib/project-presentation';
 import {
   deleteProjectRecord,
@@ -44,7 +43,7 @@ import {
   releaseUnreferencedReadPermissions,
   retryPendingReadPermissionReleases,
 } from '@/services/media-permissions';
-import type { TranscriptionProgress } from '@/services/transcription';
+import type { TranscriptionModelId, TranscriptionProgress } from '@/services/transcription';
 import type { CaptionProject } from '@/types/project';
 import type { ProjectRecordSummary } from '@/types/project-library';
 
@@ -176,7 +175,7 @@ export async function appendAudioToProject(
 
 export async function generateAndSaveProjectCaptions(
   project: CaptionProject,
-  modelId: TranscriptionModel['id'],
+  modelId: TranscriptionModelId,
   onProgress?: (progress: TranscriptionProgress) => void,
 ) {
   return captionGenerationSession.run(async (session) => {

@@ -72,6 +72,7 @@ test('durable media and font imports validate staging before atomic promotion', 
   const projectMedia = readFileSync(new URL('../src/services/project-media.ts', import.meta.url), 'utf8');
   const fontStorage = readFileSync(new URL('../src/services/font-storage.ts', import.meta.url), 'utf8');
   const transcription = readFileSync(new URL('../src/services/transcription.ts', import.meta.url), 'utf8');
+  const modelDownload = readFileSync(new URL('../src/services/verified-model-download.ts', import.meta.url), 'utf8');
 
   assert.match(native, /mime\.startsWith\("video\/"\)/);
   assert.match(native, /probeVideoFrame\(retriever,/);
@@ -80,7 +81,9 @@ test('durable media and font imports validate staging before atomic promotion', 
   assert.match(projectMedia, /copyAsync\(\{ from: options\.sourceUri, to: stagingUri \}\)[\s\S]*validateImageFile\(stagingUri\)[\s\S]*moveAsync/);
   assert.match(fontStorage, /copyAsync\(\{ from: asset\.uri, to: stagingUri \}\)[\s\S]*validateFontFile\(stagingUri\)[\s\S]*moveAsync/);
   assert.match(transcription, /modelVerificationMarkerMatches/);
-  assert.match(transcription, /model\.downloadBytes \+ MODEL_REPLACEMENT_HEADROOM_BYTES/);
+  assert.match(transcription, /resumableModelDownloadReservation\(modelFile, model\)/);
+  assert.match(modelDownload, /remainingModelDownloadBytes/);
+  assert.match(modelDownload, /verifySha256[\s\S]*replaceTarget/);
   assert.match(transcription, /planOverlappingPcmChunks[\s\S]*session\?\.throwIfCancelled\(\)/);
 });
 

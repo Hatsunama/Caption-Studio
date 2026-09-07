@@ -75,7 +75,7 @@ test('one pinned local model owns every supported multilingual direction', async
   const [service, languages, catalog] = await Promise.all([
     readFile(new URL('src/services/caption-translation.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/lib/caption-languages.ts', repositoryRoot), 'utf8'),
-    readFile(new URL('src/lib/model-catalog.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/services/transcription.ts', repositoryRoot), 'utf8'),
   ]);
 
   assert.equal((service.match(/downloadUrl:/g) ?? []).length, 1);
