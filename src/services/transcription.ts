@@ -2,12 +2,6 @@ import { Directory, File, FileMode, Paths } from 'expo-file-system';
 import { initWhisper, initWhisperVad } from 'whisper.rn/index';
 
 import CaptionMedia from 'caption-media';
-import {
-  getModel,
-  LEGACY_ENGLISH_MODEL_FILES,
-  TRANSCRIPTION_MODELS,
-  type TranscriptionModel,
-} from '@/lib/model-catalog';
 import { alignWordsToSpeech } from '@/lib/speech-alignment';
 import { PREPARING_AUDIO_CUES } from '@/lib/transcription-progress';
 import { coalesceWhisperWords } from '@/lib/whisper-words';
@@ -26,6 +20,73 @@ import {
   resumableModelDownloadReservation,
 } from '@/services/verified-model-download';
 import type { WordToken } from '@/types/project';
+
+export type TranscriptionModelId = 'fast' | 'balanced' | 'accurate';
+
+export type TranscriptionModelOption = Readonly<{
+  id: TranscriptionModelId;
+  label: string;
+  description: string;
+  downloadBytes: number;
+}>;
+
+type TranscriptionModel = TranscriptionModelOption & Readonly<{
+  fileName: string;
+  downloadUrl: string;
+  sha256: string;
+}>;
+
+const MODEL_REVISION = 'c521a4b02f422512d734391fdf08bb08c0862f68';
+const MODEL_ROOT = `https://huggingface.co/ggerganov/whisper.cpp/resolve/${MODEL_REVISION}`;
+const LEGACY_ENGLISH_MODEL_FILES = [
+  'ggml-tiny.en-q5_1.bin',
+  'ggml-base.en-q5_1.bin',
+  'ggml-small.en-q5_1.bin',
+] as const;
+const TRANSCRIPTION_MODELS: readonly TranscriptionModel[] = [
+  {
+    id: 'fast',
+    label: 'Fast',
+    description: 'Tiny multilingual, best for quick drafts and lower-memory phones.',
+    fileName: 'ggml-tiny-q5_1.bin',
+    downloadUrl: `${MODEL_ROOT}/ggml-tiny-q5_1.bin`,
+    downloadBytes: 32_152_673,
+    sha256: '818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7',
+  },
+  {
+    id: 'balanced',
+    label: 'Balanced',
+    description: 'Base multilingual, the default quality/speed choice.',
+    fileName: 'ggml-base-q5_1.bin',
+    downloadUrl: `${MODEL_ROOT}/ggml-base-q5_1.bin`,
+    downloadBytes: 59_707_625,
+    sha256: '422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898',
+  },
+  {
+    id: 'accurate',
+    label: 'Accurate',
+    description: 'Small multilingual, slower and intended for higher-memory phones.',
+    fileName: 'ggml-small-q5_1.bin',
+    downloadUrl: `${MODEL_ROOT}/ggml-small-q5_1.bin`,
+    downloadBytes: 190_085_487,
+    sha256: 'ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb',
+  },
+];
+
+export const TRANSCRIPTION_MODEL_OPTIONS: readonly TranscriptionModelOption[] = Object.freeze(
+  TRANSCRIPTION_MODELS.map(({ id, label, description, downloadBytes }) => Object.freeze({
+    id,
+    label,
+    description,
+    downloadBytes,
+  })),
+);
+
+function getModel(modelId: TranscriptionModelId) {
+  const model = TRANSCRIPTION_MODELS.find((item) => item.id === modelId);
+  if (!model) throw new Error(`Unknown transcription model: ${modelId}`);
+  return model;
+}
 
 export type TranscriptionStage =
   | 'preparing-audio'
@@ -66,7 +127,7 @@ const VAD_OPTIONS = {
 };
 
 export type DownloadedTranscriptionModel = {
-  id: TranscriptionModel['id'];
+  id: TranscriptionModelId;
   label: string;
   sizeBytes: number;
 };
@@ -102,7 +163,7 @@ export async function removeDownloadedTranscriptionModels() {
 }
 
 export async function ensureModel(
-  modelId: TranscriptionModel['id'],
+  modelId: TranscriptionModelId,
   onProgress?: (progress: TranscriptionProgress) => void,
   session?: CaptionGenerationSessionContext,
 ): Promise<File> {
@@ -118,7 +179,7 @@ export async function ensureModel(
 }
 
 async function downloadModel(
-  modelId: TranscriptionModel['id'],
+  modelId: TranscriptionModelId,
   onProgress?: (progress: TranscriptionProgress) => void,
   session?: CaptionGenerationSessionContext,
 ): Promise<File> {
@@ -283,7 +344,7 @@ async function modelReplacementReservation(
 export async function transcribeVideoLocally(options: {
   projectId: string;
   videoUri: string;
-  modelId: TranscriptionModel['id'];
+  modelId: TranscriptionModelId;
   durationMs: number;
   language?: string;
   onProgress?: (progress: TranscriptionProgress) => void;

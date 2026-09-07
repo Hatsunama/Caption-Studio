@@ -5,7 +5,7 @@ import test from 'node:test';
 import { reactionEmojis } from '../src/lib/emoji-reactions.ts';
 
 const reactionCatalog = JSON.parse(readFileSync(
-  new URL('../modules/caption-media/android/src/main/assets/emoji-reactions.json', import.meta.url),
+  new URL('../shared/emoji-reactions.json', import.meta.url),
   'utf8',
 ));
 const contextContract = readFileSync(

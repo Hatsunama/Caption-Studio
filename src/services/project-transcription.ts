@@ -3,19 +3,22 @@ import CaptionMedia from 'caption-media';
 import { groupTimelineWordsByClip, groupingOptionsForLanguage } from '@/lib/caption-grouping';
 import { synchronizeCaptionTracksAfterTranscription } from '@/lib/caption-tracks';
 import { canonicalCaptionLanguageTag } from '@/lib/caption-languages';
-import type { TranscriptionModel } from '@/lib/model-catalog';
 import {
   canReuseSourceTranscription,
   createSourceTranscriptionFingerprint,
 } from '@/lib/source-transcription-fingerprint';
 import { anchorCaptionsToClips, mapSourceWordsToTimeline } from '@/lib/video-timeline';
-import { transcribeVideoLocally, type TranscriptionProgress } from '@/services/transcription';
+import {
+  transcribeVideoLocally,
+  type TranscriptionModelId,
+  type TranscriptionProgress,
+} from '@/services/transcription';
 import type { CaptionGenerationSessionContext } from '@/services/caption-generation-session';
 import type { CaptionProject, SourceTranscription, WordToken } from '@/types/project';
 
 export async function generateProjectCaptions(
   project: CaptionProject,
-  modelId: TranscriptionModel['id'],
+  modelId: TranscriptionModelId,
   onProgress?: (progress: TranscriptionProgress) => void,
   onCheckpoint?: (project: CaptionProject) => Promise<void>,
   session?: CaptionGenerationSessionContext,

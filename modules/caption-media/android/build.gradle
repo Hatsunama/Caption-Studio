@@ -16,6 +16,11 @@ android {
   testOptions {
     unitTests.includeAndroidResources = true
   }
+  sourceSets {
+    main {
+      assets.srcDir file('../../../shared')
+    }
+  }
 }
 
 dependencies {

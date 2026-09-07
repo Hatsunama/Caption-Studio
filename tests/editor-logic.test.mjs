@@ -249,9 +249,8 @@ test('selected caption trim grips stay distinct even on tiny blocks', () => {
 });
 
 test('downloaded transcription models are pinned by SHA-256', () => {
-  const modelCatalog = readFileSync(new URL('../src/lib/model-catalog.ts', import.meta.url), 'utf8');
   const transcription = readFileSync(new URL('../src/services/transcription.ts', import.meta.url), 'utf8');
-  assert.equal((modelCatalog.match(/sha256:/g) ?? []).length, 4);
+  assert.equal((transcription.match(/sha256: '[0-9a-f]{64}'/g) ?? []).length, 4);
   assert.match(transcription, /CaptionMedia\.sha256/);
   assert.match(transcription, /\.download/);
   assert.doesNotMatch(transcription, /huggingface\.co\/[^'"`]+\/resolve\/main\//);
@@ -282,9 +281,9 @@ test('Whisper token pieces become human words without losing their timing', () =
 test('caption quality is chosen explicitly and the requested model owns generation', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   const pipeline = readFileSync(new URL('../src/services/project-transcription.ts', import.meta.url), 'utf8');
-  assert.match(editor, /TRANSCRIPTION_MODELS\.map/);
+  assert.match(editor, /TRANSCRIPTION_MODEL_OPTIONS\.map/);
   assert.match(editor, /model\.id === 'balanced'[\s\S]*recommended/);
-  assert.match(pipeline, /modelId: TranscriptionModel\['id'\]/);
+  assert.match(pipeline, /modelId: TranscriptionModelId/);
   assert.doesNotMatch(pipeline, /modelId: 'fast'/);
   assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint\)/);
   assert.match(pipeline, /CaptionMedia\.sha256\(source\.uri\)/);
