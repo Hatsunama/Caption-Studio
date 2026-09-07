@@ -111,10 +111,12 @@ test('release CI enforces native translation unit tests and retains their report
 });
 
 test('project translation orchestration owns concurrency, provenance, and mixed-language policy', async () => {
-  const [editor, controller, workflow] = await Promise.all([
+  const [editor, controller, workflow, dualEditor, service] = await Promise.all([
     readFile(new URL('src/app/editor.tsx', repositoryRoot), 'utf8'),
     readFile(new URL('src/hooks/use-project-caption-translation.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/services/project-caption-translation.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/components/editor/dual-caption-editor.tsx', repositoryRoot), 'utf8'),
+    readFile(new URL('src/services/caption-translation.ts', repositoryRoot), 'utf8'),
   ]);
 
   assert.doesNotMatch(editor, /translateNaturalCaptionBatch|translateNaturalCaptionOperations|setTranslationProgress/);
@@ -126,6 +128,14 @@ test('project translation orchestration owns concurrency, provenance, and mixed-
   assert.doesNotMatch(editor, /mixes English and Chinese clips/);
   assert.match(controller, /activeOperationRef\.current === operationId/);
   assert.match(controller, /getCurrentProject\(\) !== baseline/);
+  assert.match(controller, /retryRequestRef\.current = request/);
+  assert.match(controller, /retryAvailable/);
+  assert.doesNotMatch(controller, /\bAlert\b/);
+  assert.match(editor, /retryErrorAvailable=\{translationController\.retryAvailable\}/);
+  assert.match(editor, /translationController\.retry\(\)/);
+  assert.match(dualEditor, /Retry interrupted translation/);
+  assert.match(dualEditor, />Retry<\/Text>/);
+  assert.doesNotMatch(service, /tap Retry/);
   assert.doesNotMatch(workflow, /projectEnglishChineseCaptionLanguage/);
   assert.match(workflow, /projectPrimaryCaptionLanguage/);
   assert.doesNotMatch(workflow, /packCaptionDocuments/);

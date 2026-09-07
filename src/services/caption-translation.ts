@@ -93,7 +93,7 @@ export class CaptionTranslationCancelledError extends Error {
 
 export class CaptionTranslationDownloadError extends Error {
   constructor() {
-    super('The language-model download stopped before it finished. Downloaded bytes were saved. Keep Caption Studio open with the phone unlocked, then tap Retry to resume.');
+    super('The language-model download stopped before it finished. Downloaded bytes were saved. Keep Caption Studio open with the phone unlocked, then start translation again to resume.');
     this.name = 'CaptionTranslationDownloadError';
   }
 }

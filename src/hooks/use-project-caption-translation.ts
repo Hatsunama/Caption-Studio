@@ -1,4 +1,3 @@
-import { Alert } from 'react-native';
 import { translationAttemptMessage } from '@/lib/translation-attempt';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
@@ -20,6 +19,16 @@ type ControllerOptions = {
   commitProject: (baseline: CaptionProject, next: CaptionProject) => Promise<void>;
 };
 
+type TranslationOperation = (
+  onProgress: (next: CaptionTranslationProgress) => void,
+) => Promise<CaptionProject>;
+
+type TranslationRequest = {
+  baseline: CaptionProject;
+  operation: TranslationOperation;
+  completionMessage?: (next: CaptionProject) => string | undefined;
+};
+
 function interruptedOperationLabel(stage: CaptionTranslationProgress['stage'] | undefined) {
   return stage === 'downloading-model' ? 'language-model download' : 'translation';
 }
@@ -30,9 +39,11 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
   const activeOperationRef = useRef<symbol | undefined>(undefined);
   const activeStageRef = useRef<CaptionTranslationProgress['stage'] | undefined>(undefined);
   const interruptedRef = useRef(false);
+  const retryRequestRef = useRef<TranslationRequest | undefined>(undefined);
   const [progress, setProgress] = useState<CaptionTranslationProgress>();
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string>();
+  const [retryAvailable, setRetryAvailable] = useState(false);
 
   useLayoutEffect(() => {
     optionsRef.current = options;
@@ -56,20 +67,19 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     return () => subscription.remove();
   }, []);
 
-  const run = useCallback(async (
-    baseline: CaptionProject,
-    operation: (onProgress: (next: CaptionTranslationProgress) => void) => Promise<CaptionProject>,
-    completionMessage?: (next: CaptionProject) => string | undefined,
-  ) => {
+  const execute = useCallback(async (request: TranslationRequest) => {
     if (activeOperationRef.current) {
       if (mountedRef.current) setError('Finish or cancel the current local translation before starting another.');
       return false;
     }
+    const { baseline, operation, completionMessage } = request;
     const operationId = Symbol('project-caption-translation');
     activeOperationRef.current = operationId;
     activeStageRef.current = 'loading-model';
     interruptedRef.current = false;
+    retryRequestRef.current = undefined;
     setError(undefined);
+    setRetryAvailable(false);
     setCancelling(false);
     setProgress({ stage: 'loading-model', progress: 0, detail: 'Preparing local natural translation' });
     try {
@@ -85,14 +95,15 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
       const message = completionMessage?.(next);
       if (message && mountedRef.current) {
         setError(message);
-        Alert.alert('Translation incomplete', message);
         return false;
       }
       return true;
     } catch (caught) {
       if (mountedRef.current && activeOperationRef.current === operationId && interruptedRef.current) {
         const action = interruptedOperationLabel(activeStageRef.current);
-        setError(`The ${action} paused because Caption Studio left the foreground. Downloaded model bytes and completed translation checkpoints were kept. Keep this screen open and the phone unlocked, then tap Retry to continue unfinished lines.`);
+        retryRequestRef.current = request;
+        setRetryAvailable(true);
+        setError(`The ${action} paused because Caption Studio left the foreground. Downloaded model bytes and completed translation checkpoints were kept.`);
       } else if (
         mountedRef.current
         && activeOperationRef.current === operationId
@@ -111,6 +122,23 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
         }
       }
     }
+  }, []);
+
+  const run = useCallback((
+    baseline: CaptionProject,
+    operation: TranslationOperation,
+    completionMessage?: (next: CaptionProject) => string | undefined,
+  ) => execute({ baseline, operation, completionMessage }), [execute]);
+
+  const retry = useCallback(() => {
+    const request = retryRequestRef.current;
+    return request ? execute(request) : Promise.resolve(false);
+  }, [execute]);
+
+  const clearError = useCallback(() => {
+    retryRequestRef.current = undefined;
+    setRetryAvailable(false);
+    setError(undefined);
   }, []);
 
   const refresh = useCallback((
@@ -155,7 +183,9 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     progress,
     cancelling,
     error,
-    clearError: () => setError(undefined),
+    retryAvailable,
+    clearError,
+    retry,
     refresh,
     synchronize,
     cancel,
