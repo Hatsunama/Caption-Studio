@@ -2,6 +2,7 @@
   "name": "caption-studio",
   "main": "expo-router/entry",
   "version": "1.4.21",
+  "packageManager": "npm@10.9.2",
   "license": "MIT",
   "repository": {
     "type": "git",
