@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.18-fixed.1) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.19-fixed.1) on the phone.
 2. Tap **caption-studio-fixed-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-fixed-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.18-fixed.1/caption-studio-fixed-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.19-fixed.1/caption-studio-fixed-android.apk
 termux-open ~/storage/downloads/caption-studio-fixed-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio Fixed 1.4.18 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing Fixed installation is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio Fixed 1.4.19 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing Fixed installation is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -73,9 +73,11 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Fixed side-by-side build when the production signing key is unavailable
 
-Current fixed build: **1.4.18** (`v1.4.18-fixed.1`, Android version code 30).
+Current fixed build: **1.4.19** (`v1.4.19-fixed.1`, Android version code 31).
 
-Version 1.4.18 preserves integrity-bound caption and translation model downloads across Android foreground interruptions, reserves storage only for remaining resumable bytes, and provides a real Retry action that continues the exact interrupted translation request. The controller owns recoverable operation state, the modal owns user-facing actions, transfer and storage policy remain in services, and release identity remains outside presentation code. The production LiteRT-LM model remains unchanged while the Natural multilingual v2 candidate completes its strict model and two-phone gates.
+Version 1.4.19 keeps strict multi-cue JSON and ID validation while giving a failed single-cue retry its own deterministic plain-text provider contract. The only requested cue supplies the identity; malformed JSON, Markdown wrappers, runtime tokens, source echoes, and wrong-script output still fail closed. This makes the existing untuned production model's common bare-translation response usable without weakening batch cardinality or moving provider policy into UI/project state. Translation checkpoints are invalidated for the changed retry profile. The production LiteRT-LM URL, bytes, and SHA-256 remain unchanged while the Natural multilingual v2 candidate completes its strict model and two-phone gates.
+
+Version 1.4.18 preserves integrity-bound caption and translation model downloads across Android foreground interruptions, reserves storage only for remaining resumable bytes, and provides a real Retry action that continues the exact interrupted translation request. The controller owns recoverable operation state, the modal owns user-facing actions, transfer and storage policy remain in services, and release identity remains outside presentation code.
 
 Version 1.4.15 keeps hold-drag reorder filmstrip tiles on-screen: reorder mode shrinks the scrollable track to filmstrip width (not the full duration timeline), scrolls the active tile into view when the gesture starts, and auto-scrolls as the drop index nears the edges, then restores playhead-synced proportional scrolling on commit/cancel.
 
@@ -97,7 +99,7 @@ Version 1.4.9 checkpoints completed translation batches in private, backup-exclu
 
 Version 1.4.8 preserves individual subtitle identities through AI translation. Unusable results are marked FAILED - RETRY, successful translations and existing text are saved, and incomplete runs show a summary. Open Edit both languages and tap Refresh to repair an incomplete track. Export errors appear in a dialog; disabled and off-timeline captions no longer block MP4 export. Independent translations remain in subtitle-file output, and draft recovery operations are serialized.
 
-The installer requires the 1.4.18 repair tag and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
+The installer requires the 1.4.19 repair tag and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
 
 Version 1.4.7 replaces the translation model's false transient-memory rejection with hardware-based capability checks. Eligible 64-bit devices with at least 4 GiB physical RAM now attempt the memory-mapped model load even when Android temporarily reports memory pressure. If the runtime genuinely cannot allocate enough memory, the app keeps captions unchanged and tells the user to close other apps, keep Caption Studio open, and retry.
 
