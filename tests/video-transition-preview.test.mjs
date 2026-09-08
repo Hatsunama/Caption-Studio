@@ -109,7 +109,7 @@ test('full-source clips advance visible tail and head without frozen frames', ()
   assert.equal(videoTransitionPreviewFrameAt(windows, 4_000).incomingSourceTimeMs, 150);
 });
 
-test('preview distinguishes exact composition, cover effects, and approximated masks', () => {
+test('preview distinguishes exact composition and cover effects without diagram substitutes', () => {
   const makeWindow = (type) => buildVideoTransitionPreviewWindows(
     buildClipTimeline([
       clip(`out-${type}`, 'out-source', { transitionAfter: { type, durationMs: 600 } }),
@@ -121,8 +121,8 @@ test('preview distinguishes exact composition, cover effects, and approximated m
   assert.deepEqual([makeWindow('crossfade').mode, makeWindow('crossfade').fidelity], ['composite', 'exact']);
   assert.deepEqual([makeWindow('wipe-left').mode, makeWindow('wipe-left').fidelity], ['composite', 'exact']);
   assert.deepEqual([makeWindow('dip-black').mode, makeWindow('dip-black').fidelity], ['cover', 'exact']);
-  assert.deepEqual([makeWindow('iris-circle').mode, makeWindow('iris-circle').fidelity], ['composite', 'approximate']);
-  assert.match(makeWindow('iris-circle').approximationLabel, /EXPORT USES THE FULL EFFECT/);
+  assert.deepEqual([makeWindow('iris-circle').mode, makeWindow('iris-circle').fidelity], ['composite', 'exact']);
+  assert.deepEqual([makeWindow('iris-diamond').mode, makeWindow('iris-diamond').fidelity], ['composite', 'exact']);
 });
 
 test('missing and insufficient transition media fail visibly', () => {

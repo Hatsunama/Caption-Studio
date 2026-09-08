@@ -61,6 +61,31 @@ test('legacy transition records retain their established defaults while corrupt 
   assert.throws(() => hydrateVideoTransition({ type: 'glitch', durationMs: 2_001 }), /duration is invalid/);
 });
 
+test('retired diagram-only transitions migrate to a real cross dissolve', () => {
+  const retired = [
+    'wipe-diagonal-tl',
+    'wipe-diagonal-tr',
+    'wipe-diagonal-bl',
+    'wipe-diagonal-br',
+    'blinds-horizontal',
+    'blinds-vertical',
+    'checkerboard',
+    'pixel-grid',
+    'radial-clock',
+    'stripes-diagonal',
+    'slice-shuffle',
+    'ripple-rings',
+  ];
+  const advertised = new Set(VIDEO_TRANSITION_PRESETS.map((preset) => preset.id));
+  for (const type of retired) {
+    assert.equal(advertised.has(type), false, type);
+    assert.deepEqual(hydrateVideoTransition({ type, durationMs: 700 }), {
+      type: 'crossfade',
+      durationMs: 700,
+    });
+  }
+});
+
 test('persisted transition hydration removes effects across gaps and after the final clip', () => {
   const persisted = JSON.parse(JSON.stringify([
     clip({ id: 'first', transitionAfter: { type: 'glitch', durationMs: 420 } }),

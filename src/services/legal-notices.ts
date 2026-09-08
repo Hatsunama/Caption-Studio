@@ -19,7 +19,10 @@ const OFL_FONTS = [
   'Rubik Beastly', 'Rubik Bubbles', 'Rubik Burned', 'Rubik Dirt', 'Rubik Distressed',
   'Rubik Glitch', 'Rubik Iso', 'Rubik Marker Hatch', 'Rubik Microbe', 'Rubik Moonrocks',
   'Rubik Puddles', 'Rubik Vinyl', 'Rye', 'Sancreek', 'Sixtyfour', 'Tilt Prism',
-  'UnifrakturCook',
+  'UnifrakturCook', 'Abril Fatface', 'Alfa Slab One', 'Archivo Black', 'Audiowide',
+  'Bangers', 'Boogaloo', 'Concert One', 'DM Serif Display', 'Fjalla One',
+  'Francois One', 'Lilita One', 'Monofett', 'Paytone One', 'Racing Sans One',
+  'Rammetto One', 'Rowdies', 'Russo One', 'Squada One', 'Staatliches', 'Titan One',
 ];
 
 const OFL_COPYRIGHT_NOTICES = [
@@ -79,7 +82,7 @@ Optional caption translation model
 Qwen2.5 1.5B Instruct Q8 LiteRT-LM — Apache License 2.0.
 Pinned revision: 19edb84c69a0212f29a6ef17ba0d6f278b6a1614
 SHA-256: faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9
-The model is not bundled in the APK or AAB. Caption Studio downloads it only when natural English–Chinese translation is enabled, verifies it, and runs it locally on the device.
+The model is not bundled in the APK or AAB. Caption Studio downloads it only when natural multilingual caption translation is enabled, verifies it, and runs it locally on the device.
 
 Bundled segmentation model
 MediaPipe Selfie Multiclass Segmentation 256 × 256, Apache License 2.0.
@@ -92,7 +95,7 @@ SIL Open Font License 1.1 (${OFL_FONTS.length}): ${OFL_FONTS.join(', ')}.
 Font copyright and Reserved Font Name notices
 ${OFL_COPYRIGHT_NOTICES.join('\n')}
 
-Apache License 2.0: Fontdiner Swanky and Permanent Marker.
+Apache License 2.0: Fontdiner Swanky, Permanent Marker, Chewy, Luckiest Guy, Rock Salt, and Special Elite.
 
 Imported fonts are supplied by the user, who remains responsible for having permission to use them.`;
 

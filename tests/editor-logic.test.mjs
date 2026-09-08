@@ -1072,6 +1072,35 @@ test('adjusting one subtitle leaves neighboring subtitles where they are', () =>
   assert.deepEqual(overlapped.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_500], [1_000, 2_000]]);
 });
 
+test('manual caption timing can cross cuts and re-anchors only inside one clip', () => {
+  const project = projectFixture({
+    clips: [
+      clip({ id: 'first', sourceEndMs: 1_000, availableSourceEndMs: 1_000 }),
+      clip({ id: 'second', sourceEndMs: 1_000, availableSourceEndMs: 1_000 }),
+    ],
+    captions: [{
+      id: 'caption',
+      text: 'move me',
+      startMs: 200,
+      endMs: 800,
+      wordIds: [],
+      timelineVisible: true,
+      sourceAnchor: { clipId: 'first', sourceStartMs: 200, sourceEndMs: 800, wordIds: [] },
+    }],
+  });
+  const acrossCut = setCaptionTiming(project, 'caption', 'end', 200, 1_200);
+  assert.deepEqual([acrossCut.captions[0].startMs, acrossCut.captions[0].endMs], [200, 1_200]);
+  assert.equal(acrossCut.captions[0].sourceAnchor, undefined);
+
+  const insideSecond = setCaptionTiming(project, 'caption', 'move', 1_200, 1_800);
+  assert.deepEqual([insideSecond.captions[0].startMs, insideSecond.captions[0].endMs], [1_200, 1_800]);
+  assert.equal(insideSecond.captions[0].sourceAnchor.clipId, 'second');
+  assert.deepEqual(
+    [insideSecond.captions[0].sourceAnchor.sourceStartMs, insideSecond.captions[0].sourceAnchor.sourceEndMs],
+    [200, 800],
+  );
+});
+
 test('manual timeline timing clears stale automatic word highlights', () => {
   const project = projectFixture({
     clips: [clip({ id: 'clip', sourceEndMs: 3_000, availableSourceEndMs: 3_000 })],
@@ -1233,12 +1262,30 @@ test('partially trimmed captions retain their full anchor for restoration', () =
   assert.deepEqual([restored.project.captions[0].startMs, restored.project.captions[0].endMs], [3_200, 3_800]);
 });
 
-test('script captions never merge across a hard video cut', () => {
+test('script captions merge across a hard video cut as a timeline-owned manual caption', () => {
   const captions = [
     { id: 'left', text: 'left', startMs: 0, endMs: 500, wordIds: [], sourceAnchor: { clipId: 'a', sourceStartMs: 0, sourceEndMs: 500, wordIds: [] } },
     { id: 'right', text: 'right', startMs: 500, endMs: 1_000, wordIds: [], sourceAnchor: { clipId: 'b', sourceStartMs: 0, sourceEndMs: 500, wordIds: [] } },
   ];
-  assert.deepEqual(mergeCaptionScriptBlock(captions, 'right'), { blockedByVideoCut: true });
+  const merged = mergeCaptionScriptBlock(captions, 'right');
+  assert.ok(merged);
+  assert.equal(merged.captions.length, 1);
+  assert.deepEqual(
+    {
+      text: merged.captions[0].text,
+      startMs: merged.captions[0].startMs,
+      endMs: merged.captions[0].endMs,
+      textMode: merged.captions[0].textMode,
+      sourceAnchor: merged.captions[0].sourceAnchor,
+    },
+    {
+      text: 'left right',
+      startMs: 0,
+      endMs: 1_000,
+      textMode: 'manual',
+      sourceAnchor: undefined,
+    },
+  );
 });
 
 test('caption editing opens the full timestamped script and keeps text-layer editing isolated', () => {

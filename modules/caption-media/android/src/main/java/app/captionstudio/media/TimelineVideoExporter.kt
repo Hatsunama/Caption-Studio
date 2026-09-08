@@ -714,23 +714,12 @@ private class TimelineBitmapOverlay(
       }
       "color-wash-cyan", "color-wash-magenta" -> {
         paint.color = if (transition.outgoing.transitionType == "color-wash-cyan") Color.rgb(0, 217, 255) else Color.rgb(255, 22, 143)
-        paint.alpha = (peak * 212f).toInt()
+        paint.alpha = (peak * 255f).toInt()
         canvas.drawRect(0f, 0f, plan.width.toFloat(), plan.height.toFloat(), paint)
         paint.color = if (transition.outgoing.transitionType == "color-wash-cyan") Color.rgb(101, 31, 255) else Color.rgb(255, 234, 0)
         paint.alpha = (peak * 92f).toInt()
         val edge = if (phase < 0.5f) plan.width * phase * 2f else plan.width * (2f - phase * 2f)
         canvas.drawRect(0f, 0f, edge, plan.height.toFloat(), paint)
-      }
-      "ripple-rings" -> {
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = max(4f, min(plan.width, plan.height) * 0.012f)
-        val maximumRadius = hypot(plan.width / 2f, plan.height / 2f)
-        repeat(4) { index ->
-          val ringPhase = (phase + index * 0.19f) % 1f
-          paint.color = if (index % 2 == 0) Color.rgb(0, 229, 255) else Color.rgb(255, 60, 172)
-          paint.alpha = (peak * (1f - ringPhase) * 210f).toInt()
-          canvas.drawCircle(plan.width / 2f, plan.height / 2f, maximumRadius * ringPhase, paint)
-        }
       }
     }
   }
@@ -796,9 +785,6 @@ private class TimelineBitmapOverlay(
       "spin" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase, scaleX = 0.4f + phase * 0.6f, scaleY = 0.4f + phase * 0.6f, rotation = (1f - phase) * 280f)
       "fold-horizontal" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase, scaleY = max(0.015f, phase))
       "fold-vertical" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase, scaleX = max(0.015f, phase))
-      "wipe-diagonal-tl", "wipe-diagonal-tr", "wipe-diagonal-bl", "wipe-diagonal-br" -> {
-        drawMaskedTransitionSnapshot(canvas, transition, incomingSourceTimeMs, timeMs, diagonalRevealPath(type, phase))
-      }
       "iris-circle" -> {
         val radius = hypot(plan.width / 2f, plan.height / 2f) * phase
         val path = Path().apply { addCircle(plan.width / 2f, plan.height / 2f, radius, Path.Direction.CW) }
@@ -826,13 +812,6 @@ private class TimelineBitmapOverlay(
         val path = Path().apply { addRect(plan.width / 2f - halfWidth, 0f, plan.width / 2f + halfWidth, plan.height.toFloat(), Path.Direction.CW) }
         drawMaskedTransitionSnapshot(canvas, transition, incomingSourceTimeMs, timeMs, path)
       }
-      "blinds-horizontal" -> drawMaskedTransitionSnapshot(canvas, transition, incomingSourceTimeMs, timeMs, blindsPath(horizontal = true, phase))
-      "blinds-vertical" -> drawMaskedTransitionSnapshot(canvas, transition, incomingSourceTimeMs, timeMs, blindsPath(horizontal = false, phase))
-      "checkerboard" -> drawMaskedTransitionSnapshot(canvas, transition, incomingSourceTimeMs, timeMs, tiledRevealPath(8, 12, phase, randomOrder = false))
-      "pixel-grid" -> drawMaskedTransitionSnapshot(canvas, transition, incomingSourceTimeMs, timeMs, tiledRevealPath(12, 18, phase, randomOrder = true))
-      "radial-clock" -> drawMaskedTransitionSnapshot(canvas, transition, incomingSourceTimeMs, timeMs, radialRevealPath(phase))
-      "stripes-diagonal" -> drawMaskedTransitionSnapshot(canvas, transition, incomingSourceTimeMs, timeMs, diagonalStripesPath(phase))
-      "slice-shuffle" -> drawMaskedTransitionSnapshot(canvas, transition, incomingSourceTimeMs, timeMs, sliceShufflePath(phase))
       "glitch" -> {
         drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase)
         val peak = 1f - abs(phase * 2f - 1f)
@@ -861,122 +840,6 @@ private class TimelineBitmapOverlay(
     } finally {
       canvas.restoreToCount(checkpoint)
     }
-  }
-
-  private fun diagonalRevealPath(type: String, phase: Float): Path {
-    val width = plan.width.toFloat()
-    val height = plan.height.toFloat()
-    val threshold = phase.coerceIn(0f, 1f) * 2f
-    val path = Path()
-    if (threshold <= 1f) {
-      path.moveTo(0f, 0f)
-      path.lineTo(width * threshold, 0f)
-      path.lineTo(0f, height * threshold)
-    } else {
-      path.moveTo(0f, 0f)
-      path.lineTo(width, 0f)
-      path.lineTo(width, height * (threshold - 1f))
-      path.lineTo(width * (threshold - 1f), height)
-      path.lineTo(0f, height)
-    }
-    path.close()
-    val mirror = Matrix().apply {
-      setScale(
-        if (type.endsWith("tr") || type.endsWith("br")) -1f else 1f,
-        if (type.endsWith("bl") || type.endsWith("br")) -1f else 1f,
-        width / 2f,
-        height / 2f,
-      )
-    }
-    path.transform(mirror)
-    return path
-  }
-
-  private fun blindsPath(horizontal: Boolean, phase: Float): Path {
-    val path = Path()
-    val count = 10
-    if (horizontal) {
-      val cell = plan.height / count.toFloat()
-      repeat(count) { index ->
-        val top = index * cell
-        path.addRect(0f, top, plan.width.toFloat(), top + cell * phase, Path.Direction.CW)
-      }
-    } else {
-      val cell = plan.width / count.toFloat()
-      repeat(count) { index ->
-        val left = index * cell
-        path.addRect(left, 0f, left + cell * phase, plan.height.toFloat(), Path.Direction.CW)
-      }
-    }
-    return path
-  }
-
-  private fun tiledRevealPath(columns: Int, rows: Int, phase: Float, randomOrder: Boolean): Path {
-    val path = Path()
-    val cellWidth = plan.width / columns.toFloat()
-    val cellHeight = plan.height / rows.toFloat()
-    val count = columns * rows
-    repeat(count) { index ->
-      val row = index / columns
-      val column = index % columns
-      val threshold = if (randomOrder) ((index * 37) % count) / count.toFloat() * 0.68f else ((row + column) % 2) * 0.24f
-      val local = ((phase - threshold) / (1f - threshold).coerceAtLeast(0.01f)).coerceIn(0f, 1f)
-      if (local <= 0f) return@repeat
-      val centerX = (column + 0.5f) * cellWidth
-      val centerY = (row + 0.5f) * cellHeight
-      val halfWidth = cellWidth * local / 2f + 0.5f
-      val halfHeight = cellHeight * local / 2f + 0.5f
-      path.addRect(centerX - halfWidth, centerY - halfHeight, centerX + halfWidth, centerY + halfHeight, Path.Direction.CW)
-    }
-    return path
-  }
-
-  private fun radialRevealPath(phase: Float): Path {
-    val centerX = plan.width / 2f
-    val centerY = plan.height / 2f
-    val radius = hypot(centerX, centerY) + 2f
-    return Path().apply {
-      moveTo(centerX, centerY)
-      lineTo(centerX, centerY - radius)
-      arcTo(RectF(centerX - radius, centerY - radius, centerX + radius, centerY + radius), -90f, 360f * phase)
-      close()
-    }
-  }
-
-  private fun diagonalStripesPath(phase: Float): Path {
-    val path = Path()
-    val slant = plan.height * 0.3f
-    val span = plan.width + slant * 2f
-    val count = 14
-    val bandWidth = span / count
-    repeat(count) { index ->
-      val threshold = index / count.toFloat() * 0.42f
-      val local = ((phase - threshold) / 0.58f).coerceIn(0f, 1f)
-      if (local <= 0f) return@repeat
-      val left = -slant + index * bandWidth
-      val right = left + bandWidth * local + 1f
-      path.moveTo(left, 0f)
-      path.lineTo(right, 0f)
-      path.lineTo(right + slant, plan.height.toFloat())
-      path.lineTo(left + slant, plan.height.toFloat())
-      path.close()
-    }
-    return path
-  }
-
-  private fun sliceShufflePath(phase: Float): Path {
-    val path = Path()
-    val rows = 12
-    val sliceHeight = plan.height / rows.toFloat()
-    repeat(rows) { row ->
-      val threshold = (row % 4) * 0.07f
-      val local = ((phase - threshold) / (1f - threshold)).coerceIn(0f, 1f)
-      val width = plan.width * local
-      val top = row * sliceHeight
-      val left = if (row % 2 == 0) 0f else plan.width - width
-      path.addRect(left, top, left + width, top + sliceHeight + 0.5f, Path.Direction.CW)
-    }
-    return path
   }
 
   private fun drawTransitionSnapshot(

@@ -1,3 +1,4 @@
+import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { NavigationAction } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
@@ -1129,10 +1130,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       Alert.alert('Nothing to join', `There is no subtitle immediately ${direction === 'previous' ? 'before' : 'after'} this one.`);
       return;
     }
-    if ('blockedByVideoCut' in mutation) {
-      Alert.alert('Cannot join across a video cut', 'Subtitles attached to different video clips stay separate so their timing remains correct.');
-      return;
-    }
     void commitCaptionStructure(mutation).catch(reportCaptionCommitFailure);
   };
 
@@ -1868,9 +1865,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 </View>
               );
             }
-            const visibleNow = currentMs >= layer.startMs && currentMs < layer.endMs;
-            if (isPlaying && !visibleNow) return null;
-            if (!isPlaying && !visibleNow && selectedLayerId !== layer.id) return null;
+        if (!visualLayerVisibleAtTime(layer, currentMs)) return null;
             if (layer.kind === 'text') {
               return (
                 <CaptionOverlay

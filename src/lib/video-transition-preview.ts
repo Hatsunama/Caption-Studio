@@ -16,8 +16,7 @@ export type VideoTransitionPreviewWindow = {
   key: string;
   type: VideoTransitionType;
   mode: 'cover' | 'composite';
-  fidelity: 'exact' | 'approximate';
-  approximationLabel?: string;
+  fidelity: 'exact';
   startMs: number;
   boundaryMs: number;
   endMs: number;
@@ -41,23 +40,6 @@ const COVER_TYPES = new Set<VideoTransitionType>([
   'shutter',
   'color-wash-cyan',
   'color-wash-magenta',
-  'ripple-rings',
-]);
-
-const APPROXIMATE_MASK_TYPES = new Set<VideoTransitionType>([
-  'wipe-diagonal-tl',
-  'wipe-diagonal-tr',
-  'wipe-diagonal-bl',
-  'wipe-diagonal-br',
-  'iris-circle',
-  'iris-diamond',
-  'blinds-horizontal',
-  'blinds-vertical',
-  'checkerboard',
-  'pixel-grid',
-  'radial-clock',
-  'stripes-diagonal',
-  'slice-shuffle',
 ]);
 
 export const VIDEO_TRANSITION_PRELOAD_LEAD_MS = 750;
@@ -84,10 +66,7 @@ export function buildVideoTransitionPreviewWindows(
       key: `${entry.clip.id}:${incomingEntry.clip.id}:${transition.type}:${durationMs}`,
       type: transition.type,
       mode: COVER_TYPES.has(transition.type) ? 'cover' as const : 'composite' as const,
-      fidelity: APPROXIMATE_MASK_TYPES.has(transition.type) ? 'approximate' as const : 'exact' as const,
-      ...(APPROXIMATE_MASK_TYPES.has(transition.type)
-        ? { approximationLabel: 'MASK PREVIEW APPROXIMATION · EXPORT USES THE FULL EFFECT' }
-        : {}),
+      fidelity: 'exact' as const,
       startMs: boundaryMs - beforeBoundaryMs,
       boundaryMs,
       endMs: boundaryMs + afterBoundaryMs,

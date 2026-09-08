@@ -21,7 +21,6 @@ import {
   remapAudioClipsAcrossClipLayout,
   remapCaptionsToTimeline,
   sourceTimeAt,
-  timelineEntryAt,
   timelineTimeAt,
   totalClipDuration,
 } from '@/lib/video-timeline';
@@ -94,48 +93,52 @@ export function setCaptionTiming(
   const entries = buildClipTimeline(project.clips);
   const selected = project.captions.find((caption) => caption.id === captionId);
   if (!selected || selected.timelineVisible === false) return project;
-  const entry = entries.find((candidate) => candidate.clip.id === selected.sourceAnchor?.clipId)
-    ?? timelineEntryAt(entries, selected.startMs)
-    ?? timelineEntryAt(entries, Math.max(selected.startMs, selected.endMs - 1));
-  if (!entry) return project;
+  const durationMs = totalClipDuration(project.clips);
+  if (durationMs < 80) return project;
   const minDuration = 80;
   let safeStartMs = selected.startMs;
   let safeEndMs = selected.endMs;
   if (edge === 'start') {
-    safeStartMs = clamp(startMs, entry.startMs, selected.endMs - minDuration);
+    safeStartMs = clamp(startMs, 0, selected.endMs - minDuration);
   } else if (edge === 'end') {
-    safeEndMs = clamp(endMs, selected.startMs + minDuration, entry.endMs);
+    safeEndMs = clamp(endMs, selected.startMs + minDuration, durationMs);
   } else {
-    const duration = Math.max(minDuration, selected.endMs - selected.startMs);
-    safeStartMs = clamp(startMs, entry.startMs, entry.endMs - duration);
-    safeEndMs = safeStartMs + duration;
+    const captionDurationMs = Math.min(durationMs, Math.max(minDuration, selected.endMs - selected.startMs));
+    safeStartMs = clamp(startMs, 0, durationMs - captionDurationMs);
+    safeEndMs = safeStartMs + captionDurationMs;
   }
   if (safeStartMs === selected.startMs && safeEndMs === selected.endMs) return project;
+  const captions = project.captions
+    .map((caption) => caption.id === captionId
+      ? withTimelineCaptionTiming(caption, entries, safeStartMs, safeEndMs)
+      : caption)
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
   return updateProject(project, {
-    captions: project.captions.map((caption) => caption.id === captionId
-      ? withTimelineCaptionTiming(caption, entry, safeStartMs, safeEndMs)
-      : caption),
+    captions,
   });
 }
 
 function withTimelineCaptionTiming(
   caption: CaptionProject['captions'][number],
-  entry: ReturnType<typeof buildClipTimeline>[number],
+  entries: ReturnType<typeof buildClipTimeline>,
   startMs: number,
   endMs: number,
 ) {
+  const owner = entries.find((entry) => startMs >= entry.startMs && endMs <= entry.endMs);
   return {
     ...caption,
     startMs,
     endMs,
     textMode: 'manual' as const,
     wordIds: [],
-    sourceAnchor: {
-      clipId: entry.clip.id,
-      sourceStartMs: sourceTimeAt(entry, startMs),
-      sourceEndMs: sourceTimeAt(entry, endMs),
-      wordIds: [],
-    },
+    sourceAnchor: owner
+      ? {
+          clipId: owner.clip.id,
+          sourceStartMs: sourceTimeAt(owner, startMs),
+          sourceEndMs: sourceTimeAt(owner, endMs),
+          wordIds: [],
+        }
+      : undefined,
     timelineVisible: true,
   };
 }

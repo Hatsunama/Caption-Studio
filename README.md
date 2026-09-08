@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.21) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.22) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.21/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.22/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.21 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.22 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -73,9 +73,9 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Fixed side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.21** (`v1.4.21`, Android version code 33).
+Current Android build: **1.4.22** (`v1.4.22`, Android version code 34).
 
-Version 1.4.21 keeps extracted and imported audio continuous during timeline playback. Normal clock updates no longer seek the native player every fraction of a second; only real discontinuities, explicit scrubs, and play/pause transitions reposition it. Waveforms are decoded from the selected source by presentation timestamp at duration-scaled resolution, preserve the loudest channel without phase cancellation, persist as a versioned derived cache, and render only the visible window with bounded view count. Audio import and extraction no longer wait for waveform decoding. The locked Expo SDK 57 patch set is aligned, and Android dependency verification resolves package ownership from npm's dependency graph instead of assuming packages are hoisted. Existing projects, source files, drafts, signing identity, and the production translation model remain unchanged.
+Version 1.4.22 expands the bundled type library to 68 fonts and the caption library to 59 motion effects plus Classic. Captions, text, and image layers can be moved and trimmed across the full timeline; captions wholly inside one clip remain clip-anchored, while captions spanning a cut or gap become timeline-owned. Adjacent captions can be joined across video cuts. An image is rendered only while the playhead is inside its saved timeline interval. The transition picker now advertises only 30 effects that composite real footage in both preview and export; older projects that selected a retired diagram-only effect migrate safely to Cross dissolve. Retained iris and color-wash transitions use actual incoming video and fully conceal the cut at their midpoint. Existing projects, source files, drafts, signing identity, and the production translation model remain unchanged.
 
 Version 1.4.19 keeps strict multi-cue JSON and ID validation while giving a failed single-cue retry its own deterministic plain-text provider contract. The only requested cue supplies the identity; malformed JSON, Markdown wrappers, runtime tokens, source echoes, and wrong-script output still fail closed. This makes the existing untuned production model's common bare-translation response usable without weakening batch cardinality or moving provider policy into UI/project state. Translation checkpoints are invalidated for the changed retry profile. The production LiteRT-LM URL, bytes, and SHA-256 remain unchanged while the Natural multilingual v2 candidate completes its strict model and two-phone gates.
 
@@ -101,7 +101,7 @@ Version 1.4.9 checkpoints completed translation batches in private, backup-exclu
 
 Version 1.4.8 preserves individual subtitle identities through AI translation. Unusable results are marked FAILED - RETRY, successful translations and existing text are saved, and incomplete runs show a summary. Open Edit both languages and tap Refresh to repair an incomplete track. Export errors appear in a dialog; disabled and off-timeline captions no longer block MP4 export. Independent translations remain in subtitle-file output, and draft recovery operations are serialized.
 
-The installer requires the 1.4.21 repair tag and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
+The installer requires the 1.4.22 repair tag and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
 
 Version 1.4.7 replaces the translation model's false transient-memory rejection with hardware-based capability checks. Eligible 64-bit devices with at least 4 GiB physical RAM now attempt the memory-mapped model load even when Android temporarily reports memory pressure. If the runtime genuinely cannot allocate enough memory, the app keeps captions unchanged and tells the user to close other apps, keep Caption Studio open, and retry.
 
@@ -143,8 +143,8 @@ The release must also contain the 1.4.5 language-picker repair. ADB output is ca
 - TikTok-style caption manipulation: drag to move, pinch to resize text, twist to rotate, resize from four large edge bars, or use the corner resize/rotate control
 - Project default → caption override → word override style inheritance
 - An explicit **This subtitle / All subtitles** styling decision
-- One searchable font browser with 44 deliberately varied, license-documented fonts, favorites, recents, two-color treatments, and unlimited `.ttf`/`.otf` imports
-- 33 data-driven caption animations whose motion restarts from each spoken word's timestamps, including three visibly different emoji-reaction modes
+- One searchable font browser with 68 deliberately varied bundled fonts plus System Sans, favorites, recents, 11 optional two-color treatments, and unlimited `.ttf`/`.otf` imports
+- 60 data-driven caption styles: 59 motion effects plus Classic, with word timing derived from spoken timestamps and accent color limited to Spotlight, Karaoke, and Word Flash
 - Word-aware English and Chinese emoji reactions across 39 semantic categories; meaningful spoken words select their own reaction family and filler words stay clean instead of recycling a random or repeated set
 - Added text and phone images with their own timing, layer order, movement, resizing, rotation, and deletion controls
 - Source, 9:16, 16:9, 1:1, and 4:5 canvases
@@ -152,7 +152,7 @@ The release must also contain the 1.4.5 language-picker repair. ADB output is ca
 - Direct video drag, pinch-to-resize, two-finger rotation, size buttons, 90-degree rotation, and a precise free-angle scrubber
 - Nondestructive video split, reversible two-sided edge trimming with caption restoration, speed, volume, mute, and audio fades; cropped ranges and their captions hide inside explicit removable black gaps; after a gap is removed, either edge can still extend a packed clip back out to unused source media and auto-slide following clips
 - A dedicated audio timeline: import audio from the phone or extract the audio track from a selected video, then trim, restore, move, duplicate, mute, fade, and adjust each audio clip independently
-- 43 data-driven transition treatments with adjustable timing, including dissolves, directional and diagonal wipes, slides, pushes, irises, splits, blinds, tile reveals, folds, color washes, shutter, spin, flash, ripple, and glitch
+- 30 real-footage transition effects plus Clean cut, with adjustable timing across dips, dissolves, directional wipes, slides, pushes, zooms, folds, irises, splits, color washes, shutter, spin, flash, and glitch
 - On-device person-background removal preview and native MP4 render using the Apache-licensed MediaPipe multiclass person model; video frames and masks stay on the phone, while the optional Google SDKs send the operational metrics described in the privacy policy when the feature is enabled
 - Stable, Balanced, and Detailed person-edge modes shared by preview and export, with motion-aware temporal smoothing, face protection, bad-frame rejection, hole/speck cleanup, hysteresis, and edge-aware feathering
 - Exported person motion paths use the same eased position, scale, and shortest-arc rotation behavior shown in preview
@@ -228,4 +228,4 @@ For a production submission, use `npm run release:play` to produce the signed An
 
 ## License
 
-MIT. Third-party libraries and downloaded models retain their own licenses. Runtime attribution and distributable copyright notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); model revisions, provenance, sizes, and hashes are in [MODEL_NOTICES.md](MODEL_NOTICES.md). Forty-two bundled typefaces use the SIL Open Font License 1.1; Fontdiner Swanky and Permanent Marker use Apache License 2.0. The individual font license files are preserved in [`assets/fonts/licenses`](assets/fonts/licenses), and the app includes an offline notices screen with MIT, Apache 2.0, and OFL terms.
+MIT. Third-party libraries and downloaded models retain their own licenses. Runtime attribution and distributable copyright notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); model revisions, provenance, sizes, and hashes are in [MODEL_NOTICES.md](MODEL_NOTICES.md). Sixty-two bundled typefaces use the SIL Open Font License 1.1. Fontdiner Swanky, Permanent Marker, Chewy, Luckiest Guy, Rock Salt, and Special Elite use Apache License 2.0. The individual font license files are preserved in [`assets/fonts/licenses`](assets/fonts/licenses), and the app includes an offline notices screen with MIT, Apache 2.0, and OFL terms.
