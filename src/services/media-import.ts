@@ -6,7 +6,6 @@ import { classifyPickedMedia } from '@/lib/picked-media-kind';
 import { MINIMUM_CLIP_TIMELINE_MS } from '@/lib/video-timeline';
 import {
   deleteProjectOwnedFiles,
-  generateAudioWaveformPeaks,
   generateProjectThumbnail,
   prepareExtractedAudioUri,
   storeProjectAudio,
@@ -179,7 +178,6 @@ export async function pickAndStoreAudio(projectId: string, audioId: string): Pro
       fileName: asset.name,
     });
     const info = await CaptionMedia.getMediaInfo(uri);
-    const waveformPeaks = await generateAudioWaveformPeaks(uri);
     return {
       id: audioId,
       uri,
@@ -188,7 +186,6 @@ export async function pickAndStoreAudio(projectId: string, audioId: string): Pro
       durationMs: info.durationMs,
       mimeType: asset.mimeType,
       origin: 'audio-file',
-      ...(waveformPeaks ? { waveformPeaks } : {}),
     };
   } catch (error) {
     if (uri) await deleteProjectOwnedFiles(projectId, [uri]).catch(() => undefined);
@@ -241,7 +238,6 @@ async function extractAudioFromVideo(
   try {
     const extraction = await CaptionMedia.extractAudioTrack(sourceUri, outputUri);
     const storedInfo = await CaptionMedia.getMediaInfo(outputUri);
-    const waveformPeaks = await generateAudioWaveformPeaks(outputUri);
     return {
       id: audioId,
       uri: outputUri,
@@ -250,7 +246,6 @@ async function extractAudioFromVideo(
       durationMs: storedInfo.durationMs || extraction.durationMs,
       mimeType: extraction.mimeType,
       origin: 'video-audio' as const,
-      ...(waveformPeaks ? { waveformPeaks } : {}),
     };
   } catch (error) {
     await deleteProjectOwnedFiles(projectId, [outputUri]).catch(() => undefined);

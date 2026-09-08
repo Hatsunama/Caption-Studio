@@ -20,7 +20,8 @@ import {
 } from '@/lib/timeline-scale';
 import { buildClipTimeline, remapCaptionsToTimeline } from '@/lib/video-timeline';
 import { audioClipEnd } from '@/lib/audio-timeline';
-import { ensureClipFrameThumbnail, generateAudioWaveformPeaks } from '@/services/project-media';
+import { audioWaveformWindow } from '@/lib/audio-waveform';
+import { ensureClipFrameThumbnail } from '@/services/project-media';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import type { AudioClip, CaptionBlock, ProjectAudioSource, ProjectVideoSource, VideoClip, VisualLayer } from '@/types/project';
 
@@ -125,25 +126,6 @@ export function LayerTimeline(props: {
     0,
   ) + props.translationTracks.length * captionRowHeight;
 
-  const [peakCache, setPeakCache] = useState<Record<string, number[]>>({});
-  useEffect(() => {
-    let cancelled = false;
-    const missing = props.audioSources.filter((source) => {
-      const existing = source.waveformPeaks ?? peakCache[source.id];
-      return !existing || existing.length < 8;
-    });
-    if (!missing.length) return undefined;
-    void (async () => {
-      for (const source of missing) {
-        if (cancelled) return;
-        const peaks = await generateAudioWaveformPeaks(source.uri);
-        if (!cancelled && peaks?.length) {
-          setPeakCache((current) => current[source.id] ? current : { ...current, [source.id]: peaks });
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [peakCache, props.audioSources]);
   const leadingPadding = Math.max(0, viewportWidth / 2 - LABEL_WIDTH);
   const trailingPadding = viewportWidth / 2;
   const scrollContentWidth = leadingPadding + LABEL_WIDTH + trackWidth + trailingPadding;
@@ -408,9 +390,11 @@ export function LayerTimeline(props: {
                     durationMs={duration}
                     trackWidth={trackWidth}
                     lane={audioLayout.laneById.get(clip.id) ?? 0}
-                    color={clip.muted ? '#59636F' : '#00B8C7'}
+                    color={clip.muted ? '#59636F' : '#006D78'}
                     selected={props.selectedAudioClipId === clip.id}
-                    waveformPeaks={source?.waveformPeaks ?? (source ? peakCache[source.id] : undefined)}
+                    waveformPeaks={source?.waveformPeaks}
+                    waveformVisibleStartMs={visibleRange.startMs}
+                    waveformVisibleEndMs={visibleRange.endMs}
                     sourceStartMs={clip.sourceStartMs}
                     sourceEndMs={clip.sourceEndMs}
                     sourceDurationMs={source?.durationMs}
@@ -862,6 +846,8 @@ function TimedBlock(props: {
   selected: boolean;
   movable?: boolean;
   waveformPeaks?: number[];
+  waveformVisibleStartMs?: number;
+  waveformVisibleEndMs?: number;
   sourceStartMs?: number;
   sourceEndMs?: number;
   sourceDurationMs?: number;
@@ -879,10 +865,15 @@ function TimedBlock(props: {
           sourceStartMs={props.sourceStartMs ?? 0}
           sourceEndMs={props.sourceEndMs ?? props.sourceDurationMs ?? 1}
           sourceDurationMs={props.sourceDurationMs ?? Math.max(1, (props.sourceEndMs ?? 1) - (props.sourceStartMs ?? 0))}
+          clipStartMs={props.startMs}
+          clipEndMs={props.endMs}
+          visibleStartMs={props.waveformVisibleStartMs ?? props.startMs}
+          visibleEndMs={props.waveformVisibleEndMs ?? props.endMs}
+          renderedClipWidth={width}
           color={props.selected ? '#E8FDFF' : '#B8F7FF'}
         />
       ) : null}
-      <Text pointerEvents="none" numberOfLines={1} style={{ color: '#FFFFFF', fontSize: 8, fontWeight: '900', zIndex: 2 }}>{props.label}</Text>
+      <Text pointerEvents="none" numberOfLines={1} style={{ position: 'absolute', left: 7, right: 7, top: 1, color: '#FFFFFF', fontSize: 7, fontWeight: '900', zIndex: 2, textShadowColor: '#00161A', textShadowRadius: 2 }}>{props.label}</Text>
       {props.movable ? <CaptionMoveGrip {...props} /> : (
         <Pressable onPress={props.onPress} style={{ position: 'absolute', left: props.selected ? 24 : 0, right: props.selected ? 24 : 0, top: 0, bottom: 0 }} />
       )}
@@ -901,30 +892,41 @@ function AudioWaveform(props: {
   sourceStartMs: number;
   sourceEndMs: number;
   sourceDurationMs: number;
+  clipStartMs: number;
+  clipEndMs: number;
+  visibleStartMs: number;
+  visibleEndMs: number;
+  renderedClipWidth: number;
   color: string;
 }) {
-  const duration = Math.max(1, props.sourceDurationMs);
-  const startRatio = clamp(props.sourceStartMs / duration, 0, 1);
-  const endRatio = clamp(props.sourceEndMs / duration, startRatio + 0.001, 1);
-  const startIndex = Math.floor(startRatio * props.peaks.length);
-  const endIndex = Math.max(startIndex + 1, Math.ceil(endRatio * props.peaks.length));
-  const slice = props.peaks.slice(startIndex, endIndex);
-  const bars = slice.length > 0 ? slice : props.peaks;
-  const maxBar = LANE_HEIGHT - 12;
+  const window = audioWaveformWindow({
+    peaks: props.peaks,
+    sourceDurationMs: props.sourceDurationMs,
+    sourceStartMs: props.sourceStartMs,
+    sourceEndMs: props.sourceEndMs,
+    clipStartMs: props.clipStartMs,
+    clipEndMs: props.clipEndMs,
+    visibleStartMs: props.visibleStartMs,
+    visibleEndMs: props.visibleEndMs,
+    renderedClipWidth: props.renderedClipWidth,
+  });
+  if (window.bars.length === 0) return null;
+  const maxHalfHeight = (LANE_HEIGHT - 11) / 2;
   return (
-    <View pointerEvents="none" style={{ position: 'absolute', left: 4, right: 4, top: 3, bottom: 3, flexDirection: 'row', alignItems: 'center', gap: 1, opacity: 0.9 }}>
-      {bars.map((peak, index) => {
-        const height = Math.max(3, Math.round(peak * maxBar));
+    <View pointerEvents="none" style={{ position: 'absolute', left: window.leftPx, width: window.widthPx, top: 3, bottom: 3, flexDirection: 'row', alignItems: 'center', gap: 1, opacity: 0.96 }}>
+      <View style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: 1, backgroundColor: `${props.color}55` }} />
+      {window.bars.map((peak, index) => {
+        const halfHeight = Math.max(0.5, Math.pow(peak, 0.68) * maxHalfHeight);
         return (
           <View
-            key={`${index}-${height}`}
+            key={index}
             style={{
               flex: 1,
               minWidth: 1,
-              height,
+              height: Math.max(1, Math.round(halfHeight * 2)),
               borderRadius: 1,
               backgroundColor: props.color,
-              opacity: 0.35 + peak * 0.65,
+              opacity: peak === 0 ? 0.28 : 0.55 + peak * 0.45,
             }}
           />
         );

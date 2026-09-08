@@ -1461,13 +1461,20 @@ function projectFixture(overrides = {}) {
   return { ...base, ...overrides };
 }
 
-test('audio sources persist waveform peaks and extract busy arms after a source is chosen', () => {
+test('audio sources persist versioned waveform peaks and extract busy arms after a source is chosen', () => {
   const schema = readFileSync(new URL('../src/lib/project-schema.ts', import.meta.url), 'utf8');
   assert.match(schema, /decodeWaveformPeaks/);
   assert.match(schema, /waveformPeaks/);
+  assert.match(schema, /waveformVersion/);
   const mediaImport = readFileSync(new URL('../src/services/media-import.ts', import.meta.url), 'utf8');
-  assert.match(mediaImport, /generateAudioWaveformPeaks/);
+  assert.doesNotMatch(mediaImport, /generateAudioWaveformPeaks/);
   assert.match(mediaImport, /onSourceChosen/);
+  const waveformHook = readFileSync(new URL('../src/hooks/use-project-audio-waveforms.ts', import.meta.url), 'utf8');
+  assert.match(waveformHook, /generateAudioWaveformPeaks/);
+  assert.match(waveformHook, /audioWaveformNeedsRefresh/);
+  const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(timeline, /peakCache/);
+  assert.match(timeline, /audioWaveformWindow/);
   const workflows = readFileSync(new URL('../src/services/project-workflows.ts', import.meta.url), 'utf8');
   assert.match(workflows, /onExtractSourceChosen/);
   const nativeModule = readFileSync(new URL('../modules/caption-media/src/CaptionMediaModule.ts', import.meta.url), 'utf8');

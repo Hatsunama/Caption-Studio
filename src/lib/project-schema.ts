@@ -178,6 +178,12 @@ function decodeAudioSource(value: unknown, index: number): ProjectAudioSource {
   const waveformPeaks = source.waveformPeaks === undefined
     ? undefined
     : decodeWaveformPeaks(source.waveformPeaks, `audio source ${index + 1} waveform peaks`);
+  if (source.waveformVersion !== undefined && source.waveformVersion !== 2) {
+    throw new Error(`audio source ${index + 1} waveform version must be 2.`);
+  }
+  if (source.waveformVersion === 2 && !waveformPeaks) {
+    throw new Error(`audio source ${index + 1} waveform version requires waveform peaks.`);
+  }
   return {
     id: identifierValue(source.id, `audio source ${index + 1} identifier`),
     uri: localFileUri(source.uri, `audio source ${index + 1} URI`),
@@ -189,12 +195,13 @@ function decodeAudioSource(value: unknown, index: number): ProjectAudioSource {
       ? 'audio-file'
       : enumValue(source.origin, ['audio-file', 'video-audio'] as const, `audio source ${index + 1} origin`),
     ...(waveformPeaks ? { waveformPeaks } : {}),
+    ...(source.waveformVersion === 2 ? { waveformVersion: 2 as const } : {}),
   };
 }
 
 function decodeWaveformPeaks(value: unknown, label: string): number[] {
   if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
-  if (value.length < 8 || value.length > 256) throw new Error(`${label} must contain 8 to 256 peaks.`);
+  if (value.length < 8 || value.length > 4096) throw new Error(`${label} must contain 8 to 4096 peaks.`);
   return value.map((entry, peakIndex) => {
     const peak = finiteNumber(entry, `${label} entry ${peakIndex + 1}`, 0, 1);
     return peak;
