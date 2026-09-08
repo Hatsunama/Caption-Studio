@@ -1,10 +1,10 @@
 $ErrorActionPreference = 'Stop'
 
 $Repository = 'Hatsunama/Caption-Studio'
-$RequiredCommit = 'v1.4.20-fixed.1'
+$RequiredCommit = 'e01c55f44850a7bca94c696bd9dc2746d2ef58b8'
 $Package = 'com.hatsunama.captionstudio.fixed'
-$AssetName = 'caption-studio-fixed-android.apk'
-$TempDir = Join-Path $env:TEMP ("CaptionStudioFixedInstaller-" + [Guid]::NewGuid().ToString('N'))
+$AssetName = 'caption-studio-android.apk'
+$TempDir = Join-Path $env:TEMP ("CaptionStudioInstaller-" + [Guid]::NewGuid().ToString('N'))
 $Apk = Join-Path $TempDir $AssetName
 $OwnsTempDir = $false
 
@@ -45,11 +45,11 @@ try {
     $Release = @($Releases | Where-Object {
         -not $_.draft -and
         $_.prerelease -and
-        $_.tag_name -match '^v\d+\.\d+\.\d+-fixed\.\d+$' -and
+        $_.tag_name -match '^v\d+\.\d+\.\d+$' -and
         @($_.assets | Where-Object name -eq $AssetName).Count -eq 1
     } | Select-Object -First 1)
     if ($Release.Count -ne 1) {
-        throw 'No published Caption Studio fixed side-by-side release was found.'
+        throw 'No published Caption Studio Android release was found.'
     }
     $Release = $Release[0]
 
@@ -119,7 +119,7 @@ try {
 
     Invoke-Adb @('-s', $Serial, 'shell', 'dumpsys', 'package', $Package) |
         Select-String 'versionName=|versionCode=|targetSdk='
-    Write-Host 'Update installed. Neither app was uninstalled or cleared.'
+    Write-Host 'Caption Studio updated. Neither app was uninstalled or cleared.'
 }
 finally {
     if ($OwnsTempDir) {

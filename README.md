@@ -6,8 +6,8 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.20-fixed.1) on the phone.
-2. Tap **caption-studio-fixed-android.apk**.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.21) on the phone.
+2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
 5. Tap **Install**, then open **Caption Studio**.
@@ -24,9 +24,9 @@ This downloads the same release APK; it does not compile the app on the phone.
 pkg update
 pkg install curl
 termux-setup-storage
-curl -L -o ~/storage/downloads/caption-studio-fixed-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.20-fixed.1/caption-studio-fixed-android.apk
-termux-open ~/storage/downloads/caption-studio-fixed-android.apk
+curl -L -o ~/storage/downloads/caption-studio-android.apk \
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.21/caption-studio-android.apk
+termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
 When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a chooser, select Android's package installer. Then allow **Install unknown apps** for Termux when Android asks.
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio Fixed 1.4.20 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing Fixed installation is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.21 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -46,7 +46,7 @@ $Installer = Join-Path $env:TEMP ("install-caption-studio-" + [Guid]::NewGuid().
 
 try {
     Invoke-WebRequest -UseBasicParsing `
-        -Uri 'https://raw.githubusercontent.com/Hatsunama/Caption-Studio/main/scripts/install-caption-studio-fixed.ps1' `
+        -Uri 'https://raw.githubusercontent.com/Hatsunama/Caption-Studio/main/scripts/install-caption-studio.ps1' `
         -OutFile $Installer
     & $Installer
 }
@@ -73,9 +73,9 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Fixed side-by-side build when the production signing key is unavailable
 
-Current fixed build: **1.4.20** (`v1.4.20-fixed.1`, Android version code 32).
+Current Android build: **1.4.21** (`v1.4.21`, Android version code 33).
 
-Version 1.4.20 keeps extracted and imported audio continuous during timeline playback. Normal clock updates no longer seek the native player every fraction of a second; only real discontinuities, explicit scrubs, and play/pause transitions reposition it. Waveforms are decoded from the selected source by presentation timestamp at duration-scaled resolution, preserve the loudest channel without phase cancellation, persist as a versioned derived cache, and render only the visible window with bounded view count. Audio import and extraction no longer wait for waveform decoding. Existing projects, source files, drafts, signing identity, and the production translation model remain unchanged.
+Version 1.4.21 keeps extracted and imported audio continuous during timeline playback. Normal clock updates no longer seek the native player every fraction of a second; only real discontinuities, explicit scrubs, and play/pause transitions reposition it. Waveforms are decoded from the selected source by presentation timestamp at duration-scaled resolution, preserve the loudest channel without phase cancellation, persist as a versioned derived cache, and render only the visible window with bounded view count. Audio import and extraction no longer wait for waveform decoding. The locked Expo SDK 57 patch set is aligned, and Android dependency verification resolves package ownership from npm's dependency graph instead of assuming packages are hoisted. Existing projects, source files, drafts, signing identity, and the production translation model remain unchanged.
 
 Version 1.4.19 keeps strict multi-cue JSON and ID validation while giving a failed single-cue retry its own deterministic plain-text provider contract. The only requested cue supplies the identity; malformed JSON, Markdown wrappers, runtime tokens, source echoes, and wrong-script output still fail closed. This makes the existing untuned production model's common bare-translation response usable without weakening batch cardinality or moving provider policy into UI/project state. Translation checkpoints are invalidated for the changed retry profile. The production LiteRT-LM URL, bytes, and SHA-256 remain unchanged while the Natural multilingual v2 candidate completes its strict model and two-phone gates.
 
@@ -101,17 +101,17 @@ Version 1.4.9 checkpoints completed translation batches in private, backup-exclu
 
 Version 1.4.8 preserves individual subtitle identities through AI translation. Unusable results are marked FAILED - RETRY, successful translations and existing text are saved, and incomplete runs show a summary. Open Edit both languages and tap Refresh to repair an incomplete track. Export errors appear in a dialog; disabled and off-timeline captions no longer block MP4 export. Independent translations remain in subtitle-file output, and draft recovery operations are serialized.
 
-The installer requires the 1.4.20 repair tag and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
+The installer requires the 1.4.21 repair tag and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
 
 Version 1.4.7 replaces the translation model's false transient-memory rejection with hardware-based capability checks. Eligible 64-bit devices with at least 4 GiB physical RAM now attempt the memory-mapped model load even when Android temporarily reports memory pressure. If the runtime genuinely cannot allocate enough memory, the app keeps captions unchanged and tells the user to close other apps, keep Caption Studio open, and retry.
 
 Version 1.4.6 fixes second-language creation for existing projects with long caption identifiers. Cue creation and project loading share an identifier contract that accounts for the language-track prefix, without renaming source captions or discarding saved translations.
 
-The fixed side-by-side release installs as **Caption Studio Fixed** with package `com.hatsunama.captionstudio.fixed`. It does not replace, uninstall, clear, or migrate `com.hatsunama.captionstudio`, so projects and drafts in the existing app remain untouched. The two apps have separate private storage.
+The data-preserving update installs as **Caption Studio** with package `com.hatsunama.captionstudio.fixed`. It does not replace, uninstall, clear, or migrate `com.hatsunama.captionstudio`, so projects and drafts in the existing app remain untouched. The two packages have separate private storage.
 
 Use the recommended Windows PowerShell installer above to exercise integrated fixes while preserving an older production-signed installation.
 
-The installer accepts exactly one authorized Android device, verifies that the release contains the multilingual, independent-timing, and visible-video export repair commit, verifies GitHub's APK SHA-256 digest, updates only the fixed side-by-side package with `adb install -r`, launches it, and removes its temporary download. It never issues `adb uninstall` or `pm clear`, so projects already stored in **Caption Studio Fixed** remain in place during an update. If Android rejects the update because the signing certificate differs, the installer stops without uninstalling either app.
+The installer accepts exactly one authorized Android device, verifies that the release contains the required repair commit, verifies GitHub's APK SHA-256 digest, updates only the data-preserving package with `adb install -r`, launches it, and removes its temporary download. It never issues `adb uninstall` or `pm clear`, so existing projects remain in place during an update. If Android rejects the update because the signing certificate differs, the installer stops without uninstalling either app.
 
 The release must also contain the 1.4.5 language-picker repair. ADB output is captured with Windows PowerShell 5.1-compatible handling: normal stderr transfer progress is not treated as installation failure; the native exit code and install success response are checked. Cleanup runs on success or failure and removes only this run's APK, empty temporary download directory, and downloaded installer script. Cleanup failures are reported, not presented as successful deletion. It does not clean phone storage or unrelated files on C:.
 

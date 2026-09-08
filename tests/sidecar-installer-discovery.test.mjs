@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const installer = readFileSync(
-  new URL('../scripts/install-caption-studio-fixed.ps1', import.meta.url),
+  new URL('../scripts/install-caption-studio.ps1', import.meta.url),
   'utf8',
 );
 

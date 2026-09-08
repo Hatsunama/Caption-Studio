@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SIDECAR_NAME = 'Caption Studio Fixed';
+const SIDECAR_NAME = 'Caption Studio';
 const SIDECAR_SLUG = 'caption-studio-fixed';
 const SIDECAR_SCHEME = 'captionstudiofixed';
 const SIDECAR_PACKAGE = 'com.hatsunama.captionstudio.fixed';
