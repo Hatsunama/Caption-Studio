@@ -53,7 +53,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final int MAX_TOTAL_OUTPUT_CHARACTERS = 16_000;
   static final String PROMPT_CONTRACT = "qwen2.5-caption-json-v2";
   // Bump when the runtime version, backend, token limits, or sampler changes.
-  static final String CHECKPOINT_PROFILE = "v2;litertlm-0.16.1;cpu;4096;1536;topk1;topp1;temperature0;seed0;single-cue-repair";
+  static final String CHECKPOINT_PROFILE = "v3;litertlm-0.16.1;cpu;4096;1536;topk1;topp1;temperature0;seed0;single-cue-text-repair";
 
   static final String INVALID_REQUEST = "E_TRANSLATION_INVALID_REQUEST";
   static final String BUSY = "E_TRANSLATION_BUSY";
@@ -81,8 +81,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           + "Write natural conversational subtitles, using target-language idioms and colloquialisms where they match the speaker's register. Preserve internet slang when present, without inventing slang, profanity, or a regional dialect. "
           + "Short acknowledgements are complete utterances. On retry, translate the single requested cue using its context; do not translate the context itself. "
           + "Do not leave source-language words untranslated unless they are code-like tokens, URLs, brands, or proper names that have no natural translation. "
-          + "Return exactly one JSON array and nothing else. Every array item must be an object with exactly two string fields named id and text. "
-          + "The item count, item order, and every id must exactly match the input. Never use Markdown or code fences. "
+          + "For translate_caption_batch requests: Return exactly one JSON array and nothing else. Every array item must be an object with exactly two string fields named id and text. "
+          + "The item count, item order, and every id must exactly match the input. For translate_single_caption requests whose responseFormat is single_caption_text, return only the translated cue text with no id, label, wrapper, or explanation. Never use Markdown or code fences. "
           + "Never echo the source sentence as a fallback. Use the grammar and writing system of the declared target language. "
           + "For zh-Hans use Simplified Chinese characters and for zh-Hant use Traditional Chinese characters.";
 
@@ -351,7 +351,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
             checkCancelled(run);
             // One bounded retry per failed cue, sharing this operation's engine.
             String response = runtime.translate(buildRetryPrompt(request, cueIndex));
-            Caption retry = parseStrictResponse(response, List.of(source)).get(0);
+            Caption retry = parseSingleCaptionRetryResponse(response, source);
             boolean valid = retry.valid && !TranslationOutputQuality.needsReview(source.text, retry.text, request.targetLanguage);
             batchResult.set(cueIndex, new Caption(source.id, retry.text, valid));
             // Save each repair before observing cancellation; never cache a fabricated fallback.
@@ -430,7 +430,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     if (textCharacterCount(right) > 250) right = right.substring(0, right.offsetByCodePoints(0, 250));
     ValidatedRequest single = new ValidatedRequest(request.sourceLanguage, request.targetLanguage, List.of(request.captions.get(index)), left, right);
     JsonObject payload = com.google.gson.JsonParser.parseString(buildUserPrompt(single)).getAsJsonObject();
+    payload.addProperty("task", "translate_single_caption");
     payload.addProperty("retry", true);
+    payload.addProperty("responseFormat", "single_caption_text");
     return payload.toString();
   }
 
@@ -893,6 +895,32 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       resolved.add(validById.getOrDefault(expected.id, new Caption(expected.id, expected.text, false)));
     }
     return resolved;
+  }
+
+  static Caption parseSingleCaptionRetryResponse(String response, Caption expected)
+      throws TranslationFailure {
+    Caption structured = parseStrictResponse(response, List.of(expected)).get(0);
+    if (structured.valid) return structured;
+    if (response == null || response.isEmpty() || response.length() > MAX_OUTPUT_CHARACTERS) {
+      return new Caption(expected.id, expected.text, false);
+    }
+    String text = response.trim();
+    if (isBlankText(text) || textCharacterCount(text) > MAX_OUTPUT_TEXT_CHARACTERS
+        || text.startsWith("[") || text.startsWith("{") || text.startsWith("```")
+        || text.contains("<|") || containsDisallowedControlCharacter(text)) {
+      return new Caption(expected.id, expected.text, false);
+    }
+    return new Caption(expected.id, text, true);
+  }
+
+  private static boolean containsDisallowedControlCharacter(String text) {
+    for (int offset = 0; offset < text.length();) {
+      int codePoint = text.codePointAt(offset);
+      if (Character.isISOControl(codePoint)
+          && codePoint != '\n' && codePoint != '\r' && codePoint != '\t') return true;
+      offset += Character.charCount(codePoint);
+    }
+    return false;
   }
 
   private static List<Caption> sourceFallback(List<Caption> expectedCaptions) {

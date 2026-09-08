@@ -177,6 +177,84 @@ public final class NaturalCaptionTranslatorTest {
   }
 
   @Test
+  public void singleCaptionRetryAcceptsOnlyUnwrappedPlainText() throws Exception {
+    NaturalCaptionTranslator.Caption expected =
+        new NaturalCaptionTranslator.Caption("one", "Okay.");
+
+    assertEquals(
+        false,
+        NaturalCaptionTranslator.parseStrictResponse("好的。", List.of(expected)).get(0).valid
+    );
+    NaturalCaptionTranslator.Caption accepted =
+        NaturalCaptionTranslator.parseSingleCaptionRetryResponse("  好的。\n", expected);
+    assertEquals("one", accepted.id);
+    assertEquals("好的。", accepted.text);
+    assertEquals(true, accepted.valid);
+
+    assertEquals(
+        false,
+        NaturalCaptionTranslator.parseSingleCaptionRetryResponse(
+            "[{\"id\":\"one\",\"text\":\"好的。\"}] trailing",
+            expected
+        ).valid
+    );
+    assertEquals(
+        false,
+        NaturalCaptionTranslator.parseSingleCaptionRetryResponse("```\n好的。\n```", expected).valid
+    );
+    assertEquals(
+        false,
+        NaturalCaptionTranslator.parseSingleCaptionRetryResponse("<|assistant|>好的。", expected).valid
+    );
+  }
+
+  @Test
+  public void individualRepairBindsPlainTextToTheOnlyRequestedCue() throws Exception {
+    File model = modelFixture();
+    AtomicInteger calls = new AtomicInteger();
+    TranslationRuntime runtime = new TranslationRuntime() {
+      @Override
+      public String translate(String prompt) {
+        calls.incrementAndGet();
+        JsonObject payload = JsonParser.parseString(prompt).getAsJsonObject();
+        return "translate_single_caption".equals(payload.get("task").getAsString())
+            ? "好的。"
+            : "not structured JSON";
+      }
+
+      @Override
+      public void cancel() {
+      }
+
+      @Override
+      public void close() {
+      }
+    };
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    NaturalCaptionTranslator translator = translator(
+        model.getParentFile(),
+        (selectedModel, cacheDirectory, threadCount, systemInstruction) -> runtime,
+        executor
+    );
+    RecordingCallback callback = new RecordingCallback();
+    Map<String, Object> request = sessionRequest("en", "zh-Hans", "one", "Okay.");
+    request.put("repairUnusableOutputs", true);
+
+    translator.start(model.getAbsolutePath(), request, callback);
+    assertTrue(callback.finished.await(2, TimeUnit.SECONDS));
+
+    assertEquals(2, calls.get());
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> captions =
+        (List<Map<String, Object>>) callback.result.get().get("captions");
+    assertEquals("one", captions.get(0).get("id"));
+    assertEquals("好的。", captions.get(0).get("text"));
+    assertEquals(true, captions.get(0).get("valid"));
+    translator.close();
+    assertTrue(model.delete());
+  }
+
+  @Test
   public void acceptsReadableAbsolutePathAndFileUriOnly() throws Exception {
     File directory = Files.createTempDirectory("caption-translation-test").toFile();
     File model = new File(directory, "qwen.litertlm");
