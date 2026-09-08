@@ -17,6 +17,13 @@ export type TimelineAudioPlaybackTarget = {
   playing: boolean;
 };
 
+export type TimelineAudioPlaybackDependencies = {
+  createPlayer: (uri: string) => TimelineAudioPlayer;
+  preparePlayback?: () => Promise<void>;
+  onError?: (error: unknown) => void;
+  now?: () => number;
+};
+
 type ManagedAudioPlayer = {
   player: TimelineAudioPlayer;
   sourceId: string;
@@ -36,13 +43,18 @@ type ManagedAudioPlayer = {
 export class TimelineAudioPlaybackController {
   private readonly players = new Map<string, ManagedAudioPlayer>();
   private readonly pendingRunners = new Set<Promise<void>>();
+  private readonly createPlayer: (uri: string) => TimelineAudioPlayer;
+  private readonly preparePlayback: () => Promise<void>;
+  private readonly onError: (error: unknown) => void;
+  private readonly now: () => number;
   private disposed = false;
 
-  constructor(
-    private readonly createPlayer: (uri: string) => TimelineAudioPlayer,
-    private readonly onError: (error: unknown) => void = () => {},
-    private readonly now: () => number = Date.now,
-  ) {}
+  constructor(dependencies: TimelineAudioPlaybackDependencies) {
+    this.createPlayer = dependencies.createPlayer;
+    this.preparePlayback = dependencies.preparePlayback ?? (() => Promise.resolve());
+    this.onError = dependencies.onError ?? (() => {});
+    this.now = dependencies.now ?? Date.now;
+  }
 
   synchronize(targets: readonly TimelineAudioPlaybackTarget[]) {
     if (this.disposed) return;
@@ -153,6 +165,13 @@ export class TimelineAudioPlaybackController {
       }
 
       if (target.playing && !managed.playing) {
+        await this.preparePlayback();
+        if (managed.disposed || this.disposed) return;
+        const latestDesired = managed.desired as ManagedAudioPlayer['desired'];
+        if (latestDesired) {
+          managed.desired = { ...latestDesired, requiresSeek: true };
+          continue;
+        }
         managed.player.play();
         managed.playing = true;
       }

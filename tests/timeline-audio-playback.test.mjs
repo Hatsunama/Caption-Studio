@@ -5,7 +5,7 @@ import { TimelineAudioPlaybackController } from '../src/services/timeline-audio-
 
 test('rapid audio seeks are serialized and only the latest target can start playback', async () => {
   const player = new ControlledPlayer();
-  const controller = new TimelineAudioPlaybackController(() => player);
+  const controller = new TimelineAudioPlaybackController({ createPlayer: () => player });
   controller.synchronize([target({ targetSeconds: 1, playing: true })]);
   controller.synchronize([target({ targetSeconds: 5, playing: true })]);
   assert.deepEqual(player.seekTargets, [1]);
@@ -25,7 +25,7 @@ test('rapid audio seeks are serialized and only the latest target can start play
 
 test('paused scrubbing coalesces to the latest exact position without playing', async () => {
   const player = new ControlledPlayer();
-  const controller = new TimelineAudioPlaybackController(() => player);
+  const controller = new TimelineAudioPlaybackController({ createPlayer: () => player });
   controller.synchronize([target({ targetSeconds: 2, playing: false })]);
   controller.synchronize([target({ targetSeconds: 7.25, playing: false })]);
   player.resolveNextSeek();
@@ -40,7 +40,7 @@ test('paused scrubbing coalesces to the latest exact position without playing', 
 
 test('a removed audio clip cannot resume after its pending seek completes', async () => {
   const player = new ControlledPlayer();
-  const controller = new TimelineAudioPlaybackController(() => player);
+  const controller = new TimelineAudioPlaybackController({ createPlayer: () => player });
   controller.synchronize([target({ targetSeconds: 3, playing: true })]);
   controller.synchronize([]);
   assert.equal(player.removed, 1);
@@ -54,7 +54,7 @@ test('a removed audio clip cannot resume after its pending seek completes', asyn
 test('normal playback follows timeline continuity without polling a stale native position', async () => {
   const player = new ControlledPlayer(true);
   let now = 0;
-  const controller = new TimelineAudioPlaybackController(() => player, undefined, () => now);
+  const controller = new TimelineAudioPlaybackController({ createPlayer: () => player, now: () => now });
   controller.synchronize([target({ targetSeconds: 1, playing: true })]);
   await controller.whenIdle();
   now = 200;
@@ -73,7 +73,7 @@ test('normal playback follows timeline continuity without polling a stale native
 test('a real timeline discontinuity seeks the active player once', async () => {
   const player = new ControlledPlayer(true);
   let now = 0;
-  const controller = new TimelineAudioPlaybackController(() => player, undefined, () => now);
+  const controller = new TimelineAudioPlaybackController({ createPlayer: () => player, now: () => now });
   controller.synchronize([target({ targetSeconds: 1, playing: true })]);
   await controller.whenIdle();
   now = 50;
@@ -86,11 +86,13 @@ test('a real timeline discontinuity seeks the active player once', async () => {
 
 test('relinking a source URI replaces the native player even when the stable source id is retained', async () => {
   const players = [];
-  const controller = new TimelineAudioPlaybackController((uri) => {
-    const player = new ControlledPlayer(true);
-    player.uri = uri;
-    players.push(player);
-    return player;
+  const controller = new TimelineAudioPlaybackController({
+    createPlayer: (uri) => {
+      const player = new ControlledPlayer(true);
+      player.uri = uri;
+      players.push(player);
+      return player;
+    },
   });
   controller.synchronize([target({ uri: 'file:///first.m4a', playing: false })]);
   await controller.whenIdle();
@@ -98,6 +100,40 @@ test('relinking a source URI replaces the native player even when the stable sou
   await controller.whenIdle();
   assert.deepEqual(players.map((player) => player.uri), ['file:///first.m4a', 'file:///replacement.m4a']);
   assert.equal(players[0].removed, 1);
+  controller.dispose();
+});
+
+test('audio playback waits for the shared native session before starting', async () => {
+  const player = new ControlledPlayer(true);
+  let releasePreparation;
+  const controller = new TimelineAudioPlaybackController({
+    createPlayer: () => player,
+    preparePlayback: () => new Promise((resolve) => { releasePreparation = resolve; }),
+  });
+  controller.synchronize([target({ targetSeconds: 2, playing: true })]);
+  await nextTurn();
+  assert.deepEqual(player.playPositions, []);
+
+  releasePreparation();
+  await controller.whenIdle();
+  assert.deepEqual(player.playPositions, [2]);
+  controller.dispose();
+});
+
+test('a pause issued during native session preparation prevents stale playback', async () => {
+  const player = new ControlledPlayer(true);
+  let releasePreparation;
+  const controller = new TimelineAudioPlaybackController({
+    createPlayer: () => player,
+    preparePlayback: () => new Promise((resolve) => { releasePreparation = resolve; }),
+  });
+  controller.synchronize([target({ targetSeconds: 2, playing: true })]);
+  await nextTurn();
+  controller.synchronize([target({ targetSeconds: 2, playing: false })]);
+  releasePreparation();
+  await controller.whenIdle();
+  assert.deepEqual(player.playPositions, []);
+  assert.equal(player.playing, false);
   controller.dispose();
 });
 

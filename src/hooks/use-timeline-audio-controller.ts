@@ -1,8 +1,8 @@
-import { createAudioPlayer } from 'expo-audio';
 import { useEffect, useMemo, useRef } from 'react';
 
 import { audioClipEnd, audioClipVolume } from '@/lib/audio-timeline';
 import { TimelineAudioPlaybackController } from '@/services/timeline-audio-playback';
+import { createTimelineAudioPlayer, prepareTimelineAudioRuntime } from '@/services/timeline-audio-runtime';
 import type { CaptionProject } from '@/types/project';
 
 export function useTimelineAudioController(
@@ -36,10 +36,11 @@ export function useTimelineAudioController(
   );
 
   useEffect(() => {
-    const controller = new TimelineAudioPlaybackController(
-      (uri) => createAudioPlayer(uri, { updateInterval: 250 }),
-      () => onError('Timeline audio preview could not synchronize. The exported audio is unchanged.'),
-    );
+    const controller = new TimelineAudioPlaybackController({
+      createPlayer: createTimelineAudioPlayer,
+      preparePlayback: prepareTimelineAudioRuntime,
+      onError: () => onError('Timeline audio preview could not start. Android could not configure shared video and audio playback. The exported audio is unchanged.'),
+    });
     controllerRef.current = controller;
     return () => {
       if (controllerRef.current === controller) controllerRef.current = undefined;
