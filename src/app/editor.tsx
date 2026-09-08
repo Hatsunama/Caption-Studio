@@ -33,6 +33,7 @@ import { VideoTransformOverlay } from '@/components/editor/video-transform-overl
 import { VideoTransitionOverlay } from '@/components/editor/video-transition-overlay';
 import { useTimelineVideoController } from '@/hooks/use-timeline-video-controller';
 import { useTimelineAudioController } from '@/hooks/use-timeline-audio-controller';
+import { useProjectAudioWaveforms } from '@/hooks/use-project-audio-waveforms';
 import { useProjectCaptionTranslation } from '@/hooks/use-project-caption-translation';
 import { useForegroundOperation } from '@/hooks/use-foreground-operation';
 import { useEditorRuntimePolicy } from '@/hooks/use-editor-runtime-policy';
@@ -371,6 +372,29 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const transport = useTimelineVideoController(project, setError);
   const { players, activeSlot, currentMs, isPlaying } = transport;
   useTimelineAudioController(project, currentMs, isPlaying, runtimePolicy.mediaAdmitted, setError);
+  useProjectAudioWaveforms(
+    project,
+    runtimePolicy.mediaAdmitted && !isPlaying,
+    ({ sourceId, sourceUri, waveformPeaks, waveformVersion }) => {
+      const current = projectRef.current;
+      const source = current.audioSources.find((candidate) => candidate.id === sourceId && candidate.uri === sourceUri);
+      if (!source || (source.waveformVersion === waveformVersion && source.waveformPeaks?.length === waveformPeaks.length)) {
+        return;
+      }
+      const next = {
+        ...current,
+        audioSources: current.audioSources.map((candidate) => (
+          candidate.id === sourceId && candidate.uri === sourceUri
+            ? { ...candidate, waveformPeaks, waveformVersion }
+            : candidate
+        )),
+      };
+      projectRef.current = next;
+      setProject(next);
+      persistProjectInBackground(next);
+    },
+    setError,
+  );
   const pauseTransport = transport.pause;
 
   useEffect(() => {

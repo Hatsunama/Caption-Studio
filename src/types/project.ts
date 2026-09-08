@@ -312,6 +312,7 @@ export type ProjectAudioSource = {
   origin: 'audio-file' | 'video-audio';
   /** Normalized 0..1 amplitude peaks for timeline waveform rendering. */
   waveformPeaks?: number[];
+  waveformVersion?: 2;
 };
 
 export type AudioClip = {

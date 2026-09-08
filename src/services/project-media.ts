@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 import CaptionMedia from 'caption-media';
+import { audioWaveformPeakCount } from '@/lib/audio-waveform';
 import { assertSupportedVideo } from '@/lib/media-validation';
 
 const MAX_STORED_IMAGE_BYTES = 50 * 1024 * 1024;
@@ -57,14 +58,22 @@ export async function ensureClipFrameThumbnail(options: {
   }
 }
 
-export async function generateAudioWaveformPeaks(audioUri: string, peakCount = 64): Promise<number[] | undefined> {
-  try {
-    const result = await CaptionMedia.generateAudioPeaks(audioUri, peakCount);
-    if (!Array.isArray(result.peaks) || result.peaks.length < 8) return undefined;
-    return result.peaks.map((peak) => Math.min(1, Math.max(0, Number(peak) || 0)));
-  } catch {
-    return undefined;
+export async function generateAudioWaveformPeaks(audioUri: string, durationMs: number): Promise<number[]> {
+  const peakCount = audioWaveformPeakCount(durationMs);
+  const result = await CaptionMedia.generateAudioPeaks(audioUri, peakCount);
+  if (!Array.isArray(result.peaks) || result.peaks.length !== peakCount) {
+    throw new Error('The audio waveform decoder returned incomplete data.');
   }
+  const decodedDurationMs = Number(result.durationMs);
+  const durationToleranceMs = Math.max(1_000, durationMs * 0.03);
+  if (
+    !Number.isFinite(decodedDurationMs)
+    || decodedDurationMs <= 0
+    || Math.abs(decodedDurationMs - durationMs) > durationToleranceMs
+  ) {
+    throw new Error('The decoded waveform does not match the selected audio.');
+  }
+  return result.peaks.map((peak) => Math.min(1, Math.max(0, Number(peak) || 0)));
 }
 
 export async function deleteProjectFiles(projectId: string) {

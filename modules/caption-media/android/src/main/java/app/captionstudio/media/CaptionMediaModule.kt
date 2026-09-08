@@ -94,7 +94,9 @@ class CaptionMediaModule : Module() {
     }
 
     AsyncFunction("generateAudioPeaks") { inputUri: String, peakCount: Int ->
-      generateAudioPeaks(inputUri, peakCount)
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("The Android application context is unavailable.")
+      AudioWaveformDecoder(context).generate(inputUri, peakCount)
     }
 
     AsyncFunction("generateVideoThumbnail") { inputUri: String, outputUri: String, timeMs: Long ->
@@ -1346,119 +1348,6 @@ class CaptionMediaModule : Module() {
       0L
     } finally {
       cleanupMediaResource("release audio metadata reader") { retriever.release() }
-    }
-  }
-
-  private fun generateAudioPeaks(input: String, peakCount: Int): Map<String, Any> {
-    val buckets = AudioWaveformPeaks.clampPeakCount(peakCount)
-    val peaks = FloatArray(buckets)
-    val extractor = MediaExtractor()
-    var decoder: MediaCodec? = null
-    return try {
-      setExtractorDataSource(extractor, input)
-      val audioTrack = (0 until extractor.trackCount).firstOrNull { index ->
-        extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
-      } ?: throw IllegalArgumentException("This media does not contain an audio track")
-      extractor.selectTrack(audioTrack)
-      val inputFormat = extractor.getTrackFormat(audioTrack)
-      val declaredDurationUs = if (inputFormat.containsKey(MediaFormat.KEY_DURATION)) {
-        inputFormat.getLong(MediaFormat.KEY_DURATION).coerceAtLeast(0L)
-      } else {
-        0L
-      }
-      val mime = inputFormat.getString(MediaFormat.KEY_MIME)
-        ?: throw IllegalArgumentException("The audio format is missing")
-      if (inputFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
-        inputFormat.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
-      }
-      decoder = MediaCodec.createDecoderByType(mime)
-      decoder.configure(inputFormat, null, null, 0)
-      decoder.start()
-
-      val info = MediaCodec.BufferInfo()
-      var inputEnded = false
-      var outputEnded = false
-      var sampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-      var channelCount = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-      var pcmEncoding = AudioFormat.ENCODING_PCM_16BIT
-      var writtenSamples = 0L
-      val totalSamplesHint = if (declaredDurationUs > 0L) {
-        max(1L, declaredDurationUs * TARGET_SAMPLE_RATE / 1_000_000L)
-      } else {
-        TARGET_SAMPLE_RATE * 60L
-      }
-
-      while (!outputEnded) {
-        if (Thread.currentThread().isInterrupted) {
-          throw CancellationException("Audio peak generation was cancelled")
-        }
-        if (!inputEnded) {
-          val inputIndex = decoder.dequeueInputBuffer(TIMEOUT_US)
-          if (inputIndex >= 0) {
-            val inputBuffer = decoder.getInputBuffer(inputIndex)
-              ?: throw IllegalStateException("Audio decoder input buffer was unavailable")
-            val sampleSize = extractor.readSampleData(inputBuffer, 0)
-            if (sampleSize < 0) {
-              decoder.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-              inputEnded = true
-            } else {
-              decoder.queueInputBuffer(inputIndex, 0, sampleSize, extractor.sampleTime, 0)
-              extractor.advance()
-            }
-          }
-        }
-
-        when (val outputIndex = decoder.dequeueOutputBuffer(info, TIMEOUT_US)) {
-          MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-            val format = decoder.outputFormat
-            sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-            channelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-            pcmEncoding = if (format.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
-              format.getInteger(MediaFormat.KEY_PCM_ENCODING)
-            } else {
-              AudioFormat.ENCODING_PCM_16BIT
-            }
-          }
-          MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
-          else -> if (outputIndex >= 0) {
-            if (info.size > 0) {
-              val outputBuffer = decoder.getOutputBuffer(outputIndex)
-                ?: throw IllegalStateException("Audio decoder output buffer was unavailable")
-              outputBuffer.position(info.offset)
-              outputBuffer.limit(info.offset + info.size)
-              val mono = pcmToMono(outputBuffer.slice().order(ByteOrder.LITTLE_ENDIAN), pcmEncoding, channelCount)
-              if (mono.isNotEmpty()) {
-                val resampleStep = max(1, sampleRate / TARGET_SAMPLE_RATE)
-                var sourceIndex = 0
-                while (sourceIndex < mono.size) {
-                  val amplitude = AudioWaveformPeaks.sampleAmplitude(mono[sourceIndex])
-                  AudioWaveformPeaks.accumulateBucket(peaks, writtenSamples, totalSamplesHint, amplitude)
-                  writtenSamples += 1
-                  sourceIndex += resampleStep
-                }
-              }
-            }
-            val endOfStream = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-            decoder.releaseOutputBuffer(outputIndex, false)
-            if (endOfStream) outputEnded = true
-          }
-        }
-      }
-
-      val durationMs = if (declaredDurationUs > 0L) {
-        max(1L, declaredDurationUs / 1_000L)
-      } else {
-        max(1L, writtenSamples * 1_000L / TARGET_SAMPLE_RATE)
-      }
-      mapOf(
-        "peaks" to peaks.map { it.toDouble().coerceIn(0.0, 1.0) },
-        "durationMs" to durationMs,
-        "peakCount" to buckets,
-      )
-    } finally {
-      cleanupMediaResource("stop waveform decoder") { decoder?.stop() }
-      cleanupMediaResource("release waveform decoder") { decoder?.release() }
-      cleanupMediaResource("release waveform extractor") { extractor.release() }
     }
   }
 

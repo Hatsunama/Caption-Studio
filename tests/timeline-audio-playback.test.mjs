@@ -51,19 +51,35 @@ test('a removed audio clip cannot resume after its pending seek completes', asyn
   controller.dispose();
 });
 
-test('normal playback tolerates small clock drift but resynchronizes larger drift', async () => {
+test('normal playback follows timeline continuity without polling a stale native position', async () => {
   const player = new ControlledPlayer(true);
-  const controller = new TimelineAudioPlaybackController(() => player);
+  let now = 0;
+  const controller = new TimelineAudioPlaybackController(() => player, undefined, () => now);
   controller.synchronize([target({ targetSeconds: 1, playing: true })]);
   await controller.whenIdle();
-  player.currentTime = 1.1;
+  now = 200;
   controller.synchronize([target({ targetSeconds: 1.2, playing: true })]);
   await controller.whenIdle();
   assert.deepEqual(player.seekTargets, [1]);
 
-  controller.synchronize([target({ targetSeconds: 2.1, playing: true })]);
+  now = 1_000;
+  controller.synchronize([target({ targetSeconds: 2, playing: true })]);
   await controller.whenIdle();
-  assert.deepEqual(player.seekTargets, [1, 2.1]);
+  assert.deepEqual(player.seekTargets, [1]);
+  assert.deepEqual(player.playPositions, [1]);
+  controller.dispose();
+});
+
+test('a real timeline discontinuity seeks the active player once', async () => {
+  const player = new ControlledPlayer(true);
+  let now = 0;
+  const controller = new TimelineAudioPlaybackController(() => player, undefined, () => now);
+  controller.synchronize([target({ targetSeconds: 1, playing: true })]);
+  await controller.whenIdle();
+  now = 50;
+  controller.synchronize([target({ targetSeconds: 8, playing: true })]);
+  await controller.whenIdle();
+  assert.deepEqual(player.seekTargets, [1, 8]);
   assert.deepEqual(player.playPositions, [1]);
   controller.dispose();
 });

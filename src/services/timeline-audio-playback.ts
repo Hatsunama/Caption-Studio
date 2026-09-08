@@ -1,5 +1,4 @@
 export type TimelineAudioPlayer = {
-  currentTime: number;
   muted: boolean;
   volume: number;
   seekTo(seconds: number): Promise<void>;
@@ -22,13 +21,16 @@ type ManagedAudioPlayer = {
   player: TimelineAudioPlayer;
   sourceId: string;
   uri: string;
-  desired?: TimelineAudioPlaybackTarget;
+  desired?: TimelineAudioPlaybackTarget & { requiresSeek: boolean };
   runner?: Promise<void>;
   disposed: boolean;
   positioned: boolean;
   playing: boolean;
   lastMuted?: boolean;
   lastVolume?: number;
+  lastObservedAtMs?: number;
+  lastObservedSeconds?: number;
+  lastObservedPlaying?: boolean;
 };
 
 export class TimelineAudioPlaybackController {
@@ -39,6 +41,7 @@ export class TimelineAudioPlaybackController {
   constructor(
     private readonly createPlayer: (uri: string) => TimelineAudioPlayer,
     private readonly onError: (error: unknown) => void = () => {},
+    private readonly now: () => number = Date.now,
   ) {}
 
   synchronize(targets: readonly TimelineAudioPlaybackTarget[]) {
@@ -77,7 +80,13 @@ export class TimelineAudioPlaybackController {
           continue;
         }
       }
-      managed.desired = target;
+      const observedAtMs = this.now();
+      const requiresSeek = managed.desired?.requiresSeek === true
+        || requiresTimelineSeek(managed, target, observedAtMs);
+      managed.lastObservedAtMs = observedAtMs;
+      managed.lastObservedSeconds = target.targetSeconds;
+      managed.lastObservedPlaying = target.playing;
+      managed.desired = { ...target, requiresSeek };
       this.startRunner(managed);
     }
   }
@@ -124,25 +133,28 @@ export class TimelineAudioPlaybackController {
         managed.lastVolume = target.volume;
       }
 
-      const driftMs = Math.abs(managed.player.currentTime - target.targetSeconds) * 1_000;
-      const driftLimitMs = target.playing ? 800 : 5;
+      const playbackStateChanged = managed.playing !== target.playing;
+      if (!target.playing && managed.playing) {
+        managed.player.pause();
+        managed.playing = false;
+      }
       const needsSeek = !managed.positioned
-        || managed.playing !== target.playing
-        || !Number.isFinite(driftMs)
-        || driftMs > driftLimitMs;
+        || playbackStateChanged
+        || target.requiresSeek;
       if (needsSeek) {
         await managed.player.seekTo(target.targetSeconds);
         if (managed.disposed || this.disposed) return;
         managed.positioned = true;
-        if (managed.desired) continue;
+        const latestDesired = managed.desired as ManagedAudioPlayer['desired'];
+        if (latestDesired) {
+          managed.desired = { ...latestDesired, requiresSeek: true };
+          continue;
+        }
       }
 
       if (target.playing && !managed.playing) {
         managed.player.play();
         managed.playing = true;
-      } else if (!target.playing && managed.playing) {
-        managed.player.pause();
-        managed.playing = false;
       }
     }
   }
@@ -156,6 +168,26 @@ export class TimelineAudioPlaybackController {
     safeCall(() => managed.player.pause());
     safeCall(() => managed.player.remove());
   }
+}
+
+function requiresTimelineSeek(
+  managed: ManagedAudioPlayer,
+  target: TimelineAudioPlaybackTarget,
+  observedAtMs: number,
+) {
+  if (
+    managed.lastObservedAtMs === undefined
+    || managed.lastObservedSeconds === undefined
+    || managed.lastObservedPlaying === undefined
+    || managed.lastObservedPlaying !== target.playing
+  ) {
+    return true;
+  }
+  const timelineDelta = target.targetSeconds - managed.lastObservedSeconds;
+  if (!target.playing) return Math.abs(timelineDelta) > 0.005;
+  if (timelineDelta < -0.02) return true;
+  const elapsed = Math.max(0, observedAtMs - managed.lastObservedAtMs) / 1_000;
+  return Math.abs(timelineDelta - elapsed) > 0.35;
 }
 
 function assertTarget(target: TimelineAudioPlaybackTarget) {
