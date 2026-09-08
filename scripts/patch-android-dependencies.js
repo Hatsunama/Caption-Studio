@@ -11,6 +11,8 @@ const {
 function patchAndroidDependencies(projectRoot = path.join(path.dirname(module.filename), '..')) {
   const nodeModules = path.join(projectRoot, 'node_modules');
   if (!fs.existsSync(nodeModules)) return false;
+  const expoRoot = resolvePackageRoot('expo', projectRoot);
+  const expoModulesCoreRoot = resolvePackageRoot('expo-modules-core', expoRoot);
 
   const reactNativePlugin = path.join(nodeModules, '@react-native', 'gradle-plugin');
   const pluginBuild = path.join(reactNativePlugin, 'build.gradle.kts');
@@ -47,8 +49,7 @@ function patchAndroidDependencies(projectRoot = path.join(path.dirname(module.fi
     'build.gradle.kts',
   );
   const expoModulePluginBuild = path.join(
-    nodeModules,
-    'expo-modules-core',
+    expoModulesCoreRoot,
     'expo-module-gradle-plugin',
     'build.gradle.kts',
   );
@@ -84,7 +85,7 @@ function patchAndroidDependencies(projectRoot = path.join(path.dirname(module.fi
     path.join(nodeModules, '@react-native-masked-view', 'masked-view', 'android', 'build.gradle'),
     path.join(nodeModules, 'expo', 'android', 'build.gradle'),
     path.join(nodeModules, 'expo-constants', 'android', 'build.gradle'),
-    path.join(nodeModules, 'expo-modules-core', 'android', 'build.gradle'),
+    path.join(expoModulesCoreRoot, 'android', 'build.gradle'),
     path.join(nodeModules, 'expo-sharing', 'android', 'build.gradle'),
     path.join(nodeModules, 'react-native-gesture-handler', 'android', 'build.gradle'),
     path.join(nodeModules, 'react-native-safe-area-context', 'android', 'build.gradle'),
@@ -99,6 +100,14 @@ function patchAndroidDependencies(projectRoot = path.join(path.dirname(module.fi
   assertContains(expoAutolinkingBuild, 'kotlin("jvm") version "2.3.0" apply false', 'Expo autolinking Kotlin alignment');
   assertContains(expoModulePluginBuild, 'kotlin("jvm") version "2.3.0"', 'Expo module Kotlin alignment');
   return true;
+}
+
+function resolvePackageRoot(packageName, searchPath) {
+  try {
+    return path.dirname(require.resolve(`${packageName}/package.json`, { paths: [searchPath] }));
+  } catch {
+    throw new Error(`Required npm package is missing: ${packageName}`);
+  }
 }
 
 function removeManifestPackage(file, packageName) {
