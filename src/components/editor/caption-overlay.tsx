@@ -424,6 +424,7 @@ function wordAnimationStyle(
   intensity: number,
 ): ViewStyle {
   if (progress === undefined || !active) return {};
+  const eased = 1 - Math.pow(1 - progress, 3);
   if (id === 'wave') return { transform: [{ translateY: Math.sin(progress * Math.PI * 2 + index * 0.85) * (4 + intensity * 18) }] };
   const pulse = Math.sin(progress * Math.PI);
   if (id === 'pop') return { transform: [{ scale: 0.65 + pulse * (0.5 + intensity) }, { rotate: `${(1 - pulse) * -5}deg` }] };
@@ -433,6 +434,17 @@ function wordAnimationStyle(
   if (id === 'word-slide') return { opacity: Math.min(1, pulse * 2), transform: [{ translateX: (1 - pulse) * -(24 + intensity * 70) }] };
   if (id === 'word-flash') return { opacity: 0.45 + pulse * 0.55, transform: [{ scale: 1 + pulse * (0.12 + intensity * 0.2) }] };
   if (id === 'word-jitter') return { transform: [{ translateX: Math.sin(progress * Math.PI * 18) * (2 + intensity * 8) }, { translateY: Math.cos(progress * Math.PI * 14) * (1 + intensity * 5) }] };
+  if (id === 'word-rise') return { opacity: eased, transform: [{ translateY: (1 - eased) * (20 + intensity * 44) }] };
+  if (id === 'word-drop') return { opacity: eased, transform: [{ translateY: (1 - eased) * -(20 + intensity * 44) }] };
+  if (id === 'word-zoom') return { opacity: eased, transform: [{ scale: 0.35 + eased * 0.65 }] };
+  if (id === 'word-tilt') return { opacity: eased, transform: [{ translateX: (1 - eased) * (18 + intensity * 40) }, { rotate: `${(1 - eased) * (18 + intensity * 24)}deg` }] };
+  if (id === 'word-wobble') return { transform: [{ rotate: `${Math.sin(progress * Math.PI * 6) * (1 - progress) * (5 + intensity * 14)}deg` }] };
+  if (id === 'word-squash') return { opacity: eased, transform: [{ scaleX: 0.55 + eased * 0.45 }, { scaleY: 1.5 - eased * 0.5 }] };
+  if (id === 'word-stretch') return { opacity: eased, transform: [{ scaleX: 1.4 - eased * 0.4 }, { scaleY: 0.45 + eased * 0.55 }] };
+  if (id === 'word-fade') return { opacity: eased };
+  if (id === 'word-drift') return { opacity: eased, transform: [{ translateX: (1 - eased) * -(18 + intensity * 50) }, { translateY: pulse * (3 + intensity * 8) }] };
+  if (id === 'word-kick') return { transform: [{ translateY: -pulse * (8 + intensity * 28) }, { rotate: `${Math.sin(progress * Math.PI * 2) * (3 + intensity * 8)}deg` }] };
+  if (id === 'word-breathe') return { transform: [{ scale: 1 + pulse * (0.04 + intensity * 0.12) }] };
   return {};
 }
 

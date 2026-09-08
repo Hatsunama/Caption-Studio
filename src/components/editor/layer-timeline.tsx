@@ -429,7 +429,7 @@ export function LayerTimeline(props: {
                   {isCaptions ? displayCaptions.map((caption, index) => ({ caption, index })).filter(({ caption }) => isVisible(caption.startMs, caption.endMs)).map(({ caption, index }) => (
                     <TimedBlock key={caption.id} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} lane={captionLayout.laneById.get(caption.id) ?? 0} color={NEON_CAPTION_COLORS[index % NEON_CAPTION_COLORS.length]} selected={props.selectedCaptionId === caption.id} movable onPress={() => props.onSelectCaption(caption)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onCaptionTimingChange(caption.id, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )) : (
-                    <TimedBlock label={layer.kind === 'text' ? layer.text : 'IMAGE'} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(_edge, startMs, endMs) => props.onLayerTimingChange(layer.id, startMs, endMs)} onEnd={endBlockGesture} />
+                    <TimedBlock label={layer.kind === 'text' ? layer.text : 'IMAGE'} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} movable onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(_edge, startMs, endMs) => props.onLayerTimingChange(layer.id, startMs, endMs)} onEnd={endBlockGesture} />
                   )}
                 </TimelineRow>
                 {isCaptions ? displayTranslationTracks.map((track, trackIndex) => (
@@ -971,7 +971,7 @@ function CaptionMoveGrip(props: Parameters<typeof TimedBlock>[0]) {
       {...responder.panHandlers}
       accessible
       accessibilityRole="adjustable"
-      accessibilityLabel={`${props.label}. Tap to select. Drag to move this subtitle without changing the ones next to it.`}
+      accessibilityLabel={`${props.label}. Tap to select. Drag to move this timeline item without changing adjacent items.`}
       style={{ position: 'absolute', left: props.selected ? 24 : 0, right: props.selected ? 24 : 0, top: 0, bottom: 0 }}
     />
   );
@@ -982,7 +982,7 @@ function TimingGrip(props: Parameters<typeof TimedBlock>[0] & { side: 'start' | 
   propsRef.current = props;
   const start = useRef({ startMs: props.startMs, endMs: props.endMs });
   const responder = useMemo(() => PanResponder.create({ onStartShouldSetPanResponder: () => true, onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dx) > 2, onPanResponderTerminationRequest: () => false, onShouldBlockNativeResponder: () => true, onPanResponderGrant: () => { propsRef.current.onPress(); propsRef.current.onChangeStart(); start.current = { startMs: propsRef.current.startMs, endMs: propsRef.current.endMs }; }, onPanResponderMove: (_event, gesture) => { const delta = gesture.dx / Math.max(1, propsRef.current.trackWidth) * propsRef.current.durationMs; if (propsRef.current.side === 'start') propsRef.current.onChange('start', clamp(start.current.startMs + delta, 0, start.current.endMs - 80), start.current.endMs); else propsRef.current.onChange('end', start.current.startMs, clamp(start.current.endMs + delta, start.current.startMs + 80, propsRef.current.durationMs)); }, onPanResponderRelease: () => propsRef.current.onEnd(), onPanResponderTerminate: () => propsRef.current.onEnd() }), []);
-  return <View {...responder.panHandlers} accessible accessibilityRole="adjustable" accessibilityLabel={`${props.side === 'start' ? 'Start' : 'End'} subtitle boundary. Drag to move this boundary.`} hitSlop={{ top: 6, bottom: 6 }} style={{ position: 'absolute', [props.side === 'start' ? 'left' : 'right']: -20, top: 0, bottom: 0, width: 20, borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}><View pointerEvents="none" style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: '#151A20' }} /></View>;
+  return <View {...responder.panHandlers} accessible accessibilityRole="adjustable" accessibilityLabel={`${props.side === 'start' ? 'Start' : 'End'} timeline boundary. Drag to move this boundary.`} hitSlop={{ top: 6, bottom: 6 }} style={{ position: 'absolute', [props.side === 'start' ? 'left' : 'right']: -20, top: 0, bottom: 0, width: 20, borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}><View pointerEvents="none" style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: '#151A20' }} /></View>;
 }
 
 function TinyButton(props: { label: string; danger?: boolean; disabled?: boolean; onPress: () => void }) { return <Pressable disabled={props.disabled} onPress={props.onPress} hitSlop={5} style={{ opacity: props.disabled ? 0.25 : 1 }}><Text style={{ color: props.danger ? '#FF7C8D' : '#9FAAB6', fontSize: 11, fontWeight: '900' }}>{props.label}</Text></Pressable>; }

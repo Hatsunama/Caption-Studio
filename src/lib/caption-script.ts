@@ -16,7 +16,7 @@ export type CaptionScriptMutation = {
   focusedId: string;
 };
 
-export type CaptionMergeResult = CaptionScriptMutation | { blockedByVideoCut: true } | null;
+export type CaptionMergeResult = CaptionScriptMutation | null;
 
 export function updateCaptionScriptText(captions: CaptionBlock[], captionId: string, requestedText: string) {
   return captions.map((caption) => caption.id === captionId
@@ -133,21 +133,19 @@ export function mergeCaptionScriptBlock(
   captionId: string,
   direction: 'previous' | 'next' = 'previous',
 ): CaptionMergeResult {
-  const currentIndex = captions.findIndex((caption) => caption.id === captionId);
+  const ordered = [...captions].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+  const currentIndex = ordered.findIndex((caption) => caption.id === captionId);
   if (currentIndex < 0) return null;
   const leftIndex = direction === 'previous' ? currentIndex - 1 : currentIndex;
   const rightIndex = leftIndex + 1;
-  if (leftIndex < 0 || rightIndex >= captions.length) return null;
-  const previous = captions[leftIndex];
-  const current = captions[rightIndex];
-  if (
-    !previous.sourceAnchor
-    || !current.sourceAnchor
-    || previous.sourceAnchor.clipId !== current.sourceAnchor.clipId
-  ) return { blockedByVideoCut: true };
+  if (leftIndex < 0 || rightIndex >= ordered.length) return null;
+  const previous = ordered[leftIndex];
+  const current = ordered[rightIndex];
 
   const wordIds = [...previous.wordIds, ...current.wordIds];
-  const sourceAnchor = previous.sourceAnchor && current.sourceAnchor
+  const sourceAnchor = previous.sourceAnchor
+    && current.sourceAnchor
+    && previous.sourceAnchor.clipId === current.sourceAnchor.clipId
     ? {
         ...previous.sourceAnchor,
         sourceStartMs: Math.min(previous.sourceAnchor.sourceStartMs, current.sourceAnchor.sourceStartMs),
@@ -159,12 +157,13 @@ export function mergeCaptionScriptBlock(
     ...previous,
     text: normalizeText(captionLayoutText([previous.text.trim(), current.text.trim()])),
     textMode: 'manual',
+    startMs: Math.min(previous.startMs, current.startMs),
     endMs: Math.max(previous.endMs, current.endMs),
     wordIds,
     sourceAnchor,
     timelineVisible: true,
   };
-  const next = [...captions];
+  const next = [...ordered];
   next.splice(leftIndex, 2, merged);
   return { captions: next, focusedId: merged.id };
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Modal, Pressable, Text, TextInput, View } from 'react-native';
 
 import { chrome } from '@/lib/ui-theme';
-import { BUILT_IN_FONT_CHOICES, type FontChoice } from '@/lib/font-catalog';
+import { BUILT_IN_FONT_CHOICES, TWO_COLOR_FONT_COUNT, type FontChoice } from '@/lib/font-catalog';
 import {
   importFontFromDevice,
   loadFontLibrary,
@@ -78,7 +78,7 @@ export function FontBrowser(props: {
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flex: 1 }}>
               <Text style={{ color: chrome.text, fontSize: 26, fontWeight: '700' }}>All Fonts</Text>
-              <Text style={{ color: chrome.muted, fontSize: 13 }}>32 varied free fonts, favorites, recent, and imports.</Text>
+              <Text style={{ color: chrome.muted, fontSize: 13 }}>{BUILT_IN_FONT_CHOICES.length} built-in choices. Only {TWO_COLOR_FONT_COUNT} use optional two-color styling.</Text>
             </View>
             <Pressable onPress={props.onClose} hitSlop={12}>
               <Text style={{ color: chrome.accent, fontSize: 16, fontWeight: '700' }}>Done</Text>

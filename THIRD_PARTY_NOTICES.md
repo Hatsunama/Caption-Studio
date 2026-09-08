@@ -20,8 +20,8 @@ The required copyright and permission notices are preserved in [MIT-component-no
 - Google AI Edge LiteRT-LM.
 - AndroidX Media3 Transformer and Effect.
 - Gson, Kotlin reflection, and Kotlin coroutines.
-- Fontdiner Swanky and Permanent Marker fonts.
-- Qwen2.5 1.5B Instruct and the optional LiteRT-LM conversion used for natural English–Chinese translation.
+- Fontdiner Swanky, Permanent Marker, Chewy, Luckiest Guy, Rock Salt, and Special Elite fonts.
+- Qwen2.5 1.5B Instruct and the optional LiteRT-LM conversion used for natural multilingual caption translation.
 
 The Apache License 2.0 text is preserved in [Apache-2.0.txt](third-party/licenses/Apache-2.0.txt). Component-specific model provenance is in [MODEL_NOTICES.md](MODEL_NOTICES.md).
 
@@ -32,3 +32,16 @@ Google ML Kit Face Detection is a Google SDK governed by the [Google APIs Terms 
 ## Fonts
 
 Bundled font license and copyright files are preserved individually under [`assets/fonts/licenses`](assets/fonts/licenses). Imported fonts are supplied by the user, who remains responsible for permission to use them.
+
+## Additional bundled display fonts
+
+Caption Studio bundles Abril Fatface, Alfa Slab One, Archivo Black, Audiowide,
+Bangers, Boogaloo, Concert One, DM Serif Display, Fjalla One, Francois One,
+Lilita One, Monofett, Paytone One, Racing Sans One, Rammetto One, Rowdies,
+Russo One, Squada One, Staatliches, and Titan One under the SIL Open Font
+License 1.1. It bundles Chewy, Luckiest Guy, Rock Salt, and Special Elite under
+the Apache License 2.0. The corresponding license texts are distributed in
+`assets/fonts/licenses`.
+
+These font files were obtained from the Google Fonts repository at commit
+`baa2e5561af8a4873b058859dcfe158bdd033942`.

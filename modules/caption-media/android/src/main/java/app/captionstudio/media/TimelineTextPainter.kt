@@ -77,13 +77,51 @@ internal fun captionAnimationState(
     "stretch" -> TextAnimationState(alpha = entry, scaleX = 1.45f - eased * 0.45f, scaleY = 0.35f + eased * 0.65f)
     "slide-up" -> TextAnimationState(alpha = entry, translateY = (1f - eased) * (35f + intensity * 80f))
     "slide-left" -> TextAnimationState(alpha = entry, translateX = (1f - eased) * -(55f + intensity * 120f))
+    "slide-right" -> TextAnimationState(alpha = entry, translateX = (1f - eased) * (55f + intensity * 120f))
     "zoom-in" -> {
       val scale = 0.15f + eased * 0.85f
+      TextAnimationState(alpha = entry, scaleX = scale, scaleY = scale)
+    }
+    "zoom-out" -> {
+      val scale = 1f + (1f - eased) * (0.7f + intensity * 0.8f)
       TextAnimationState(alpha = entry, scaleX = scale, scaleY = scale)
     }
     "spin-in" -> {
       val scale = 0.5f + eased * 0.5f
       TextAnimationState(alpha = entry, rotation = (1f - eased) * -270f, scaleX = scale, scaleY = scale)
+    }
+    "roll-in" -> TextAnimationState(
+      alpha = entry,
+      translateX = (1f - eased) * -(70f + intensity * 130f),
+      rotation = (1f - eased) * -(180f + intensity * 180f),
+    )
+    "spiral-in" -> {
+      val radius = (1f - eased) * (45f + intensity * 75f)
+      val angle = (1f - eased) * PI.toFloat() * 2f
+      val scale = 0.25f + eased * 0.75f
+      TextAnimationState(
+        alpha = entry,
+        translateX = cos(angle) * radius,
+        translateY = sin(angle) * radius,
+        rotation = (1f - eased) * 360f,
+        scaleX = scale,
+        scaleY = scale,
+      )
+    }
+    "snap-in" -> {
+      val wobble = sin(entry * PI.toFloat() * 3f) * (1f - entry)
+      val scale = 1f + wobble * (0.16f + intensity * 0.18f)
+      TextAnimationState(alpha = min(1f, entry * 3f), scaleX = scale, scaleY = scale)
+    }
+    "recoil" -> {
+      val recoil = sin(entry * PI.toFloat() * 4f) * (1f - entry)
+      TextAnimationState(
+        alpha = min(1f, entry * 4f),
+        translateX = -recoil * (12f + intensity * 32f),
+        scaleX = 1f + recoil * (0.08f + intensity * 0.12f),
+        scaleY = 1f - recoil * 0.06f,
+        rotation = recoil * (4f + intensity * 8f),
+      )
     }
     "shake" -> TextAnimationState(
       translateX = sin(phase * PI.toFloat() * 12f) * (4f + intensity * 16f),
@@ -93,6 +131,28 @@ internal fun captionAnimationState(
       val pulse = sin(phase * PI.toFloat() * 2f)
       val scale = 1f + pulse * (0.02f + intensity * 0.06f)
       TextAnimationState(scaleX = scale, scaleY = scale, glow = abs(pulse))
+    }
+    "breathe" -> {
+      val pulse = sin(phase * PI.toFloat() * 2f)
+      val scale = 1f + pulse * (0.025f + intensity * 0.055f)
+      TextAnimationState(scaleX = scale, scaleY = scale)
+    }
+    "float" -> {
+      val angle = phase * PI.toFloat() * 2f
+      TextAnimationState(
+        translateX = cos(angle) * (2f + intensity * 6f),
+        translateY = sin(angle) * (4f + intensity * 10f),
+      )
+    }
+    "wobble" -> TextAnimationState(rotation = sin(phase * PI.toFloat() * 2f) * (2f + intensity * 9f))
+    "drift" -> TextAnimationState(
+      translateX = sin(phase * PI.toFloat() * 2f) * (4f + intensity * 14f),
+      translateY = cos(phase * PI.toFloat() * 1.5f) * (3f + intensity * 8f),
+    )
+    "pulse" -> {
+      val beat = abs(sin(phase * PI.toFloat() * 2f))
+      val scale = 1f + beat * (0.04f + intensity * 0.1f)
+      TextAnimationState(scaleX = scale, scaleY = scale)
     }
     "elastic" -> {
       val wobble = sin(entry * PI.toFloat() * 5f) * (1f - entry)
@@ -111,6 +171,43 @@ internal fun captionAnimationState(
       TextAnimationState(
         alpha = entry,
         translateY = (1f - eased) * -(50f + intensity * 100f),
+        scaleX = scale,
+        scaleY = scale,
+      )
+    }
+    "lean-in" -> TextAnimationState(
+      alpha = entry,
+      translateX = (1f - eased) * -(35f + intensity * 85f),
+      rotation = (1f - eased) * -(12f + intensity * 24f),
+    )
+    "rise-spin" -> TextAnimationState(
+      alpha = entry,
+      translateY = (1f - eased) * (45f + intensity * 90f),
+      rotation = (1f - eased) * (110f + intensity * 170f),
+    )
+    "soft-land" -> {
+      val landing = sin(entry * PI.toFloat() * 2f) * (1f - entry)
+      TextAnimationState(
+        alpha = entry,
+        translateY = (1f - eased) * (24f + intensity * 50f) - landing * (8f + intensity * 14f),
+        scaleX = 1f + landing * 0.04f,
+        scaleY = 1f - landing * (0.05f + intensity * 0.08f),
+      )
+    }
+    "rubber-drop" -> {
+      val spring = sin(entry * PI.toFloat() * 4f) * (1f - entry)
+      TextAnimationState(
+        alpha = min(1f, entry * 3f),
+        translateY = (1f - eased) * -(60f + intensity * 120f),
+        scaleX = 1f + spring * (0.16f + intensity * 0.18f),
+        scaleY = 1f - spring * (0.12f + intensity * 0.12f),
+      )
+    }
+    "cinema-fade" -> {
+      val scale = 0.92f + eased * 0.08f
+      TextAnimationState(
+        alpha = eased,
+        translateY = (1f - eased) * (10f + intensity * 18f),
         scaleX = scale,
         scaleY = scale,
       )
@@ -512,6 +609,7 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
     if (!active || word == null || timeMs !in word.startMs until word.endMs) return TextAnimationState()
     val progress = ((timeMs - word.startMs).toFloat() / max(1L, word.endMs - word.startMs)).coerceIn(0f, 1f)
     val pulse = sin(progress * PI.toFloat())
+    val eased = 1f - (1f - progress).pow(3)
     return when (id) {
       "wave" -> TextAnimationState(translateY = sin(progress * PI.toFloat() * 2f + max(0, index) * 0.85f) * (4f + intensity * 18f) * scaleFactor)
       "pop" -> {
@@ -539,6 +637,42 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
         translateX = sin(progress * PI.toFloat() * 18f) * (2f + intensity * 8f) * scaleFactor,
         translateY = cos(progress * PI.toFloat() * 14f) * (1f + intensity * 5f) * scaleFactor,
       )
+      "word-rise" -> TextAnimationState(alpha = eased, translateY = (1f - eased) * (20f + intensity * 44f) * scaleFactor)
+      "word-drop" -> TextAnimationState(alpha = eased, translateY = (1f - eased) * -(20f + intensity * 44f) * scaleFactor)
+      "word-zoom" -> {
+        val scale = 0.35f + eased * 0.65f
+        TextAnimationState(alpha = eased, scaleX = scale, scaleY = scale)
+      }
+      "word-tilt" -> TextAnimationState(
+        alpha = eased,
+        translateX = (1f - eased) * (18f + intensity * 40f) * scaleFactor,
+        rotation = (1f - eased) * (18f + intensity * 24f),
+      )
+      "word-wobble" -> TextAnimationState(rotation = sin(progress * PI.toFloat() * 6f) * (1f - progress) * (5f + intensity * 14f))
+      "word-squash" -> TextAnimationState(
+        alpha = eased,
+        scaleX = 0.55f + eased * 0.45f,
+        scaleY = 1.5f - eased * 0.5f,
+      )
+      "word-stretch" -> TextAnimationState(
+        alpha = eased,
+        scaleX = 1.4f - eased * 0.4f,
+        scaleY = 0.45f + eased * 0.55f,
+      )
+      "word-fade" -> TextAnimationState(alpha = eased)
+      "word-drift" -> TextAnimationState(
+        alpha = eased,
+        translateX = (1f - eased) * -(18f + intensity * 50f) * scaleFactor,
+        translateY = pulse * (3f + intensity * 8f) * scaleFactor,
+      )
+      "word-kick" -> TextAnimationState(
+        translateY = -pulse * (8f + intensity * 28f) * scaleFactor,
+        rotation = sin(progress * PI.toFloat() * 2f) * (3f + intensity * 8f),
+      )
+      "word-breathe" -> {
+        val scale = 1f + pulse * (0.04f + intensity * 0.12f)
+        TextAnimationState(scaleX = scale, scaleY = scale)
+      }
       else -> TextAnimationState()
     }
   }
@@ -594,10 +728,7 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
 
   private companion object {
     const val DESIGN_WIDTH = 360f
-    val ACTIVE_WORD_ANIMATIONS = setOf(
-      "active-word", "karaoke", "pop", "bounce", "punch", "wave", "word-spin", "word-slide", "word-flash", "word-jitter",
-      "emoji-burst", "emoji-orbit", "emoji-rain",
-    )
+    val ACTIVE_WORD_ANIMATIONS = setOf("active-word", "karaoke", "word-flash")
   }
 }
 

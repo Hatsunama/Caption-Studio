@@ -1,6 +1,7 @@
+import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
-import { ANIMATION_PRESETS } from '@/lib/animation-presets';
+import { ANIMATION_PRESETS, CAPTION_ANIMATION_COUNT, type AnimationPreset } from '@/lib/animation-presets';
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionAnimationId } from '@/types/project';
 
@@ -12,10 +13,16 @@ export function AnimationBrowser(props: {
   onScopeChange: (scope: 'caption' | 'all') => void;
   onSelect: (id: CaptionAnimationId) => void;
 }) {
+  const [filter, setFilter] = useState<'all' | AnimationPreset['group']>('all');
+  const visiblePresets = useMemo(
+    () => filter === 'all' ? ANIMATION_PRESETS : ANIMATION_PRESETS.filter((preset) => preset.group === filter),
+    [filter],
+  );
+
   return (
     <View style={{ gap: 9 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text style={{ color: chrome.text, fontSize: 13, fontWeight: '700' }}>21 real animation styles</Text>
+        <Text style={{ color: chrome.text, fontSize: 13, fontWeight: '700' }}>{CAPTION_ANIMATION_COUNT} motion styles + Classic</Text>
         {props.textLayerSelected ? (
           <View style={{ paddingHorizontal: 9, paddingVertical: 6, borderRadius: chrome.radius.pill, backgroundColor: chrome.purple }}>
             <Text style={{ color: '#150D22', fontSize: 9, fontWeight: '700' }}>THIS TEXT LAYER</Text>
@@ -32,8 +39,15 @@ export function AnimationBrowser(props: {
           </View>
         )}
       </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7, paddingRight: 18 }}>
+        <FilterChip label="All" active={filter === 'all'} onPress={() => setFilter('all')} />
+        <FilterChip label="Entrances" active={filter === 'entry'} onPress={() => setFilter('entry')} />
+        <FilterChip label="Loops" active={filter === 'loop'} onPress={() => setFilter('loop')} />
+        <FilterChip label="Words" active={filter === 'word'} onPress={() => setFilter('word')} />
+        <FilterChip label="Emoji" active={filter === 'emoji'} onPress={() => setFilter('emoji')} />
+      </ScrollView>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 9, paddingRight: 18 }}>
-        {ANIMATION_PRESETS.map((preset) => {
+        {visiblePresets.map((preset) => {
           const active = props.selected === preset.id;
           return (
             <Pressable
@@ -59,6 +73,18 @@ export function AnimationBrowser(props: {
         })}
       </ScrollView>
     </View>
+  );
+}
+
+function FilterChip(props: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: props.active }}
+      onPress={props.onPress}
+      style={{ paddingHorizontal: 11, paddingVertical: 7, borderRadius: chrome.radius.pill, backgroundColor: props.active ? chrome.accent : chrome.surfaceRaised }}>
+      <Text style={{ color: props.active ? chrome.accentInk : chrome.text, fontSize: 10, fontWeight: '700' }}>{props.label}</Text>
+    </Pressable>
   );
 }
 

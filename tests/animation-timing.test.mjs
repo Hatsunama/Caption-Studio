@@ -36,15 +36,15 @@ test('preview phrase states match the native shared contract fixture', () => {
   }
 });
 
-test('all 33 effects have one timing domain and all phrase effects have contract fixtures', () => {
+test('all 60 effects have one timing domain and all phrase effects have contract fixtures', () => {
   const fixtureIds = new Set(fixture.map((row) => row.id));
-  assert.equal(ANIMATION_PRESETS.length, 33);
+  assert.equal(ANIMATION_PRESETS.length, 60);
   for (const preset of ANIMATION_PRESETS) {
     if (preset.id === 'none') continue;
     assert.equal(isWordTimedAnimation(preset.id) || fixtureIds.has(preset.id), true, preset.id);
     assert.equal(isWordTimedAnimation(preset.id) && fixtureIds.has(preset.id), false, preset.id);
   }
-  assert.equal(fixtureIds.size, 17);
+  assert.equal(fixtureIds.size, 33);
 });
 
 test('word timing never falls back to a caption clock or an invalid word window', () => {
@@ -56,8 +56,11 @@ test('word timing never falls back to a caption clock or an invalid word window'
 });
 
 test('only spoken-word effects can apply the active-word color contract', () => {
-  assert.equal(isActiveWordHighlightAnimation('active-word'), true);
-  assert.equal(isActiveWordHighlightAnimation('emoji-burst'), true);
-  assert.equal(isActiveWordHighlightAnimation('single-word'), false);
-  assert.equal(isActiveWordHighlightAnimation('heartbeat'), false);
+  const highlighted = ANIMATION_PRESETS
+    .filter((preset) => preset.colorBehavior === 'active-word')
+    .map((preset) => preset.id);
+  assert.deepEqual(highlighted, ['active-word', 'karaoke', 'word-flash']);
+  for (const preset of ANIMATION_PRESETS) {
+    assert.equal(isActiveWordHighlightAnimation(preset.id), highlighted.includes(preset.id), preset.id);
+  }
 });

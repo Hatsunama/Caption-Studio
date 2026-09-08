@@ -178,10 +178,6 @@ export function ScriptEditor(props: {
     if (requireCursorAtStart && (!selection || selection.start !== 0 || selection.end !== 0)) return;
     const result = mergeCaptionScriptBlock(draftCaptions, caption.id);
     if (!result) return;
-    if ('blockedByVideoCut' in result) {
-      setBoundaryMessage('Subtitles on opposite sides of a video cut cannot be merged.');
-      return;
-    }
     setBoundaryMessage(undefined);
     focusCaption(result.focusedId, result.captions);
   };
@@ -190,10 +186,6 @@ export function ScriptEditor(props: {
     const result = mergeCaptionScriptBlock(draftCaptions, caption.id, 'next');
     if (!result) {
       setBoundaryMessage('There is no subtitle below this one to join.');
-      return;
-    }
-    if ('blockedByVideoCut' in result) {
-      setBoundaryMessage('Subtitles on opposite sides of a video cut cannot be joined.');
       return;
     }
     setBoundaryMessage(undefined);
