@@ -1,4 +1,4 @@
-name: Publish fixed side-by-side Android release
+name: Publish Caption Studio Android release
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: caption-studio-fixed-release
+  group: caption-studio-release
   cancel-in-progress: false
 
 jobs:
@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$VERSION_CODE" =~ ^[1-9][0-9]*$ ]]
-          tag="v${VERSION}-fixed.1"
+          tag="v${VERSION}"
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists; refusing replacement." >&2
             exit 1
@@ -71,7 +71,7 @@ jobs:
           npx expo install --check
           npx --yes expo-doctor@1.20.4
 
-      - name: Configure fixed side-by-side identity
+      - name: Configure data-preserving update identity
         env:
           VERSION: ${{ inputs.version }}
           VERSION_CODE: ${{ inputs.version_code }}
@@ -86,7 +86,7 @@ jobs:
           node ./scripts/patch-react-native-gradle.js
           npm run verify:android-config
 
-      - name: Configure stable fixed-release signing
+      - name: Configure stable release signing
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.CAPTION_STUDIO_FIXED_KEYSTORE_BASE64 }}
@@ -99,7 +99,7 @@ jobs:
           test -n "$STORE_PASSWORD"
           test -n "$KEY_ALIAS"
           test -n "$KEY_PASSWORD"
-          keystore="$RUNNER_TEMP/caption-studio-fixed-release.p12"
+          keystore="$RUNNER_TEMP/caption-studio-release.p12"
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
           chmod 600 "$keystore"
           mkdir -p "$HOME/.gradle"
@@ -112,7 +112,7 @@ jobs:
           } >> "$HOME/.gradle/gradle.properties"
           chmod 600 "$HOME/.gradle/gradle.properties"
 
-      - name: Test and build fixed release APK
+      - name: Test and build Caption Studio release APK
         env:
           NODE_ENV: production
         working-directory: android
@@ -139,12 +139,12 @@ jobs:
           certificate="$($build_tools/apksigner verify --verbose --print-certs "$source_apk")"
           printf '%s\n' "$certificate"
           if grep -Eqi "Android Debug|androiddebugkey|Caption Studio CI" <<< "$certificate"; then
-            echo 'Fixed APK has an invalid signing identity.' >&2
+            echo 'APK has an invalid signing identity.' >&2
             exit 1
           fi
           mkdir -p dist
-          cp "$source_apk" dist/caption-studio-fixed-android.apk
-          (cd dist && sha256sum caption-studio-fixed-android.apk > caption-studio-fixed-android.apk.sha256)
+          cp "$source_apk" dist/caption-studio-android.apk
+          (cd dist && sha256sum caption-studio-android.apk > caption-studio-android.apk.sha256)
 
       - name: Publish immutable prerelease
         shell: bash
@@ -153,18 +153,18 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          tag="v${VERSION}-fixed.1"
+          tag="v${VERSION}"
           gh release create "$tag" \
-            dist/caption-studio-fixed-android.apk \
-            dist/caption-studio-fixed-android.apk.sha256 \
+            dist/caption-studio-android.apk \
+            dist/caption-studio-android.apk.sha256 \
             --prerelease \
-            --title "Caption Studio Fixed ${VERSION} (side-by-side)" \
-            --notes "Side-by-side fixed build from main at $GITHUB_SHA. Installs as com.hatsunama.captionstudio.fixed and does not replace, uninstall, clear, or migrate the existing production app."
+            --title "Caption Studio ${VERSION}" \
+            --notes "Data-preserving Android build from main at $GITHUB_SHA. It updates package com.hatsunama.captionstudio.fixed without uninstalling, clearing, or migrating either Caption Studio installation."
 
-      - name: Retain fixed APK
+      - name: Retain Caption Studio APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: caption-studio-fixed-${{ inputs.version }}
+          name: caption-studio-${{ inputs.version }}
           path: dist/
           if-no-files-found: error
           retention-days: 30
