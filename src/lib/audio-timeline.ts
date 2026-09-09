@@ -1,6 +1,7 @@
 import type { AudioClip, CaptionProject, ProjectAudioSource } from '@/types/project';
+import { editTimelineRange, MINIMUM_TIMELINE_ITEM_MS, splitTimelineRange } from '@/lib/timeline-item-timing';
 
-export const MINIMUM_AUDIO_CLIP_MS = 80;
+export const MINIMUM_AUDIO_CLIP_MS = MINIMUM_TIMELINE_ITEM_MS;
 
 export function audioClipDuration(clip: AudioClip) {
   return Math.max(0, clip.sourceEndMs - clip.sourceStartMs);
@@ -72,9 +73,18 @@ export function updateAudioClip(
 
 export function moveAudioClip(project: CaptionProject, clipId: string, startMs: number, timelineDurationMs: number) {
   return updateProject(project, {
-    audioClips: project.audioClips.map((clip) => clip.id === clipId
-      ? { ...clip, startMs: clamp(startMs, 0, Math.max(0, timelineDurationMs - audioClipDuration(clip))) }
-      : clip),
+    audioClips: project.audioClips.map((clip) => {
+      if (clip.id !== clipId) return clip;
+      const range = editTimelineRange(
+        { startMs: clip.startMs, endMs: audioClipEnd(clip) },
+        'move',
+        startMs,
+        startMs + audioClipDuration(clip),
+        timelineDurationMs,
+        MINIMUM_AUDIO_CLIP_MS,
+      );
+      return range.startMs === clip.startMs ? clip : { ...clip, startMs: range.startMs };
+    }),
   });
 }
 
@@ -90,7 +100,7 @@ export function trimAudioClip(
     audioClips: project.audioClips.map((clip) => {
       if (clip.id !== clipId) return clip;
       const source = sourceById.get(clip.sourceId);
-      if (!source) return clip;
+      if (!source || !Number.isFinite(requestedTimelineMs) || !Number.isFinite(timelineDurationMs)) return clip;
       if (edge === 'start') {
         const targetStart = clamp(
           requestedTimelineMs,
@@ -98,16 +108,55 @@ export function trimAudioClip(
           audioClipEnd(clip) - MINIMUM_AUDIO_CLIP_MS,
         );
         const sourceStartMs = clip.sourceStartMs + targetStart - clip.startMs;
-        return { ...clip, startMs: targetStart, sourceStartMs };
+        return clampAudioFades({ ...clip, startMs: targetStart, sourceStartMs });
       }
       const targetEnd = clamp(
         requestedTimelineMs,
         clip.startMs + MINIMUM_AUDIO_CLIP_MS,
         Math.min(timelineDurationMs, clip.startMs + source.durationMs - clip.sourceStartMs),
       );
-      return { ...clip, sourceEndMs: clip.sourceStartMs + targetEnd - clip.startMs };
+      return clampAudioFades({ ...clip, sourceEndMs: clip.sourceStartMs + targetEnd - clip.startMs });
     }),
   });
+}
+
+export function splitAudioClip(
+  project: CaptionProject,
+  clipId: string,
+  timelineMs: number,
+  leftId: string,
+  rightId: string,
+) {
+  const index = project.audioClips.findIndex((clip) => clip.id === clipId);
+  const clip = project.audioClips[index];
+  if (
+    !clip
+    || leftId === rightId
+    || project.audioClips.some((candidate) => candidate.id === leftId || candidate.id === rightId)
+  ) return null;
+  const split = splitTimelineRange(
+    { startMs: clip.startMs, endMs: audioClipEnd(clip) },
+    timelineMs,
+    MINIMUM_AUDIO_CLIP_MS,
+  );
+  if (!split) return null;
+  const sourceSplitMs = clip.sourceStartMs + split.left.endMs - split.left.startMs;
+  const left = clampAudioFades({
+    ...clip,
+    id: leftId,
+    sourceEndMs: sourceSplitMs,
+    fadeOutMs: 0,
+  });
+  const right = clampAudioFades({
+    ...clip,
+    id: rightId,
+    startMs: split.right.startMs,
+    sourceStartMs: sourceSplitMs,
+    fadeInMs: 0,
+  });
+  const audioClips = [...project.audioClips];
+  audioClips.splice(index, 1, left, right);
+  return { project: updateProject(project, { audioClips }), left, right };
 }
 
 export function deleteAudioClip(project: CaptionProject, clipId: string) {
@@ -129,8 +178,19 @@ export function constrainAudioClips(audioClips: AudioClip[] | undefined, timelin
     if (clip.startMs >= timelineDurationMs) return [];
     const maximumDuration = timelineDurationMs - clip.startMs;
     const sourceEndMs = Math.min(clip.sourceEndMs, clip.sourceStartMs + maximumDuration);
-    return sourceEndMs - clip.sourceStartMs >= MINIMUM_AUDIO_CLIP_MS ? [{ ...clip, sourceEndMs }] : [];
+    return sourceEndMs - clip.sourceStartMs >= MINIMUM_AUDIO_CLIP_MS
+      ? [clampAudioFades({ ...clip, sourceEndMs })]
+      : [];
   });
+}
+
+function clampAudioFades(clip: AudioClip): AudioClip {
+  const durationMs = audioClipDuration(clip);
+  return {
+    ...clip,
+    fadeInMs: clamp(clip.fadeInMs, 0, durationMs),
+    fadeOutMs: clamp(clip.fadeOutMs, 0, durationMs),
+  };
 }
 
 function updateProject(project: CaptionProject, update: Partial<CaptionProject>): CaptionProject {

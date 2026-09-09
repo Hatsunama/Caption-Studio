@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.23) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.24) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.23/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.24/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.23 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.24 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -71,11 +71,11 @@ The original production app and Caption Studio Fixed have different package iden
 
 Never uninstall or clear either app to bypass an installation failure. Keep the error output for diagnosis; uninstalling deletes local drafts and projects.
 
-### Fixed side-by-side build when the production signing key is unavailable
+### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.23** (`v1.4.23`, Android version code 35).
+Current Android build: **1.4.24** (`v1.4.24`, Android version code 36).
 
-Version 1.4.23 explicitly configures extracted and imported timeline audio to share Android playback with the video transport before either session is synchronized. Android can no longer pause the external track at time zero when the video requests audio focus, and a delayed native setup cannot start stale audio after the user pauses. The source-derived waveform remains visible on the audio block. This release also includes the 68-font library, 59 motion effects plus Classic, full-timeline caption/text/image editing, cross-cut caption joins, time-bounded image rendering, and 30 real-footage transitions introduced in 1.4.22. Existing projects, source files, drafts, signing identity, and the production translation model remain unchanged.
+Version 1.4.24 gives every timed content block the same movement and trim gesture contract. Extracted or imported audio can be dragged anywhere within the project, either visible white edge can shorten or restore source audio, and audio can be split nondestructively at the playhead without introducing a fade seam. Text and image layers can also be moved, trimmed, and split. Timing bounds and minimum durations are enforced by domain code rather than gesture components, so a timeline lane cannot silently discard a valid move again. Existing projects, source files, drafts, signing identity, and the production translation model remain unchanged.
 
 Version 1.4.19 keeps strict multi-cue JSON and ID validation while giving a failed single-cue retry its own deterministic plain-text provider contract. The only requested cue supplies the identity; malformed JSON, Markdown wrappers, runtime tokens, source echoes, and wrong-script output still fail closed. This makes the existing untuned production model's common bare-translation response usable without weakening batch cardinality or moving provider policy into UI/project state. Translation checkpoints are invalidated for the changed retry profile. The production LiteRT-LM URL, bytes, and SHA-256 remain unchanged while the Natural multilingual v2 candidate completes its strict model and two-phone gates.
 
@@ -101,7 +101,7 @@ Version 1.4.9 checkpoints completed translation batches in private, backup-exclu
 
 Version 1.4.8 preserves individual subtitle identities through AI translation. Unusable results are marked FAILED - RETRY, successful translations and existing text are saved, and incomplete runs show a summary. Open Edit both languages and tap Refresh to repair an incomplete track. Export errors appear in a dialog; disabled and off-timeline captions no longer block MP4 export. Independent translations remain in subtitle-file output, and draft recovery operations are serialized.
 
-The installer requires the 1.4.23 release tag and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
+The installer requires release 1.4.24 or newer and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
 
 Version 1.4.7 replaces the translation model's false transient-memory rejection with hardware-based capability checks. Eligible 64-bit devices with at least 4 GiB physical RAM now attempt the memory-mapped model load even when Android temporarily reports memory pressure. If the runtime genuinely cannot allocate enough memory, the app keeps captions unchanged and tells the user to close other apps, keep Caption Studio open, and retry.
 
@@ -111,7 +111,7 @@ The data-preserving update installs as **Caption Studio** with package `com.hats
 
 Use the recommended Windows PowerShell installer above to exercise integrated fixes while preserving an older production-signed installation.
 
-The installer accepts exactly one authorized Android device, verifies that the release contains the required repair commit, verifies GitHub's APK SHA-256 digest, updates only the data-preserving package with `adb install -r`, launches it, and removes its temporary download. It never issues `adb uninstall` or `pm clear`, so existing projects remain in place during an update. If Android rejects the update because the signing certificate differs, the installer stops without uninstalling either app.
+The installer accepts exactly one authorized Android device, requires the current release version, verifies GitHub's APK SHA-256 digest, updates only the data-preserving package with `adb install -r`, verifies the installed version, launches it, and removes its temporary download. It never issues `adb uninstall` or `pm clear`, so existing projects remain in place during an update. If Android rejects the update because the signing certificate differs, the installer stops without uninstalling either app.
 
 The release must also contain the 1.4.5 language-picker repair. ADB output is captured with Windows PowerShell 5.1-compatible handling: normal stderr transfer progress is not treated as installation failure; the native exit code and install success response are checked. Cleanup runs on success or failure and removes only this run's APK, empty temporary download directory, and downloaded installer script. Cleanup failures are reported, not presented as successful deletion. It does not clean phone storage or unrelated files on C:.
 
@@ -146,12 +146,12 @@ The release must also contain the 1.4.5 language-picker repair. ADB output is ca
 - One searchable font browser with 68 deliberately varied bundled fonts plus System Sans, favorites, recents, 11 optional two-color treatments, and unlimited `.ttf`/`.otf` imports
 - 60 data-driven caption styles: 59 motion effects plus Classic, with word timing derived from spoken timestamps and accent color limited to Spotlight, Karaoke, and Word Flash
 - Word-aware English and Chinese emoji reactions across 39 semantic categories; meaningful spoken words select their own reaction family and filler words stay clean instead of recycling a random or repeated set
-- Added text and phone images with their own timing, layer order, movement, resizing, rotation, and deletion controls
+- Added text and phone images with independent body-drag positioning, two-sided timing trim, playhead split, layer order, canvas movement, resizing, rotation, and deletion controls
 - Source, 9:16, 16:9, 1:1, and 4:5 canvases
 - Fit and Fill framing for making a wide clip fill a TikTok canvas
 - Direct video drag, pinch-to-resize, two-finger rotation, size buttons, 90-degree rotation, and a precise free-angle scrubber
 - Nondestructive video split, reversible two-sided edge trimming with caption restoration, speed, volume, mute, and audio fades; cropped ranges and their captions hide inside explicit removable black gaps; after a gap is removed, either edge can still extend a packed clip back out to unused source media and auto-slide following clips
-- A dedicated audio timeline: import audio from the phone or extract the audio track from a selected video, then trim, restore, move, duplicate, mute, fade, and adjust each audio clip independently
+- A dedicated audio timeline: import audio from the phone or extract the audio track from a selected video, then body-drag, trim or restore either source edge, split at the playhead, duplicate, mute, fade, and adjust each audio clip independently
 - 30 real-footage transition effects plus Clean cut, with adjustable timing across dips, dissolves, directional wipes, slides, pushes, zooms, folds, irises, splits, color washes, shutter, spin, flash, and glitch
 - On-device person-background removal preview and native MP4 render using the Apache-licensed MediaPipe multiclass person model; video frames and masks stay on the phone, while the optional Google SDKs send the operational metrics described in the privacy policy when the feature is enabled
 - Stable, Balanced, and Detailed person-edge modes shared by preview and export, with motion-aware temporal smoothing, face protection, bad-frame rejection, hole/speck cleanup, hysteresis, and edge-aware feathering

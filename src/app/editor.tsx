@@ -38,7 +38,8 @@ import { useProjectAudioWaveforms } from '@/hooks/use-project-audio-waveforms';
 import { useProjectCaptionTranslation } from '@/hooks/use-project-caption-translation';
 import { useForegroundOperation } from '@/hooks/use-foreground-operation';
 import { useEditorRuntimePolicy } from '@/hooks/use-editor-runtime-policy';
-import { deleteAudioClip, duplicateAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '@/lib/audio-timeline';
+import { deleteAudioClip, duplicateAudioClip, moveAudioClip, splitAudioClip, updateAudioClip } from '@/lib/audio-timeline';
+import { applyTimelineItemTiming, type TimelineItemReference, type TimelineTimingEdge } from '@/lib/timeline-item-editor';
 import { findAnimationPreset } from '@/lib/animation-presets';
 import { canAutomaticallyTranslatePair, captionLanguageLabel, type CaptionLanguageTag } from '@/lib/caption-languages';
 import { exportTranslationSummary } from '@/lib/export-caption-pairs';
@@ -48,7 +49,6 @@ import {
   removeTranslationCaptionTrack,
   resolveCaptionPairs,
   setTranslationCueStyle,
-  setTranslationCueTiming,
   setTranslationCueSkipped,
   setTranslationStackGap,
   setTranslationTrackStyle,
@@ -83,9 +83,8 @@ import {
   setCanvasPreset as applyCanvasPreset,
   setBackgroundReplacement as applyBackgroundReplacement,
   replaceVisibleCaptionScript,
-  setCaptionTiming,
   setImageLayer,
-  setLayerTiming,
+  splitVisualLayer,
   setTextLayerStyle,
   setTextLayerText,
   setVideoClipGap,
@@ -1205,25 +1204,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
-  const updateCaptionTiming = (captionId: string, edge: 'start' | 'end' | 'move', startMs: number, endMs: number) => {
+  const updateTimelineItemTiming = (item: TimelineItemReference, edge: TimelineTimingEdge, startMs: number, endMs: number) => {
     setProject((current) => {
-      const next = setCaptionTiming(current, captionId, edge, startMs, endMs);
-      projectRef.current = next;
-      return next;
-    });
-  };
-
-  const updateTranslationCaptionTiming = (trackId: string, sourceCaptionId: string, edge: 'start' | 'end' | 'move', startMs: number, endMs: number) => {
-    setProject((current) => {
-      const next = setTranslationCueTiming(current, trackId, sourceCaptionId, edge, startMs, endMs, new Date().toISOString());
-      projectRef.current = next;
-      return next;
-    });
-  };
-
-  const updateLayerTiming = (layerId: string, startMs: number, endMs: number) => {
-    setProject((current) => {
-      const next = setLayerTiming(current, layerId, startMs, endMs);
+      const next = applyTimelineItemTiming(current, item, edge, startMs, endMs, timelineDurationMs);
       projectRef.current = next;
       return next;
     });
@@ -1306,6 +1289,27 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       return next;
     });
     setSelectedLayerId('captions');
+  };
+
+  const splitSelectedVisualAtPlayhead = () => {
+    if (!selectedLayer || selectedLayer.kind === 'captions') return;
+    const result = splitVisualLayer(
+      projectRef.current,
+      selectedLayer.id,
+      currentMs,
+      uniqueId(selectedLayer.kind),
+      uniqueId(selectedLayer.kind),
+    );
+    if (!result) {
+      Alert.alert('Move the playhead inside this item', 'A split needs a little room on both sides of the playhead.');
+      return;
+    }
+    transport.pause();
+    pushUndo();
+    projectRef.current = result.project;
+    setProject(result.project);
+    persistProjectInBackground(result.project);
+    setSelectedLayerId(result.right.id);
   };
 
   const addVideosToTimeline = async () => {
@@ -1489,14 +1493,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     commitAudioProject(updateAudioClip(projectRef.current, selectedAudioClipId, patch));
   };
 
-  const changeAudioTiming = (clipId: string, edge: 'start' | 'end', startMs: number, endMs: number) => {
-    const next = edge === 'start'
-      ? trimAudioClip(projectRef.current, clipId, 'start', startMs, timelineDurationMs)
-      : trimAudioClip(projectRef.current, clipId, 'end', endMs, timelineDurationMs);
-    projectRef.current = next;
-    setProject(next);
-  };
-
   const shiftSelectedAudio = (deltaMs: number) => {
     if (!selectedAudioClip) return;
     pushUndo();
@@ -1517,6 +1513,25 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     pushUndo();
     commitAudioProject(result.project);
     setSelectedAudioClipId(result.clip.id);
+  };
+
+  const splitSelectedAudioAtPlayhead = () => {
+    if (!selectedAudioClipId) return;
+    const result = splitAudioClip(
+      projectRef.current,
+      selectedAudioClipId,
+      currentMs,
+      uniqueId('audio-clip'),
+      uniqueId('audio-clip'),
+    );
+    if (!result) {
+      Alert.alert('Move the playhead inside this audio', 'A split needs a little room on both sides of the playhead.');
+      return;
+    }
+    transport.pause();
+    pushUndo();
+    commitAudioProject(result.project);
+    setSelectedAudioClipId(result.right.id);
   };
 
   const applyTransition = (type: VideoClip['transitionAfter']['type'], durationMs = 500) => {
@@ -2026,9 +2041,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onSetClipGap={setClipGap}
           onSetClipLeadingGap={setClipLeadingGap}
           onReorderClip={reorderClipToIndex}
-          onLayerTimingChange={updateLayerTiming}
-          onCaptionTimingChange={updateCaptionTiming}
-          onTranslationCaptionTimingChange={updateTranslationCaptionTiming}
+          onItemTimingChange={updateTimelineItemTiming}
           onTimingChangeStart={beginHistoryInteraction}
           onTimingChangeEnd={finishHistoryInteraction}
           onMoveLayer={moveLayer}
@@ -2041,8 +2054,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedCaptionId(undefined);
             setActiveTool('audio');
           }}
-          onAudioTimingChange={changeAudioTiming}
         />
+        {selectedCaption || selectedTranslationPair || selectedAudioClip || selectedTextLayer || selectedImageLayer ? (
+          <Text style={{ color: palette.muted, fontSize: 11 }}>Drag the selected block to move it. Drag either white edge to trim it.</Text>
+        ) : null}
 
         {activeTool === 'video' ? (
           <View style={{ gap: 8 }}>
@@ -2134,6 +2149,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             {selectedAudioClip ? <>
               <Text numberOfLines={1} style={{ color: '#64E8FF', fontSize: 12, fontWeight: '900' }}>SELECTED AUDIO · {project.audioSources.find((source) => source.id === selectedAudioClip.sourceId)?.displayName ?? 'Audio'}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                <Action label="Split at playhead" onPress={splitSelectedAudioAtPlayhead} />
+                <Action label="Delete audio" danger onPress={removeSelectedAudio} />
+                <Action label="Duplicate" onPress={copySelectedAudio} />
                 <Action label={selectedAudioClip.muted ? 'Unmute audio' : 'Mute audio'} onPress={() => updateSelectedAudio({ muted: !selectedAudioClip.muted })} />
                 <Action label="Volume −" disabled={selectedAudioClip.volume <= 0} onPress={() => updateSelectedAudio({ volume: clamp(selectedAudioClip.volume - 0.1, 0, 1) })} />
                 <Action label={`${Math.round(selectedAudioClip.volume * 100)}% volume`} color="#64E8FF" onPress={() => updateSelectedAudio({ volume: 1, muted: false })} />
@@ -2142,8 +2160,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <Action label="Move +0.5s" onPress={() => shiftSelectedAudio(500)} />
                 <Action label={selectedAudioClip.fadeInMs ? 'Remove fade in' : 'Fade in'} onPress={() => updateSelectedAudio({ fadeInMs: selectedAudioClip.fadeInMs ? 0 : 500 })} />
                 <Action label={selectedAudioClip.fadeOutMs ? 'Remove fade out' : 'Fade out'} onPress={() => updateSelectedAudio({ fadeOutMs: selectedAudioClip.fadeOutMs ? 0 : 500 })} />
-                <Action label="Duplicate" onPress={copySelectedAudio} />
-                <Action label="Delete audio" danger onPress={removeSelectedAudio} />
               </ScrollView>
             </> : null}
             {!selectedClip && !selectedAudioClip ? <Text style={{ color: palette.muted, fontSize: 12 }}>Select a video clip for its embedded audio, add audio, or tap an audio block in the timeline.</Text> : null}
@@ -2159,6 +2175,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           />
         ) : selectedTextLayer ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
             <Action label="Edit text" onPress={() => { setEditingLayerId(selectedTextLayer.id); setEditingText(selectedTextLayer.text); }} />
             <Action label="Delete text layer" danger onPress={() => deleteLayer(selectedTextLayer.id)} />
             <Action label="Add text layer" onPress={addTextLayer} />
@@ -2166,6 +2183,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           </ScrollView>
         ) : selectedImageLayer ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
             <Action label="Delete sticker" danger onPress={() => deleteLayer(selectedImageLayer.id)} />
             <Action label="Add text layer" onPress={addTextLayer} />
             <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
