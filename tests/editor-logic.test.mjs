@@ -16,8 +16,9 @@ import { humanVideoName, isMachineVideoName } from '../src/lib/project-presentat
 import { applyCaptionTextChanges } from '../src/lib/caption-text-edits.ts';
 import { serializeAss, serializeSrt } from '../src/lib/subtitle-export.ts';
 import { mergeCaptionScriptBlock, splitCaptionScriptBlock, splitCaptionScriptBlockAtTime } from '../src/lib/caption-script.ts';
-import { deleteVideoClip, moveVideoClip, previewVideoClipLeadingGap, previewVideoClipReorder, previewVideoClipTrim, reorderVideoClip, setCaptionTiming, setVideoClipGap, setVideoClipLeadingGap, setVideoTransition, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
-import { addAudioSourceToProject, audioClipEnd, audioClipVolume, deleteAudioClip, moveAudioClip, trimAudioClip, updateAudioClip } from '../src/lib/audio-timeline.ts';
+import { deleteVideoClip, moveVideoClip, previewVideoClipLeadingGap, previewVideoClipReorder, previewVideoClipTrim, reorderVideoClip, setCaptionTiming, setLayerTiming, setVideoClipGap, setVideoClipLeadingGap, setVideoTransition, splitVideoClip, splitVisualLayer, trimVideoClip } from '../src/lib/project-editor.ts';
+import { addAudioSourceToProject, audioClipEnd, audioClipVolume, deleteAudioClip, moveAudioClip, splitAudioClip, trimAudioClip, updateAudioClip } from '../src/lib/audio-timeline.ts';
+import { applyTimelineItemTiming } from '../src/lib/timeline-item-editor.ts';
 import {
   buildClipTimeline,
   clipPlaybackVolume,
@@ -41,9 +42,38 @@ test('inserted audio is persistent, trimmable, movable, and independently mutabl
   assert.equal(restored.audioClips[0].sourceStartMs, 0);
   const moved = moveAudioClip(restored, 'audio-clip', 4_000, 12_000);
   assert.equal(moved.audioClips[0].startMs, 4_000);
+  const routed = applyTimelineItemTiming(restored, { kind: 'audio', clipId: 'audio-clip' }, 'move', 1_000, 9_000, 12_000);
+  assert.equal(routed.audioClips[0].startMs, 1_000);
+  const faded = updateAudioClip(restored, 'audio-clip', { fadeInMs: 500, fadeOutMs: 700 });
+  const split = splitAudioClip(faded, 'audio-clip', 6_000, 'audio-left', 'audio-right');
+  assert.ok(split);
+  assert.deepEqual(split.project.audioClips.map((clip) => [clip.id, clip.startMs, clip.sourceStartMs, clip.sourceEndMs]), [
+    ['audio-left', 2_000, 0, 4_000],
+    ['audio-right', 6_000, 4_000, 8_000],
+  ]);
+  assert.deepEqual([split.left.fadeInMs, split.left.fadeOutMs, split.right.fadeInMs, split.right.fadeOutMs], [500, 0, 0, 700]);
   const muted = updateAudioClip(moved, 'audio-clip', { muted: true, volume: 0.4, fadeInMs: 500 });
   assert.equal(audioClipVolume(muted.audioClips[0], 4_250), 0);
   assert.equal(deleteAudioClip(muted, 'audio-clip').audioClips.length, 0);
+});
+
+test('text and image timing stays bounded and splits into independently editable timeline items', () => {
+  const visual = {
+    clips: [{ id: 'video', sourceId: 'source', sourceStartMs: 0, sourceEndMs: 10_000, availableSourceStartMs: 0, availableSourceEndMs: 10_000, playbackRate: 1, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0, gapBeforeMs: 0, gapAfterMs: 0, transitionAfter: { type: 'none', durationMs: 0 } }],
+    layers: [
+      { id: 'captions', kind: 'captions', name: 'Captions', visible: true },
+      { id: 'image', kind: 'image', name: 'Image', visible: true, uri: 'file:///image.png', startMs: 2_000, endMs: 5_000, position: { x: 0.5, y: 0.5 }, box: { width: 0.3, height: 0.3 }, rotation: 0, opacity: 1 },
+    ],
+    updatedAt: 'before',
+  };
+  const moved = setLayerTiming(visual, 'image', 'move', 9_000, 12_000);
+  assert.deepEqual([moved.layers[1].startMs, moved.layers[1].endMs], [7_000, 10_000]);
+  const split = splitVisualLayer(visual, 'image', 3_500, 'image-left', 'image-right');
+  assert.ok(split);
+  assert.deepEqual(split.project.layers.slice(1).map((layer) => [layer.id, layer.startMs, layer.endMs, layer.uri]), [
+    ['image-left', 2_000, 3_500, 'file:///image.png'],
+    ['image-right', 3_500, 5_000, 'file:///image.png'],
+  ]);
 });
 
 test('video transitions are boundary-owned and deterministic', () => {
@@ -243,7 +273,7 @@ test('selected caption trim grips stay distinct even on tiny blocks', () => {
   assert.match(timeline, /<TimingGrip side="start" \{\.\.\.props\} \/>/);
   assert.match(timeline, /<TimingGrip side="end" \{\.\.\.props\} \/>/);
   const grip = timeline.slice(timeline.indexOf('function TimingGrip'));
-  assert.match(grip, /\[props\.side === 'start' \? 'left' : 'right'\]: -20/);
+  assert.match(grip, /\[props\.side === 'start' \? 'left' : 'right'\]: -10/);
   assert.match(grip, /width: 20/);
   assert.doesNotMatch(grip, /left: 4, right: 4/);
 });
@@ -1346,6 +1376,9 @@ test('timeline selection does not move or snap the playhead', () => {
   assert.doesNotMatch(timeline, /onSeek\(layer\.startMs\)/);
   assert.match(timeline, /onSelectClip: \(clipId: string\) => void/);
   assert.match(timeline, /onSelectAudioClip: \(clipId: string\) => void/);
+  assert.match(timeline, /onItemTimingChange: \(item: TimelineItemReference/);
+  assert.doesNotMatch(timeline, /edge !== 'move'/);
+  assert.match(timeline, /kind: 'audio'/);
   assert.match(timeline, /onPress=\{\(\) => props\.onSelectLayer\(layer\.id\)\}/);
   assert.match(editor, /onSelectClip=\{\(clipId\) => \{/);
   assert.match(editor, /onSelectAudioClip=\{\(clipId\) => \{/);
@@ -1358,18 +1391,21 @@ test('timeline selection does not move or snap the playhead', () => {
   assert.match(timeline, /gestureLockRef\.current = false;[\s\S]*setReorderDrag\(undefined\)/);
 });
 
-test('every subtitle body captures selection while only the selected subtitle exposes trim handles', () => {
+test('every timed content body captures movement while only the selected item exposes trim handles', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   const block = timeline.slice(timeline.indexOf('function TimedBlock'), timeline.indexOf('function LinkedCaptionBlock'));
-  assert.match(block, /props\.movable \? <CaptionMoveGrip/);
-  assert.doesNotMatch(block, /props\.selected && props\.movable/);
+  assert.match(block, /<TimelineMoveGrip/);
+  assert.doesNotMatch(block, /movable\?: boolean/);
   assert.match(block, /\{props\.selected \? \(/);
   assert.match(block, /<TimingGrip side="start"/);
   assert.match(block, /<TimingGrip side="end"/);
   assert.match(block, /zIndex: props\.selected \? 6 : 1/);
-  const moveGrip = timeline.slice(timeline.indexOf('function CaptionMoveGrip'), timeline.indexOf('function TimingGrip'));
+  const moveGrip = timeline.slice(timeline.indexOf('function TimelineMoveGrip'), timeline.indexOf('function TimingGrip'));
   assert.match(moveGrip, /onPanResponderTerminationRequest: \(\) => false/);
   assert.match(moveGrip, /onShouldBlockNativeResponder: \(\) => true/);
+  const timingGrip = timeline.slice(timeline.indexOf('function TimingGrip'), timeline.indexOf('function TinyButton'));
+  assert.doesNotMatch(timingGrip, /clamp\(/);
+  assert.match(timingGrip, /left: 8, right: 8/);
 });
 
 test('the add-video button stays in the timeline header instead of covering clip gestures', () => {

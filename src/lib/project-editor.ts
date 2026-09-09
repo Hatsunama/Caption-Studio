@@ -34,6 +34,7 @@ import {
   type VideoClip,
   type VideoTransformPatch,
 } from '@/types/project';
+import { editTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
 
 export function setBackgroundReplacement(project: CaptionProject, value: BackgroundReplacement) {
   if (project.backgroundReplacement === value) return project;
@@ -164,11 +165,27 @@ export function replaceVisibleCaptionScript(project: CaptionProject, captions: C
   });
 }
 
-export function setLayerTiming(project: CaptionProject, layerId: string, startMs: number, endMs: number) {
+export function setLayerTiming(
+  project: CaptionProject,
+  layerId: string,
+  edge: TimelineTimingEdge,
+  startMs: number,
+  endMs: number,
+) {
+  const selected = project.layers.find((layer) => layer.id === layerId && layer.kind !== 'captions');
+  if (!selected || selected.kind === 'captions') return project;
+  const range = editTimelineRange(
+    { startMs: selected.startMs, endMs: selected.endMs },
+    edge,
+    startMs,
+    endMs,
+    totalClipDuration(project.clips),
+  );
+  if (range.startMs === selected.startMs && range.endMs === selected.endMs) return project;
   const entries = buildClipTimeline(project.clips);
   return updateProject(project, {
     layers: project.layers.map((layer) => layer.id === layerId && layer.kind !== 'captions'
-      ? attachLayerToTimeline({ ...layer, startMs, endMs, timelineVisible: true }, entries, true)
+      ? attachLayerToTimeline({ ...layer, ...range, timelineVisible: true }, entries, true)
       : layer),
   });
 }
@@ -240,6 +257,31 @@ export function moveVisualLayer(project: CaptionProject, layerId: string, direct
 export function deleteVisualLayer(project: CaptionProject, layerId: string) {
   if (layerId === 'captions') return project;
   return updateProject(project, { layers: project.layers.filter((layer) => layer.id !== layerId) });
+}
+
+export function splitVisualLayer(
+  project: CaptionProject,
+  layerId: string,
+  timelineMs: number,
+  leftId: string,
+  rightId: string,
+) {
+  const index = project.layers.findIndex((layer) => layer.id === layerId && layer.kind !== 'captions');
+  const layer = project.layers[index];
+  if (
+    !layer
+    || layer.kind === 'captions'
+    || leftId === rightId
+    || project.layers.some((candidate) => candidate.id === leftId || candidate.id === rightId)
+  ) return null;
+  const split = splitTimelineRange({ startMs: layer.startMs, endMs: layer.endMs }, timelineMs);
+  if (!split) return null;
+  const entries = buildClipTimeline(project.clips);
+  const left = attachLayerToTimeline({ ...layer, id: leftId, ...split.left }, entries, true);
+  const right = attachLayerToTimeline({ ...layer, id: rightId, ...split.right }, entries, true);
+  const layers = [...project.layers];
+  layers.splice(index, 1, left, right);
+  return { project: updateProject(project, { layers }), left, right };
 }
 
 export function deleteCaptionBlock(project: CaptionProject, captionId: string) {

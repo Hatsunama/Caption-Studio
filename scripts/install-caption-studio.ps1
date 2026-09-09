@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $Repository = 'Hatsunama/Caption-Studio'
-$RequiredCommit = 'e01c55f44850a7bca94c696bd9dc2746d2ef58b8'
+$MinimumVersion = [Version]'1.4.24'
 $Package = 'com.hatsunama.captionstudio.fixed'
 $AssetName = 'caption-studio-android.apk'
 $TempDir = Join-Path $env:TEMP ("CaptionStudioInstaller-" + [Guid]::NewGuid().ToString('N'))
@@ -52,13 +52,15 @@ try {
         throw 'No published Caption Studio Android release was found.'
     }
     $Release = $Release[0]
-
-    $EncodedTag = [Uri]::EscapeDataString([string]$Release.tag_name)
-    $Comparison = Invoke-RestMethod `
-        -Uri "https://api.github.com/repos/$Repository/compare/$RequiredCommit...$EncodedTag" `
-        -Headers $Headers
-    if ($Comparison.status -notin @('ahead', 'identical')) {
-        throw "Release $($Release.tag_name) does not contain the integrated fixes."
+    $ReleaseVersionText = ([string]$Release.tag_name).TrimStart('v')
+    try {
+        $ReleaseVersion = [Version]$ReleaseVersionText
+    }
+    catch {
+        throw "Release $($Release.tag_name) has an invalid version."
+    }
+    if ($ReleaseVersion -lt $MinimumVersion) {
+        throw "Latest release $($Release.tag_name) is older than required version $MinimumVersion."
     }
 
     $Asset = @($Release.assets | Where-Object name -eq $AssetName)[0]
@@ -117,8 +119,12 @@ try {
     }
     Invoke-Adb @('-s', $Serial, 'shell', 'am', 'start', '-W', '-n', $LaunchComponent) | Out-Host
 
-    Invoke-Adb @('-s', $Serial, 'shell', 'dumpsys', 'package', $Package) |
-        Select-String 'versionName=|versionCode=|targetSdk='
+    $PackageInfo = @(Invoke-Adb @('-s', $Serial, 'shell', 'dumpsys', 'package', $Package))
+    $PackageInfo | Select-String 'versionName=|versionCode=|targetSdk='
+    $InstalledVersion = @($PackageInfo | Where-Object { $_ -match '^\s*versionName=(\S+)' } | ForEach-Object { $Matches[1] } | Select-Object -First 1)
+    if ($InstalledVersion.Count -ne 1 -or $InstalledVersion[0] -ne $ReleaseVersionText) {
+        throw "Installed package version does not match release $($Release.tag_name). No app data was cleared."
+    }
     Write-Host 'Caption Studio updated. Neither app was uninstalled or cleared.'
 }
 finally {
