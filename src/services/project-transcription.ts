@@ -1,3 +1,4 @@
+import { createTimelineTranscriptionSession } from '@/services/timeline-audio-render';
 import CaptionMedia from 'caption-media';
 
 import { groupTimelineWordsByClip, groupingOptionsForLanguage } from '@/lib/caption-grouping';
@@ -16,7 +17,7 @@ import {
 import type { CaptionGenerationSessionContext } from '@/services/caption-generation-session';
 import type { CaptionProject, SourceTranscription, WordToken } from '@/types/project';
 
-export async function generateProjectCaptions(
+async function generateProjectCaptionsFromSources(
   project: CaptionProject,
   modelId: TranscriptionModelId,
   onProgress?: (progress: TranscriptionProgress) => void,
@@ -129,4 +130,26 @@ export async function generateProjectCaptions(
     ...generated,
     captionTracks: synchronizeCaptionTracksAfterTranscription(project, generated),
   };
+}
+export async function generateProjectCaptions(
+  ...args: Parameters<typeof generateProjectCaptionsFromSources>
+): Promise<Awaited<ReturnType<typeof generateProjectCaptionsFromSources>>> {
+  const [project] = args;
+  const usesTimelineComposition = project.clips.length > 1
+    || project.audioClips.some((clip) => !clip.muted && clip.volume > 0);
+  if (!usesTimelineComposition) return generateProjectCaptionsFromSources(...args);
+
+  const timelineSession = await createTimelineTranscriptionSession(project);
+  const forwarded = [...args] as unknown as Parameters<typeof generateProjectCaptionsFromSources>;
+  forwarded[0] = timelineSession.project;
+  const checkpoint = args[3];
+  if (checkpoint) {
+    forwarded[3] = async (candidate) => checkpoint(timelineSession.restore(candidate));
+  }
+  try {
+    const generated = await generateProjectCaptionsFromSources(...forwarded);
+    return timelineSession.restore(generated);
+  } finally {
+    timelineSession.dispose();
+  }
 }

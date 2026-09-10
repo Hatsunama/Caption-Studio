@@ -46,14 +46,26 @@ test('release workflow uses stable secrets and publishes a verified immutable AP
   assert.match(workflow, /gh release create/);
   assert.match(workflow, /tag="v\$\{VERSION\}"/);
   assert.match(workflow, /caption-studio-android\.apk/);
+  assert.match(workflow, /:app:lintRelease/);
+  assert.match(workflow, /--init-script \.\.\/scripts\/first-party-android-lint\.gradle/);
   assert.doesNotMatch(workflow, /Caption Studio Fixed/);
   assert.doesNotMatch(workflow, /v\$\{VERSION\}-fixed/);
   assert.doesNotMatch(workflow, /caption-studio-fixed-android/);
   assert.doesNotMatch(workflow, /keytool -genkeypair/);
 });
 
+test('verification workflow runs Android lint before retaining release artifacts', async () => {
+  const workflow = await readFile(new URL('.github/workflows/ci.yml', root), 'utf8');
+  assert.match(workflow, /:app:lintRelease/);
+  assert.match(workflow, /--init-script \.\.\/scripts\/first-party-android-lint\.gradle/);
+  assert.match(workflow, /:app:assembleRelease/);
+  assert.match(workflow, /:app:bundleRelease/);
+});
+
 test('installer is fail-closed and cannot delete the production app', async () => {
   const installer = await readFile(new URL('scripts/install-caption-studio.ps1', root), 'utf8');
+  const appConfig = JSON.parse(await readFile(new URL('app.json', root), 'utf8'));
+  assert.ok(installer.includes(`$MinimumVersion = [Version]'${appConfig.expo.version}'`));
   assert.match(installer, /Multiple Android devices are connected/);
   assert.match(installer, /device\|unauthorized\|offline/);
   assert.match(installer, /Get-FileHash -LiteralPath \$Apk -Algorithm SHA256/);

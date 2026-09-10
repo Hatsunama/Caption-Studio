@@ -1,0 +1,11 @@
+gradle.afterProject { project, state ->
+    if (state.failure != null) return
+
+    def nodeModulesRoot = new File(project.rootDir.parentFile, 'node_modules').canonicalFile.toPath()
+    def projectPath = project.projectDir.canonicalFile.toPath()
+    if (!projectPath.startsWith(nodeModulesRoot)) return
+
+    project.tasks.configureEach { task ->
+        if (task.name.startsWith('lintAnalyze')) task.enabled = false
+    }
+}

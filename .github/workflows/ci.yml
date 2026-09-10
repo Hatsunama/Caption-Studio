@@ -82,6 +82,12 @@ jobs:
           } >> "$HOME/.gradle/gradle.properties"
           chmod 600 "$HOME/.gradle/gradle.properties"
 
+      - name: Lint Android release code
+        env:
+          NODE_ENV: production
+        working-directory: android
+        run: ./gradlew :app:lintRelease --init-script ../scripts/first-party-android-lint.gradle --no-daemon --stacktrace --warning-mode all
+
       - name: Run native release tests and build release artifacts
         env:
           NODE_ENV: production
