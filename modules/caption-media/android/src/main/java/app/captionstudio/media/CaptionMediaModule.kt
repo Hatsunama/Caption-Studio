@@ -40,6 +40,8 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 class CaptionMediaModule : Module() {
+  private val timelineVideoExporter = lazy { TimelineVideoExporter(context) }
+  private val audioExtractionEpoch = AtomicLong(0L)
 
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()

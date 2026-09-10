@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { NavigationAction } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
-import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
@@ -99,7 +98,6 @@ import {
   buildClipTimeline,
   setClipPlaybackRate,
   timelineEntryAt,
-  sourceTimeAt,
   totalClipDuration,
   visibleTimelineCaptions,
 } from '@/lib/video-timeline';

@@ -291,15 +291,6 @@ function hydrateBackgroundReplacement(value: CaptionProject['backgroundReplaceme
   };
 }
 
-function boundedNumber(value: unknown, fallback: number, minimum: number, maximum: number) {
-  const number = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-  return Math.min(maximum, Math.max(minimum, number));
-}
-
-function normalizeAngle(value: number) {
-  return ((value + 180) % 360 + 360) % 360 - 180;
-}
-
 function hydrateClips(clips: VideoClip[], sources: ProjectVideoSource[]): VideoClip[] {
   const sourceById = new Map(sources.map((source) => [source.id, source]));
   const ids = new Set<string>();
