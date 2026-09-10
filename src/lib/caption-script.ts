@@ -62,6 +62,7 @@ export function splitCaptionScriptBlock(
     ...caption,
     text: beforeText,
     textMode: 'manual',
+    timingMode: caption.sourceAnchor ? 'source' : 'timeline',
     endMs: splitMs,
     wordIds: leftWordIds,
     sourceAnchor: caption.sourceAnchor && sourceSplitMs != null
@@ -73,6 +74,7 @@ export function splitCaptionScriptBlock(
     id: newCaptionId,
     text: afterText,
     textMode: 'manual',
+    timingMode: caption.sourceAnchor ? 'source' : 'timeline',
     startMs: splitMs,
     wordIds: rightWordIds,
     sourceAnchor: caption.sourceAnchor && sourceSplitMs != null
@@ -157,6 +159,7 @@ export function mergeCaptionScriptBlock(
     ...previous,
     text: normalizeText(captionLayoutText([previous.text.trim(), current.text.trim()])),
     textMode: 'manual',
+    timingMode: sourceAnchor ? 'source' : 'timeline',
     startMs: Math.min(previous.startMs, current.startMs),
     endMs: Math.max(previous.endMs, current.endMs),
     wordIds,
