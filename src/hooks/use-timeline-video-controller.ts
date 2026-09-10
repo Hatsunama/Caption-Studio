@@ -105,12 +105,7 @@ export function useTimelineVideoController(
     primedRef.current = undefined;
   };
 
-  const releaseStandbySurface = useCallback(() => {
-    primedRef.current = undefined;
-    const standby = players[oppositeTimelineSlot(activeSlotRef.current)];
-    standby.pause();
-    void standby.replaceAsync(null).catch(() => undefined);
-  }, [players]);
+  const releaseStandbySurface = useCallback(() => undefined, []);
 
   const stopTransport = useCallback(() => {
     playIntentRef.current = false;
@@ -121,7 +116,7 @@ export function useTimelineVideoController(
     players[0].pause();
     players[1].pause();
     const standby = players[oppositeTimelineSlot(activeSlotRef.current)];
-    void standby.replaceAsync(null).catch(() => undefined);
+    standby.pause();
     if (mountedRef.current) setIsPlaying(false);
   }, [players]);
 
@@ -236,7 +231,6 @@ export function useTimelineVideoController(
     player.pause();
     standbyPlayer().pause();
     if (sourceChanged) {
-      setPhase('loading');
       clearStandbyPrime();
       await player.replaceAsync(source.uri);
       if (!mountedRef.current) return;

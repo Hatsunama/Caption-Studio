@@ -116,7 +116,7 @@ jobs:
         env:
           NODE_ENV: production
         working-directory: android
-        run: ./gradlew :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest :app:assembleRelease --no-daemon --stacktrace --warning-mode all
+        run: ./gradlew :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest :app:lintRelease :app:assembleRelease --no-daemon --stacktrace --warning-mode all
 
       - name: Verify and package APK
         id: package

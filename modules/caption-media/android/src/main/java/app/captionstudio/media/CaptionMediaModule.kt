@@ -85,7 +85,13 @@ class CaptionMediaModule : Module() {
       decodeAudioToWav(inputUri, outputUri, requestEpoch)
     }
 
+    AsyncFunction("renderTimelineAudio") { outputUri: String, rawPlan: Map<String, Any?>, promise: Promise ->
+      val context = requireNotNull(appContext.reactContext) { "Android context is unavailable" }
+      TimelineAudioRenderer.render(context, outputFile(outputUri).absolutePath, parseTimelineAudioPlan(rawPlan), promise)
+    }
+
     AsyncFunction("cancelAudioExtraction") {
+      TimelineAudioRenderer.cancel()
       audioExtractionEpoch.incrementAndGet()
     }
 
@@ -180,6 +186,7 @@ class CaptionMediaModule : Module() {
     }
 
     OnDestroy {
+      TimelineAudioRenderer.cancel()
       audioExtractionEpoch.incrementAndGet()
       synchronized(segmentationLock) {
         previewDestroyed = true

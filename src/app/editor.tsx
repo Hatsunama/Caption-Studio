@@ -348,7 +348,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const persistProjectInBackground = (next: CaptionProject) => {
-    void persistProject(next).catch(() => undefined);
+    void persistProject(next).catch((caught) => {
+      setPersistenceError(caught instanceof Error ? caught.message : 'The project could not be saved.');
+    });
   };
 
   const commitPersistedProject = async (
