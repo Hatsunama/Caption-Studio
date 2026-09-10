@@ -112,11 +112,17 @@ jobs:
           } >> "$HOME/.gradle/gradle.properties"
           chmod 600 "$HOME/.gradle/gradle.properties"
 
+      - name: Lint Android release code
+        env:
+          NODE_ENV: production
+        working-directory: android
+        run: ./gradlew :app:lintRelease -x :react-native-worklets:lintAnalyzeRelease --no-daemon --stacktrace --warning-mode all
+
       - name: Test and build Caption Studio release APK
         env:
           NODE_ENV: production
         working-directory: android
-        run: ./gradlew :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest :app:lintRelease :app:assembleRelease --no-daemon --stacktrace --warning-mode all
+        run: ./gradlew :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest :app:assembleRelease --no-daemon --stacktrace --warning-mode all
 
       - name: Verify and package APK
         id: package
