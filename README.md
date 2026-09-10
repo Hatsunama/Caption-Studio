@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.28) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.29) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.28/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.29/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.28 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.29 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -73,7 +73,9 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.28** (`v1.4.28`, Android version code 40).
+Current Android build: **1.4.29** (`v1.4.29`, Android version code 41).
+
+Version 1.4.29 prevents transition preview decoders from appearing as animated black panels. Composite previews stay transparent until both auxiliary players have rendered their first sought frame, disable ExoPlayer's black shutter, and reset the render gate whenever the transition sources change. Native export geometry remains unchanged because it decodes exact bitmap frames before composition. Background removal and person motion paths have been retired across the editor, preview, export planner, native compositor, privacy controls, and Android dependencies. Existing projects remain readable; legacy background metadata is retained only for safe media cleanup and is always loaded inactive.
 
 Version 1.4.28 makes every caption-quality choice immediately enter a visible generation state before composed timeline audio is prepared. Fast, Balanced, and Accurate all use the same operation contract, and any preparation, model-download, or transcription failure now opens a plain-English failure dialog at the point of action instead of appearing only in an editor message below the fold.
 
@@ -105,7 +107,7 @@ Version 1.4.9 checkpoints completed translation batches in private, backup-exclu
 
 Version 1.4.8 preserves individual subtitle identities through AI translation. Unusable results are marked FAILED - RETRY, successful translations and existing text are saved, and incomplete runs show a summary. Open Edit both languages and tap Refresh to repair an incomplete track. Export errors appear in a dialog; disabled and off-timeline captions no longer block MP4 export. Independent translations remain in subtitle-file output, and draft recovery operations are serialized.
 
-The installer requires release 1.4.28 or newer and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
+The installer requires release 1.4.29 or newer and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
 
 Version 1.4.7 replaces the translation model's false transient-memory rejection with hardware-based capability checks. Eligible 64-bit devices with at least 4 GiB physical RAM now attempt the memory-mapped model load even when Android temporarily reports memory pressure. If the runtime genuinely cannot allocate enough memory, the app keeps captions unchanged and tells the user to close other apps, keep Caption Studio open, and retry.
 
@@ -157,15 +159,12 @@ The release must also contain the 1.4.5 language-picker repair. ADB output is ca
 - Nondestructive video split, reversible two-sided edge trimming with caption restoration, speed, volume, mute, and audio fades; cropped ranges and their captions hide inside explicit removable black gaps; after a gap is removed, either edge can still extend a packed clip back out to unused source media and auto-slide following clips
 - A dedicated audio timeline: import audio from the phone or extract the audio track from a selected video, then body-drag, trim or restore either source edge, split at the playhead, duplicate, mute, fade, and adjust each audio clip independently
 - 30 real-footage transition effects plus Clean cut, with adjustable timing across dips, dissolves, directional wipes, slides, pushes, zooms, folds, irises, splits, color washes, shutter, spin, flash, and glitch
-- On-device person-background removal preview and native MP4 render using the Apache-licensed MediaPipe multiclass person model; video frames and masks stay on the phone, while the optional Google SDKs send the operational metrics described in the privacy policy when the feature is enabled
-- Stable, Balanced, and Detailed person-edge modes shared by preview and export, with motion-aware temporal smoothing, face protection, bad-frame rejection, hole/speck cleanup, hysteresis, and edge-aware feathering
-- Exported person motion paths use the same eased position, scale, and shortest-arc rotation behavior shown in preview
 - Continuous playback across same-source splits and different video files, with an explicit decoder handoff that prevents fast clips from bleeding into the following clip
 - An explicit Save draft / Discard / Keep editing decision whenever the user backs out of the editor
 - Confirmed project deletion from a trash control on every project card; linked source videos are never deleted
 - Local SQLite project snapshots
 
-The native timeline renderer exports multiple trimmed clips, deliberate black gaps, per-clip speed and gain, inserted audio, background replacement, person motion, ordered text/image layers, caption styling and speech-timed animations, and all transition families into an H.264/AAC MP4. Real footage is registered above the opaque canvas in Media3's compositor; the canvas appears only where a project intentionally has no visible video. The exporter validates the MP4 before publishing it to `Movies/Caption Studio` on Android 7 and newer, then opens Android's share sheet. Android 7–9 ask for legacy write access only when an export needs to enter the public media library. SRT and styled ASS subtitle files are available from the same Export menu. Production APKs use the dedicated Caption Studio release identity described below. Editing and exporting never rewrite the source videos.
+The native timeline renderer exports multiple trimmed clips, deliberate black gaps, per-clip speed and gain, inserted audio, ordered text/image layers, caption styling and speech-timed animations, and all transition families into an H.264/AAC MP4. Real footage is registered above the opaque canvas in Media3's compositor; the canvas appears only where a project intentionally has no visible video. The exporter validates the MP4 before publishing it to `Movies/Caption Studio` on Android 7 and newer, then opens Android's share sheet. Android 7–9 ask for legacy write access only when an export needs to enter the public media library. SRT and styled ASS subtitle files are available from the same Export menu. Production APKs use the dedicated Caption Studio release identity described below. Editing and exporting never rewrite the source videos.
 
 ## Architecture
 
@@ -173,7 +172,7 @@ The native timeline renderer exports multiple trimmed clips, deliberate black ga
 - Custom Android native build; this project does not run in Expo Go
 - `expo-video` for hardware-backed preview
 - `whisper.rn` for local inference
-- Local Expo Kotlin module for Android media metadata, audio decoding, lossless audio-track extraction, MediaPipe multiclass person segmentation, timeline audio mixing, and frame compositing
+- Local Expo Kotlin module for Android media metadata, audio decoding, lossless audio-track extraction, timeline audio mixing, and frame compositing
 - Isolated Expo Android translation module using LiteRT-LM and one pinned Qwen model for every supported source-target language pair
 - Expo SQLite for nondestructive project state
 
@@ -215,7 +214,7 @@ adb reverse tcp:8081 tcp:8081
 npx expo start --localhost
 ```
 
-The first transcription downloads the selected model once. Later transcription can run offline while that verified model remains installed. Optional background removal has a separate Google operational-metrics disclosure even though its media processing stays on-device.
+The first transcription downloads the selected model once. Later transcription can run offline while that verified model remains installed.
 After installing an update that improves transcription timing, open an existing project and tap **Generate again** once to replace its previously saved word timings; project styling and added layers are preserved.
 
 Dual-language subtitles are optional and disabled by default. Caption Studio uses one multilingual translation model for every supported English–Chinese direction, not a separate model per language. A project whose clips mix English and Chinese source languages must be split into language-consistent projects before automatic dual-language refresh; code-switching and machine translation should always be reviewed before publishing.

@@ -4,8 +4,6 @@ import test from 'node:test';
 
 import { ANIMATION_PRESETS, reactionEmojis } from '../src/lib/animation-presets.ts';
 import { VIDEO_TRANSITION_PRESETS } from '../src/lib/transition-presets.ts';
-import { resolvePersonTransform, upsertPersonKeyframe } from '../src/lib/person-motion.ts';
-import { PERSON_MATTE_PRESETS } from '../src/lib/person-matte-presets.ts';
 import { groupTimelineWordsByClip, groupWordsIntoCaptions } from '../src/lib/caption-grouping.ts';
 import { alignWordsToSpeech } from '../src/lib/speech-alignment.ts';
 import { coalesceWhisperWords } from '../src/lib/whisper-words.ts';
@@ -98,36 +96,6 @@ test('creative catalogs stay broad, unique, and data-driven', () => {
   assert.equal((fontCatalog.match(/require\('\.\.\/\.\.\/assets\/fonts\//g) ?? []).length, fontFamilies.length);
 });
 
-test('person motion paths interpolate deterministically and rotate by the shortest arc', () => {
-  const base = {
-    enabled: true,
-    mask: { threshold: 0.5, softness: 0.18 },
-    personTransform: { position: { x: 0.5, y: 0.5 }, scale: 1, rotation: 0 },
-    keyframes: [],
-  };
-  const first = { id: 'a', timeMs: 0, position: { x: 0.2, y: 0.3 }, scale: 0.8, rotation: 170 };
-  const second = { id: 'b', timeMs: 1_000, position: { x: 0.8, y: 0.7 }, scale: 1.4, rotation: -170 };
-  const keyframes = upsertPersonKeyframe(upsertPersonKeyframe([], second), first);
-  const middle = resolvePersonTransform({ ...base, keyframes }, 500);
-  assert.deepEqual(middle.position, { x: 0.5, y: 0.5 });
-  assert.equal(middle.scale, 1.1);
-  assert.equal(middle.rotation, -180);
-});
-
-test('person matte quality presets are distinct and shared by preview and export', () => {
-  assert.deepEqual(Object.keys(PERSON_MATTE_PRESETS), ['stable', 'balanced', 'detailed']);
-  assert.ok(PERSON_MATTE_PRESETS.stable.temporalStability > PERSON_MATTE_PRESETS.balanced.temporalStability);
-  assert.ok(PERSON_MATTE_PRESETS.balanced.temporalStability > PERSON_MATTE_PRESETS.detailed.temporalStability);
-  const preview = readFileSync(new URL('../src/services/person-compositor.ts', import.meta.url), 'utf8');
-  const exporter = readFileSync(new URL('../src/lib/export-render-plan.ts', import.meta.url), 'utf8');
-  const nativeMatte = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/PersonMatteProcessor.kt', import.meta.url), 'utf8');
-  assert.match(preview, /qualityPreset: options\.background\.mask\.qualityPreset/);
-  assert.match(exporter, /qualityPreset: project\.backgroundReplacement\.mask\.qualityPreset/);
-  assert.match(nativeMatte, /protectFaces/);
-  assert.match(nativeMatte, /maximumHoldFrames/);
-  assert.match(nativeMatte, /cleanupMask/);
-});
-
 test('audio and transition ownership stays out of the editor screen', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   const audioDomain = readFileSync(new URL('../src/lib/audio-timeline.ts', import.meta.url), 'utf8');
@@ -161,16 +129,11 @@ test('timeline export is native, local, multi-track, and version-aligned', () =>
   const exporter = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineVideoExporter.kt', import.meta.url), 'utf8');
   const transitionTimeline = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineTransitionTimeline.kt', import.meta.url), 'utf8');
   const renderPlan = readFileSync(new URL('../src/lib/export-render-plan.ts', import.meta.url), 'utf8');
-  const segmenter = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/MediaPipePersonSegmenter.kt', import.meta.url), 'utf8');
   const nativeModule = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/CaptionMediaModule.kt', import.meta.url), 'utf8');
-  const motionPath = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/PersonMotionPath.kt', import.meta.url), 'utf8');
-  const bitmapMatte = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/BitmapMatte.kt', import.meta.url), 'utf8');
   const exportService = readFileSync(new URL('../src/services/project-export.ts', import.meta.url), 'utf8');
-  const previewService = readFileSync(new URL('../src/services/person-compositor.ts', import.meta.url), 'utf8');
   assert.match(nativeGradle, /media3-transformer:1\.10\.1/);
   assert.match(nativeGradle, /media3-effect:1\.10\.1/);
-  assert.match(nativeGradle, /tasks-vision:0\.10\.32/);
-  assert.doesNotMatch(nativeGradle, /segmentation-selfie|beta/);
+  assert.doesNotMatch(nativeGradle, /tasks-vision|face-detection|segmentation-selfie/);
   assert.match(exporter, /OverlayEffect/);
   assert.match(exporter, /MediaStore\.Video\.Media\.EXTERNAL_CONTENT_URI/);
   assert.match(exporter, /Environment\.getExternalStoragePublicDirectory/);
@@ -190,20 +153,11 @@ test('timeline export is native, local, multi-track, and version-aligned', () =>
   assert.doesNotMatch(exportService, /clips\.length !== 1|playbackRate !== 1/);
   assert.match(renderPlan, /resolveCaptionStyle/);
   assert.match(renderPlan, /audioClips/);
-  assert.match(segmenter, /selfie_multiclass_256x256\.tflite/);
-  assert.match(segmenter, /1f - buffer\.float/);
-  assert.match(exporter, /personMotion.*resolve/);
-  assert.match(motionPath, /shortestAngle/);
-  assert.match(bitmapMatte, /PorterDuff\.Mode\.DST_IN/);
   assert.match(exporter, /override fun configure\(videoSize: Size\)/);
   assert.match(exporter, /drawImageLayer/);
   assert.match(exporter, /drawTransition/);
   assert.match(exporter, /TimelineTextPainter/);
-  assert.match(previewService, /queue\.running/);
-  assert.match(previewService, /queue\.pending = job/);
-  assert.match(previewService, /superseded by a newer frame/);
   assert.ok((nativeModule.match(/METADATA_KEY_VIDEO_ROTATION/g) ?? []).length >= 2);
-  assert.match(nativeModule, /foreground = decoded/);
   assert.match(exporter, /orientBitmapAndRecycle\(decoded, orientation\)/);
 });
 
@@ -240,24 +194,6 @@ test('subtitle serializers emit standards-compliant timing and escaped styling',
   };
   const styledAss = serializeAss(wordStyled);
   assert.match(styledAss, /\{\\fnAnton\\fs216[^}]*\\c&H0000FF00&/);
-});
-
-test('native person mattes preserve the generated alpha channel during composition', () => {
-  const matte = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/BitmapMatte.kt', import.meta.url), 'utf8');
-  const processor = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/PersonMatteProcessor.kt', import.meta.url), 'utf8');
-  assert.match(matte, /Bitmap\.createBitmap\(source\.width, source\.height, Bitmap\.Config\.ARGB_8888\)/);
-  assert.match(matte, /setHasAlpha\(true\)/);
-  assert.match(matte, /eraseColor\(Color\.TRANSPARENT\)/);
-  assert.match(matte, /Bitmap\.createBitmap\(maskPixels, maskWidth, maskHeight, Bitmap\.Config\.ARGB_8888\)/);
-  assert.doesNotMatch(matte, /Bitmap\.Config\.ALPHA_8/);
-  assert.doesNotMatch(matte, /source\.copy\(Bitmap\.Config\.ARGB_8888/);
-  assert.match(processor, /val evidence = max\(confidence\[index\], prior\?\.get\(index\) \?: 0f\)/);
-  assert.match(processor, /face\.width\(\) \* 0\.42f/);
-  assert.match(processor, /face\.height\(\) \* 0\.52f/);
-  assert.match(processor, /evidence >= 0\.24f/);
-  assert.match(processor, /prior\[index\]\.toInt\(\) and 0xff\) >= 128/);
-  assert.doesNotMatch(processor, /centerWeight > 0\.42f/);
-  assert.doesNotMatch(processor, /face\.width\(\) \* 0\.72f|face\.height\(\) \* 0\.92f/);
 });
 
 test('provider URIs stay in persistence and never cross the navigation URL', () => {
@@ -393,10 +329,7 @@ test('Play releases use a signed app bundle and expose an in-app privacy policy'
   assert.match(homeScreen, /router\.push\('\/privacy'\)/);
   assert.match(privacyScreen, /Caption Studio privacy policy/);
   assert.match(privacyPolicy, /does not include advertising, first-party analytics, tracking, or cloud-transcription SDKs/);
-  assert.match(privacyPolicy, /MediaPipe Tasks SDK and bundled multiclass segmentation model/);
-  assert.match(privacyPolicy, /ML Kit collects device and app information, a per-installation identifier/);
-  assert.match(privacyPolicy, /Video frames, masks, and other feature inputs and outputs stay on the device/);
-  assert.match(privacyPolicy, /MediaPipe terms state that its APIs contact Google/);
+  assert.doesNotMatch(privacyPolicy, /MediaPipe|ML Kit|background removal/);
 });
 
 test('clips magnetically pack by default while intentional gaps remain explicit and removable', () => {

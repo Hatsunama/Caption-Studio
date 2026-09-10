@@ -30,17 +30,6 @@ Caption Studio downloads `ggml-silero-v6.2.0.bin` with the selected Whisper mode
 - SHA-256: `2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987`
 - License: [MIT component notices](third-party/licenses/MIT-component-notices.txt)
 
-## MediaPipe Selfie Multiclass Segmentation 256 × 256
-
-Caption Studio bundles `selfie_multiclass_256x256.tflite`, published by Google for the MediaPipe Image Segmenter. It classifies background, hair, body, face, clothing, and other person-associated pixels. The model card identifies the model as Apache License 2.0.
-
-- Source: `https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/1/selfie_multiclass_256x256.tflite`
-- Model card: `https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Multiclass%20Segmentation.pdf`
-- SHA-256: `c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0`
-- License: [Apache License 2.0](third-party/licenses/Apache-2.0.txt)
-
-The model runs entirely on the Android device. Caption Studio does not send frames to a model server.
-
 ## Qwen2.5 1.5B Instruct for optional natural translation
 
 Caption Studio can download `Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm` only when a user enables natural English–Chinese dual subtitles. One model handles English to Simplified Chinese, English to Traditional Chinese, and Chinese to English. It is not bundled in the APK or AAB and runs locally through LiteRT-LM after download.

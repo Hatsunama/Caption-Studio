@@ -6,9 +6,7 @@ Caption Studio is provided by Hatsunama. It is a local-first Android video and c
 
 ## Local media processing
 
-Videos, audio, images, imported fonts, transcripts, person masks, projects, and exports are processed and stored locally on the user's Android device. Caption Studio does not upload this content to Hatsunama. The app does not include advertising, first-party analytics, tracking, or cloud-transcription SDKs.
-
-Caption Studio uses Google's MediaPipe Tasks SDK and bundled multiclass segmentation model for on-device person segmentation, and ML Kit for on-device face detection that stabilizes difficult facial edges. Before first use, Caption Studio presents a disclosure and asks for consent. Video frames, masks, and other feature inputs and outputs stay on the device. When background removal is enabled and these SDKs are used, Google's ML Kit disclosure states that ML Kit collects device and app information, a per-installation identifier, performance measurements, API configuration and input/output sizes, feature versions, event types, and error codes for diagnostics and usage analytics. Google's MediaPipe terms state that its APIs contact Google for bug fixes, updated models, and hardware-accelerator compatibility and send utilization and performance metrics. Google states that ML Kit encrypts collected data in transit and does not transfer it to third parties. The user can stop future background-removal processing from the in-app Privacy policy screen.
+Videos, audio, images, imported fonts, transcripts, projects, and exports are processed and stored locally on the user's Android device. Caption Studio does not upload this content to Hatsunama. The app does not include advertising, first-party analytics, tracking, or cloud-transcription SDKs.
 
 ## Optional model downloads
 

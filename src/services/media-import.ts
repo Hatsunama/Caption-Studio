@@ -13,7 +13,7 @@ import {
 } from '@/services/project-media';
 import { releaseReadPermissions } from '@/services/media-permissions';
 import { requireFreeSpace } from '@/services/storage-policy';
-import type { BackgroundReplacement, ProjectAudioSource, ProjectVideoSource } from '@/types/project';
+import type { ProjectAudioSource, ProjectVideoSource } from '@/types/project';
 
 const MIN_IMPORT_HEADROOM_BYTES = 32 * 1024 * 1024;
 
@@ -115,49 +115,6 @@ export async function pickAndStoreImage(projectId: string, imageId: string) {
     fileName: asset.name,
   });
   return { uri, name: asset.name };
-}
-
-export async function pickBackgroundMedia(projectId: string): Promise<BackgroundReplacement['source'] | null> {
-  const result = await DocumentPicker.getDocumentAsync({
-    type: ['image/*', 'video/*'],
-    copyToCacheDirectory: false,
-    multiple: false,
-  });
-  if (result.canceled) return null;
-  const asset = result.assets[0];
-  const declaredKind = classifyPickedMedia(asset.mimeType, asset.name);
-  let probedVideoInfo;
-  if (declaredKind === 'video' || declaredKind === 'unknown') {
-    try {
-      const info = await probeVideoForImport(asset.uri, asset.name);
-      probedVideoInfo = info;
-    } catch (error) {
-      if (declaredKind === 'video') throw error;
-      throw new Error(`Caption Studio could not identify ${asset.name} as an image or video. Choose a supported image or video file.`);
-    }
-  }
-  const isVideo = Boolean(probedVideoInfo);
-  if (isVideo) {
-    try {
-      await CaptionMedia.persistReadPermission(asset.uri);
-    } catch {
-      throw new Error(`Android did not grant lasting access to ${asset.name}. Select it from Files or Photos and try again.`);
-    }
-    try {
-      return { kind: 'video', uri: asset.uri, storageMode: 'linked', displayName: asset.name };
-    } catch (error) {
-      await releaseReadPermissions([asset.uri]);
-      throw error;
-    }
-  }
-  await requireFreeSpace((asset.size ?? MIN_IMPORT_HEADROOM_BYTES) + MIN_IMPORT_HEADROOM_BYTES, 'add this background image');
-  const stored = await pickAndStoreSpecificImage(projectId, `background-${Date.now()}`, asset.uri, asset.name);
-  return { kind: 'image', uri: stored.uri, storageMode: 'copied', displayName: stored.name };
-}
-
-async function pickAndStoreSpecificImage(projectId: string, imageId: string, sourceUri: string, name: string) {
-  const uri = await storeProjectImage({ projectId, imageId, sourceUri, fileName: name });
-  return { uri, name };
 }
 
 export async function pickAndStoreAudio(projectId: string, audioId: string): Promise<ProjectAudioSource | null> {

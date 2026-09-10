@@ -4,10 +4,6 @@ import { Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native'
 
 import { chrome } from '@/lib/ui-theme';
 import {
-  hasBackgroundProcessingConsent,
-  setBackgroundProcessingConsent,
-} from '@/services/background-processing-consent';
-import {
   listDownloadedTranscriptionModels,
   removeDownloadedTranscriptionModels,
   type DownloadedTranscriptionModel,
@@ -25,15 +21,11 @@ const PUBLIC_SUPPORT_URL = 'https://github.com/Hatsunama/Caption-Studio/issues/n
 
 export default function PrivacyScreen() {
   const router = useRouter();
-  const [backgroundConsent, setBackgroundConsent] = useState(false);
   const [downloadedModels, setDownloadedModels] = useState<DownloadedTranscriptionModel[]>([]);
   const [translationModels, setTranslationModels] = useState<DownloadedNaturalTranslationModel[]>([]);
 
   useEffect(() => {
     let active = true;
-    void hasBackgroundProcessingConsent().then((granted) => {
-      if (active) setBackgroundConsent(granted);
-    });
     void listDownloadedTranscriptionModels().then((models) => {
       if (active) setDownloadedModels(models);
     });
@@ -42,25 +34,6 @@ export default function PrivacyScreen() {
     });
     return () => { active = false; };
   }, []);
-
-  const revokeBackgroundProcessing = () => {
-    Alert.alert(
-      'Turn off background-removal processing?',
-      'This stops future MediaPipe and ML Kit background-removal work until you review and accept the disclosure again. Other editing features keep working.',
-      [
-        { text: 'Keep enabled', style: 'cancel' },
-        {
-          text: 'Turn off',
-          style: 'destructive',
-          onPress: () => {
-            void setBackgroundProcessingConsent(false)
-              .then(() => setBackgroundConsent(false))
-              .catch(() => Alert.alert('Could not update privacy choice', 'Try again.'));
-          },
-        },
-      ],
-    );
-  };
 
   const removeTranslationModel = () => {
     const size = formatStorage(translationModels.reduce((total, model) => total + model.sizeBytes, 0));
@@ -131,15 +104,9 @@ export default function PrivacyScreen() {
         video and caption editor and does not require an account.
       </PolicySection>
       <PolicySection title="What stays on your phone">
-        Videos, audio, images, imported fonts, transcripts, person masks, projects, and exports are
+        Videos, audio, images, imported fonts, transcripts, projects, and exports are
         processed and stored locally. Caption Studio does not upload this content to Hatsunama and
         does not include advertising, first-party analytics, tracking, or cloud transcription SDKs.
-        MediaPipe performs multiclass person segmentation locally, and ML Kit performs local face
-        detection to stabilize difficult facial edges. Video frames and masks stay on your device. When
-        background removal is enabled and used, Google states that ML Kit collects device and app data,
-        a per-installation identifier, performance, configuration, input/output-size, feature-version,
-        event, and error metrics. Google&apos;s MediaPipe terms say its APIs contact Google for fixes,
-        updated models, and accelerator compatibility and send utilization and performance metrics.
       </PolicySection>
       <PolicySection title="Model downloads">
         When you first choose a transcription model, the app downloads the selected Whisper model
@@ -153,13 +120,6 @@ export default function PrivacyScreen() {
         Caption Studio only receives media you select through Android system pickers. Exports are
         saved to your device media library when supported. Sharing or uploading an export is a
         separate action you control outside Caption Studio.
-      </PolicySection>
-      <PolicySection title="Optional background-removal processing">
-        Background removal is optional. Before its first use, Caption Studio asks you to accept local
-        person processing and Google&apos;s encrypted operational metrics. Those metrics include app,
-        device, performance, configuration, event, error, and input/output-size information, but not
-        your video frames or generated masks. Google states that ML Kit encrypts collected data in transit
-        and does not transfer it to third parties. You can turn future background-removal processing off here.
       </PolicySection>
       <PolicySection title="Retention and deletion">
         Project data remains on the device until you delete the project, clear app storage, or uninstall
@@ -184,13 +144,6 @@ export default function PrivacyScreen() {
         media, transcripts, project files, or device logs.
       </PolicySection>
       <View style={{ gap: 10 }}>
-        {backgroundConsent ? (
-          <PolicyAction label="Turn off optional background-removal processing" onPress={revokeBackgroundProcessing} />
-        ) : (
-        <View style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: chrome.radius.md, backgroundColor: chrome.surface }}>
-            <Text style={{ color: chrome.muted, fontSize: 14, fontWeight: '600' }}>Optional background-removal processing is off</Text>
-          </View>
-        )}
         {downloadedModels.length > 0 ? (
           <PolicyAction
             label={`Remove offline models · ${formatStorage(downloadedModels.reduce((total, model) => total + model.sizeBytes, 0))}`}

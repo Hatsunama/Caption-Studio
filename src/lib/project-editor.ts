@@ -25,7 +25,6 @@ import {
 } from '@/lib/video-timeline';
 import {
   DEFAULT_CAPTION_STYLE,
-  type BackgroundReplacement,
   type CaptionProject,
   type CaptionStylePatch,
   type ImageVisualLayer,
@@ -34,11 +33,6 @@ import {
   type VideoTransformPatch,
 } from '@/types/project';
 import { editTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
-
-export function setBackgroundReplacement(project: CaptionProject, value: BackgroundReplacement) {
-  if (project.backgroundReplacement === value) return project;
-  return updateProject(project, { backgroundReplacement: value });
-}
 
 export function setCaptionTexts(project: CaptionProject, changes: CaptionTextChanges) {
   const changed = applyCaptionTextChanges(project.captions, changes);

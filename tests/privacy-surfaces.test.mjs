@@ -2,13 +2,12 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 
-test('public and in-app privacy surfaces disclose SDK traffic and backup limits consistently', () => {
+test('public and in-app privacy surfaces match the shipped local runtime and backup limits', () => {
   const markdown = readFileSync(new URL('../PRIVACY.md', import.meta.url), 'utf8');
   const publicHtml = readFileSync(new URL('../docs/privacy/index.html', import.meta.url), 'utf8');
   const inApp = readFileSync(new URL('../src/app/privacy.tsx', import.meta.url), 'utf8');
   for (const policy of [markdown, publicHtml, inApp]) {
-    assert.match(policy, /ML Kit collects/);
-    assert.match(policy, /MediaPipe terms/);
+    assert.doesNotMatch(policy, /ML Kit|MediaPipe|background-removal/);
     assert.match(policy, /device-to-device migration/);
     assert.match(policy, /security\/advisories\/new/);
   }

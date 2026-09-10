@@ -8,6 +8,9 @@ import {
   videoTransitionPreviewFrameAt,
 } from '../src/lib/video-transition-preview.ts';
 import { buildClipTimeline } from '../src/lib/video-timeline.ts';
+import { readFileSync } from 'node:fs';
+
+const previewOverlaySource = readFileSync(new URL('../src/components/editor/video-transition-overlay.tsx', import.meta.url), 'utf8');
 
 const transform = (rotation = 0) => ({
   fit: 'fit',
@@ -170,4 +173,12 @@ test('auxiliary decoders preload near a valid transition only', () => {
   assert.equal(videoTransitionPreloadWindow(windows, preloadStartMs - 1), undefined);
   assert.equal(videoTransitionPreloadWindow(windows, preloadStartMs)?.key, windows[0].key);
   assert.equal(videoTransitionPreloadWindow(windows, 4_300), undefined);
+});
+
+test('composite previews never animate an ExoPlayer shutter or an unrendered surface', () => {
+  assert.match(previewOverlaySource, /onFirstFrameRender=\{props\.onFirstFrameRender\}/);
+  assert.match(previewOverlaySource, /rendered\.outgoing && rendered\.incoming/);
+  assert.match(previewOverlaySource, /opacity: ready \? 1 : 0/);
+  assert.match(previewOverlaySource, /useExoShutter=\{false\}/);
+  assert.doesNotMatch(previewOverlaySource, /overflow: 'hidden', backgroundColor: props\.backgroundColor/);
 });

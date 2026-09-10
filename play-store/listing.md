@@ -49,10 +49,6 @@ VIDEO AND AUDIO EDITING
 • Use clip volume and fade controls
 • Work in Original, 9:16, 16:9, 1:1, or 4:5 canvas formats
 
-OPTIONAL ON-DEVICE BACKGROUND REMOVAL
-
-Replace the area behind a person with an image or video without requiring a physical green screen. Resize, rotate, move, or animate the person along a motion path. Processing runs on the Android device; the app explains Google SDK operational metrics before this optional feature is enabled.
-
 Caption Studio has no watermark, export quota, font pack paywall, or transcription-credit system. Projects are nondestructive, so your original selected media is never deleted or modified.
 
 Requires Android 7.0 or newer. Optional natural English–Chinese translation uses one additional approximately 1.6 GB local model, is not available until the user enables it, and can still require human review. Performance depends on video resolution, duration, selected model, and phone hardware.
@@ -63,4 +59,4 @@ Video Players & Editors
 
 ## Release notes — 1.4.0
 
-Commercial export pipeline with multi-clip timelines, intentional gaps, speed-aware audio, inserted audio, burned captions and overlays, 43 video transitions, optional on-device-media person-background replacement with disclosed Google operational metrics, optional linked English–Chinese subtitles, multilingual transcription, SRT and ASS export, improved media lifecycle safety, cancellable caption generation and export, and Android 7–15 media publishing support.
+Commercial export pipeline with multi-clip timelines, intentional gaps, speed-aware audio, inserted audio, burned captions and overlays, 43 video transitions, optional linked multilingual subtitles, multilingual transcription, SRT and ASS export, improved media lifecycle safety, cancellable caption generation and export, and Android 7–15 media publishing support.

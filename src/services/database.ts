@@ -13,8 +13,6 @@ import {
   MINIMUM_CLIP_TIMELINE_MS,
   recoverCanonicalSourceWords,
 } from '@/lib/video-timeline';
-import { normalizedPersonKeyframes } from '@/lib/person-motion';
-import { PERSON_MATTE_PRESETS } from '@/lib/person-matte-presets';
 import { hydrateVideoTransitionBoundaries } from '@/lib/video-transitions';
 import {
   DEFAULT_CAPTION_STYLE,
@@ -284,33 +282,13 @@ function hydrateProject(project: CaptionProject): CaptionProject {
 }
 
 function hydrateBackgroundReplacement(value: CaptionProject['backgroundReplacement'] | undefined): CaptionProject['backgroundReplacement'] {
-  const legacyMask = value?.mask;
-  const qualityPreset = isPersonMatteQualityPreset(legacyMask?.qualityPreset) ? legacyMask.qualityPreset : undefined;
-  const migratedMask = qualityPreset && legacyMask ? legacyMask : PERSON_MATTE_PRESETS.stable;
   return {
-    enabled: value?.enabled ?? false,
+    enabled: false,
     source: value?.source,
-    mask: {
-      qualityPreset: qualityPreset ?? 'stable',
-      threshold: boundedNumber(migratedMask.threshold, PERSON_MATTE_PRESETS.stable.threshold, 0, 1),
-      softness: boundedNumber(migratedMask.softness, PERSON_MATTE_PRESETS.stable.softness, 0.001, 1),
-      temporalStability: boundedNumber(migratedMask.temporalStability, PERSON_MATTE_PRESETS.stable.temporalStability, 0, 0.92),
-      edgeFeather: boundedNumber(migratedMask.edgeFeather, PERSON_MATTE_PRESETS.stable.edgeFeather, 0, 1),
-    },
-    personTransform: {
-      position: {
-        x: boundedNumber(value?.personTransform?.position?.x, 0.5, -1, 2),
-        y: boundedNumber(value?.personTransform?.position?.y, 0.5, -1, 2),
-      },
-      scale: boundedNumber(value?.personTransform?.scale, 1, 0.05, 8),
-      rotation: normalizeAngle(boundedNumber(value?.personTransform?.rotation, 0, -360_000, 360_000)),
-    },
-    keyframes: normalizedPersonKeyframes(Array.isArray(value?.keyframes) ? value.keyframes : []),
+    mask: { qualityPreset: 'stable', threshold: 0.46, softness: 0.14, temporalStability: 0.78, edgeFeather: 0.45 },
+    personTransform: { position: { x: 0.5, y: 0.5 }, scale: 1, rotation: 0 },
+    keyframes: [],
   };
-}
-
-function isPersonMatteQualityPreset(value: unknown): value is CaptionProject['backgroundReplacement']['mask']['qualityPreset'] {
-  return value === 'stable' || value === 'balanced' || value === 'detailed' || value === 'custom';
 }
 
 function boundedNumber(value: unknown, fallback: number, minimum: number, maximum: number) {

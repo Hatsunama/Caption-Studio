@@ -23,32 +23,6 @@ declare class CaptionMediaModule extends NativeModule<Record<never, never>> {
     outputUri: string,
     timeMs: number,
   ): Promise<VideoThumbnailResult>;
-  renderPersonPreviewFrame(
-    inputUri: string,
-    backgroundUri: string | null,
-    outputUri: string,
-    options: {
-      timeMs: number;
-      backgroundTimeMs: number;
-      qualityPreset: 'stable' | 'balanced' | 'detailed' | 'custom';
-      threshold: number;
-      softness: number;
-      temporalStability: number;
-      edgeFeather: number;
-      positionX: number;
-      positionY: number;
-      scale: number;
-      rotation: number;
-      outputWidth: number;
-      outputHeight: number;
-      videoFit: 'fit' | 'fill';
-      videoPositionX: number;
-      videoPositionY: number;
-      videoScale: number;
-      videoRotation: number;
-    },
-  ): Promise<VideoThumbnailResult>;
-  resetPersonSegmentation(): Promise<void>;
   requestLegacyMediaWritePermission(): Promise<boolean>;
   exportTimelineVideo(outputPath: string, renderPlan: Record<string, unknown>): Promise<TimelineVideoExportResult>;
   getTimelineVideoExportProgress(): Promise<TimelineVideoExportProgress>;

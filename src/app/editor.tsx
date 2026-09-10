@@ -18,7 +18,6 @@ import {
 } from 'react-native';
 
 import { AnimationBrowser } from '@/components/editor/animation-browser';
-import { BackgroundTools } from '@/components/editor/background-tools';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
 import { DualLanguagePicker } from '@/components/editor/dual-language-picker';
@@ -57,7 +56,6 @@ import {
   MAX_TRANSLATION_STACK_GAP,
   MIN_TRANSLATION_STACK_GAP,
 } from '@/lib/caption-tracks';
-import { deletePersonKeyframe, resolvePersonTransform, upsertPersonKeyframe } from '@/lib/person-motion';
 import {
   collectLinkedMediaUris,
   collectProjectOwnedUris,
@@ -81,7 +79,6 @@ import {
   deleteVisualLayer,
   moveVisualLayer,
   setCanvasPreset as applyCanvasPreset,
-  setBackgroundReplacement as applyBackgroundReplacement,
   replaceVisibleCaptionScript,
   setImageLayer,
   splitVisualLayer,
@@ -106,12 +103,7 @@ import {
   totalClipDuration,
   visibleTimelineCaptions,
 } from '@/lib/video-timeline';
-import {
-  hasBackgroundProcessingConsent,
-  setBackgroundProcessingConsent,
-} from '@/services/background-processing-consent';
-import { pickAndStoreImage, pickBackgroundMedia, type MediaImportProgress } from '@/services/media-import';
-import { releasePersonPreview, renderPersonPreview } from '@/services/person-compositor';
+import { pickAndStoreImage, type MediaImportProgress } from '@/services/media-import';
 import {
   cancelProjectVideoExport,
   exportProjectVideo,
@@ -251,9 +243,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [dualCaptionEditorOpen, setDualCaptionEditorOpen] = useState(false);
   const [dualLanguagePickerOpen, setDualLanguagePickerOpen] = useState(false);
   const [selectedTranslationTrackId, setSelectedTranslationTrackId] = useState<string>();
-  const [personPreviewUri, setPersonPreviewUri] = useState<string>();
-  const [personPreviewBusy, setPersonPreviewBusy] = useState(false);
-  const [backgroundProcessingAllowed, setBackgroundProcessingAllowed] = useState<boolean>();
   const [activeTool, setActiveTool] = useState<EditorTool>('captions');
   const [exporting, setExporting] = useState(false);
   const [exportKind, setExportKind] = useState<'video' | 'subtitle'>('video');
@@ -269,7 +258,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const exitApprovedRef = useRef(false);
   const exitPromptOpenRef = useRef(false);
   const pendingExitActionRef = useRef<NavigationAction | undefined>(undefined);
-  const backgroundConsentRequestRef = useRef<Promise<boolean> | undefined>(undefined);
   const blockingUi = Boolean(
     fontBrowserOpen
     || pendingChange
@@ -282,16 +270,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     || extractAudioOpen,
   );
   const runtimePolicy = useEditorRuntimePolicy(blockingUi);
-
-  useEffect(() => {
-    let active = true;
-    void hasBackgroundProcessingConsent()
-      .then((granted) => { if (active) setBackgroundProcessingAllowed(granted); })
-      .catch((caught) => {
-        if (active) setError(caught instanceof Error ? caught.message : 'The background-removal privacy choice could not be loaded.');
-      });
-    return () => { active = false; };
-  }, []);
 
   useEffect(() => {
     if (!exporting || exportKind !== 'video') return;
@@ -527,52 +505,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const currentVideoTransform = currentClipEntry?.clip.transform ?? project.videoTransform;
   const editableVideoClip = currentClipEntry?.clip ?? selectedClip;
   const editableVideoTransform = editableVideoClip?.transform ?? project.videoTransform;
-  const personPreviewTimeMs = Math.floor(currentMs / 250) * 250;
-  const personProcessingActive = project.backgroundReplacement.enabled && backgroundProcessingAllowed === true;
-
-  useEffect(() => {
-    if (!runtimePolicy.mediaAdmitted || !personProcessingActive || !currentClipEntry) {
-      return;
-    }
-    const source = project.sources.find((candidate) => candidate.id === currentClipEntry.clip.sourceId);
-    if (!source) return;
-    let active = true;
-    const timer = setTimeout(() => {
-      setPersonPreviewBusy(true);
-      void renderPersonPreview({
-        projectId: project.id,
-        videoUri: source.uri,
-        sourceTimeMs: sourceTimeAt(currentClipEntry, personPreviewTimeMs),
-        timelineTimeMs: personPreviewTimeMs,
-        background: project.backgroundReplacement,
-        outputSize: { width: canvasWidth, height: canvasHeight },
-        videoTransform: currentVideoTransform,
-      }).then((uri) => {
-        if (active) setPersonPreviewUri(uri);
-      }).catch((caught) => {
-        if (active) setError(caught instanceof Error ? caught.message : 'Background preview failed.');
-      }).finally(() => {
-        if (active) setPersonPreviewBusy(false);
-      });
-    }, isPlaying ? 160 : 80);
-    return () => { active = false; clearTimeout(timer); };
-  }, [canvasHeight, canvasWidth, currentClipEntry, currentVideoTransform, isPlaying, personPreviewTimeMs, personProcessingActive, project.backgroundReplacement, project.id, project.sources, runtimePolicy.mediaAdmitted]);
-
-  useEffect(() => {
-    if (runtimePolicy.mediaAdmitted) return;
-    let active = true;
-    void releasePersonPreview(project.id).catch(() => undefined).finally(() => {
-      if (!active) return;
-      setPersonPreviewUri(undefined);
-      setPersonPreviewBusy(false);
-    });
-    return () => { active = false; };
-  }, [project.id, runtimePolicy.mediaAdmitted]);
-
-  useEffect(() => () => {
-    void releasePersonPreview(project.id).catch(() => undefined);
-  }, [project.id]);
-
   useEffect(() => {
     workspaceMountedRef.current = true;
     return () => {
@@ -1572,11 +1504,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const exportVideo = async () => {
     if (exporting) return;
     const snapshot = projectRef.current;
-    if (
-      projectRef.current.backgroundReplacement.enabled
-      && projectRef.current.backgroundReplacement.source
-      && !await requestBackgroundProcessing()
-    ) return;
     transport.pause();
     setError(undefined);
     setExportKind('video');
@@ -1668,98 +1595,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
-  const updateBackgroundReplacement = (backgroundReplacement: CaptionProject['backgroundReplacement']) => {
-    const before = projectRef.current;
-    pushUndo(before);
-    const next = applyBackgroundReplacement(before, backgroundReplacement);
-    projectRef.current = next;
-    setProject(next);
-    persistProjectInBackground(next);
-  };
-
-  const requestBackgroundProcessing = async () => {
-    if (backgroundProcessingAllowed === true || await hasBackgroundProcessingConsent()) {
-      setBackgroundProcessingAllowed(true);
-      return true;
-    }
-    if (backgroundConsentRequestRef.current) return backgroundConsentRequestRef.current;
-    const request = new Promise<boolean>((resolve) => {
-      let settled = false;
-      const finish = (granted: boolean) => {
-        if (settled) return;
-        settled = true;
-        resolve(granted);
-      };
-      Alert.alert(
-        'Enable on-device background removal?',
-        'Your video frames and masks stay on this phone. Google MediaPipe and ML Kit can send encrypted engagement, device/app, performance, configuration, input/output-size, event, and error metrics to Google. Caption Studio does not receive those metrics. You can turn future background-removal processing off in Privacy.',
-        [
-          { text: 'Not now', style: 'cancel', onPress: () => finish(false) },
-          {
-            text: 'Allow and enable',
-            onPress: () => {
-              void setBackgroundProcessingConsent(true)
-                .then(() => {
-                  setBackgroundProcessingAllowed(true);
-                  finish(true);
-                })
-                .catch(() => {
-                  Alert.alert('Could not save privacy choice', 'Background removal remains off. Try again.');
-                  finish(false);
-                });
-            },
-          },
-        ],
-        { cancelable: true, onDismiss: () => finish(false) },
-      );
-    });
-    backgroundConsentRequestRef.current = request;
-    try {
-      return await request;
-    } finally {
-      if (backgroundConsentRequestRef.current === request) backgroundConsentRequestRef.current = undefined;
-    }
-  };
-
-  const enableBackgroundProcessing = async () => {
-    try {
-      if (!await requestBackgroundProcessing()) return;
-      updateBackgroundReplacement({ ...projectRef.current.backgroundReplacement, enabled: true });
-    } catch (caught) {
-      Alert.alert('Could not enable background removal', caught instanceof Error ? caught.message : 'Try again.');
-    }
-  };
-
-  const chooseBackgroundMedia = async () => {
-    try {
-      if (!await requestBackgroundProcessing()) return;
-      const source = await pickBackgroundMedia(projectRef.current.id);
-      if (!source) return;
-      const nextBackground = { ...projectRef.current.backgroundReplacement, enabled: true, source };
-      const nextProject = applyBackgroundReplacement(projectRef.current, nextBackground);
-      trackSessionMedia(nextProject);
-      updateBackgroundReplacement(nextBackground);
-    } catch (caught) {
-      Alert.alert('Could not use this background', caught instanceof Error ? caught.message : 'The selected media could not be opened.');
-    }
-  };
-
-  const addPersonPathPoint = () => {
-    const background = projectRef.current.backgroundReplacement;
-    const transform = resolvePersonTransform(background, currentMs);
-    updateBackgroundReplacement({
-      ...background,
-      keyframes: upsertPersonKeyframe(background.keyframes, { id: uniqueId('person-point'), timeMs: currentMs, ...transform }),
-    });
-  };
-
-  const removeNearestPersonPathPoint = () => {
-    const background = projectRef.current.backgroundReplacement;
-    const nearest = background.keyframes.reduce<typeof background.keyframes[number] | undefined>((best, frame) => !best || Math.abs(frame.timeMs - currentMs) < Math.abs(best.timeMs - currentMs) ? frame : best, undefined);
-    if (!nearest) return;
-    updateBackgroundReplacement({ ...background, keyframes: deletePersonKeyframe(background.keyframes, nearest.id) });
-  };
-
   return (
     <View style={{ flex: 1, backgroundColor: palette.background }}>
       <View style={{ height: previewHeight, alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
@@ -1788,7 +1623,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 style={{
                   position: 'absolute',
                   inset: 0,
-                  opacity: personProcessingActive || slot !== activeSlot ? 0 : 1,
+                  opacity: slot !== activeSlot ? 0 : 1,
                 }}
                 player={slotPlayer}
                 nativeControls={false}
@@ -1798,21 +1633,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               />
             ))}
           </View>
-          {personProcessingActive && currentClipEntry && personPreviewUri ? (
-            <Image
-              pointerEvents="none"
-              source={{ uri: personPreviewUri }}
-              cachePolicy="none"
-              contentFit="fill"
-              style={{ position: 'absolute', inset: 0 }}
-            />
-          ) : null}
-          {personProcessingActive && personPreviewBusy && !personPreviewUri ? (
-            <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }}>
-              <ActivityIndicator color={palette.accent} />
-              <Text style={{ marginTop: 7, color: '#D7DEE7', fontSize: 10, fontWeight: '800' }}>REMOVING BACKGROUND…</Text>
-            </View>
-          ) : null}
           {transport.isGap ? (
             <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
               <Text style={{ color: '#7F8996', fontSize: 12, fontWeight: '800' }}>EMPTY TIMELINE GAP</Text>
@@ -1832,7 +1652,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             width={canvasWidth}
             height={canvasHeight}
             backgroundColor={project.canvas.backgroundColor}
-            backgroundProcessingActive={personProcessingActive}
             admitted={runtimePolicy.mediaAdmitted}
           />
           {activeTool === 'video' && currentClipEntry ? (
@@ -2114,16 +1933,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 queueMicrotask(finishHistoryInteraction);
               }}
               onTransformEnd={finishHistoryInteraction}
-            />
-            <BackgroundTools
-              value={project.backgroundReplacement}
-              currentTimeMs={currentMs}
-              processingAllowed={backgroundProcessingAllowed === true}
-              onRequestProcessing={() => { void enableBackgroundProcessing(); }}
-              onChooseMedia={() => { void chooseBackgroundMedia(); }}
-              onChange={updateBackgroundReplacement}
-              onAddKeyframe={addPersonPathPoint}
-              onRemoveNearestKeyframe={removeNearestPersonPathPoint}
             />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
               <Action label="Add videos" onPress={() => { void addVideosToTimeline(); }} />

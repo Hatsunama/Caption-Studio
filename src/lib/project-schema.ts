@@ -764,7 +764,7 @@ function decodeBackgroundReplacement(value: unknown): BackgroundReplacement {
     ? {}
     : record(background.personTransform, 'background replacement person transform');
   return {
-    enabled: background.enabled === undefined ? false : booleanValue(background.enabled, 'background replacement enabled state'),
+    enabled: false,
     source,
     mask: {
       qualityPreset: optionalEnum(mask.qualityPreset, ['stable', 'balanced', 'detailed', 'custom'] as const, 'background replacement quality') ?? 'stable',
@@ -780,7 +780,7 @@ function decodeBackgroundReplacement(value: unknown): BackgroundReplacement {
       scale: optionalNumber(personTransform.scale, 1, 'background replacement person scale', 0.05, 8),
       rotation: optionalNumber(personTransform.rotation, 0, 'background replacement person rotation', -360_000, 360_000),
     },
-    keyframes: decodePersonKeyframes(background.keyframes),
+    keyframes: [],
   };
 }
 
@@ -796,24 +796,6 @@ function decodeBackgroundSource(value: unknown): NonNullable<BackgroundReplaceme
     storageMode,
     displayName: nonEmptyString(source.displayName, 'background replacement source name'),
   };
-}
-
-function decodePersonKeyframe(value: unknown, index: number) {
-  const frame = record(value, `person keyframe ${index + 1}`);
-  return {
-    id: identifierValue(frame.id, `person keyframe ${index + 1} identifier`),
-    timeMs: finiteNumber(frame.timeMs, `person keyframe ${index + 1} time`, 0, Number.MAX_SAFE_INTEGER),
-    position: decodePoint(frame.position, `person keyframe ${index + 1} position`, -1, 2),
-    scale: finiteNumber(frame.scale, `person keyframe ${index + 1} scale`, 0.05, 8),
-    rotation: finiteNumber(frame.rotation, `person keyframe ${index + 1} rotation`, -360_000, 360_000),
-  };
-}
-
-function decodePersonKeyframes(value: unknown) {
-  if (value === undefined) return [];
-  const keyframes = decodeArray(value, 'background replacement keyframes', 100_000, decodePersonKeyframe);
-  uniqueIds(keyframes, 'background replacement keyframes');
-  return keyframes;
 }
 
 function normalizeFontSource(source: string, family: string | undefined) {

@@ -34,17 +34,6 @@ export type TimelineRenderPlan = {
     transform: VideoTransform;
     transition: { type: string; durationMs: number };
   }[];
-  backgroundReplacement?: {
-    kind: 'image' | 'video';
-    uri: string;
-    qualityPreset: 'stable' | 'balanced' | 'detailed' | 'custom';
-    threshold: number;
-    softness: number;
-    temporalStability: number;
-    edgeFeather: number;
-    personTransform: CaptionProject['backgroundReplacement']['personTransform'];
-    keyframes: CaptionProject['backgroundReplacement']['keyframes'];
-  };
   captions: {
     id: string;
     text: string;
@@ -230,27 +219,6 @@ export function buildTimelineRenderPlan(
         fadeOutMs: clip.fadeOutMs,
       };
     }),
-    ...(project.backgroundReplacement.enabled && project.backgroundReplacement.source
-      ? {
-        backgroundReplacement: {
-          kind: project.backgroundReplacement.source.kind,
-          uri: project.backgroundReplacement.source.uri,
-          qualityPreset: project.backgroundReplacement.mask.qualityPreset,
-          threshold: project.backgroundReplacement.mask.threshold,
-          softness: project.backgroundReplacement.mask.softness,
-          temporalStability: project.backgroundReplacement.mask.temporalStability,
-          edgeFeather: project.backgroundReplacement.mask.edgeFeather,
-          personTransform: {
-            ...project.backgroundReplacement.personTransform,
-            position: { ...project.backgroundReplacement.personTransform.position },
-          },
-          keyframes: project.backgroundReplacement.keyframes.map((keyframe) => ({
-            ...keyframe,
-            position: { ...keyframe.position },
-          })),
-        },
-      }
-      : {}),
   };
   return omitUndefinedDeep(plan);
 }

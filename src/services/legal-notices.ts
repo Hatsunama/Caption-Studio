@@ -58,8 +58,6 @@ const OFL_COPYRIGHT_NOTICES = [
 const OVERVIEW = `Caption Studio is MIT-licensed. It includes open-source Android and Expo software under their respective licenses.
 
 Native media and machine-learning components
-• Google MediaPipe Tasks Vision — Apache License 2.0
-• Google ML Kit Face Detection — Google APIs Terms and ML Kit terms
 • Google AI Edge LiteRT-LM 0.16.1 — Apache License 2.0
 • Gson 2.13.2 — Apache License 2.0
 • Kotlin reflection 2.2.21 — Apache License 2.0
@@ -83,11 +81,6 @@ Qwen2.5 1.5B Instruct Q8 LiteRT-LM — Apache License 2.0.
 Pinned revision: 19edb84c69a0212f29a6ef17ba0d6f278b6a1614
 SHA-256: faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9
 The model is not bundled in the APK or AAB. Caption Studio downloads it only when natural multilingual caption translation is enabled, verifies it, and runs it locally on the device.
-
-Bundled segmentation model
-MediaPipe Selfie Multiclass Segmentation 256 × 256, Apache License 2.0.
-SHA-256: c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0
-The model runs locally and is not called through a server.
 
 Bundled fonts
 SIL Open Font License 1.1 (${OFL_FONTS.length}): ${OFL_FONTS.join(', ')}.

@@ -16,7 +16,6 @@ The required copyright and permission notices are preserved in [MIT-component-no
 
 ## Apache License 2.0 components
 
-- Google MediaPipe Tasks Vision and the bundled MediaPipe Selfie Multiclass Segmentation model.
 - Google AI Edge LiteRT-LM.
 - AndroidX Media3 Transformer and Effect.
 - Gson, Kotlin reflection, and Kotlin coroutines.
@@ -24,10 +23,6 @@ The required copyright and permission notices are preserved in [MIT-component-no
 - Qwen2.5 1.5B Instruct and the optional LiteRT-LM conversion used for natural multilingual caption translation.
 
 The Apache License 2.0 text is preserved in [Apache-2.0.txt](third-party/licenses/Apache-2.0.txt). Component-specific model provenance is in [MODEL_NOTICES.md](MODEL_NOTICES.md).
-
-## Google ML Kit
-
-Google ML Kit Face Detection is a Google SDK governed by the [Google APIs Terms of Service](https://developers.google.com/terms) and [ML Kit terms and data-disclosure documentation](https://developers.google.com/ml-kit/terms). It is not represented as an open-source Apache component in Caption Studio's notices.
 
 ## Fonts
 

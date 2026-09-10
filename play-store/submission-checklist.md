@@ -21,7 +21,7 @@ Verified against Google Play requirements on August 27, 2026.
 ## App content declarations
 
 - Privacy policy URL: `https://hatsunama.github.io/Caption-Studio/privacy/`. Confirm that the public static page is live before completing App content.
-- Data Safety: media and transcripts are processed on-device; there are no ads, accounts, tracking, or first-party analytics. Disclose the user-initiated Hugging Face model download and Google MediaPipe/ML Kit diagnostic and usage-metric collection described in `data-safety-notes.md`, then verify every answer against the current disclosures for every shipped SDK.
+- Data Safety: media and transcripts are processed on-device; there are no ads, accounts, tracking, or first-party analytics. Disclose the user-initiated Hugging Face model download, then verify every answer against the current disclosures for every shipped SDK.
 - Ads: No.
 - App access: every feature is available without an account; no reviewer credentials are needed.
 - Target audience: not designed for children under 13. Select only the age groups actually intended.
@@ -29,7 +29,6 @@ Verified against Google Play requirements on August 27, 2026.
 - Declare any other Play Console questionnaires shown for the selected countries and category.
 - Foreground-service declaration is not expected: the release manifest removes unused foreground-media-playback permissions.
 - Caption Studio uses on-device AI to transcribe and translate user-selected media inside an editing workflow; it does not accept prompts to generate open-ended text, images, voice, or video. Google's current guidance excludes limited-scope productivity AI that improves an existing feature, so an offensive-content reporting flow is not expected for this release. Reassess this before every release and add an in-app reporting flow before adding prompt-driven generative output.
-- Background removal must remain gated by the in-app MediaPipe/ML Kit metrics disclosure. Confirm acceptance enables the feature, Not now leaves it off, and Privacy can revoke future processing.
 
 ## Account and rollout
 
@@ -43,8 +42,6 @@ Verified against Google Play requirements on August 27, 2026.
 
 - [Target API level requirements](https://support.google.com/googleplay/android-developer/answer/11926878)
 - [Android 16 KB page-size build and ELF verification](https://developer.android.com/guide/practices/page-sizes)
-- [ML Kit Android data disclosure](https://developers.google.com/ml-kit/android-data-disclosure)
-- [MediaPipe terms and operational metrics](https://developers.google.com/edge/mediapipe/legal/tos)
 - [Android 12 backup and device-transfer behavior](https://developer.android.com/about/versions/12/behavior-changes-12#backup-restore)
 - [AI-generated content policy scope](https://support.google.com/googleplay/android-developer/answer/14094294)
 - [AI-generated listing-asset declarations](https://support.google.com/googleplay/android-developer/answer/17262077)

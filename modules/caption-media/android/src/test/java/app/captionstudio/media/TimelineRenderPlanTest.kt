@@ -37,24 +37,6 @@ class TimelineRenderPlanTest {
           )
         },
       )
-      this["backgroundReplacement"] = mapOf<String, Any>(
-        "kind" to "video",
-        "uri" to "content://background",
-        "qualityPreset" to "stable",
-        "threshold" to 0.5,
-        "softness" to 0.2,
-        "temporalStability" to 0.8,
-        "edgeFeather" to 0.4,
-        "personTransform" to mapOf<String, Any>(
-          "position" to mapOf<String, Any>("x" to 0.4, "y" to 0.6),
-          "scale" to 1.25,
-          "rotation" to -10,
-        ),
-        "keyframes" to listOf(
-          personKeyframe(3_000, 0.8),
-          personKeyframe(1_000, 0.2),
-        ),
-      )
       this["captions"] = listOf(
         mapOf<String, Any>(
           "id" to "caption-a",
@@ -105,7 +87,6 @@ class TimelineRenderPlanTest {
     assertEquals(8_000L, plan.clips.single().availableSourceEndMs)
     assertEquals(0.7f, plan.clips.single().transform.positionX)
     assertEquals(-22f, plan.clips.single().transform.rotation)
-    assertEquals(listOf(1_000L, 3_000L), plan.backgroundReplacement!!.keyframes.map { it.timeMs })
     assertEquals(400f, plan.captions.single().style.fontSize)
     assertEquals(1f, plan.captions.single().style.shadowOpacity)
     assertEquals(1, plan.layers.size)
@@ -226,11 +207,6 @@ class TimelineRenderPlanTest {
         this["layers"] = listOf(mapOf<String, Any>("kind" to "unsupported", "id" to "invalid-layer"))
       }
     }
-    assertInvalid("Unsupported background replacement kind 'document'") {
-      validPlan().apply {
-        this["backgroundReplacement"] = backgroundReplacement("document")
-      }
-    }
   }
 
   @Test
@@ -340,13 +316,6 @@ class TimelineRenderPlanTest {
     "transition" to mapOf<String, Any>("type" to "none", "durationMs" to 0),
   )
 
-  private fun personKeyframe(timeMs: Long, x: Double) = mapOf<String, Any>(
-    "timeMs" to timeMs,
-    "position" to mapOf<String, Any>("x" to x, "y" to 0.5),
-    "scale" to 1,
-    "rotation" to 0,
-  )
-
   private fun caption(
     id: String,
     startMs: Long,
@@ -390,13 +359,4 @@ class TimelineRenderPlanTest {
     return textStyle().toMutableMap().apply { this["font"] = font }
   }
 
-  private fun backgroundReplacement(kind: String) = mapOf<String, Any>(
-    "kind" to kind,
-    "uri" to "content://background",
-    "personTransform" to mapOf<String, Any>(
-      "position" to mapOf<String, Any>("x" to 0.5, "y" to 0.5),
-      "scale" to 1,
-      "rotation" to 0,
-    ),
-  )
 }

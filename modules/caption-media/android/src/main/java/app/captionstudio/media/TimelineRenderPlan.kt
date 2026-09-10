@@ -11,7 +11,6 @@ internal data class TimelineRenderPlan(
   val burnCaptions: Boolean,
   val videoTransform: VideoTransform,
   val clips: List<RenderVideoClip>,
-  val backgroundReplacement: RenderBackgroundReplacement?,
   val captions: List<RenderCaption>,
   val layers: List<RenderLayer>,
   val audioClips: List<RenderAudioClip>,
@@ -45,14 +44,6 @@ internal data class RenderVideoClip(
 ) {
   val timelineDurationMs get() = timelineEndMs - timelineStartMs
 }
-
-internal data class RenderBackgroundReplacement(
-  val kind: String,
-  val uri: String,
-  val settings: PersonMatteSettings,
-  val transform: PersonTransformFrame,
-  val keyframes: List<PersonTransformFrame>,
-)
 
 internal data class RenderCaption(
   val id: String,
@@ -170,7 +161,6 @@ internal fun parseTimelineRenderPlan(value: Map<String, Any>): TimelineRenderPla
     burnCaptions = value.booleanOr("burnCaptions", true),
     videoTransform = videoTransform,
     clips = value.list("clips").map { parseVideoClip(it, videoTransform) },
-    backgroundReplacement = value.optionalMap("backgroundReplacement")?.let(::parseBackgroundReplacement),
     captions = value.list("captions").map(::parseCaption),
     layers = value.list("layers").map(::parseLayer),
     audioClips = value.list("audioClips").map(::parseAudioClip),
@@ -234,43 +224,6 @@ private fun parseVideoTransform(value: Map<String, Any>): VideoTransform {
     },
     scale = value.numberOr("scale", 1).toFloat().coerceIn(0.05f, 12f),
     rotation = value.numberOr("rotation", 0).toFloat(),
-  )
-}
-
-private fun parseBackgroundReplacement(value: Map<String, Any>): RenderBackgroundReplacement {
-  val transform = value.map("personTransform")
-  val kind = value.stringOr("kind", "image")
-  require(kind == "image" || kind == "video") { "Unsupported background replacement kind '$kind'" }
-  return RenderBackgroundReplacement(
-    kind = kind,
-    uri = value.string("uri"),
-    settings = PersonMatteSettings(
-      preset = value.stringOr("qualityPreset", "stable"),
-      threshold = value.numberOr("threshold", 0.46).toFloat(),
-      softness = value.numberOr("softness", 0.14).toFloat(),
-      temporalStability = value.numberOr("temporalStability", 0.78).toFloat(),
-      edgeFeather = value.numberOr("edgeFeather", 0.45).toFloat(),
-    ),
-    transform = PersonTransformFrame(
-      timeMs = 0,
-      transform = PersonTransform(
-        positionX = transform.map("position").numberOr("x", 0.5).toFloat(),
-        positionY = transform.map("position").numberOr("y", 0.5).toFloat(),
-        scale = transform.numberOr("scale", 1).toFloat(),
-        rotation = transform.numberOr("rotation", 0).toFloat(),
-      ),
-    ),
-    keyframes = value.list("keyframes").map { frame ->
-      PersonTransformFrame(
-        timeMs = frame.number("timeMs").toLong(),
-        transform = PersonTransform(
-          positionX = frame.map("position").numberOr("x", 0.5).toFloat(),
-          positionY = frame.map("position").numberOr("y", 0.5).toFloat(),
-          scale = frame.numberOr("scale", 1).toFloat(),
-          rotation = frame.numberOr("rotation", 0).toFloat(),
-        ),
-      )
-    }.sortedBy(PersonTransformFrame::timeMs),
   )
 }
 

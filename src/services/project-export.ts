@@ -6,7 +6,6 @@ import type { TimelineVideoExportProgress } from 'caption-media';
 
 import { buildTimelineRenderPlan, collectUnresolvedFontFamilies, toNativeRenderPlan } from '@/lib/export-render-plan';
 import { serializeAss, serializeSrt, visibleCaptions } from '@/lib/subtitle-export';
-import { requireBackgroundProcessingConsent } from '@/services/background-processing-consent';
 import {
   assertVideoExportDelivery,
   createExportCacheFileName,
@@ -32,9 +31,6 @@ export async function exportProjectVideo(project: CaptionProject, allowIncomplet
       estimateVideoExportStorageBytes(unresolvedPlan),
       'export this video',
     ));
-    if (project.backgroundReplacement.enabled && project.backgroundReplacement.source) {
-      await session.waitFor(requireBackgroundProcessingConsent());
-    }
     const canPublish = await session.waitFor(CaptionMedia.requestLegacyMediaWritePermission());
     if (!canPublish) throw new Error('Allow storage access so Caption Studio can save the export to your media library.');
 

@@ -1,4 +1,3 @@
-import { PERSON_MATTE_PRESETS } from '@/lib/person-matte-presets';
 import { cloneVideoTransform } from '@/lib/video-transform';
 import { validatedSourceFrameRate } from '@/lib/video-source-metadata';
 import {
@@ -57,7 +56,7 @@ export function createCaptionProject(options: {
     videoTransform: cloneVideoTransform(DEFAULT_VIDEO_TRANSFORM),
     backgroundReplacement: {
       enabled: false,
-      mask: { ...PERSON_MATTE_PRESETS.stable },
+      mask: { qualityPreset: 'stable', threshold: 0.46, softness: 0.14, temporalStability: 0.78, edgeFeather: 0.45 },
       personTransform: { position: { x: 0.5, y: 0.5 }, scale: 1, rotation: 0 },
       keyframes: [],
     },

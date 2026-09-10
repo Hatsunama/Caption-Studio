@@ -1,5 +1,5 @@
 import { VideoView, type VideoPlayer } from 'expo-video';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { useVideoTransitionPreview } from '@/hooks/use-video-transition-preview';
@@ -22,7 +22,6 @@ type Props = {
   width: number;
   height: number;
   backgroundColor: string;
-  backgroundProcessingActive: boolean;
   admitted: boolean;
 };
 
@@ -42,9 +41,6 @@ export function VideoTransitionOverlay(props: Props) {
   if (!props.admitted) return null;
   if (frame?.mode === 'cover') return <CoverTransition frame={frame} width={props.width} height={props.height} />;
   if (frame?.unavailableReason) return <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame.unavailableReason} />;
-  if (props.backgroundProcessingActive) {
-    return frame ? <PreviewNotice label="BACKGROUND PREVIEW APPROXIMATION" detail="Export blends both processed clips." /> : null;
-  }
   if (preload?.mode !== 'composite') return null;
 
   return <CompositeVideoTransitionOverlay {...props} windows={windows} />;
@@ -64,15 +60,29 @@ function CompositeVideoTransitionOverlay(props: Props & { windows: ReturnType<ty
     return <PreviewNotice label="LOADING TRANSITION PREVIEW" />;
   }
 
+  return <FirstFrameGatedTransition key={frame.key} {...props} frame={frame} preview={preview} />;
+}
+
+function FirstFrameGatedTransition(props: Props & {
+  frame: VideoTransitionPreviewFrame;
+  preview: ReturnType<typeof useVideoTransitionPreview>;
+}) {
+  const [rendered, setRendered] = useState({ outgoing: false, incoming: false });
+  const ready = rendered.outgoing && rendered.incoming;
   return (
-    <View pointerEvents="none" style={[fill, { overflow: 'hidden', backgroundColor: props.backgroundColor }]}>
-      <CompositeTransition
-        frame={frame}
-        outgoingPlayer={preview.outgoingPlayer}
-        incomingPlayer={preview.incomingPlayer}
-        width={props.width}
-        height={props.height}
-      />
+    <View pointerEvents="none" style={[fill, { overflow: 'hidden' }]}>
+      <View key={props.frame.key} style={[fill, { opacity: ready ? 1 : 0 }]}>
+        <CompositeTransition
+          frame={props.frame}
+          outgoingPlayer={props.preview.outgoingPlayer}
+          incomingPlayer={props.preview.incomingPlayer}
+          width={props.width}
+          height={props.height}
+          onOutgoingFirstFrame={() => setRendered((current) => ({ ...current, outgoing: true }))}
+          onIncomingFirstFrame={() => setRendered((current) => ({ ...current, incoming: true }))}
+        />
+      </View>
+      {!ready ? <PreviewNotice label="LOADING TRANSITION PREVIEW" /> : null}
     </View>
   );
 }
@@ -83,8 +93,10 @@ function CompositeTransition(props: {
   incomingPlayer: VideoPlayer;
   width: number;
   height: number;
+  onOutgoingFirstFrame: () => void;
+  onIncomingFirstFrame: () => void;
 }) {
-  const { frame, outgoingPlayer, incomingPlayer, width, height } = props;
+  const { frame, outgoingPlayer, incomingPlayer, width, height, onOutgoingFirstFrame, onIncomingFirstFrame } = props;
   const outgoing = frame.outgoing!;
   const incoming = frame.incoming!;
   const phase = frame.phase;
@@ -96,8 +108,8 @@ function CompositeTransition(props: {
     const distance = horizontal ? width : height;
     return (
       <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} effectStyle={{ transform: horizontal ? [{ translateX: sign * distance * phase }] : [{ translateY: sign * distance * phase }] }} />
-        <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} effectStyle={{ transform: horizontal ? [{ translateX: -sign * distance * (1 - phase) }] : [{ translateY: -sign * distance * (1 - phase) }] }} />
+        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} effectStyle={{ transform: horizontal ? [{ translateX: sign * distance * phase }] : [{ translateY: sign * distance * phase }] }} />
+        <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} onFirstFrameRender={onIncomingFirstFrame} effectStyle={{ transform: horizontal ? [{ translateX: -sign * distance * (1 - phase) }] : [{ translateY: -sign * distance * (1 - phase) }] }} />
       </>
     );
   }
@@ -108,8 +120,8 @@ function CompositeTransition(props: {
     const distance = horizontal ? width : height;
     return (
       <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} />
-        <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} effectStyle={{ transform: horizontal ? [{ translateX: sign * distance * (1 - phase) }] : [{ translateY: sign * distance * (1 - phase) }] }} />
+        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
+        <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} onFirstFrameRender={onIncomingFirstFrame} effectStyle={{ transform: horizontal ? [{ translateX: sign * distance * (1 - phase) }] : [{ translateY: sign * distance * (1 - phase) }] }} />
       </>
     );
   }
@@ -118,8 +130,8 @@ function CompositeTransition(props: {
     const rect = directionalRevealRect(type, phase, width, height);
     return (
       <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} />
-        <ClippedVideoLayer player={incomingPlayer} transform={incoming.transform} rect={rect} width={width} height={height} />
+        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
+        <ClippedVideoLayer player={incomingPlayer} transform={incoming.transform} rect={rect} width={width} height={height} onFirstFrameRender={onIncomingFirstFrame} />
       </>
     );
   }
@@ -131,8 +143,8 @@ function CompositeTransition(props: {
       : { left: width * (1 - phase) / 2, top: 0, width: width * phase, height };
     return (
       <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} />
-        <ClippedVideoLayer player={incomingPlayer} transform={incoming.transform} rect={rect} width={width} height={height} />
+        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
+        <ClippedVideoLayer player={incomingPlayer} transform={incoming.transform} rect={rect} width={width} height={height} onFirstFrameRender={onIncomingFirstFrame} />
       </>
     );
   }
@@ -140,7 +152,7 @@ function CompositeTransition(props: {
   if (type === 'iris-circle' || type === 'iris-diamond') {
     return (
       <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} />
+        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
         <IrisVideoLayer
           player={incomingPlayer}
           transform={incoming.transform}
@@ -148,6 +160,7 @@ function CompositeTransition(props: {
           height={height}
           phase={phase}
           shape={type === 'iris-circle' ? 'circle' : 'diamond'}
+          onFirstFrameRender={onIncomingFirstFrame}
         />
       </>
     );
@@ -157,8 +170,8 @@ function CompositeTransition(props: {
     const rotate = type === 'spin' ? `${(1 - phase) * 280}deg` : '0deg';
     return (
       <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} />
-        <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} opacity={phase} effectStyle={{ transform: [{ scale }, { rotate }] }} />
+        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
+        <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} opacity={phase} onFirstFrameRender={onIncomingFirstFrame} effectStyle={{ transform: [{ scale }, { rotate }] }} />
       </>
     );
   }
@@ -166,13 +179,14 @@ function CompositeTransition(props: {
   if (type === 'fold-horizontal' || type === 'fold-vertical') {
     return (
       <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} />
+        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
         <VideoLayer
           player={incomingPlayer}
           transform={incoming.transform}
           width={width}
           height={height}
           opacity={phase}
+          onFirstFrameRender={onIncomingFirstFrame}
           effectStyle={{ transform: type === 'fold-horizontal' ? [{ scaleY: Math.max(0.015, phase) }] : [{ scaleX: Math.max(0.015, phase) }] }}
         />
       </>
@@ -181,8 +195,8 @@ function CompositeTransition(props: {
 
   return (
     <>
-      <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} />
-      <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} opacity={phase} />
+      <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
+      <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} opacity={phase} onFirstFrameRender={onIncomingFirstFrame} />
       {type === 'fade-dark' ? <View style={[fill, { backgroundColor: '#000000', opacity: frame.peak * 140 / 255 }]} /> : null}
       {type === 'glitch' ? <GlitchOverlay phase={phase} peak={frame.peak} height={height} /> : null}
     </>
@@ -196,6 +210,7 @@ function IrisVideoLayer(props: {
   height: number;
   phase: number;
   shape: 'circle' | 'diamond';
+  onFirstFrameRender: () => void;
 }) {
   if (props.phase <= 0) return null;
   const size = Math.max(
@@ -227,7 +242,7 @@ function IrisVideoLayer(props: {
           height: props.height,
           transform: [{ rotate: inverseRotation }],
         }}>
-        <VideoLayer player={props.player} transform={props.transform} width={props.width} height={props.height} />
+        <VideoLayer player={props.player} transform={props.transform} width={props.width} height={props.height} onFirstFrameRender={props.onFirstFrameRender} />
       </View>
     </View>
   );
@@ -239,6 +254,7 @@ function VideoLayer(props: {
   height: number;
   opacity?: number;
   effectStyle?: StyleProp<ViewStyle>;
+  onFirstFrameRender: () => void;
 }) {
   return (
     <View style={[fill, props.effectStyle, { opacity: props.opacity ?? 1 }]}>
@@ -249,7 +265,8 @@ function VideoLayer(props: {
           nativeControls={false}
           contentFit={props.transform.fit === 'fill' ? 'cover' : 'contain'}
           surfaceType="textureView"
-          useExoShutter
+          useExoShutter={false}
+          onFirstFrameRender={props.onFirstFrameRender}
         />
       </View>
     </View>
@@ -262,12 +279,13 @@ function ClippedVideoLayer(props: {
   rect: { left: number; top: number; width: number; height: number };
   width: number;
   height: number;
+  onFirstFrameRender: () => void;
 }) {
   if (props.rect.width <= 0 || props.rect.height <= 0) return null;
   return (
     <View style={{ position: 'absolute', overflow: 'hidden', ...props.rect }}>
       <View style={{ position: 'absolute', left: -props.rect.left, top: -props.rect.top, width: props.width, height: props.height }}>
-        <VideoLayer player={props.player} transform={props.transform} width={props.width} height={props.height} />
+        <VideoLayer player={props.player} transform={props.transform} width={props.width} height={props.height} onFirstFrameRender={props.onFirstFrameRender} />
       </View>
     </View>
   );

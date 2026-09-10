@@ -565,14 +565,6 @@ private class TimelineBitmapOverlay(
   private val imageCache = BitmapMemoryCache(MAX_CACHED_IMAGE_BYTES)
   private val outputBuffer = ReusableOverlayBitmap(plan.width, plan.height)
   private val textPainter = TimelineTextPainter(context).apply { prepare(plan.textStyles()) }
-  private val segmenter = plan.backgroundReplacement?.let { MediaPipePersonSegmenter(context) }
-  private val matteProcessor = plan.backgroundReplacement?.let { PersonMatteProcessor() }
-  private val transitionMatteProcessor = plan.backgroundReplacement?.let { PersonMatteProcessor() }
-  private val personMotion = plan.backgroundReplacement?.let { background ->
-    PersonMotionPath(background.transform.transform, background.keyframes)
-  }
-  private var activeMatteClipId: String? = null
-  private var lastTimeMs = -1L
   private var released = false
 
   override fun configure(videoSize: Size) {
@@ -583,16 +575,11 @@ private class TimelineBitmapOverlay(
   override fun getBitmap(presentationTimeUs: Long): Bitmap {
     check(!released) { "The timeline compositor has been released" }
     val timeMs = (presentationTimeUs / 1_000L).coerceIn(0L, plan.durationMs)
-    val rendersVideo = plan.backgroundReplacement != null
-    return outputBuffer.render(if (rendersVideo) Color.parseColor(plan.backgroundColor) else Color.TRANSPARENT) { canvas ->
+    return outputBuffer.render(Color.TRANSPARENT) { canvas ->
       val transition = transitionTimeline.activeAt(timeMs)
       if (transition != null && transition.outgoing.transitionType in TimelineTransitionSpec.compositeTypes) {
         drawCompositeTransition(canvas, transition, timeMs)
       } else {
-        if (rendersVideo) {
-          val clip = plan.clips.find { timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs }
-          if (clip != null) drawClip(canvas, clip, timeMs)
-        }
         if (transition != null) drawCoverTransition(canvas, transition, timeMs)
       }
       plan.layers.asReversed().forEach { layer ->
@@ -607,54 +594,7 @@ private class TimelineBitmapOverlay(
           is ImageRenderLayer -> drawImageLayer(canvas, layer, timeMs)
         }
       }
-      lastTimeMs = timeMs
     }
-  }
-
-  private fun drawClip(canvas: Canvas, clip: RenderVideoClip, timeMs: Long) {
-    val sourceTimeMs = clip.sourceStartMs + ((timeMs - clip.timelineStartMs) * clip.playbackRate).toLong()
-    val frame = retriever(clip.uri).frame(sourceTimeMs, decodeWidth, decodeHeight)
-      ?: throw IllegalArgumentException("Video clip ${clip.id} could not decode a frame at $sourceTimeMs ms")
-    try {
-      val background = plan.backgroundReplacement
-      if (background == null) {
-        drawVideoFrame(canvas, frame, clip.transform)
-        return
-      }
-      drawReplacementBackground(canvas, background, timeMs)
-      if (activeMatteClipId != clip.id || timeMs < lastTimeMs) {
-        matteProcessor?.reset()
-        activeMatteClipId = clip.id
-      }
-      val confidence = requireNotNull(segmenter).segment(frame)
-      val alpha = requireNotNull(matteProcessor).process(
-        confidence.confidence,
-        confidence.width,
-        confidence.height,
-        frame,
-        background.settings,
-      )
-      val isolated = applyAlphaMask(frame, alpha, confidence.width, confidence.height)
-      try {
-        val motion = requireNotNull(personMotion).resolve(timeMs)
-        drawPersonFrame(canvas, isolated, clip.transform, motion)
-      } finally {
-        isolated.recycle()
-      }
-    } finally {
-      frame.recycle()
-    }
-  }
-
-  private fun drawReplacementBackground(canvas: Canvas, background: RenderBackgroundReplacement, timeMs: Long) {
-    val bitmap = if (background.kind == "video") {
-      val managed = retriever(background.uri)
-      managed.frame(timeMs % max(1L, managed.durationMs), plan.width, plan.height)
-    } else {
-      imageCache.getOrLoad(background.uri) { decodeImage(background.uri) }
-    } ?: throw IllegalArgumentException("The replacement background could not decode a frame at $timeMs ms")
-    drawBitmapFill(canvas, bitmap, 1f)
-    if (background.kind == "video") bitmap.recycle()
   }
 
   private fun drawVideoFrame(canvas: Canvas, bitmap: Bitmap, transform: VideoTransform) {
@@ -668,25 +608,6 @@ private class TimelineBitmapOverlay(
       transform.positionY,
       transform.scale,
       transform.rotation,
-    )
-    canvas.drawBitmap(bitmap, matrix, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-  }
-
-  private fun drawPersonFrame(canvas: Canvas, bitmap: Bitmap, video: VideoTransform, person: PersonTransform) {
-    val matrix = personContentMatrix(
-      bitmap.width,
-      bitmap.height,
-      plan.width,
-      plan.height,
-      video.fit,
-      video.positionX,
-      video.positionY,
-      video.scale,
-      video.rotation,
-      person.positionX,
-      person.positionY,
-      person.scale,
-      person.rotation,
     )
     canvas.drawBitmap(bitmap, matrix, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
   }
@@ -728,7 +649,6 @@ private class TimelineBitmapOverlay(
     val phase = transition.phaseAt(timeMs)
     val outgoingSourceTimeMs = transition.outgoingSourceTimeMs(timeMs)
     val incomingSourceTimeMs = transition.incomingSourceTimeMs(timeMs)
-    plan.backgroundReplacement?.let { drawReplacementBackground(canvas, it, timeMs) }
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     val type = transition.outgoing.transitionType
     if (type.startsWith("push-")) {
@@ -757,8 +677,7 @@ private class TimelineBitmapOverlay(
       return
     }
 
-    val outgoingAlpha = if (plan.backgroundReplacement == null) 1f else 1f - phase
-    drawTransitionSnapshot(canvas, transition.outgoing, outgoingSourceTimeMs, timeMs, outgoingAlpha)
+    drawTransitionSnapshot(canvas, transition.outgoing, outgoingSourceTimeMs, timeMs, 1f)
     when (type) {
       "crossfade" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase)
       "fade-dark" -> {
@@ -864,26 +783,7 @@ private class TimelineBitmapOverlay(
       canvas.scale(scaleX, scaleY, plan.width / 2f, plan.height / 2f)
       canvas.rotate(rotation, plan.width / 2f, plan.height / 2f)
       val layer = canvas.saveLayerAlpha(null, (alpha.coerceIn(0f, 1f) * 255).toInt())
-      val background = plan.backgroundReplacement
-      if (background == null) {
-        drawVideoFrame(canvas, frame, clip.transform)
-      } else {
-        val confidence = requireNotNull(segmenter).segment(frame)
-        requireNotNull(transitionMatteProcessor).reset()
-        val mask = transitionMatteProcessor.process(
-          confidence.confidence,
-          confidence.width,
-          confidence.height,
-          frame,
-          background.settings,
-        )
-        val isolated = applyAlphaMask(frame, mask, confidence.width, confidence.height)
-        try {
-          drawPersonFrame(canvas, isolated, clip.transform, requireNotNull(personMotion).resolve(timelineTimeMs))
-        } finally {
-          isolated.recycle()
-        }
-      }
+      drawVideoFrame(canvas, frame, clip.transform)
       canvas.restoreToCount(layer)
     } finally {
       canvas.restore()
@@ -906,16 +806,6 @@ private class TimelineBitmapOverlay(
     canvas.drawBitmap(bitmap, matrix, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
       alpha = (layer.opacity * 255).toInt()
     })
-  }
-
-  private fun drawBitmapFill(canvas: Canvas, bitmap: Bitmap, opacity: Float) {
-    val scale = max(plan.width / bitmap.width.toFloat(), plan.height / bitmap.height.toFloat())
-    val matrix = Matrix().apply {
-      postTranslate(-bitmap.width / 2f, -bitmap.height / 2f)
-      postScale(scale, scale)
-      postTranslate(plan.width / 2f, plan.height / 2f)
-    }
-    canvas.drawBitmap(bitmap, matrix, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply { alpha = (opacity * 255).toInt() })
   }
 
   private fun retriever(uri: String) = retrievers.getOrLoad(uri) { ManagedRetriever(context, uri) }
@@ -966,9 +856,6 @@ private class TimelineBitmapOverlay(
     }
     releaseResource { imageCache.close() }
     releaseResource { retrievers.close() }
-    releaseResource { matteProcessor?.close() }
-    releaseResource { transitionMatteProcessor?.close() }
-    releaseResource { segmenter?.close() }
     releaseResource { textPainter.close() }
     releaseResource { super.release() }
     releaseResource { outputBuffer.close() }
@@ -982,16 +869,10 @@ private class TimelineBitmapOverlay(
     get() = decodeSize.second
 
   private val decodeSize: Pair<Int, Int> by lazy {
-    if (plan.backgroundReplacement == null || max(plan.width, plan.height) <= PERSON_MATTE_MAX_EDGE) {
-      plan.width to plan.height
-    } else {
-      val ratio = PERSON_MATTE_MAX_EDGE.toFloat() / max(plan.width, plan.height)
-      max(2, (plan.width * ratio).toInt()) to max(2, (plan.height * ratio).toInt())
-    }
+    plan.width to plan.height
   }
 
   private companion object {
-    const val PERSON_MATTE_MAX_EDGE = 1920
     const val MAX_OPEN_RETRIEVERS = 6
     const val MAX_CACHED_IMAGE_BYTES = 48 * 1024 * 1024
   }
