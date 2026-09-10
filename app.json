@@ -34,7 +34,13 @@
       "expo-router",
       "expo-document-picker",
       "expo-sqlite",
-      "expo-video",
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": false,
+          "supportsPictureInPicture": false
+        }
+      ],
       "./plugins/with-splash-screen-api-contract",
       [
         "expo-splash-screen",
@@ -44,13 +50,22 @@
           "imageWidth": 176
         }
       ],
-      "expo-audio",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
       "expo-asset",
       "expo-sharing",
       "./plugins/with-legacy-export-permission",
       "./plugins/with-soloader-metadata",
       "expo-font",
-      "expo-image"
+      "expo-image",
+      "./plugins/with-android-lint-contract"
     ],
     "experiments": {
       "typedRoutes": true,
