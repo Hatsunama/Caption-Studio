@@ -47,7 +47,7 @@ test('release workflow uses stable secrets and publishes a verified immutable AP
   assert.match(workflow, /tag="v\$\{VERSION\}"/);
   assert.match(workflow, /caption-studio-android\.apk/);
   assert.match(workflow, /:app:lintRelease/);
-  assert.match(workflow, /-x :react-native-worklets:lintAnalyzeRelease/);
+  assert.match(workflow, /--init-script \.\.\/scripts\/first-party-android-lint\.gradle/);
   assert.doesNotMatch(workflow, /Caption Studio Fixed/);
   assert.doesNotMatch(workflow, /v\$\{VERSION\}-fixed/);
   assert.doesNotMatch(workflow, /caption-studio-fixed-android/);
@@ -57,7 +57,7 @@ test('release workflow uses stable secrets and publishes a verified immutable AP
 test('verification workflow runs Android lint before retaining release artifacts', async () => {
   const workflow = await readFile(new URL('.github/workflows/ci.yml', root), 'utf8');
   assert.match(workflow, /:app:lintRelease/);
-  assert.match(workflow, /-x :react-native-worklets:lintAnalyzeRelease/);
+  assert.match(workflow, /--init-script \.\.\/scripts\/first-party-android-lint\.gradle/);
   assert.match(workflow, /:app:assembleRelease/);
   assert.match(workflow, /:app:bundleRelease/);
 });
