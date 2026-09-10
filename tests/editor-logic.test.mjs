@@ -580,7 +580,7 @@ test('packed cropped clips can extend into remaining source and auto-slide neigh
   ]);
 });
 
-test('hold-drag clip reorder keeps the filmstrip mounted and remaps captions plus related audio', () => {
+test('hold-drag clip reorder keeps the filmstrip mounted, remaps source captions, and preserves timeline audio', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   assert.match(timeline, /VideoReorderBanner/);
   assert.doesNotMatch(timeline, /VideoReorderStrip/);
@@ -636,8 +636,8 @@ test('hold-drag clip reorder keeps the filmstrip mounted and remaps captions plu
   assert.deepEqual([byId.c3.startMs, byId.c3.endMs], [100, 400]);
   assert.deepEqual([byId.c1.startMs, byId.c1.endMs], [1_600, 1_900]);
   const audioById = Object.fromEntries(reordered.project.audioClips.map((item) => [item.id, item]));
-  assert.equal(audioById.a3.startMs, 50);
-  assert.equal(audioById.a1.startMs, 1_550);
+  assert.equal(audioById.a3.startMs, 3_050);
+  assert.equal(audioById.a1.startMs, 50);
 });
 
 test('text and image overlays hidden by a trim return with their transforms intact', () => {
@@ -763,7 +763,12 @@ test('splitting video changes only clip topology and preserves subtitle identity
         style: { marker: 'preserved' },
       },
     ],
+    audioClips: [
+      { id: 'voice-one', sourceId: 'audio-one', anchor: 'timeline', startMs: 600, sourceStartMs: 0, sourceEndMs: 700, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0 },
+      { id: 'voice-two', sourceId: 'audio-two', anchor: 'timeline', startMs: 1_600, sourceStartMs: 100, sourceEndMs: 1_100, volume: 0.8, muted: false, fadeInMs: 100, fadeOutMs: 200 },
+    ],
   });
+  const audioBefore = structuredClone(project.audioClips);
   const result = splitVideoClip(project, 'whole', 1_500, 'left', 'right');
   assert.ok(result);
   assert.deepEqual(visibleTimelineCaptions(result.project.captions).map((caption) => ({
@@ -785,9 +790,39 @@ test('splitting video changes only clip topology and preserves subtitle identity
   }]);
   assert.deepEqual(result.project.layers[1].sourceAnchors.map((anchor) => anchor.clipId), ['left', 'right']);
   assert.deepEqual([result.project.layers[1].startMs, result.project.layers[1].endMs], [500, 2_500]);
+  assert.deepEqual(result.project.audioClips, audioBefore);
   const gapped = setVideoClipGap(result.project, 'right', 500);
   assert.ok(gapped);
   assert.deepEqual(visibleTimelineCaptions(gapped.project.captions).map((caption) => [caption.id, caption.text]), [['sentence', 'hello world']]);
+});
+
+test('video layout edits cannot infer ownership or delete timeline-owned audio', () => {
+  const audioClips = [
+    { id: 'early-audio', sourceId: 'audio-one', anchor: 'timeline', startMs: 500, sourceStartMs: 100, sourceEndMs: 900, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0 },
+    { id: 'late-audio', sourceId: 'audio-two', anchor: 'timeline', startMs: 2_500, sourceStartMs: 200, sourceEndMs: 1_200, volume: 0.7, muted: false, fadeInMs: 100, fadeOutMs: 100 },
+  ];
+  const project = projectFixture({
+    clips: [
+      clip({ id: 'first', sourceEndMs: 2_000, availableSourceEndMs: 2_000 }),
+      clip({ id: 'second', sourceStartMs: 2_000, sourceEndMs: 4_000, availableSourceStartMs: 2_000, availableSourceEndMs: 4_000 }),
+    ],
+    audioClips,
+  });
+  const identity = (value) => value.map(({ id, sourceId, sourceStartMs, sourceEndMs }) => ({ id, sourceId, sourceStartMs, sourceEndMs }));
+  const reordered = reorderVideoClip(project, 'first', 1);
+  assert.ok(reordered);
+  assert.deepEqual(reordered.project.audioClips, audioClips);
+  const trimmed = trimVideoClip(project, 'first', 'end', 1_500);
+  assert.ok(trimmed);
+  assert.deepEqual(trimmed.project.audioClips, audioClips);
+  const gapped = setVideoClipGap(project, 'second', 500);
+  assert.ok(gapped);
+  assert.deepEqual(identity(gapped.project.audioClips), identity(audioClips));
+  assert.deepEqual(gapped.project.audioClips.map((clip) => clip.startMs), [500, 3_000]);
+  const deleted = deleteVideoClip(project, 'first');
+  assert.ok(deleted);
+  assert.deepEqual(identity(deleted.project.audioClips), identity(audioClips));
+  assert.deepEqual(deleted.project.audioClips.map((clip) => clip.startMs), [500, 500]);
 });
 
 test('deleting an earlier clip preserves manual downstream caption text, identity, and style', () => {
