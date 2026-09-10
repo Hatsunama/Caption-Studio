@@ -167,7 +167,13 @@ export function anchorCaptionsToClips(
   const wordById = new Map(timelineWords.map((word) => [word.id, word]));
   const reservedIds = new Set(captions.map((caption) => caption.id));
   return captions.flatMap((caption) => {
-    if (caption.sourceAnchor) return [caption];
+    if (caption.timingMode === 'timeline') return [caption];
+    if (caption.sourceAnchor) {
+      return [caption.timingMode === 'source' ? caption : { ...caption, timingMode: 'source' as const }];
+    }
+    if (caption.timingMode === undefined && caption.textMode === 'manual') {
+      return [{ ...caption, timingMode: 'timeline' as const }];
+    }
     const owners = entries.map((entry) => {
       if (caption.startMs >= entry.endMs || caption.endMs <= entry.startMs) return undefined;
       const prefix = `${entry.clip.id}-`;
@@ -187,7 +193,13 @@ export function anchorCaptionsToClips(
       };
     }).filter((owner): owner is NonNullable<typeof owner> => Boolean(owner));
     if (owners.length === 0) {
-      return [{ ...caption, textMode: caption.textMode ?? 'manual', timelineVisible: caption.timelineVisible ?? true }];
+      const textMode = caption.textMode ?? 'manual';
+      return [{
+        ...caption,
+        textMode,
+        timingMode: caption.timingMode ?? (textMode === 'manual' ? 'timeline' as const : 'source' as const),
+        timelineVisible: caption.timelineVisible ?? true,
+      }];
     }
     const completeAutomaticText = joinTimelineWords(owners.flatMap((owner) => owner.words));
     const textMode = caption.textMode ?? (completeAutomaticText === caption.text ? 'automatic' : 'manual');
@@ -200,6 +212,7 @@ export function anchorCaptionsToClips(
         id: derivedId,
         text: useAutomaticPiece && automaticText ? automaticText : caption.text,
         textMode: useAutomaticPiece ? 'automatic' as const : textMode,
+        timingMode: 'source' as const,
         startMs: owner.startMs,
         endMs: owner.endMs,
         wordIds: owner.wordIds,
@@ -223,6 +236,7 @@ export function remapCaptionsToTimeline(
   const entryByClipId = new Map(buildClipTimeline(clips).map((entry) => [entry.clip.id, entry]));
   const wordById = new Map(timelineWords.map((word) => [word.id, word]));
   return captions.map((caption) => {
+    if (caption.timingMode === 'timeline') return caption;
     const anchor = caption.sourceAnchor;
     if (!anchor) return caption;
     const entry = entryByClipId.get(anchor.clipId);

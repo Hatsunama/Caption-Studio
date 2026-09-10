@@ -439,18 +439,24 @@ test('existing primary-caption editor operations keep translated cues synchroniz
   assert.deepEqual(deleted.captionTracks.translations[0].cues.map((cue) => cue.sourceCaptionId), ['c1']);
 });
 
-test('splitting a video preserves both halves of an existing translation cue', () => {
+test('splitting a video preserves primary and translated subtitle identity, content, and timing', () => {
   const bilingual = createEnglishChineseCaptionTrack(projectFixture(), { c1: '你好世界', c2: '再见' });
+  const beforeCaptions = bilingual.captions.map(({ id, text, startMs, endMs }) => ({ id, text, startMs, endMs }));
+  const beforeCues = bilingual.captionTracks.translations[0].cues.map((cue) => ({ ...cue }));
   const result = splitVideoClip(bilingual, 'clip-source-1-0', 1_500, 'left', 'right');
   assert.ok(result);
-  const sourceCaptionIds = result.project.captionTracks.translations[0].cues.map((cue) => cue.sourceCaptionId);
-  assert.deepEqual(sourceCaptionIds, ['c1', 'c1-right', 'c2']);
-  const [leftCue, rightCue] = result.project.captionTracks.translations[0].cues;
-  assert.equal(`${leftCue.text}${rightCue.text}`, '你好世界');
-  assert.deepEqual([leftCue.status, rightCue.status], ['translated', 'translated']);
-  const captionById = new Map(result.project.captions.map((caption) => [caption.id, caption]));
-  assert.equal(leftCue.sourceTextSnapshot, captionById.get('c1').text);
-  assert.equal(rightCue.sourceTextSnapshot, captionById.get('c1-right').text);
+  assert.deepEqual(
+    result.project.captions.map(({ id, text, startMs, endMs }) => ({ id, text, startMs, endMs })),
+    beforeCaptions,
+  );
+  assert.deepEqual(result.project.captionTracks.translations[0].cues, beforeCues);
+  assert.equal(result.project.captions[0].timingMode, 'timeline');
+  assert.equal(result.project.captions[0].sourceAnchor, undefined);
+  assert.equal(result.project.captions[1].timingMode, 'source');
+  assert.equal(result.project.captions[1].sourceAnchor.clipId, 'right');
+  const reopened = decodeVersionTwoProject(serializedProject(result.project));
+  assert.equal(reopened.captions[0].timingMode, 'timeline');
+  assert.deepEqual(serializedProject(reopened.captionTracks.translations[0].cues), serializedProject(beforeCues));
 });
 
 test('timeline speed changes preserve cue linkage and resolve translated timing from the primary track', () => {

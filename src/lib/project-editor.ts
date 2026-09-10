@@ -2,7 +2,6 @@ import { mergeStyle } from '@/lib/style-resolver';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { applyCaptionTextChanges, type CaptionTextChanges } from '@/lib/caption-text-edits';
 
-import { captionSpokenTokenSpans } from '@/lib/caption-text-breaks';
 import {
   canApplyVideoTransition,
   isVideoTransitionType,
@@ -131,6 +130,7 @@ function withTimelineCaptionTiming(
     startMs,
     endMs,
     textMode: 'manual' as const,
+    timingMode: owner ? 'source' as const : 'timeline' as const,
     wordIds: [],
     sourceAnchor: owner
       ? {
@@ -391,51 +391,23 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
   const index = clips.findIndex((clip) => clip.id === clipId);
   clips.splice(index, 1, left, right);
   const wordById = new Map(project.transcription.words.map((word) => [word.id, word]));
-  const splitRatios = new Map<string, { ratio: number; rightCaptionId: string }>();
-  const captions = anchorCaptionsToClips(project.captions, project.clips, project.transcription.words).flatMap((caption) => {
+  const captions = anchorCaptionsToClips(project.captions, project.clips, project.transcription.words).map((caption) => {
     const anchor = caption.sourceAnchor;
-    if (anchor?.clipId !== entry.clip.id) return [caption];
-    if (anchor.sourceEndMs <= sourceSplitMs) return [retargetCaptionAnchor(caption, entry.clip.id, leftId)];
-    if (anchor.sourceStartMs >= sourceSplitMs) return [retargetCaptionAnchor(caption, entry.clip.id, rightId)];
+    if (anchor?.clipId !== entry.clip.id) return caption;
+    if (anchor.sourceEndMs <= sourceSplitMs) return retargetCaptionAnchor(caption, entry.clip.id, leftId);
+    if (anchor.sourceStartMs >= sourceSplitMs) return retargetCaptionAnchor(caption, entry.clip.id, rightId);
     const leftWordIds = anchor.wordIds
       .filter((wordId) => (wordById.get(wordId)?.startMs ?? timelineMs) < timelineMs)
       .map((wordId) => replaceClipWordPrefix(wordId, entry.clip.id, leftId));
     const rightWordIds = anchor.wordIds
       .filter((wordId) => (wordById.get(wordId)?.endMs ?? timelineMs) > timelineMs)
       .map((wordId) => replaceClipWordPrefix(wordId, entry.clip.id, rightId));
-    const [leftText, rightText] = splitCaptionText(caption.text, (
-      sourceSplitMs - anchor.sourceStartMs
-    ) / Math.max(1, anchor.sourceEndMs - anchor.sourceStartMs));
-    const rightCaptionId = `${caption.id}-${rightId}`;
-    splitRatios.set(caption.id, {
-      ratio: (sourceSplitMs - anchor.sourceStartMs) / Math.max(1, anchor.sourceEndMs - anchor.sourceStartMs),
-      rightCaptionId,
-    });
-    return [
-      {
-        ...caption,
-        text: caption.textMode === 'manual' ? leftText : caption.text,
-        wordIds: leftWordIds,
-        sourceAnchor: {
-          clipId: leftId,
-          sourceStartMs: anchor.sourceStartMs,
-          sourceEndMs: sourceSplitMs,
-          wordIds: leftWordIds,
-        },
-      },
-      {
-        ...caption,
-        id: rightCaptionId,
-        text: caption.textMode === 'manual' ? rightText : caption.text,
-        wordIds: rightWordIds,
-        sourceAnchor: {
-          clipId: rightId,
-          sourceStartMs: sourceSplitMs,
-          sourceEndMs: anchor.sourceEndMs,
-          wordIds: rightWordIds,
-        },
-      },
-    ];
+    return {
+      ...caption,
+      wordIds: [...leftWordIds, ...rightWordIds],
+      timingMode: 'timeline' as const,
+      sourceAnchor: undefined,
+    };
   });
   const layers = reanchorVisualLayersAfterSplit(
     anchorVisualLayers(project.layers, project.clips),
@@ -444,57 +416,13 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
     rightId,
     sourceSplitMs,
   );
-  const rebuilt = rebuildAfterLayoutEdit(
+  const next = rebuildAfterLayoutEdit(
     project,
     clips,
     captions,
     { atMs: entry.endMs, removeMs: 0, insertMs: 0 },
     layers,
   );
-  const captionById = new Map(rebuilt.captions.map((caption) => [caption.id, caption]));
-  const translations = (project.captionTracks?.translations ?? []).map((track) => ({
-    ...track,
-    cues: track.cues.flatMap((cue) => {
-      const split = splitRatios.get(cue.sourceCaptionId);
-      if (!split) return [cue];
-      const leftSource = captionById.get(cue.sourceCaptionId);
-      const rightSource = captionById.get(split.rightCaptionId);
-      if (!leftSource || !rightSource) return [cue];
-      const [leftText, rightText] = cue.text.trim()
-        ? splitCaptionText(cue.text, split.ratio)
-        : ['', ''];
-      const splitStatus = cue.text.trim() ? cue.status : 'pending' as const;
-      const reviewed = Boolean(cue.text.trim()) && cue.reviewed;
-      return [
-        {
-          ...cue,
-          sourceTextSnapshot: leftSource.text,
-          text: leftText,
-          status: splitStatus,
-          reviewed,
-        },
-        {
-          ...cue,
-          id: `${track.id}:${split.rightCaptionId}`,
-          sourceCaptionId: split.rightCaptionId,
-          sourceTextSnapshot: rightSource.text,
-          text: rightText,
-          status: splitStatus,
-          reviewed,
-        },
-      ];
-    }),
-  }));
-  const next = {
-    ...rebuilt,
-    captionTracks: synchronizeCaptionTracks({
-      ...rebuilt,
-      captionTracks: {
-        ...(rebuilt.captionTracks ?? { schemaVersion: 1 as const, primaryTrackId: 'captions' as const }),
-        translations,
-      },
-    }, rebuilt.captions),
-  };
   return { project: next, rightClipId: right.id };
 }
 
@@ -737,16 +665,9 @@ function retargetCaptionAnchor(
   return {
     ...caption,
     wordIds,
+    timingMode: 'source' as const,
     sourceAnchor: { ...sourceAnchor, clipId: nextClipId, wordIds },
   };
-}
-
-function splitCaptionText(text: string, leftRatio: number) {
-  const tokens = captionSpokenTokenSpans(text);
-  if (tokens.length < 2) return [text, text] as const;
-  const leftCount = clamp(Math.round(tokens.length * clamp(leftRatio, 0, 1)), 1, tokens.length - 1);
-  const boundary = tokens[leftCount - 1].end;
-  return [text.slice(0, boundary).trim(), text.slice(boundary).trim()] as const;
 }
 
 function anchorVisualLayers(layers: CaptionProject['layers'], clips: VideoClip[]) {

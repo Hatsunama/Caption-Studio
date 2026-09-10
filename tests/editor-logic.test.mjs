@@ -726,7 +726,7 @@ test('caption grouping always breaks at hard video cuts', () => {
   ]);
 });
 
-test('splitting through an automatic caption preserves both owned halves', () => {
+test('splitting video changes only clip topology and preserves subtitle identity, text, and timing', () => {
   const sourceWords = [
     { id: 'hello', text: 'hello', startMs: 500, endMs: 900 },
     { id: 'world', text: 'world', startMs: 2_100, endMs: 2_500 },
@@ -766,15 +766,28 @@ test('splitting through an automatic caption preserves both owned halves', () =>
   });
   const result = splitVideoClip(project, 'whole', 1_500, 'left', 'right');
   assert.ok(result);
-  assert.deepEqual(visibleTimelineCaptions(result.project.captions).map((caption) => [
-    caption.text,
-    caption.sourceAnchor.clipId,
-  ]), [['hello', 'left'], ['world', 'right']]);
+  assert.deepEqual(visibleTimelineCaptions(result.project.captions).map((caption) => ({
+    id: caption.id,
+    text: caption.text,
+    startMs: caption.startMs,
+    endMs: caption.endMs,
+    wordIds: caption.wordIds,
+    timingMode: caption.timingMode,
+    sourceAnchor: caption.sourceAnchor,
+  })), [{
+    id: 'sentence',
+    text: 'hello world',
+    startMs: 500,
+    endMs: 2_500,
+    wordIds: ['left-hello', 'right-world'],
+    timingMode: 'timeline',
+    sourceAnchor: undefined,
+  }]);
   assert.deepEqual(result.project.layers[1].sourceAnchors.map((anchor) => anchor.clipId), ['left', 'right']);
   assert.deepEqual([result.project.layers[1].startMs, result.project.layers[1].endMs], [500, 2_500]);
   const gapped = setVideoClipGap(result.project, 'right', 500);
   assert.ok(gapped);
-  assert.deepEqual(visibleTimelineCaptions(gapped.project.captions).map((caption) => caption.text), ['hello', 'world']);
+  assert.deepEqual(visibleTimelineCaptions(gapped.project.captions).map((caption) => [caption.id, caption.text]), [['sentence', 'hello world']]);
 });
 
 test('deleting an earlier clip preserves manual downstream caption text, identity, and style', () => {

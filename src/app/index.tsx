@@ -127,7 +127,7 @@ export default function ProjectsScreen() {
         <View style={{ gap: 18 }}>
           <View style={{ gap: 6 }}>
             <Text selectable style={{ color: palette.text, fontSize: 34, fontWeight: '700' }}>
-              Captions first.
+              Captions Locally
             </Text>
             <Text selectable style={{ color: palette.muted, fontSize: 16, lineHeight: 23 }}>
               Import a video, generate captions locally, then style every word without credits,

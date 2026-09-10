@@ -81,6 +81,9 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
   const captionTracks = decodeCaptionTracks(candidate.captionTracks, captions, transcription.language);
   const clipIds = new Set(clips.map((clip) => clip.id));
   captions.forEach((caption) => {
+    if (caption.timingMode === 'timeline' && caption.sourceAnchor) {
+      throw new Error('A timeline-owned project caption cannot retain a video source anchor');
+    }
     if (caption.sourceAnchor && !clipIds.has(caption.sourceAnchor.clipId)) {
       throw new Error('A project caption references an unknown video clip');
     }
@@ -292,6 +295,7 @@ function decodeCaption(value: unknown, index: number): CaptionBlock {
   const startMs = finiteNumber(caption.startMs, `caption ${index + 1} start`, 0, Number.MAX_SAFE_INTEGER);
   const endMs = finiteNumber(caption.endMs, `caption ${index + 1} end`, startMs, Number.MAX_SAFE_INTEGER);
   const wordIds = decodeStringArray(caption.wordIds, `caption ${index + 1} word identifiers`, 10_000);
+  const timingMode = optionalEnum(caption.timingMode, ['source', 'timeline'] as const, `caption ${index + 1} timing mode`);
   return {
     id: identifierValue(caption.id, `caption ${index + 1} identifier`),
     text: boundedString(caption.text, `caption ${index + 1} text`, 100_000),
@@ -299,6 +303,7 @@ function decodeCaption(value: unknown, index: number): CaptionBlock {
     endMs,
     wordIds,
     textMode: optionalEnum(caption.textMode, ['automatic', 'manual'] as const, `caption ${index + 1} text mode`),
+    ...(timingMode === undefined ? {} : { timingMode }),
     timelineVisible: caption.timelineVisible === undefined ? true : booleanValue(caption.timelineVisible, `caption ${index + 1} timeline visibility`),
     sourceAnchor: caption.sourceAnchor === undefined
       ? undefined

@@ -147,7 +147,7 @@ test('video timeline remapping rebuilds automatic Chinese captions without space
   assert.equal(caption.text, '你好，世界！');
 });
 
-test('splitting video under a manual Chinese caption produces clean left and right text', () => {
+test('splitting video under a manual Chinese caption preserves its text, identity, and timing', () => {
   const project = projectFixture({
     captions: [{
       id: 'caption',
@@ -161,7 +161,21 @@ test('splitting video under a manual Chinese caption produces clean left and rig
   });
   const result = splitVideoClip(project, 'clip', 500, 'left', 'right');
   assert.ok(result);
-  assert.deepEqual(result.project.captions.map((caption) => caption.text), ['你好，', '世界！']);
+  assert.deepEqual(result.project.captions.map((caption) => ({
+    id: caption.id,
+    text: caption.text,
+    startMs: caption.startMs,
+    endMs: caption.endMs,
+    timingMode: caption.timingMode,
+    sourceAnchor: caption.sourceAnchor,
+  })), [{
+    id: 'caption',
+    text: '你好，世界！',
+    startMs: 0,
+    endMs: 1_000,
+    timingMode: 'timeline',
+    sourceAnchor: undefined,
+  }]);
 });
 
 test('ASS per-word styling preserves compact Chinese spacing', () => {

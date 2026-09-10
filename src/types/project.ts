@@ -158,6 +158,7 @@ export type CaptionBlock = {
   endMs: number;
   wordIds: Identifier[];
   textMode?: 'automatic' | 'manual';
+  timingMode?: 'source' | 'timeline';
   timelineVisible?: boolean;
   sourceAnchor?: {
     clipId: Identifier;
