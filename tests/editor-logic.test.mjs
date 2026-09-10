@@ -311,12 +311,22 @@ test('Whisper token pieces become human words without losing their timing', () =
 test('caption quality is chosen explicitly and the requested model owns generation', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   const pipeline = readFileSync(new URL('../src/services/project-transcription.ts', import.meta.url), 'utf8');
+  const workflows = readFileSync(new URL('../src/services/project-workflows.ts', import.meta.url), 'utf8');
   assert.match(editor, /TRANSCRIPTION_MODEL_OPTIONS\.map/);
   assert.match(editor, /model\.id === 'balanced'[\s\S]*recommended/);
+  assert.match(editor, /Alert\.alert\('Caption generation failed', message\)/);
   assert.match(pipeline, /modelId: TranscriptionModelId/);
   assert.doesNotMatch(pipeline, /modelId: 'fast'/);
   assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint\)/);
   assert.match(pipeline, /CaptionMedia\.sha256\(source\.uri\)/);
+  assert.ok(
+    workflows.indexOf("detail: 'Starting caption generation'")
+      < workflows.indexOf('captionGenerationSession.run'),
+  );
+  assert.ok(
+    pipeline.indexOf("detail: 'Preparing the audible timeline'")
+      < pipeline.indexOf('createTimelineTranscriptionSession(project)'),
+  );
 });
 
 test('Expo owns video-player release and editor teardown never commands a released player', () => {
