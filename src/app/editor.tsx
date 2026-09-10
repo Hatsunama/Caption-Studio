@@ -697,7 +697,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       }
     } catch (caught) {
       if (workspaceMountedRef.current && !(caught instanceof CaptionGenerationCancelledError)) {
-        setError(caught instanceof Error ? caught.message : 'Caption generation failed');
+        const message = caught instanceof Error ? caught.message : 'Caption generation failed. Try again.';
+        setError(message);
+        Alert.alert('Caption generation failed', message);
       }
     } finally {
       if (workspaceMountedRef.current) {

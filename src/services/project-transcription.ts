@@ -139,6 +139,11 @@ export async function generateProjectCaptions(
     || project.audioClips.some((clip) => !clip.muted && clip.volume > 0);
   if (!usesTimelineComposition) return generateProjectCaptionsFromSources(...args);
 
+  args[2]?.({
+    stage: 'preparing-audio',
+    progress: 0,
+    detail: 'Preparing the audible timeline',
+  });
   const timelineSession = await createTimelineTranscriptionSession(project);
   const forwarded = [...args] as unknown as Parameters<typeof generateProjectCaptionsFromSources>;
   forwarded[0] = timelineSession.project;

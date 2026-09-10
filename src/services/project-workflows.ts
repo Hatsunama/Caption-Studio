@@ -178,6 +178,11 @@ export async function generateAndSaveProjectCaptions(
   modelId: TranscriptionModelId,
   onProgress?: (progress: TranscriptionProgress) => void,
 ) {
+  onProgress?.({
+    stage: 'preparing-audio',
+    progress: 0,
+    detail: 'Starting caption generation',
+  });
   return captionGenerationSession.run(async (session) => {
     const guardedProgress = (progress: TranscriptionProgress) => {
       if (!session.isCancelled()) onProgress?.(progress);
