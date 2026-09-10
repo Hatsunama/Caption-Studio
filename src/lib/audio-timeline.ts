@@ -172,6 +172,23 @@ export function duplicateAudioClip(project: CaptionProject, clipId: string, next
   return { project: updateProject(project, { audioClips: [...project.audioClips, duplicate] }), clip: duplicate };
 }
 
+export function applyTimelineSpliceToAudioClips(
+  audioClips: AudioClip[] | undefined,
+  splice: { atMs: number; removeMs: number; insertMs: number },
+) {
+  const clips = audioClips ?? [];
+  if (![splice.atMs, splice.removeMs, splice.insertMs].every(Number.isFinite)) return clips;
+  const atMs = Math.max(0, splice.atMs);
+  const removeMs = Math.max(0, splice.removeMs);
+  const insertMs = Math.max(0, splice.insertMs);
+  const deltaMs = insertMs - removeMs;
+  if (Math.abs(deltaMs) < 1) return clips;
+  const boundaryMs = atMs + removeMs;
+  return clips.map((clip) => clip.startMs >= boundaryMs
+    ? { ...clip, startMs: Math.max(0, clip.startMs + deltaMs) }
+    : clip);
+}
+
 export function constrainAudioClips(audioClips: AudioClip[] | undefined, timelineDurationMs: number) {
   if (!audioClips) return [];
   return audioClips.flatMap((clip) => {

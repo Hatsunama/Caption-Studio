@@ -1,6 +1,7 @@
 import { mergeStyle } from '@/lib/style-resolver';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { applyCaptionTextChanges, type CaptionTextChanges } from '@/lib/caption-text-edits';
+import { applyTimelineSpliceToAudioClips } from '@/lib/audio-timeline';
 
 import {
   canApplyVideoTransition,
@@ -17,7 +18,6 @@ import {
   buildClipTimeline,
   mapSourceWordsToTimeline,
   MINIMUM_CLIP_TIMELINE_MS,
-  remapAudioClipsAcrossClipLayout,
   remapCaptionsToTimeline,
   sourceTimeAt,
   timelineTimeAt,
@@ -605,7 +605,7 @@ function rebuildAfterLayoutEdit(
     captions,
     captionTracks: remapTranslationTrackTimings(project.captionTracks, project.captions, captions),
     layers,
-    audioClips: remapAudioClipsAcrossClipLayout(project.clips, clips, project.audioClips),
+    audioClips: applyTimelineSpliceToAudioClips(project.audioClips, splice),
   });
 }
 

@@ -1,4 +1,4 @@
-import type { AudioClip, CaptionBlock, CaptionProject, VideoClip, VisualLayer, WordToken } from '@/types/project';
+import type { CaptionBlock, CaptionProject, VideoClip, VisualLayer, WordToken } from '@/types/project';
 import { audioClipEnd, constrainAudioClips } from '@/lib/audio-timeline';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { captionLayoutText } from '@/lib/caption-text-breaks';
@@ -316,48 +316,6 @@ export function rippleTimedContent(project: CaptionProject, cutStartMs: number, 
     layers,
     audioClips,
   };
-}
-
-export function remapAudioClipsAcrossClipLayout(
-  previousClips: VideoClip[],
-  nextClips: VideoClip[],
-  audioClips: AudioClip[] | undefined,
-) {
-  if (!audioClips?.length) return audioClips ?? [];
-  const previousEntries = buildClipTimeline(previousClips);
-  const nextById = new Map(buildClipTimeline(nextClips).map((entry) => [entry.clip.id, entry]));
-  const remapped = audioClips.flatMap((clip) => {
-    const owner = owningClipEntry(previousEntries, clip.startMs);
-    if (!owner) return [clip];
-    const next = nextById.get(owner.clip.id);
-    if (!next) return [];
-    const startMs = mapTimeAcrossClipEntries(owner, next, clip.startMs);
-    return [{ ...clip, startMs: Math.max(0, startMs) }];
-  });
-  return constrainAudioClips(remapped, totalClipDuration(nextClips));
-}
-
-function owningClipEntry(entries: ClipTimelineEntry[], timelineMs: number) {
-  return entries.find((entry) => timelineMs >= entry.gapStartMs && timelineMs < entry.afterGapEndMs)
-    ?? timelineEntryAt(entries, timelineMs);
-}
-
-function mapTimeAcrossClipEntries(previous: ClipTimelineEntry, next: ClipTimelineEntry, timelineMs: number) {
-  if (timelineMs < previous.startMs) {
-    const previousGap = previous.startMs - previous.gapStartMs;
-    const nextGap = next.startMs - next.gapStartMs;
-    const ratio = previousGap > 0 ? (timelineMs - previous.gapStartMs) / previousGap : 0;
-    return next.gapStartMs + ratio * nextGap;
-  }
-  if (timelineMs < previous.endMs) {
-    const previousDuration = Math.max(1, previous.endMs - previous.startMs);
-    const nextDuration = next.endMs - next.startMs;
-    return next.startMs + (timelineMs - previous.startMs) * nextDuration / previousDuration;
-  }
-  const previousGap = previous.afterGapEndMs - previous.endMs;
-  const nextGap = next.afterGapEndMs - next.endMs;
-  const ratio = previousGap > 0 ? (timelineMs - previous.endMs) / previousGap : 0;
-  return next.endMs + ratio * nextGap;
 }
 
 export function setClipPlaybackRate(project: CaptionProject, clipId: string, playbackRate: number) {

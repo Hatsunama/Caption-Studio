@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.26) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.27) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.26/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.27/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.26 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.27 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -73,9 +73,9 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.26** (`v1.4.26`, Android version code 38).
+Current Android build: **1.4.27** (`v1.4.27`, Android version code 38).
 
-Version 1.4.26 makes a video split a topology-only operation. Splitting a clip no longer divides, duplicates, retimes, rewrites, or regenerates primary or translated subtitles. Captions wholly on one side keep source ownership under the corresponding new clip ID; a caption crossing the new cut keeps its exact identity, text, timing, style, and translation while becoming explicitly timeline-owned. Timing ownership is persisted independently from automatic/manual text ownership, so later clip edits cannot silently reattach or split subtitles that a user intentionally moved or combined across clips. The project screen heading is now **Captions Locally**.
+Version 1.4.27 makes a video split a topology-only operation. Splitting a clip no longer divides, duplicates, retimes, rewrites, or regenerates primary or translated subtitles. Captions wholly on one side keep source ownership under the corresponding new clip ID; a caption crossing the new cut keeps its exact identity, text, timing, style, and translation while becoming explicitly timeline-owned. Timing ownership is persisted independently from automatic/manual text ownership, so later clip edits cannot silently reattach or split subtitles that a user intentionally moved or combined across clips. The project screen heading is now **Captions Locally**. Video topology and layout operations now respect the independent `timeline` ownership of added audio: splitting or reordering video preserves audio exactly, and duration-changing ripple edits can shift later audio without inferring a video owner, trimming source content, or deleting an audio block.
 
 Version 1.4.25 keeps prepared video sources resident in a bounded two-player set, so selecting, seeking, pausing, and revisiting timeline clips do not destroy the standby decoder or return the editor to a loading screen. Caption generation now transcribes one native audible-timeline composition instead of aborting on the first original container that does not expose an embedded audio track; attached audio clips, muted state, trims, playback rate, gaps, and clip ownership remain aligned with the project timeline. Native bridge failures are translated into actionable English, cancellation stops both extraction and timeline preparation, and temporary audio is removed without changing projects, drafts, videos, app data, or signing identity.
 
@@ -103,7 +103,7 @@ Version 1.4.9 checkpoints completed translation batches in private, backup-exclu
 
 Version 1.4.8 preserves individual subtitle identities through AI translation. Unusable results are marked FAILED - RETRY, successful translations and existing text are saved, and incomplete runs show a summary. Open Edit both languages and tap Refresh to repair an incomplete track. Export errors appear in a dialog; disabled and off-timeline captions no longer block MP4 export. Independent translations remain in subtitle-file output, and draft recovery operations are serialized.
 
-The installer requires release 1.4.26 or newer and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
+The installer requires release 1.4.27 or newer and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
 
 Version 1.4.7 replaces the translation model's false transient-memory rejection with hardware-based capability checks. Eligible 64-bit devices with at least 4 GiB physical RAM now attempt the memory-mapped model load even when Android temporarily reports memory pressure. If the runtime genuinely cannot allocate enough memory, the app keeps captions unchanged and tells the user to close other apps, keep Caption Studio open, and retry.
 
