@@ -544,6 +544,11 @@ test('hold-drag clip reorder keeps the filmstrip mounted, remaps source captions
   assert.match(timeline, /AudioWaveform/);
   assert.match(timeline, /waveformPeaks/);
   assert.match(timeline, /clipPositions\.map/);
+  const layerButton = timeline.slice(timeline.indexOf('function TinyButton'), timeline.indexOf('function ZoomButton'));
+  assert.match(layerButton, /accessibilityLabel=\{accessibilityLabel\}/);
+  assert.match(layerButton, /width: 26/);
+  assert.match(layerButton, /height: 26/);
+  assert.match(layerButton, /fontSize: 18/);
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   assert.match(editor, /onReorderClip=\{reorderClipToIndex\}/);
   assert.match(editor, /reorderVideoClip/);

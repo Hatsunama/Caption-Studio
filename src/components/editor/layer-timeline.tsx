@@ -418,7 +418,7 @@ export function LayerTimeline(props: {
                   height={isCaptions ? captionRowHeight : 46}
                   controls={<View style={{ gap: 2 }}>
                     {isCaptions && captionLayout.laneCount > 1 ? <Text style={{ color: '#19D98B', fontSize: 7, fontWeight: '800' }}>{captionLayout.laneCount} AUTO LANES</Text> : null}
-                    <View style={{ flexDirection: 'row', gap: 4 }}>
+                    <View style={{ flexDirection: 'row', gap: 2 }}>
                       <TinyButton label="↑" disabled={layerIndex === 0} onPress={() => props.onMoveLayer(layer.id, -1)} />
                       <TinyButton label="↓" disabled={layerIndex === props.layers.length - 1} onPress={() => props.onMoveLayer(layer.id, 1)} />
                       {!isCaptions ? <TinyButton label="×" danger onPress={() => props.onDeleteLayer(layer.id)} /> : null}
@@ -1006,7 +1006,32 @@ function TimingGrip(props: Parameters<typeof TimedBlock>[0] & { side: 'start' | 
   return <View {...responder.panHandlers} accessible accessibilityRole="adjustable" accessibilityLabel={`${props.side === 'start' ? 'Start' : 'End'} timeline boundary. Drag to trim this item.`} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ position: 'absolute', [props.side === 'start' ? 'left' : 'right']: -10, top: -2, bottom: -2, width: 20, zIndex: 10, borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}><View pointerEvents="none" style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: '#151A20' }} /></View>;
 }
 
-function TinyButton(props: { label: string; danger?: boolean; disabled?: boolean; onPress: () => void }) { return <Pressable disabled={props.disabled} onPress={props.onPress} hitSlop={5} style={{ opacity: props.disabled ? 0.25 : 1 }}><Text style={{ color: props.danger ? '#FF7C8D' : '#9FAAB6', fontSize: 11, fontWeight: '900' }}>{props.label}</Text></Pressable>; }
+function TinyButton(props: { label: string; danger?: boolean; disabled?: boolean; onPress: () => void }) {
+  const accessibilityLabel = props.label === '↑'
+    ? 'Move layer up'
+    : props.label === '↓'
+      ? 'Move layer down'
+      : 'Remove layer';
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      disabled={props.disabled}
+      onPress={props.onPress}
+      hitSlop={4}
+      style={{
+        width: 26,
+        height: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 7,
+        backgroundColor: props.danger ? '#3A2028' : '#252C34',
+        opacity: props.disabled ? 0.25 : 1,
+      }}>
+      <Text style={{ color: props.danger ? '#FF7C8D' : '#D7E0E8', fontSize: 18, lineHeight: 21, fontWeight: '900' }}>{props.label}</Text>
+    </Pressable>
+  );
+}
 function ZoomButton(props: { label: string; onPress: () => void }) { return <Pressable accessibilityRole="button" accessibilityLabel={props.label === '+' ? 'Zoom timeline in' : 'Zoom timeline out'} onPress={props.onPress} style={{ width: 42, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: '#2C2C2E' }}><Text style={{ color: '#64D2FF', fontSize: 20, fontWeight: '600' }}>{props.label}</Text></Pressable>; }
 function formatRulerTime(ms: number, intervalMs: number) { const minutes = Math.floor(ms / 60_000); const seconds = (ms % 60_000) / 1000; return intervalMs < 1000 ? `${minutes}:${seconds.toFixed(intervalMs < 500 ? 2 : 1).padStart(4, '0')}` : `${minutes}:${Math.floor(seconds).toString().padStart(2, '0')}`; }
 function formatGap(ms: number) { return `${(Math.max(0, ms) / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`; }
