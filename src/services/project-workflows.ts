@@ -1,5 +1,6 @@
 import { createCaptionProject, createVideoClip } from '@/lib/project-factory';
 import { addAudioSourceToProject } from '@/lib/audio-timeline';
+import { AUDIO_WAVEFORM_VERSION } from '@/lib/audio-waveform';
 import {
   abandonedLedgerAssets,
   abandonedLinkedMediaPermissions,
@@ -29,6 +30,7 @@ import {
   deleteProjectFiles,
   deleteProjectOwnedFiles,
   ensureProjectThumbnail,
+  generateAudioWaveformPeaks,
   reconcileOrphanedProjectDirectories,
   reconcileProjectOwnedFiles,
 } from '@/services/project-media';
@@ -141,6 +143,11 @@ export async function appendVideosToProject(
   return next;
 }
 
+async function prepareTimelineAudioSource<T extends { uri: string; durationMs: number }>(source: T) {
+  const waveformPeaks = await generateAudioWaveformPeaks(source.uri, source.durationMs);
+  return { ...source, waveformPeaks, waveformVersion: AUDIO_WAVEFORM_VERSION };
+}
+
 export async function appendAudioToProject(
   project: CaptionProject,
   currentMs: number,
@@ -149,10 +156,17 @@ export async function appendAudioToProject(
 ) {
   const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const sourceId = `audio-source-${nonce}`;
-  const source = origin === 'audio-file'
+  const importedSource = origin === 'audio-file'
     ? await pickAndStoreAudio(project.id, sourceId)
     : await pickVideoAndExtractAudio(project.id, sourceId, onExtractSourceChosen);
-  if (!source) return null;
+  if (!importedSource) return null;
+  let source;
+  try {
+    source = await prepareTimelineAudioSource(importedSource);
+  } catch (error) {
+    await runBestEffortCleanup('failed audio waveform preparation', [deleteProjectOwnedFiles(project.id, [importedSource.uri])]);
+    throw error;
+  }
   const result = addAudioSourceToProject(
     project,
     source,
@@ -203,7 +217,14 @@ export async function appendProjectVideoAudioToProject(
   const videoSource = project.sources.find((source) => source.id === videoSourceId);
   if (!videoSource) throw new Error('That project video is no longer available.');
   const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  const source = await extractAudioFromProjectVideo(project.id, `audio-source-${nonce}`, videoSource);
+  const extractedSource = await extractAudioFromProjectVideo(project.id, `audio-source-${nonce}`, videoSource);
+  let source;
+  try {
+    source = await prepareTimelineAudioSource(extractedSource);
+  } catch (error) {
+    await runBestEffortCleanup('failed extracted audio waveform preparation', [deleteProjectOwnedFiles(project.id, [extractedSource.uri])]);
+    throw error;
+  }
   const result = addAudioSourceToProject(
     project,
     source,

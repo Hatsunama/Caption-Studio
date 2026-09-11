@@ -225,7 +225,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const ownedAssetLedgerRef = useRef(createProjectOwnedAssetLedger(initialProject));
   const linkedPermissionLedgerRef = useRef(createLinkedMediaPermissionLedger(initialProject));
   const [selectedCaptionId, setSelectedCaptionId] = useState<string>();
-  const [selectedLayerId, setSelectedLayerId] = useState('captions');
+  const [selectedLayerId, setSelectedLayerId] = useState<string>();
   const [selectedClipId, setSelectedClipId] = useState<string>();
   const [selectedAudioClipId, setSelectedAudioClipId] = useState<string>();
   const [progress, setProgress] = useState<TranscriptionProgress>();
@@ -249,6 +249,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [extractAudioOpen, setExtractAudioOpen] = useState(false);
   const [extractAudioBusy, setExtractAudioBusy] = useState(false);
   const [transitionTimingOpen, setTransitionTimingOpen] = useState(false);
+  const clearEditorSelection = () => {
+    setSelectedCaptionId(undefined);
+    setSelectedLayerId(undefined);
+    setSelectedClipId(undefined);
+    setSelectedAudioClipId(undefined);
+    setSelectedTranslationTrackId(undefined);
+  };
   const undoStackRef = useRef<CaptionProject[]>([]);
   const redoStackRef = useRef<CaptionProject[]>([]);
   const interactionStartRef = useRef<CaptionProject | undefined>(undefined);
@@ -577,8 +584,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     projectRef.current = previous;
     transport.synchronizeProject(previous);
     setProject(previous);
-    setSelectedCaptionId((id) => previous.captions.some((caption) => caption.id === id) ? id : previous.captions[0]?.id);
-    setSelectedLayerId((id) => previous.layers.some((layer) => layer.id === id) ? id : 'captions');
+    setSelectedCaptionId((id) => previous.captions.some((caption) => caption.id === id) ? id : undefined);
+    setSelectedLayerId((id) => previous.layers.some((layer) => layer.id === id) ? id : undefined);
     persistProjectInBackground(previous);
   };
 
@@ -592,8 +599,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     projectRef.current = next;
     transport.synchronizeProject(next);
     setProject(next);
-    setSelectedCaptionId((id) => next.captions.some((caption) => caption.id === id) ? id : next.captions[0]?.id);
-    setSelectedLayerId((id) => next.layers.some((layer) => layer.id === id) ? id : 'captions');
+    setSelectedCaptionId((id) => next.captions.some((caption) => caption.id === id) ? id : undefined);
+    setSelectedLayerId((id) => next.layers.some((layer) => layer.id === id) ? id : undefined);
     persistProjectInBackground(next);
   };
 
@@ -1373,6 +1380,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       setExtractAudioOpen(true);
       return;
     }
+    setExtractAudioBusy(true);
     try {
       const before = projectRef.current;
       const result = await appendAudioToProject(before, currentMs, origin);
@@ -1382,11 +1390,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       projectRef.current = result.project;
       setProject(result.project);
       setSelectedAudioClipId(result.clip.id);
+      setSelectedLayerId(undefined);
       setSelectedClipId(undefined);
       setSelectedCaptionId(undefined);
+      setSelectedTranslationTrackId(undefined);
       setActiveTool('audio');
     } catch (caught) {
       Alert.alert('Could not add audio', caught instanceof Error ? caught.message : 'The selected media could not be added.');
+    } finally {
+      setExtractAudioBusy(false);
     }
   };
 
@@ -1406,7 +1418,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       projectRef.current = result.project;
       setProject(result.project);
       setSelectedAudioClipId(result.clip.id);
+      setSelectedLayerId(undefined);
+      setSelectedClipId(undefined);
       setSelectedCaptionId(undefined);
+      setSelectedTranslationTrackId(undefined);
       setActiveTool('audio');
       setExtractAudioOpen(false);
     } catch (caught) {
@@ -1596,7 +1611,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   return (
     <View style={{ flex: 1, backgroundColor: palette.background }}>
-      <View style={{ height: previewHeight, alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Clear editor selection"
+        onPress={clearEditorSelection}
+        style={{ height: previewHeight, alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
         <View
           style={{
             width: canvasSize.width,
@@ -1619,6 +1638,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             {players.map((slotPlayer, slot) => (
               <VideoView
                 key={slot === 0 ? 'timeline-player-a' : 'timeline-player-b'}
+                pointerEvents="none"
                 style={{
                   position: 'absolute',
                   inset: 0,
@@ -1673,7 +1693,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     currentMs={currentMs}
                     interactive={activeTool !== 'video' && selectedLayerId === 'captions' && Boolean(selectedCaptionId) && displayCaption?.id === selectedCaptionId}
                     selectable={Boolean(displayCaption)}
-                    onSelect={() => { transport.pause(); setSelectedLayerId('captions'); setSelectedCaptionId(displayCaption?.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setActiveTool('captions'); }}
+                    onSelect={() => { transport.pause(); setSelectedLayerId('captions'); setSelectedCaptionId(displayCaption?.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); setActiveTool('captions'); }}
                     onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                     onTransform={updateSharedCaptionTransform}
                     onTransformEnd={finishHistoryInteraction}
@@ -1718,7 +1738,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   interactive={activeTool !== 'video' && selectedLayerId === layer.id}
                   selectable
                   preserveLineBreaks
-                  onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setActiveTool('captions'); }}
+                  onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedCaptionId(undefined); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); setActiveTool('captions'); }}
                   onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                   onTransform={(patch) => updateTextLayerStyle(layer.id, patch)}
                   onTransformEnd={finishHistoryInteraction}
@@ -1732,7 +1752,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 layer={layer}
                 interactive={activeTool !== 'video' && selectedLayerId === layer.id}
                 selectable
-                onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setActiveTool('captions'); }}
+                onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedCaptionId(undefined); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); setActiveTool('captions'); }}
                 onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                 onChange={(patch) => updateImageLayer(layer.id, patch)}
                 onEnd={finishHistoryInteraction}
@@ -1747,7 +1767,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               if (isPlaying) {
                 transport.pause();
               } else {
-                setSelectedCaptionId(undefined);
+                clearEditorSelection();
                 transport.play();
               }
             }}
@@ -1765,7 +1785,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             <Text style={{ color: '#FFF', fontSize: 20 }}>{isPlaying ? 'Ⅱ' : '▶'}</Text>
           </Pressable>
         </View>
-      </View>
+      </Pressable>
 
       <View style={{ flex: 1 }}>
         <ScrollView
@@ -1836,11 +1856,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           currentMs={currentMs}
           onSeek={seekTimeline}
           onScrubStart={transport.pause}
+          onClearSelection={clearEditorSelection}
           onSelectLayer={(layerId) => {
             transport.pause();
             setSelectedLayerId(layerId);
             setSelectedClipId(undefined);
             setSelectedAudioClipId(undefined);
+            setSelectedTranslationTrackId(undefined);
             setActiveTool('captions');
             if (layerId !== 'captions') setSelectedCaptionId(undefined);
           }}
@@ -1850,6 +1872,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedCaptionId(caption.id);
             setSelectedClipId(undefined);
             setSelectedAudioClipId(undefined);
+            setSelectedTranslationTrackId(undefined);
             setActiveTool('captions');
           }}
           onSelectTranslationCaption={(trackId, pair) => {
@@ -1864,8 +1887,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onSelectClip={(clipId) => {
             transport.pause();
             setSelectedClipId(clipId);
+            setSelectedLayerId(undefined);
             setSelectedCaptionId(undefined);
             setSelectedAudioClipId(undefined);
+            setSelectedTranslationTrackId(undefined);
             setActiveTool('video');
           }}
           onTrimClip={trimClipEdge}
@@ -1881,8 +1906,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onSelectAudioClip={(clipId) => {
             transport.pause();
             setSelectedAudioClipId(clipId);
+            setSelectedLayerId(undefined);
             setSelectedClipId(undefined);
             setSelectedCaptionId(undefined);
+            setSelectedTranslationTrackId(undefined);
             setActiveTool('audio');
           }}
         />
@@ -2318,9 +2345,9 @@ function ExtractAudioBusyOverlay(props: { visible: boolean }) {
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: chrome.overlay }}>
         <View style={{ width: '100%', maxWidth: 360, alignItems: 'center', gap: 14, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <ActivityIndicator size="large" color={chrome.accent} />
-          <Text style={{ color: chrome.text, fontSize: 20, fontWeight: '700', textAlign: 'center' }}>Extracting audio locally</Text>
+          <Text style={{ color: chrome.text, fontSize: 20, fontWeight: '700', textAlign: 'center' }}>Preparing audio locally</Text>
           <Text style={{ color: chrome.muted, fontSize: 15, lineHeight: 21, textAlign: 'center' }}>
-            Remuxing the audio track on this phone. Keep Caption Studio open.
+            Extracting, validating, and building the waveform on this phone. Playback starts when the audio is ready. Keep Caption Studio open.
           </Text>
         </View>
       </View>

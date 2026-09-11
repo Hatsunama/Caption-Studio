@@ -43,7 +43,7 @@ export function LayerTimeline(props: {
   captions: CaptionBlock[];
   translationTracks: { id: string; name: string; visible: boolean; pairs: CaptionPair[] }[];
   currentMs: number;
-  selectedLayerId: string;
+  selectedLayerId?: string;
   selectedCaptionId?: string;
   selectedClipId?: string;
   audioSources: ProjectAudioSource[];
@@ -51,6 +51,7 @@ export function LayerTimeline(props: {
   selectedAudioClipId?: string;
   onSeek: (timeMs: number) => void;
   onScrubStart: () => void;
+  onClearSelection: () => void;
   onSelectLayer: (id: string) => void;
   onSelectCaption: (caption: CaptionBlock) => void;
   onSelectTranslationCaption: (trackId: string, pair: CaptionPair) => void;
@@ -273,7 +274,7 @@ export function LayerTimeline(props: {
         <View style={{ width: LABEL_WIDTH + trackWidth, height: '100%', marginLeft: leadingPadding }}>
           <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
           <ScrollView style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}>
-            <TimelineRow label="VIDEO" labelColor={chrome.accent} selected={Boolean(props.selectedClipId)} trackWidth={trackWidth} height={videoRowHeight} onPressTrack={(x) => props.onSeek(x / trackWidth * duration)} controls={<Text style={{ color: chrome.muted, fontSize: 8 }}>{props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}</Text>}>
+            <TimelineRow label="VIDEO" labelColor={chrome.accent} selected={Boolean(props.selectedClipId)} trackWidth={trackWidth} height={videoRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: chrome.muted, fontSize: 8 }}>{props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}</Text>}>
               {reorderDrag ? (
                 <VideoReorderBanner
                   clips={previewClips}
@@ -357,7 +358,7 @@ export function LayerTimeline(props: {
                       endMs={startMs}
                       durationMs={duration}
                       trackWidth={trackWidth}
-                      onPress={() => props.onSelectClip(clip.id)}
+                      onPress={props.onClearSelection}
                       onRemove={() => props.onSetClipGap(clip.id, 0)}
                     />
                   ) : null}
@@ -367,8 +368,8 @@ export function LayerTimeline(props: {
                       endMs={afterGapEndMs}
                       durationMs={duration}
                       trackWidth={trackWidth}
-                      accessibilityLabel={`Empty gap after ${formatGap(afterGapEndMs - endMs)}. Tap to select the preceding clip.`}
-                      onPress={() => props.onSelectClip(clip.id)}
+                      accessibilityLabel={`Empty gap after ${formatGap(afterGapEndMs - endMs)}. Tap to clear the selection.`}
+                      onPress={props.onClearSelection}
                       onRemove={() => props.onSetClipGap(clip.id, 0, 'after')}
                     />
                   ) : null}
@@ -376,7 +377,7 @@ export function LayerTimeline(props: {
                 );
               })}
             </TimelineRow>
-            <TimelineRow label="AUDIO" labelColor="#64E8FF" selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => props.onSeek(x / trackWidth * duration)} controls={<Text style={{ color: '#6F7985', fontSize: 8 }}>{props.audioClips.length} TRACK{props.audioClips.length === 1 ? '' : 'S'}</Text>}>
+            <TimelineRow label="AUDIO" labelColor="#64E8FF" selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: '#6F7985', fontSize: 8 }}>{props.audioClips.length} TRACK{props.audioClips.length === 1 ? '' : 'S'}</Text>}>
               {props.audioClips.filter((clip) => isVisible(clip.startMs, audioClipEnd(clip))).map((clip) => {
                 const source = props.audioSources.find((candidate) => candidate.id === clip.sourceId);
                 return (
@@ -413,7 +414,7 @@ export function LayerTimeline(props: {
                   labelColor={isCaptions ? '#FF4FD8' : layer.kind === 'text' ? '#A985F8' : '#64E8FF'}
                   selected={props.selectedLayerId === layer.id && !props.selectedClipId}
                   onPressLabel={() => props.onSelectLayer(layer.id)}
-                  onPressTrack={(x) => props.onSeek(x / trackWidth * duration)}
+                  onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }}
                   trackWidth={trackWidth}
                   height={isCaptions ? captionRowHeight : 46}
                   controls={<View style={{ gap: 2 }}>
@@ -440,7 +441,7 @@ export function LayerTimeline(props: {
                       const first = track.pairs.find((pair) => pair.timelineVisible);
                       if (first) props.onSelectTranslationCaption(track.id, first);
                     }}
-                    onPressTrack={(x) => props.onSeek(x / trackWidth * duration)}
+                    onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }}
                     trackWidth={trackWidth}
                     height={captionRowHeight}
                     controls={<Text style={{ color: track.visible ? '#19D98B' : '#7B8591', fontSize: 7, fontWeight: '900' }}>{track.visible ? 'VISIBLE · INDEPENDENT' : 'HIDDEN · INDEPENDENT'}</Text>}>
@@ -823,7 +824,7 @@ function TimelineRow(props: { label: string; labelColor: string; selected?: bool
         {props.controls}
       </Pressable>
       <View style={{ width: props.trackWidth, height: props.height - 8, borderRadius: 7, backgroundColor: '#171D23', overflow: 'visible' }}>
-        <Pressable onPress={(event) => props.onPressTrack?.(event.nativeEvent.locationX)} style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }} />
+        <Pressable accessibilityRole="button" accessibilityLabel="Clear selection and seek timeline" onPress={(event) => props.onPressTrack?.(event.nativeEvent.locationX)} style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }} />
         <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}>
           {props.children}
         </View>

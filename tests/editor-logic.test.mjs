@@ -553,7 +553,7 @@ test('hold-drag clip reorder keeps the filmstrip mounted, remaps source captions
   assert.match(editor, /onReorderClip=\{reorderClipToIndex\}/);
   assert.match(editor, /reorderVideoClip/);
   assert.match(editor, /ExtractAudioBusyOverlay/);
-  assert.match(editor, /Extracting audio locally/);
+  assert.match(editor, /Preparing audio locally/);
   assert.match(editor, /VIDEO CLIP AUDIO/);
   assert.match(editor, /ToolbarItem label="Audio" active=\{activeTool === 'audio'\} onPress=\{\(\) => \{ setActiveTool\('audio'\); \}\} \/>/);
 
