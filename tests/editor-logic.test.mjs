@@ -559,8 +559,9 @@ test('hold-drag clip reorder keeps the filmstrip mounted, remaps source captions
       clip({ id: 'three', sourceEndMs: 1_500, availableSourceEndMs: 1_500 }),
     ],
     captions: [
-      { id: 'c1', text: 'one', textMode: 'manual', startMs: 100, endMs: 400, wordIds: [], timelineVisible: true, sourceAnchor: { clipId: 'one', sourceStartMs: 100, sourceEndMs: 400, wordIds: [] } },
-      { id: 'c3', text: 'three', textMode: 'manual', startMs: 3_100, endMs: 3_400, wordIds: [], timelineVisible: true, sourceAnchor: { clipId: 'three', sourceStartMs: 100, sourceEndMs: 400, wordIds: [] } },
+      { id: 'c1', text: 'edited one', textMode: 'manual', startMs: 100, endMs: 400, wordIds: ['one-word'], timelineVisible: true, sourceAnchor: { clipId: 'one', sourceStartMs: 100, sourceEndMs: 400, wordIds: ['one-word'] }, styleOverride: { textColor: '#19D98B' } },
+      { id: 'c3', text: 'edited three', textMode: 'manual', startMs: 3_100, endMs: 3_400, wordIds: ['three-word'], timelineVisible: true, sourceAnchor: { clipId: 'three', sourceStartMs: 100, sourceEndMs: 400, wordIds: ['three-word'] }, styleOverride: { textColor: '#FF2FA9' } },
+      { id: 'timeline', text: 'stay here', textMode: 'manual', timingMode: 'timeline', startMs: 2_100, endMs: 2_500, wordIds: [], timelineVisible: true },
     ],
     audioClips: [
       { id: 'a3', sourceId: 'audio', anchor: 'timeline', startMs: 3_050, sourceStartMs: 0, sourceEndMs: 400, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0 },
@@ -578,6 +579,11 @@ test('hold-drag clip reorder keeps the filmstrip mounted, remaps source captions
   const byId = Object.fromEntries(reordered.project.captions.map((caption) => [caption.id, caption]));
   assert.deepEqual([byId.c3.startMs, byId.c3.endMs], [100, 400]);
   assert.deepEqual([byId.c1.startMs, byId.c1.endMs], [1_600, 1_900]);
+  assert.deepEqual([byId.timeline.startMs, byId.timeline.endMs], [2_100, 2_500]);
+  assert.deepEqual(
+    reordered.project.captions.map(({ startMs, endMs, ...caption }) => caption),
+    project.captions.map(({ startMs, endMs, ...caption }) => caption),
+  );
   const audioById = Object.fromEntries(reordered.project.audioClips.map((item) => [item.id, item]));
   assert.equal(audioById.a3.startMs, 3_050);
   assert.equal(audioById.a1.startMs, 50);

@@ -336,7 +336,37 @@ export function previewVideoClipReorder(clips: VideoClip[], clipId: string, toIn
 export function reorderVideoClip(project: CaptionProject, clipId: string, toIndex: number) {
   const clips = previewVideoClipReorder(project.clips, clipId, toIndex);
   if (!clips || clips.every((clip, index) => clip.id === project.clips[index]?.id)) return null;
-  const next = rebuildAfterLayoutEdit(project, clips, project.captions, { atMs: 0, removeMs: 0, insertMs: 0 });
+  const oldStarts = new Map(
+    buildClipTimeline(project.clips).map((entry) => [entry.clip.id, entry.startMs]),
+  );
+  const newStarts = new Map(
+    buildClipTimeline(clips).map((entry) => [entry.clip.id, entry.startMs]),
+  );
+  const captions = project.captions.map((caption) => {
+    if (caption.timingMode === 'timeline' || !caption.sourceAnchor) return caption;
+
+    const oldStartMs = oldStarts.get(caption.sourceAnchor.clipId);
+    const newStartMs = newStarts.get(caption.sourceAnchor.clipId);
+    if (oldStartMs == null || newStartMs == null || oldStartMs === newStartMs) return caption;
+
+    const deltaMs = newStartMs - oldStartMs;
+    return {
+      ...caption,
+      startMs: caption.startMs + deltaMs,
+      endMs: caption.endMs + deltaMs,
+    };
+  });
+  const rebuilt = rebuildAfterLayoutEdit(project, clips, project.captions, { atMs: 0, removeMs: 0, insertMs: 0 });
+  const synchronizedCaptionTracks = synchronizeCaptionTracks(project, captions);
+  const next = {
+    ...rebuilt,
+    captions,
+    captionTracks: remapTranslationTrackTimings(
+      synchronizedCaptionTracks,
+      project.captions,
+      captions,
+    ),
+  };
   const entry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId);
   return { project: next, seekMs: entry?.startMs ?? 0 };
 }
