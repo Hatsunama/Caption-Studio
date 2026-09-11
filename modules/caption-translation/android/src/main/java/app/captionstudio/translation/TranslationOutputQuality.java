@@ -25,7 +25,7 @@ final class TranslationOutputQuality {
   static boolean needsReview(String sourceText, String translatedText, String target) {
     String source = Normalizer.normalize(sourceText, Normalizer.Form.NFC).trim();
     String text = Normalizer.normalize(translatedText, Normalizer.Form.NFC).trim();
-    if (text.isEmpty() || text.codePointCount(0, text.length()) > 500) return true;
+    if (text.isEmpty() || !isPlausibleCueTranslation(source, text)) return true;
     String sourceAck = acknowledgement(source);
     String targetAck = acknowledgement(text);
     if (sourceAck.equals("ok") || sourceAck.equals("okay")) {
@@ -49,6 +49,20 @@ final class TranslationOutputQuality {
       case "en": return has(text, HAN);
       default: return !has(text, LATIN);
     }
+  }
+
+  /**
+   * Language-agnostic per-cue correspondence shared with JS translation-invariants.
+   * Rejects multi-cue bleed / runaway expansion relative to that cue's source.
+   */
+  static boolean isPlausibleCueTranslation(String sourceText, String translatedText) {
+    String source = Normalizer.normalize(sourceText, Normalizer.Form.NFC).trim();
+    String translated = Normalizer.normalize(translatedText, Normalizer.Form.NFC).trim();
+    if (translated.isEmpty()) return false;
+    int sourcePoints = source.codePointCount(0, source.length());
+    int translatedPoints = translated.codePointCount(0, translated.length());
+    int maximum = Math.max(Math.max(sourcePoints * 4, sourcePoints + 60), 48);
+    return translatedPoints <= maximum;
   }
 
   private static String acknowledgement(String text) {

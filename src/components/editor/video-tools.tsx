@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
-import { type GestureResponderEvent, Modal, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
+import { type GestureResponderEvent, Modal, PanResponder, Pressable, Text, View } from 'react-native';
 
+import { PersistedHorizontalScroll } from '@/components/editor/persisted-horizontal-scroll';
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionProject, VideoTransform } from '@/types/project';
 
@@ -27,7 +28,7 @@ export function VideoTools(props: {
 
   return (
     <View style={{ gap: 8 }}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+      <PersistedHorizontalScroll id="tool:video:canvas" contentContainerStyle={{ gap: 8 }}>
         {presets.map((preset) => (
           <ToolChip
             key={preset.id}
@@ -36,9 +37,9 @@ export function VideoTools(props: {
             onPress={() => props.onCanvasPreset(preset.id)}
           />
         ))}
-      </ScrollView>
+      </PersistedHorizontalScroll>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+      <PersistedHorizontalScroll id="tool:video:transform" contentContainerStyle={{ gap: 8 }}>
         <ToolChip label="Fit" active={props.transform.fit === 'fit'} onPress={() => props.onFit('fit')} />
         <ToolChip label="Fill screen" active={props.transform.fit === 'fill'} onPress={() => props.onFit('fill')} />
         <ToolChip
@@ -65,7 +66,7 @@ export function VideoTools(props: {
         />
         <ToolChip label={`Angle ${Math.round(props.transform.rotation)}°`} onPress={() => setRotationOpen(true)} />
         <ToolChip label="Reset video" onPress={props.onReset} />
-      </ScrollView>
+      </PersistedHorizontalScroll>
 
       <Text style={{ color: chrome.muted, fontSize: 11 }}>
         On the preview: drag to move, pinch to resize, and twist with two fingers to rotate.

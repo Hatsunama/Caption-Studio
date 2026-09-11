@@ -89,7 +89,17 @@ public final class TranslationRepairTest {
     assertTrue(TranslationOutputQuality.needsReview("We already arrived", "我们已经到了", "zh-Hant"));
   }
 
+  @Test public void qualityRejectsMultiCueBleedEvenWhenUnderFormerAbsoluteCap() {
+    String source = "positive response on these";
+    String bleed = "对该请求给出积极回应。请在 GitHub 查看源代码，在 Play Store 下载应用，通过 CuCoin 完成支付，并核对工资单、税务表格以及前后多条字幕里提到的发布说明、安装步骤、账户恢复流程与客服回复内容，确保所有条目都已翻译完整且没有遗漏。";
+    assertTrue(bleed.codePointCount(0, bleed.length()) < 500);
+    assertTrue(TranslationOutputQuality.needsReview(source, bleed, "zh-Hans"));
+    assertFalse(TranslationOutputQuality.isPlausibleCueTranslation(source, bleed));
+    assertFalse(TranslationOutputQuality.needsReview(source, "积极回应", "zh-Hans"));
+  }
+
   private NaturalCaptionTranslator translator(File cache, File checkpoints, TranslationRuntimeFactory factory) {
+
     return new NaturalCaptionTranslator(new TranslationEnvironment() {
       public File prepareCacheDirectory() { return cache; }
       public File prepareCheckpointDirectory() { return checkpoints; }

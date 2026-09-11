@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 
 import { AnimationBrowser } from '@/components/editor/animation-browser';
+import { PersistedHorizontalScroll } from '@/components/editor/persisted-horizontal-scroll';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
 import { DualLanguagePicker } from '@/components/editor/dual-language-picker';
@@ -245,7 +246,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [exporting, setExporting] = useState(false);
   const [exportKind, setExportKind] = useState<'video' | 'subtitle'>('video');
   const [exportProgress, setExportProgress] = useState<ProjectVideoExportProgress>();
-  const [animationScope, setAnimationScope] = useState<StyleScope>('all');
+  const [animationScope, setAnimationScope] = useState<StyleScope>('caption');
   const [extractAudioOpen, setExtractAudioOpen] = useState(false);
   const [extractAudioBusy, setExtractAudioBusy] = useState(false);
   const [transitionTimingOpen, setTransitionTimingOpen] = useState(false);
@@ -749,6 +750,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       updateTextLayerStyle(selectedTextLayer.id, {
         animation: { id, intensity: preset.intensity, durationMs: preset.durationMs },
       }, true);
+      return;
+    }
+    if (!selectedCaptionId && animationScope !== 'all') {
+      Alert.alert(
+        'Choose Text From The Timeline First',
+        'Tap a caption or text layer in the timeline, or switch scope to All captions.',
+      );
       return;
     }
     const scope = animationScope === 'caption' && selectedCaptionId ? 'caption' : 'all';
@@ -1701,7 +1709,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     currentMs={currentMs}
                     interactive={activeTool !== 'video' && selectedLayerId === 'captions' && Boolean(selectedCaptionId) && displayCaption?.id === selectedCaptionId}
                     selectable={Boolean(displayCaption)}
-                    onSelect={() => { transport.pause(); setSelectedLayerId('captions'); setSelectedCaptionId(displayCaption?.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); setActiveTool('captions'); }}
+                    onSelect={() => { transport.pause(); setSelectedLayerId('captions'); setSelectedCaptionId(displayCaption?.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); }}
                     onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                     onTransform={updateSharedCaptionTransform}
                     onTransformEnd={finishHistoryInteraction}
@@ -1722,7 +1730,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                       currentMs={currentMs}
                       interactive={activeTool !== 'video' && selectedLayerId === pair.trackId && selectedCaptionId === pair.source.id}
                       selectable
-                      onSelect={() => { transport.pause(); setSelectedLayerId(pair.trackId); setSelectedTranslationTrackId(pair.trackId); setSelectedCaptionId(pair.source.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setActiveTool('captions'); }}
+                      onSelect={() => { transport.pause(); setSelectedLayerId(pair.trackId); setSelectedTranslationTrackId(pair.trackId); setSelectedCaptionId(pair.source.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); }}
                       onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                       onTransform={(patch) => {
                         const { position: _ignoredPosition, ...sizePatch } = patch;
@@ -1746,7 +1754,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   interactive={activeTool !== 'video' && selectedLayerId === layer.id}
                   selectable
                   preserveLineBreaks
-                  onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedCaptionId(undefined); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); setActiveTool('captions'); }}
+                  onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedCaptionId(undefined); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); }}
                   onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                   onTransform={(patch) => updateTextLayerStyle(layer.id, patch)}
                   onTransformEnd={finishHistoryInteraction}
@@ -1760,7 +1768,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 layer={layer}
                 interactive={activeTool !== 'video' && selectedLayerId === layer.id}
                 selectable
-                onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedCaptionId(undefined); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); setActiveTool('captions'); }}
+                onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedCaptionId(undefined); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); }}
                 onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                 onChange={(patch) => updateImageLayer(layer.id, patch)}
                 onEnd={finishHistoryInteraction}
@@ -1871,7 +1879,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedClipId(undefined);
             setSelectedAudioClipId(undefined);
             setSelectedTranslationTrackId(undefined);
-            setActiveTool('captions');
             if (layerId !== 'captions') setSelectedCaptionId(undefined);
           }}
           onSelectCaption={(caption) => {
@@ -1881,7 +1888,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedClipId(undefined);
             setSelectedAudioClipId(undefined);
             setSelectedTranslationTrackId(undefined);
-            setActiveTool('captions');
           }}
           onSelectTranslationCaption={(trackId, pair) => {
             transport.pause();
@@ -1890,7 +1896,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedCaptionId(pair.source.id);
             setSelectedClipId(undefined);
             setSelectedAudioClipId(undefined);
-            setActiveTool('captions');
           }}
           onSelectClip={(clipId) => {
             transport.pause();
@@ -1899,7 +1904,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedCaptionId(undefined);
             setSelectedAudioClipId(undefined);
             setSelectedTranslationTrackId(undefined);
-            setActiveTool('video');
           }}
           onTrimClip={trimClipEdge}
           onSetClipGap={setClipGap}
@@ -1918,7 +1922,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             setSelectedClipId(undefined);
             setSelectedCaptionId(undefined);
             setSelectedTranslationTrackId(undefined);
-            setActiveTool('audio');
           }}
         />
         {selectedCaption || selectedTranslationPair || selectedAudioClip || selectedTextLayer || selectedImageLayer ? (
@@ -1932,7 +1935,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <Text numberOfLines={1} style={{ color: palette.accent, fontSize: 12, fontWeight: '900' }}>
                   SELECTED CLIP · {project.sources.find((source) => source.id === selectedClip.sourceId)?.displayName ?? 'Video'}
                 </Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                <PersistedHorizontalScroll id="tool:video:clip-actions" contentContainerStyle={{ gap: 8 }}>
                   <Action label="Split at playhead" onPress={splitClipAtPlayhead} />
                   <Action label="Delete + close gap" danger disabled={project.clips.length <= 1} onPress={deleteSelectedClip} />
                   <Action label="Gap −0.5s" disabled={selectedClip.gapBeforeMs <= 0} onPress={() => setClipGap(selectedClip.id, Math.max(0, selectedClip.gapBeforeMs - 500))} />
@@ -1946,18 +1949,18 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   <Action label={selectedClip.fadeOutMs ? 'Remove fade out' : 'Fade out'} onPress={() => updateSelectedClip({ fadeOutMs: selectedClip.fadeOutMs ? 0 : 500 })} />
                   <Action label="Move clip left" onPress={() => reorderSelectedVideo(-1)} />
                   <Action label="Move clip right" onPress={() => reorderSelectedVideo(1)} />
-                </ScrollView>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                </PersistedHorizontalScroll>
+                <PersistedHorizontalScroll id="tool:video:speed" contentContainerStyle={{ gap: 8 }}>
                   {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map((rate) => (
                     <Action key={rate} label={`${rate}× speed`} color={selectedClip.playbackRate === rate ? chrome.accent : undefined} onPress={() => updateSelectedClipRate(rate)} />
                   ))}
-                </ScrollView>
+                </PersistedHorizontalScroll>
                 <View style={{ alignItems: 'flex-start' }}>
                   <Action label="Transition timing…" color={selectedClip.transitionAfter.type !== 'none' ? chrome.accent : undefined} disabled={!transitionBoundaryAvailable || selectedClip.transitionAfter.type === 'none'} onPress={() => setTransitionTimingOpen(true)} />
                 </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                <PersistedHorizontalScroll id="tool:video:transitions" contentContainerStyle={{ gap: 8 }}>
                   {VIDEO_TRANSITION_PRESETS.map((preset) => <Action key={preset.id} label={preset.name} color={selectedClip.transitionAfter.type === preset.id ? chrome.accent : undefined} disabled={preset.id !== 'none' && !transitionBoundaryAvailable} onPress={() => applyTransition(preset.id, preset.durationMs)} />)}
-                </ScrollView>
+                </PersistedHorizontalScroll>
                 {!transitionBoundaryAvailable ? <Text style={{ color: palette.muted, fontSize: 11 }}>Transitions need another clip touching this clip with no empty gap.</Text> : null}
               </View>
             ) : <Text style={{ color: palette.muted, fontSize: 12 }}>Tap a video clip in the timeline to edit that clip.</Text>}
@@ -1979,34 +1982,34 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               }}
               onTransformEnd={finishHistoryInteraction}
             />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            <PersistedHorizontalScroll id="tool:video:add" contentContainerStyle={{ gap: 8 }}>
               <Action label="Add videos" onPress={() => { void addVideosToTimeline(); }} />
               <Action label="Add text layer" onPress={addTextLayer} />
               <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
-            </ScrollView>
+            </PersistedHorizontalScroll>
           </View>
         ) : activeTool === 'audio' ? (
           <View style={{ gap: 8 }}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            <PersistedHorizontalScroll id="tool:audio:add" contentContainerStyle={{ gap: 8 }}>
               <Action label="Add audio file" onPress={() => void addAudio('audio-file')} />
               <Action label="Extract from video" onPress={() => void addAudio('video-audio')} />
-            </ScrollView>
+            </PersistedHorizontalScroll>
             {selectedClip ? <>
               <Text numberOfLines={1} style={{ color: chrome.accent, fontSize: 12, fontWeight: '900' }}>
                 VIDEO CLIP AUDIO · {project.sources.find((source) => source.id === selectedClip.sourceId)?.displayName ?? 'Video'}
               </Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              <PersistedHorizontalScroll id="tool:audio:clip" contentContainerStyle={{ gap: 8 }}>
                 <Action label={selectedClip.muted ? 'Unmute clip audio' : 'Mute clip audio'} onPress={() => updateSelectedClip({ muted: !selectedClip.muted })} />
                 <Action label="Volume −" disabled={selectedClip.muted || selectedClip.volume <= 0} onPress={() => updateSelectedClip({ volume: clamp(selectedClip.volume - 0.1, 0, 1) })} />
                 <Action label={`${Math.round(selectedClip.volume * 100)}% volume`} color="#64E8FF" onPress={() => updateSelectedClip({ volume: 1, muted: false })} />
                 <Action label="Volume +" disabled={selectedClip.volume >= 1} onPress={() => updateSelectedClip({ volume: clamp(selectedClip.volume + 0.1, 0, 1) })} />
                 <Action label={selectedClip.fadeInMs ? 'Remove fade in' : 'Fade in'} onPress={() => updateSelectedClip({ fadeInMs: selectedClip.fadeInMs ? 0 : 500 })} />
                 <Action label={selectedClip.fadeOutMs ? 'Remove fade out' : 'Fade out'} onPress={() => updateSelectedClip({ fadeOutMs: selectedClip.fadeOutMs ? 0 : 500 })} />
-              </ScrollView>
+              </PersistedHorizontalScroll>
             </> : null}
             {selectedAudioClip ? <>
               <Text numberOfLines={1} style={{ color: '#64E8FF', fontSize: 12, fontWeight: '900' }}>SELECTED AUDIO · {project.audioSources.find((source) => source.id === selectedAudioClip.sourceId)?.displayName ?? 'Audio'}</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              <PersistedHorizontalScroll id="tool:audio:selected" contentContainerStyle={{ gap: 8 }}>
                 <Action label="Split at playhead" onPress={splitSelectedAudioAtPlayhead} />
                 <Action label="Delete audio" danger onPress={removeSelectedAudio} />
                 <Action label="Duplicate" onPress={copySelectedAudio} />
@@ -2018,7 +2021,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <Action label="Move +0.5s" onPress={() => shiftSelectedAudio(500)} />
                 <Action label={selectedAudioClip.fadeInMs ? 'Remove fade in' : 'Fade in'} onPress={() => updateSelectedAudio({ fadeInMs: selectedAudioClip.fadeInMs ? 0 : 500 })} />
                 <Action label={selectedAudioClip.fadeOutMs ? 'Remove fade out' : 'Fade out'} onPress={() => updateSelectedAudio({ fadeOutMs: selectedAudioClip.fadeOutMs ? 0 : 500 })} />
-              </ScrollView>
+              </PersistedHorizontalScroll>
             </> : null}
             {!selectedClip && !selectedAudioClip ? <Text style={{ color: palette.muted, fontSize: 12 }}>Select a video clip for its embedded audio, add audio, or tap an audio block in the timeline.</Text> : null}
           </View>
@@ -2032,22 +2035,22 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             onSelect={chooseAnimation}
           />
         ) : selectedTextLayer ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          <PersistedHorizontalScroll id="tool:stickers:text" contentContainerStyle={{ gap: 8 }}>
             <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
             <Action label="Edit text" onPress={() => { setEditingLayerId(selectedTextLayer.id); setEditingText(selectedTextLayer.text); }} />
             <Action label="Delete text layer" danger onPress={() => deleteLayer(selectedTextLayer.id)} />
             <Action label="Add text layer" onPress={addTextLayer} />
             <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
-          </ScrollView>
+          </PersistedHorizontalScroll>
         ) : selectedImageLayer ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          <PersistedHorizontalScroll id="tool:stickers:image" contentContainerStyle={{ gap: 8 }}>
             <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
             <Action label="Delete sticker" danger onPress={() => deleteLayer(selectedImageLayer.id)} />
             <Action label="Add text layer" onPress={addTextLayer} />
             <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
-          </ScrollView>
+          </PersistedHorizontalScroll>
         ) : translationTrackSelected && selectedTranslationTrack ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          <PersistedHorizontalScroll id="tool:stickers:translation" contentContainerStyle={{ gap: 8 }}>
             <Action label="Edit both languages" color={chrome.accent} onPress={() => setDualCaptionEditorOpen(true)} />
             <Action label="Closer together" disabled={(selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) <= MIN_TRANSLATION_STACK_GAP} onPress={() => adjustTranslationGap(-0.016)} />
             <Action
@@ -2075,9 +2078,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             {selectedTranslationPair ? <Action label="Refresh this translation" onPress={() => requestTranslationRefresh([selectedTranslationPair.source.id])} /> : null}
             <Action label={selectedTranslationTrack.visible ? 'Hide second language' : 'Show second language'} onPress={() => { void toggleSelectedTranslationTrack(); }} />
             <Action label="Remove second language" danger onPress={confirmRemoveSelectedTranslationTrack} />
-          </ScrollView>
+          </PersistedHorizontalScroll>
         ) : selectedCaption ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          <PersistedHorizontalScroll id="tool:stickers:caption" contentContainerStyle={{ gap: 8 }}>
             <Action label="Split at playhead" onPress={splitSelectedCaptionAtPlayhead} />
             <Action label="Join previous" onPress={() => joinSelectedCaption('previous')} />
             <Action label="Join next" onPress={() => joinSelectedCaption('next')} />
@@ -2113,12 +2116,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 queueMicrotask(finishHistoryInteraction);
               }}
             />
-          </ScrollView>
+          </PersistedHorizontalScroll>
         ) : (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          <PersistedHorizontalScroll id="tool:stickers:empty" contentContainerStyle={{ gap: 8 }}>
             <Action label="Add text layer" onPress={addTextLayer} />
             <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
-          </ScrollView>
+          </PersistedHorizontalScroll>
         )}
 
         {captionInterruptionMessage || error || persistenceError || translationController.error ? (
@@ -2139,7 +2142,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             borderTopWidth: 1,
             borderTopColor: '#20262D',
           }}>
-          <ToolbarItem label="Captions" active={activeTool === 'captions'} onPress={() => { setSelectedClipId(undefined); setActiveTool('captions'); }} />
+          <ToolbarItem label="Stickers" active={activeTool === 'captions'} onPress={() => { setSelectedClipId(undefined); setActiveTool('captions'); }} />
           <ToolbarItem label="Fonts" active={activeTool === 'fonts'} onPress={() => { setSelectedClipId(undefined); setActiveTool('fonts'); setFontBrowserOpen(true); }} />
           <ToolbarItem label="Animate" active={activeTool === 'animate'} onPress={() => { setSelectedClipId(undefined); setActiveTool('animate'); }} />
           <ToolbarItem label="Video" active={activeTool === 'video'} onPress={() => setActiveTool('video')} />

@@ -4,6 +4,12 @@ import {
   captionSpokenTokenSpans,
   captionTextLength,
 } from '@/lib/caption-text-breaks';
+import {
+  TRANSLATION_BATCH_CONTEXT_TOKEN_RESERVE,
+  TRANSLATION_BATCH_STRUCTURAL_TOKEN_BASE,
+  TRANSLATION_BATCH_TOKEN_BUDGET,
+  estimateTranslationTokens,
+} from '@/lib/translation-invariants';
 
 export type CaptionDocumentSource = {
   id: string;
@@ -18,17 +24,18 @@ export type CaptionDocumentChunk = {
   sourceIds: string[];
 };
 
-const DOCUMENT_CHUNK_CHARACTERS = 900;
 const SENTENCE_END = /[.!?。！？…\u061F]["'”’」』)\]]*$/u;
 
 export function packCaptionDocuments(
   captions: readonly { id: string; text: string }[],
-  maxCharacters = DOCUMENT_CHUNK_CHARACTERS,
+  maxTokens = TRANSLATION_BATCH_TOKEN_BUDGET
+    - TRANSLATION_BATCH_CONTEXT_TOKEN_RESERVE
+    - TRANSLATION_BATCH_STRUCTURAL_TOKEN_BASE,
 ): CaptionDocumentChunk[] {
   const chunks: CaptionDocumentChunk[] = [];
   let sourceIds: string[] = [];
   let texts: string[] = [];
-  let characters = 0;
+  let tokens = 0;
 
   const flush = () => {
     if (sourceIds.length === 0) return;
@@ -39,17 +46,17 @@ export function packCaptionDocuments(
     });
     sourceIds = [];
     texts = [];
-    characters = 0;
+    tokens = 0;
   };
 
   for (const caption of captions) {
     const text = caption.text.normalize('NFC').trim();
     if (!text) continue;
-    const length = captionTextLength(text);
-    if (sourceIds.length > 0 && characters + length + 1 > maxCharacters) flush();
+    const captionTokens = estimateTranslationTokens(text);
+    if (sourceIds.length > 0 && tokens + captionTokens > maxTokens) flush();
     sourceIds.push(caption.id);
     texts.push(text);
-    characters += length + (texts.length > 1 ? 1 : 0);
+    tokens += captionTokens;
   }
   flush();
   return chunks;

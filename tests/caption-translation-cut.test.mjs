@@ -119,12 +119,12 @@ test('document cutting never copies source-language text into empty translation 
   assert.equal(single.get('c1'), '');
 });
 
-test('document packing respects the model chunk budget without splitting a caption', () => {
+test('document packing respects the native token budget without splitting a caption', () => {
   const captions = [
-    { id: 'a', text: 'A'.repeat(900) },
-    { id: 'b', text: 'B'.repeat(900) },
+    { id: 'a', text: '字'.repeat(2_000) },
+    { id: 'b', text: '语'.repeat(2_000) },
   ];
-  const chunks = packCaptionDocuments(captions, 900);
+  const chunks = packCaptionDocuments(captions);
   assert.equal(chunks.length, 2);
   assert.deepEqual(chunks.map((chunk) => chunk.sourceIds), [['a'], ['b']]);
 });

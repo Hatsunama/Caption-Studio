@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 
+import { PersistedHorizontalScroll } from '@/components/editor/persisted-horizontal-scroll';
 import { ANIMATION_PRESETS, CAPTION_ANIMATION_COUNT, type AnimationPreset } from '@/lib/animation-presets';
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionAnimationId } from '@/types/project';
@@ -39,14 +40,14 @@ export function AnimationBrowser(props: {
           </View>
         )}
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7, paddingRight: 18 }}>
+      <PersistedHorizontalScroll id="tool:animate:filters" contentContainerStyle={{ gap: 7, paddingRight: 18 }}>
         <FilterChip label="All" active={filter === 'all'} onPress={() => setFilter('all')} />
         <FilterChip label="Entrances" active={filter === 'entry'} onPress={() => setFilter('entry')} />
         <FilterChip label="Loops" active={filter === 'loop'} onPress={() => setFilter('loop')} />
         <FilterChip label="Words" active={filter === 'word'} onPress={() => setFilter('word')} />
         <FilterChip label="Emoji" active={filter === 'emoji'} onPress={() => setFilter('emoji')} />
-      </ScrollView>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 9, paddingRight: 18 }}>
+      </PersistedHorizontalScroll>
+      <PersistedHorizontalScroll id="tool:animate:presets" contentContainerStyle={{ gap: 9, paddingRight: 18 }}>
         {visiblePresets.map((preset) => {
           const active = props.selected === preset.id;
           return (
@@ -71,7 +72,7 @@ export function AnimationBrowser(props: {
             </Pressable>
           );
         })}
-      </ScrollView>
+      </PersistedHorizontalScroll>
     </View>
   );
 }

@@ -161,19 +161,44 @@ public final class NaturalCaptionTranslatorTest {
   }
 
   @Test
-  public void invalidOrMissingLinesFallBackWithoutDiscardingValidNeighbors() throws Exception {
+  public void incompleteOrDuplicateRepliesRejectTheEntireBatchWithoutSourceFallback() throws Exception {
     List<NaturalCaptionTranslator.Caption> expected = List.of(
         new NaturalCaptionTranslator.Caption("one", "Hello"),
         new NaturalCaptionTranslator.Caption("two", "world"),
         new NaturalCaptionTranslator.Caption("three", "friend")
     );
-    List<NaturalCaptionTranslator.Caption> result = NaturalCaptionTranslator.parseStrictResponse(
-        "[{\"id\":\"one\",\"text\":\"你好\"},{\"id\":\"two\",\"text\":\"   \"}]",
+    List<NaturalCaptionTranslator.Caption> incomplete = NaturalCaptionTranslator.parseStrictResponse(
+        "[{\"id\":\"one\",\"text\":\"你好\"},{\"id\":\"two\",\"text\":\"世界\"}]",
         expected
     );
-    assertEquals("你好", result.get(0).text);
-    assertEquals("world", result.get(1).text);
-    assertEquals("friend", result.get(2).text);
+    assertEquals("", incomplete.get(0).text);
+    assertEquals(false, incomplete.get(0).valid);
+    assertEquals("", incomplete.get(1).text);
+    assertEquals("", incomplete.get(2).text);
+
+    List<NaturalCaptionTranslator.Caption> duplicate = NaturalCaptionTranslator.parseStrictResponse(
+        "[{\"id\":\"one\",\"text\":\"你好\"},{\"id\":\"one\",\"text\":\"又一次\"},{\"id\":\"two\",\"text\":\"世界\"}]",
+        List.of(expected.get(0), expected.get(1))
+    );
+    assertEquals("", duplicate.get(0).text);
+    assertEquals(false, duplicate.get(0).valid);
+  }
+
+  @Test
+  public void multiCueBleedIsRejectedPerCueWithoutPersistingSourceText() throws Exception {
+    String bleed = "对该请求给出积极回应。请在 GitHub 查看源代码，在 Play Store 下载应用，通过 CuCoin 完成支付，并核对工资单、税务表格以及前后多条字幕里提到的发布说明、安装步骤、账户恢复流程与客服回复内容，确保所有条目都已翻译完整且没有遗漏。";
+    List<NaturalCaptionTranslator.Caption> expected = List.of(
+        new NaturalCaptionTranslator.Caption("eight", "positive response on these"),
+        new NaturalCaptionTranslator.Caption("nine", "Next cue")
+    );
+    List<NaturalCaptionTranslator.Caption> result = NaturalCaptionTranslator.parseStrictResponse(
+        "[{\"id\":\"eight\",\"text\":\"" + bleed + "\"},{\"id\":\"nine\",\"text\":\"下一句\"}]",
+        expected
+    );
+    assertEquals("", result.get(0).text);
+    assertEquals(false, result.get(0).valid);
+    assertEquals("下一句", result.get(1).text);
+    assertEquals(true, result.get(1).valid);
   }
 
   @Test

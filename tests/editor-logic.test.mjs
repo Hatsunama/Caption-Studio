@@ -1451,10 +1451,18 @@ test('video transport has dual primed players for seamless clip handoff', () => 
   assert.doesNotMatch(controller, /player\.playing/);
 });
 
+test('animation requires a timeline text target unless scope is All', () => {
+  const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
+  assert.match(editor, /Choose Text From The Timeline First/);
+  assert.match(editor, /useState<StyleScope>\('caption'\)/);
+  assert.match(editor, /ToolbarItem label="Stickers" active=\{activeTool === 'captions'\}/);
+  assert.match(editor, /PersistedHorizontalScroll/);
+});
+
 test('the editor tool panel scrolls independently above a fixed mode bar', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   assert.match(editor, /nestedScrollEnabled[\s\S]*contentContainerStyle=\{\{ gap: 12/);
-  assert.match(editor, /<VideoTools[\s\S]*<\/ScrollView>[\s\S]*<ToolbarItem label="Captions"/);
+  assert.match(editor, /<VideoTools[\s\S]*<\/ScrollView>[\s\S]*<ToolbarItem label="Stickers"/);
 });
 
 test('emoji reactions change with the spoken word', () => {

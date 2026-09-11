@@ -1,5 +1,5 @@
-import { captionTextLength } from '@/lib/caption-text-breaks';
 import { isLikelyUntranslatedCaption } from '@/lib/caption-languages';
+import { isPlausibleCueTranslation } from '@/lib/translation-invariants';
 
 export type AutomaticTranslationCueWrite = {
   sourceCaptionId: string;
@@ -19,7 +19,7 @@ export function usableAutomaticTranslation(
     needsReview
     || !translated
     || (!targetLanguage && translated === source)
-    || captionTextLength(translated) > 500
+    || !isPlausibleCueTranslation(source, translated)
     || (targetLanguage ? isLikelyUntranslatedCaption(source, translated, targetLanguage) : false)
   ) return undefined;
   return translated;

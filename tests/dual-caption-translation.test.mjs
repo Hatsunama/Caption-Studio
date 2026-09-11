@@ -15,6 +15,11 @@ import {
   translatedSliceReviewFlags,
   usableAutomaticTranslation,
 } from '../src/lib/caption-translation-commit.ts';
+import {
+  acceptTranslationBoundary,
+  isPlausibleCueTranslation,
+} from '../src/lib/translation-invariants.ts';
+import { TOP_SPOKEN_CAPTION_LANGUAGES } from '../src/lib/caption-languages.ts';
 
 test('unedited dual-subtitle drafts adopt committed Chinese immediately', () => {
   const previous = dualCaptionDraftsFromPairs([
@@ -122,4 +127,60 @@ test('refresh writes committed Chinese and fails closed when nothing usable is r
     translationStatus: 'stale',
   }]);
   assertAutomaticTranslationWroteText([captions[0]], new Map([['c1', '你好，世界']]), keptPrevious);
+});
+
+const LINE8_SOURCE = 'positive response on these';
+const LINE8_BLEED = '对该请求给出积极回应。请在 GitHub 查看源代码，在 Play Store 下载应用，通过 CuCoin 完成支付，并核对工资单、税务表格以及前后多条字幕里提到的发布说明、安装步骤、账户恢复流程与客服回复内容，确保所有条目都已翻译完整且没有遗漏。';
+
+test('line-8 multi-cue bleed never persists for any supported language', () => {
+  assert.equal(LINE8_BLEED.length < 500, true);
+  assert.equal(isPlausibleCueTranslation(LINE8_SOURCE, LINE8_BLEED), false);
+  assert.equal(usableAutomaticTranslation(LINE8_SOURCE, LINE8_BLEED, false, 'zh-Hans'), undefined);
+
+  for (const language of TOP_SPOKEN_CAPTION_LANGUAGES) {
+    const writes = automaticTranslationCueWrites({
+      captions: [{ id: 'c8', text: LINE8_SOURCE }],
+      translatedById: new Map([['c8', LINE8_BLEED]]),
+      previousById: new Map(),
+      targetLanguage: language.tag,
+    });
+    assert.deepEqual(writes, [], language.tag);
+  }
+
+  const keptPrevious = automaticTranslationCueWrites({
+    captions: [{ id: 'c8', text: LINE8_SOURCE }],
+    translatedById: new Map([['c8', LINE8_BLEED]]),
+    previousById: new Map([['c8', '积极回应']]),
+    targetLanguage: 'zh-Hans',
+  });
+  assert.deepEqual(keptPrevious, [{
+    sourceCaptionId: 'c8',
+    translatedText: '积极回应',
+    translationStatus: 'stale',
+  }]);
+});
+
+test('translation boundary rejects duplicates, partial maps, and source fallback', () => {
+  const expected = [
+    { id: 'c8', text: LINE8_SOURCE },
+    { id: 'c9', text: 'Next cue' },
+  ];
+  assert.throws(
+    () => acceptTranslationBoundary(expected, [{ id: 'c8', text: '积极回应' }]),
+    /incomplete translation/,
+  );
+  assert.throws(
+    () => acceptTranslationBoundary(expected, [
+      { id: 'c8', text: '积极回应' },
+      { id: 'c8', text: '又一次' },
+    ]),
+    /incomplete translation/,
+  );
+  const rejected = acceptTranslationBoundary(expected, [
+    { id: 'c8', text: LINE8_BLEED },
+    { id: 'c9', text: '下一句' },
+  ]);
+  assert.equal(rejected.translations.get('c8'), '');
+  assert.equal(rejected.rejected.has('c8'), true);
+  assert.equal(rejected.translations.get('c9'), '下一句');
 });

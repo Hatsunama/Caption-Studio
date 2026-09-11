@@ -15,6 +15,13 @@ import {
   captionTextLength,
   captionTextTail,
 } from '@/lib/caption-text-breaks';
+import {
+  TRANSLATION_BATCH_CONTEXT_TOKEN_RESERVE,
+  TRANSLATION_BATCH_STRUCTURAL_TOKEN_BASE,
+  TRANSLATION_BATCH_TOKEN_BUDGET,
+  acceptTranslationBoundary,
+  estimateTranslationTokens,
+} from '@/lib/translation-invariants';
 import { requireFreeSpace } from '@/services/storage-policy';
 import {
   downloadVerifiedModel,
@@ -277,10 +284,14 @@ export async function translateNaturalCaptionOperations(options: {
       });
       const expectedCaptions = prepared.flatMap((operation) => operation.captions);
       const translated = validateNativeResult(expectedCaptions, result.captions);
+      const rejected = new Set([
+        ...translated.filter((caption) => caption.rejected).map((caption) => caption.id),
+        ...result.captions.filter((caption) => caption.valid === false).map((caption) => caption.id),
+      ]);
       const repaired = reviewTranslatedCaptions(
         prepared,
         new Map(translated.map((caption) => [caption.id, caption.text])),
-        new Set(result.captions.filter((caption) => caption.valid === false).map((caption) => caption.id)),
+        rejected,
       );
       throwIfCancelled(run);
       const translatedById = repaired.translatedById;
@@ -289,10 +300,9 @@ export async function translateNaturalCaptionOperations(options: {
       for (const operation of prepared) {
         const needsReview = new Set<string>();
         translatedOperations.set(operation.id, new Map(operation.captions.map((caption) => {
-          const text = translatedById.get(caption.id);
-          if (!text) throw new Error('The local model returned an incomplete translation. No captions were changed.');
+          const text = translatedById.get(caption.id) ?? '';
           const originalId = operation.originalIdByKey.get(caption.id)!;
-          if (repaired.needsReview.has(caption.id)) needsReview.add(originalId);
+          if (!text || repaired.needsReview.has(caption.id)) needsReview.add(originalId);
           return [originalId, text];
         })));
         needsReviewByOperation.set(operation.id, needsReview);
@@ -423,16 +433,23 @@ function validateTranslationUnits(units: NaturalTranslationUnit[]) {
 function createBatches(captions: NaturalCaptionTranslationInput[]) {
   const batches: NaturalCaptionTranslationInput[][] = [];
   let batch: NaturalCaptionTranslationInput[] = [];
-  let characters = 0;
+  let batchTokens = 0;
   for (const caption of captions) {
-    const captionLength = captionTextLength(caption.text);
-    if (batch.length > 0 && (batch.length >= 4 || characters + captionLength > 1_000)) {
+    const captionTokens = estimateTranslationTokens(caption.text);
+    const nextCount = batch.length + 1;
+    const structural = TRANSLATION_BATCH_STRUCTURAL_TOKEN_BASE + nextCount * 12;
+    const outputTokens = Math.ceil((batchTokens + captionTokens) * 1.35);
+    const projected = batchTokens + captionTokens
+      + TRANSLATION_BATCH_CONTEXT_TOKEN_RESERVE
+      + structural
+      + outputTokens;
+    if (batch.length > 0 && projected > TRANSLATION_BATCH_TOKEN_BUDGET) {
       batches.push(batch);
       batch = [];
-      characters = 0;
+      batchTokens = 0;
     }
     batch.push(caption);
-    characters += captionLength;
+    batchTokens += captionTokens;
   }
   if (batch.length > 0) batches.push(batch);
   return batches;
@@ -458,17 +475,13 @@ function batchContext(
 
 function validateNativeResult(
   expected: NaturalCaptionTranslationInput[],
-  translated: { id: string; text: string }[],
+  translated: { id: string; text: string; valid?: boolean }[],
 ) {
-  const translatedById = new Map<string, string>();
-  for (const caption of translated) {
-    if (translatedById.has(caption.id)) continue;
-    const text = caption.text.normalize('NFC').trim();
-    if (text && captionTextLength(text) <= 2_000) translatedById.set(caption.id, text);
-  }
+  const boundary = acceptTranslationBoundary(expected, translated);
   return expected.map((caption) => ({
     id: caption.id,
-    text: translatedById.get(caption.id) ?? caption.text,
+    text: boundary.translations.get(caption.id) ?? '',
+    rejected: boundary.rejected.has(caption.id),
   }));
 }
 

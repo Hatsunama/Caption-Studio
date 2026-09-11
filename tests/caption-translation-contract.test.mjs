@@ -86,7 +86,9 @@ test('one pinned local model owns every supported multilingual direction', async
   assert.match(languages, /if \(normalized === 'en'/);
   assert.match(languages, /return 'zh-Hant'/);
   assert.match(languages, /return 'zh-Hans'/);
-  assert.match(service, /characters \+ captionLength > 1_000/);
+  assert.match(service, /TRANSLATION_BATCH_TOKEN_BUDGET/);
+  assert.match(service, /estimateTranslationTokens/);
+  assert.doesNotMatch(service, /characters \+ captionLength > 1_000/);
   assert.match(service, /captionTextTail\([^)]*[\s\S]*, 250\)/);
   assert.match(service, /captionTextHead\([^)]*[\s\S]*, 250\)/);
   assert.equal((service.match(/CaptionTranslation\.translateNaturalCaptions\(/g) ?? []).length, 1);
@@ -244,9 +246,32 @@ test('English-target translation review and rounded spread timing stay fail-clos
   assert.doesNotMatch(service, /id: 'repair'/);
   assert.doesNotMatch(service, /targetLanguage !== 'zh-Hans' && operation.targetLanguage !== 'zh-Hant'/);
   assert.doesNotMatch(service, /updated\.set\(caption\.id, caption\.text\)/);
+  assert.match(service, /acceptTranslationBoundary/);
+  assert.doesNotMatch(service, /translatedById\.get\(caption\.id\) \?\? caption\.text/);
   assert.match(commit, /isLikelyUntranslatedCaption\(source, translated, targetLanguage\)/);
   assert.match(workflow, /needsReviewById: translated\.needsReview/);
   assert.match(workflow, /targetLanguage: track\.languageTag/);
   assert.match(transcription, /allSourcesReady/);
   assert.match(breaks, /Math\.round\(durationMs\.toDouble\(\) \* consumed \/ totalWeight\)/);
+});
+
+test('native translation boundary is exact-ID, empty-reject, and checkpoint-atomic', async () => {
+  const [translator, quality, commit, invariants] = await Promise.all([
+    readFile(new URL('modules/caption-translation/android/src/main/java/app/captionstudio/translation/NaturalCaptionTranslator.java', repositoryRoot), 'utf8'),
+    readFile(new URL('modules/caption-translation/android/src/main/java/app/captionstudio/translation/TranslationOutputQuality.java', repositoryRoot), 'utf8'),
+    readFile(new URL('src/lib/caption-translation-commit.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/lib/translation-invariants.ts', repositoryRoot), 'utf8'),
+  ]);
+  assert.match(translator, /strict-boundary/);
+  assert.match(translator, /emptyFallback/);
+  assert.match(translator, /batchFullyValid/);
+  assert.doesNotMatch(translator, /sourceFallback/);
+  assert.match(translator, /writeCheckpoint\(checkpoints, checkpointKey, checkpointResponse\(batchResult\)\)/);
+  assert.doesNotMatch(translator, /writeCheckpoint\(checkpoints, checkpointKey, modelResponse\)/);
+  assert.match(quality, /isPlausibleCueTranslation/);
+  assert.doesNotMatch(quality, /codePointCount\(0, text\.length\) > 500/);
+  assert.match(commit, /isPlausibleCueTranslation/);
+  assert.doesNotMatch(commit, /captionTextLength\(translated\) > 500/);
+  assert.match(invariants, /acceptTranslationBoundary/);
+  assert.match(invariants, /estimateTranslationTokens/);
 });

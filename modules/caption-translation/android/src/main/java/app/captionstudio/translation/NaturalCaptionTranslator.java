@@ -53,7 +53,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final int MAX_TOTAL_OUTPUT_CHARACTERS = 16_000;
   static final String PROMPT_CONTRACT = "qwen2.5-caption-json-v2";
   // Bump when the runtime version, backend, token limits, or sampler changes.
-  static final String CHECKPOINT_PROFILE = "v3;litertlm-0.16.1;cpu;4096;1536;topk1;topp1;temperature0;seed0;single-cue-text-repair";
+  static final String CHECKPOINT_PROFILE = "v3;litertlm-0.16.1;cpu;4096;1536;topk1;topp1;temperature0;seed0;single-cue-text-repair;strict-boundary";
 
   static final String INVALID_REQUEST = "E_TRANSLATION_INVALID_REQUEST";
   static final String BUSY = "E_TRANSLATION_BUSY";
@@ -337,10 +337,6 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
             session.batches.size()
         );
         List<Caption> batchResult = parseStrictResponse(modelResponse, request.captions);
-        if (!restored && hasTranslatedText(batchResult, request.captions)) {
-          // Persist complete validated output before cancellation can discard it.
-          writeCheckpoint(checkpoints, checkpointKey, modelResponse);
-        }
         if (repairOutputs) {
           for (int cueIndex = 0; cueIndex < request.captions.size(); cueIndex += 1) {
             Caption source = request.captions.get(cueIndex);
@@ -352,12 +348,14 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
             // One bounded retry per failed cue, sharing this operation's engine.
             String response = runtime.translate(buildRetryPrompt(request, cueIndex));
             Caption retry = parseSingleCaptionRetryResponse(response, source);
-            boolean valid = retry.valid && !TranslationOutputQuality.needsReview(source.text, retry.text, request.targetLanguage);
-            batchResult.set(cueIndex, new Caption(source.id, retry.text, valid));
-            // Save each repair before observing cancellation; never cache a fabricated fallback.
-            writeCheckpoint(checkpoints, checkpointKey, checkpointResponse(batchResult));
+            boolean valid = retry.valid
+                && !TranslationOutputQuality.needsReview(source.text, retry.text, request.targetLanguage);
+            batchResult.set(cueIndex, new Caption(source.id, valid ? retry.text : "", valid));
             checkCancelled(run);
           }
+        }
+        if (batchFullyValid(batchResult, request.targetLanguage, request.captions)) {
+          writeCheckpoint(checkpoints, checkpointKey, checkpointResponse(batchResult));
         }
         checkCancelled(run);
         translated.addAll(batchResult);
@@ -482,11 +480,22 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         "Translation progress could not be saved or restored. Free some phone storage and tap Refresh. Previously saved translations were kept.");
   }
 
-  private static boolean hasTranslatedText(List<Caption> result, List<Caption> source) {
+  private static boolean batchFullyValid(
+      List<Caption> result,
+      String targetLanguage,
+      List<Caption> sources
+  ) {
+    if (result.size() != sources.size()) return false;
     for (int index = 0; index < result.size(); index += 1) {
-      if (result.get(index).valid) return true;
+      Caption caption = result.get(index);
+      Caption source = sources.get(index);
+      if (!caption.valid
+          || caption.text.isEmpty()
+          || TranslationOutputQuality.needsReview(source.text, caption.text, targetLanguage)) {
+        return false;
+      }
     }
-    return false;
+    return true;
   }
 
   private void finish(
@@ -845,54 +854,65 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       List<Caption> expectedCaptions
   ) throws TranslationFailure {
     if (response == null || response.isEmpty() || response.length() > MAX_OUTPUT_CHARACTERS) {
-      return sourceFallback(expectedCaptions);
+      return emptyFallback(expectedCaptions);
     }
-    LinkedHashMap<String, Caption> validById = new LinkedHashMap<>();
     LinkedHashMap<String, Caption> expectedById = new LinkedHashMap<>();
     for (Caption expected : expectedCaptions) expectedById.put(expected.id, expected);
+    LinkedHashMap<String, Caption> accepted = new LinkedHashMap<>();
     int totalCharacters = 0;
+    int itemCount = 0;
     try (JsonReader reader = new JsonReader(new StringReader(response))) {
       reader.setStrictness(Strictness.STRICT);
-      if (reader.peek() != JsonToken.BEGIN_ARRAY) return sourceFallback(expectedCaptions);
+      if (reader.peek() != JsonToken.BEGIN_ARRAY) return emptyFallback(expectedCaptions);
       reader.beginArray();
       while (reader.hasNext()) {
-        if (reader.peek() != JsonToken.BEGIN_OBJECT) {
-          reader.skipValue();
-          continue;
-        }
+        if (reader.peek() != JsonToken.BEGIN_OBJECT) return emptyFallback(expectedCaptions);
         reader.beginObject();
         String id = null;
         String text = null;
+        int fields = 0;
         while (reader.hasNext()) {
           String field = reader.nextName();
+          fields += 1;
           if ("id".equals(field) && id == null) {
             if (reader.peek() == JsonToken.STRING) id = reader.nextString();
-            else reader.skipValue();
+            else return emptyFallback(expectedCaptions);
           } else if ("text".equals(field) && text == null) {
             if (reader.peek() == JsonToken.STRING) text = reader.nextString();
-            else reader.skipValue();
+            else return emptyFallback(expectedCaptions);
           } else {
-            reader.skipValue();
+            return emptyFallback(expectedCaptions);
           }
         }
         reader.endObject();
-        if (id != null && expectedById.containsKey(id) && !validById.containsKey(id)
-            && text != null && !isBlankText(text)
-            && textCharacterCount(text) <= MAX_OUTPUT_TEXT_CHARACTERS) {
-          totalCharacters += textCharacterCount(text);
-          if (totalCharacters <= MAX_TOTAL_OUTPUT_CHARACTERS) {
-            validById.put(id, new Caption(id, text));
-          }
+        itemCount += 1;
+        if (fields != 2 || id == null || text == null || !expectedById.containsKey(id)
+            || accepted.containsKey(id)) {
+          return emptyFallback(expectedCaptions);
         }
+        String normalized = text.trim();
+        Caption expected = expectedById.get(id);
+        if (isBlankText(normalized)
+            || textCharacterCount(normalized) > MAX_OUTPUT_TEXT_CHARACTERS
+            || !TranslationOutputQuality.isPlausibleCueTranslation(expected.text, normalized)) {
+          accepted.put(id, new Caption(id, "", false));
+          continue;
+        }
+        totalCharacters += textCharacterCount(normalized);
+        if (totalCharacters > MAX_TOTAL_OUTPUT_CHARACTERS) return emptyFallback(expectedCaptions);
+        accepted.put(id, new Caption(id, normalized, true));
       }
       reader.endArray();
-      if (reader.peek() != JsonToken.END_DOCUMENT) return sourceFallback(expectedCaptions);
+      if (reader.peek() != JsonToken.END_DOCUMENT) return emptyFallback(expectedCaptions);
     } catch (IOException | IllegalStateException error) {
-      return sourceFallback(expectedCaptions);
+      return emptyFallback(expectedCaptions);
+    }
+    if (itemCount != expectedCaptions.size() || accepted.size() != expectedCaptions.size()) {
+      return emptyFallback(expectedCaptions);
     }
     List<Caption> resolved = new ArrayList<>(expectedCaptions.size());
     for (Caption expected : expectedCaptions) {
-      resolved.add(validById.getOrDefault(expected.id, new Caption(expected.id, expected.text, false)));
+      resolved.add(accepted.get(expected.id));
     }
     return resolved;
   }
@@ -902,13 +922,14 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     Caption structured = parseStrictResponse(response, List.of(expected)).get(0);
     if (structured.valid) return structured;
     if (response == null || response.isEmpty() || response.length() > MAX_OUTPUT_CHARACTERS) {
-      return new Caption(expected.id, expected.text, false);
+      return new Caption(expected.id, "", false);
     }
     String text = response.trim();
     if (isBlankText(text) || textCharacterCount(text) > MAX_OUTPUT_TEXT_CHARACTERS
         || text.startsWith("[") || text.startsWith("{") || text.startsWith("```")
-        || text.contains("<|") || containsDisallowedControlCharacter(text)) {
-      return new Caption(expected.id, expected.text, false);
+        || text.contains("<|") || containsDisallowedControlCharacter(text)
+        || !TranslationOutputQuality.isPlausibleCueTranslation(expected.text, text)) {
+      return new Caption(expected.id, "", false);
     }
     return new Caption(expected.id, text, true);
   }
@@ -923,9 +944,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     return false;
   }
 
-  private static List<Caption> sourceFallback(List<Caption> expectedCaptions) {
+  private static List<Caption> emptyFallback(List<Caption> expectedCaptions) {
     List<Caption> fallback = new ArrayList<>(expectedCaptions.size());
-    for (Caption expected : expectedCaptions) fallback.add(new Caption(expected.id, expected.text, false));
+    for (Caption expected : expectedCaptions) fallback.add(new Caption(expected.id, "", false));
     return fallback;
   }
 
