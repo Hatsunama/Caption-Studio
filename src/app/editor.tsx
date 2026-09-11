@@ -1614,7 +1614,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Clear editor selection"
-        onPress={clearEditorSelection}
+        onPress={(event) => {
+          if (event.target === event.currentTarget) clearEditorSelection();
+        }}
         style={{ height: previewHeight, alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
         <View
           style={{
@@ -1672,6 +1674,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             height={canvasHeight}
             backgroundColor={project.canvas.backgroundColor}
             admitted={runtimePolicy.mediaAdmitted}
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Clear editor selection"
+            onPress={clearEditorSelection}
+            style={{ position: 'absolute', inset: 0 }}
           />
           {activeTool === 'video' && currentClipEntry ? (
             <VideoTransformOverlay
@@ -1944,9 +1952,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     <Action key={rate} label={`${rate}× speed`} color={selectedClip.playbackRate === rate ? chrome.accent : undefined} onPress={() => updateSelectedClipRate(rate)} />
                   ))}
                 </ScrollView>
+                <View style={{ alignItems: 'flex-start' }}>
+                  <Action label="Transition timing…" color={selectedClip.transitionAfter.type !== 'none' ? chrome.accent : undefined} disabled={!transitionBoundaryAvailable || selectedClip.transitionAfter.type === 'none'} onPress={() => setTransitionTimingOpen(true)} />
+                </View>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                   {VIDEO_TRANSITION_PRESETS.map((preset) => <Action key={preset.id} label={preset.name} color={selectedClip.transitionAfter.type === preset.id ? chrome.accent : undefined} disabled={preset.id !== 'none' && !transitionBoundaryAvailable} onPress={() => applyTransition(preset.id, preset.durationMs)} />)}
-                  <Action label="Transition timing…" color={selectedClip.transitionAfter.type !== 'none' ? chrome.accent : undefined} disabled={!transitionBoundaryAvailable || selectedClip.transitionAfter.type === 'none'} onPress={() => setTransitionTimingOpen(true)} />
                 </ScrollView>
                 {!transitionBoundaryAvailable ? <Text style={{ color: palette.muted, fontSize: 11 }}>Transitions need another clip touching this clip with no empty gap.</Text> : null}
               </View>

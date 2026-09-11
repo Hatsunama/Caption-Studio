@@ -80,6 +80,9 @@ export function CaptionOverlay(props: {
       PanResponder.create({
         onStartShouldSetPanResponder: () => Boolean(propsRef.current.interactive || propsRef.current.selectable),
         onMoveShouldSetPanResponder: () => Boolean(propsRef.current.interactive),
+        onMoveShouldSetPanResponderCapture: (event) =>
+          Boolean(propsRef.current.interactive && event.nativeEvent.touches.length >= 2),
+        onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: (event) => {
           if (!propsRef.current.interactive) {
             propsRef.current.onSelect?.();
@@ -87,6 +90,13 @@ export function CaptionOverlay(props: {
           }
           propsRef.current.onInteractionStart?.();
           rebaseGesture(readTouches(event));
+        },
+        onPanResponderStart: (event) => {
+          if (!propsRef.current.interactive) return;
+          const touches = readTouches(event);
+          if (touches.length >= 2 && gestureStart.current.touchCount !== 2) {
+            rebaseGesture(touches);
+          }
         },
         onPanResponderMove: (event) => {
           if (!propsRef.current.interactive) return;
