@@ -53,17 +53,16 @@ function CompositeVideoTransitionOverlay(props: Props & { windows: ReturnType<ty
     isPlaying: props.isPlaying && props.transportReady,
   });
   const frame = preview.frame;
-  if (!frame) return null;
+  const renderFrame = preview.renderFrame;
+  if (!renderFrame) return null;
 
-  if (preview.error) return <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={preview.error} />;
-  if (!preview.ready || !frame.outgoing || !frame.incoming) {
-    return <PreviewNotice label="LOADING TRANSITION PREVIEW" />;
-  }
+  if (preview.error && frame) return <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={preview.error} />;
 
-  return <FirstFrameGatedTransition key={frame.key} {...props} frame={frame} preview={preview} />;
+  return <FirstFrameGatedTransition key={renderFrame.key} {...props} active={Boolean(frame)} frame={renderFrame} preview={preview} />;
 }
 
 function FirstFrameGatedTransition(props: Props & {
+  active: boolean;
   frame: VideoTransitionPreviewFrame;
   preview: ReturnType<typeof useVideoTransitionPreview>;
 }) {
@@ -71,7 +70,7 @@ function FirstFrameGatedTransition(props: Props & {
   const ready = rendered.outgoing && rendered.incoming;
   return (
     <View pointerEvents="none" style={[fill, { overflow: 'hidden' }]}>
-      <View key={props.frame.key} style={[fill, { opacity: ready ? 1 : 0 }]}>
+      <View key={props.frame.key} style={[fill, { opacity: props.active && ready ? 1 : 0 }]}>
         <CompositeTransition
           frame={props.frame}
           outgoingPlayer={props.preview.outgoingPlayer}
@@ -82,7 +81,6 @@ function FirstFrameGatedTransition(props: Props & {
           onIncomingFirstFrame={() => setRendered((current) => ({ ...current, incoming: true }))}
         />
       </View>
-      {!ready ? <PreviewNotice label="LOADING TRANSITION PREVIEW" /> : null}
     </View>
   );
 }
@@ -114,27 +112,6 @@ function CompositeTransition(props: {
     );
   }
 
-  if (type.startsWith('slide-')) {
-    const horizontal = type.endsWith('left') || type.endsWith('right');
-    const sign = type.endsWith('left') || type.endsWith('up') ? 1 : -1;
-    const distance = horizontal ? width : height;
-    return (
-      <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
-        <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} onFirstFrameRender={onIncomingFirstFrame} effectStyle={{ transform: horizontal ? [{ translateX: sign * distance * (1 - phase) }] : [{ translateY: sign * distance * (1 - phase) }] }} />
-      </>
-    );
-  }
-
-  if (type.startsWith('wipe-')) {
-    const rect = directionalRevealRect(type, phase, width, height);
-    return (
-      <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
-        <ClippedVideoLayer player={incomingPlayer} transform={incoming.transform} rect={rect} width={width} height={height} onFirstFrameRender={onIncomingFirstFrame} />
-      </>
-    );
-  }
 
   if (type === 'split-horizontal' || type === 'split-vertical') {
     const horizontal = type === 'split-horizontal';
@@ -331,13 +308,6 @@ function PreviewNotice(props: { label: string; detail?: string; compact?: boolea
       </View>
     </View>
   );
-}
-
-function directionalRevealRect(type: string, phase: number, width: number, height: number) {
-  if (type === 'wipe-left') return { left: width * (1 - phase), top: 0, width: width * phase, height };
-  if (type === 'wipe-right') return { left: 0, top: 0, width: width * phase, height };
-  if (type === 'wipe-up') return { left: 0, top: height * (1 - phase), width, height: height * phase };
-  return { left: 0, top: 0, width, height: height * phase };
 }
 
 function transformStyle(transform: VideoTransform, width: number, height: number) {

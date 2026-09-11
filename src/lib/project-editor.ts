@@ -384,21 +384,13 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
   const clips = [...project.clips];
   const index = clips.findIndex((clip) => clip.id === clipId);
   clips.splice(index, 1, left, right);
-  const wordById = new Map(project.transcription.words.map((word) => [word.id, word]));
   const captions = anchorCaptionsToClips(project.captions, project.clips, project.transcription.words).map((caption) => {
     const anchor = caption.sourceAnchor;
     if (anchor?.clipId !== entry.clip.id) return caption;
-    if (anchor.sourceEndMs <= sourceSplitMs) return retargetCaptionAnchor(caption, entry.clip.id, leftId);
-    if (anchor.sourceStartMs >= sourceSplitMs) return retargetCaptionAnchor(caption, entry.clip.id, rightId);
-    const leftWordIds = anchor.wordIds
-      .filter((wordId) => (wordById.get(wordId)?.startMs ?? timelineMs) < timelineMs)
-      .map((wordId) => replaceClipWordPrefix(wordId, entry.clip.id, leftId));
-    const rightWordIds = anchor.wordIds
-      .filter((wordId) => (wordById.get(wordId)?.endMs ?? timelineMs) > timelineMs)
-      .map((wordId) => replaceClipWordPrefix(wordId, entry.clip.id, rightId));
+    if (anchor.sourceEndMs <= sourceSplitMs) return { ...caption, sourceAnchor: { ...anchor, clipId: leftId } };
+    if (anchor.sourceStartMs >= sourceSplitMs) return { ...caption, sourceAnchor: { ...anchor, clipId: rightId } };
     return {
       ...caption,
-      wordIds: [...leftWordIds, ...rightWordIds],
       timingMode: 'timeline' as const,
       sourceAnchor: undefined,
     };
@@ -410,13 +402,7 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
     rightId,
     sourceSplitMs,
   );
-  const next = rebuildAfterLayoutEdit(
-    project,
-    clips,
-    captions,
-    { atMs: entry.endMs, removeMs: 0, insertMs: 0 },
-    layers,
-  );
+  const next = { ...project, updatedAt: new Date().toISOString(), clips, captions, layers };
   return { project: next, rightClipId: right.id };
 }
 
@@ -642,26 +628,6 @@ function spliceTimedRange<T extends { startMs: number; endMs: number }>(
     }
   }
   return endMs - startMs >= 80 ? { ...range, startMs, endMs } : undefined;
-}
-
-function replaceClipWordPrefix(wordId: string, previousClipId: string, nextClipId: string) {
-  const prefix = `${previousClipId}-`;
-  return wordId.startsWith(prefix) ? `${nextClipId}-${wordId.slice(prefix.length)}` : wordId;
-}
-
-function retargetCaptionAnchor(
-  caption: CaptionProject['captions'][number],
-  previousClipId: string,
-  nextClipId: string,
-) {
-  const sourceAnchor = caption.sourceAnchor!;
-  const wordIds = sourceAnchor.wordIds.map((wordId) => replaceClipWordPrefix(wordId, previousClipId, nextClipId));
-  return {
-    ...caption,
-    wordIds,
-    timingMode: 'source' as const,
-    sourceAnchor: { ...sourceAnchor, clipId: nextClipId, wordIds },
-  };
 }
 
 function anchorVisualLayers(layers: CaptionProject['layers'], clips: VideoClip[]) {

@@ -17,10 +17,10 @@ const nativeTransitionSource = readFileSync(new URL(
   import.meta.url,
 ), 'utf8');
 
-test('the commercial catalog has at least 28 effects and every effect is routed to preview and native export', () => {
+test('the transition catalog contains unique effects routed to preview and native export', () => {
   const ids = VIDEO_TRANSITION_PRESETS.map((preset) => preset.id);
-  assert.ok(ids.length - 1 >= 28, `expected at least 28 effects, found ${ids.length - 1}`);
   assert.equal(new Set(ids).size, ids.length);
+  assert.deepEqual(ids.filter((id) => /^(wipe|slide|push)-/.test(id)), ['push-left', 'push-right', 'push-up', 'push-down']);
   for (const id of ids) {
     assert.notEqual(videoTransitionPreviewKind(id), undefined);
     if (id !== 'none') assert.notEqual(videoTransitionPreviewKind(id), 'none');
@@ -86,10 +86,21 @@ test('retired diagram-only transitions migrate to a real cross dissolve', () => 
   }
 });
 
+test('retired duplicate directional transitions migrate to the matching push direction', () => {
+  for (const family of ['wipe', 'slide']) {
+    for (const direction of ['left', 'right', 'up', 'down']) {
+      assert.deepEqual(hydrateVideoTransition({ type: `${family}-${direction}`, durationMs: 700 }), {
+        type: `push-${direction}`,
+        durationMs: 700,
+      });
+    }
+  }
+});
+
 test('persisted transition hydration removes effects across gaps and after the final clip', () => {
   const persisted = JSON.parse(JSON.stringify([
     clip({ id: 'first', transitionAfter: { type: 'glitch', durationMs: 420 } }),
-    clip({ id: 'second', gapBeforeMs: 300, transitionAfter: { type: 'wipe-left', durationMs: 600 } }),
+    clip({ id: 'second', gapBeforeMs: 300, transitionAfter: { type: 'push-left', durationMs: 600 } }),
   ]));
   const hydrated = hydrateVideoTransitionBoundaries(persisted);
   assert.deepEqual(hydrated.map((item) => item.transitionAfter), [
@@ -100,10 +111,10 @@ test('persisted transition hydration removes effects across gaps and after the f
 
 test('a gap edit atomically clears its boundary transition and blocks reapplication', () => {
   const project = projectFixture();
-  const transitioned = setVideoTransition(project, 'first', 'wipe-right', 600);
-  assert.equal(transitioned.clips[0].transitionAfter.type, 'wipe-right');
+  const transitioned = setVideoTransition(project, 'first', 'push-right', 600);
+  assert.equal(transitioned.clips[0].transitionAfter.type, 'push-right');
   assert.equal(canApplyVideoTransition(transitioned.clips, 0), true);
-  assert.equal(setVideoTransition(transitioned, 'first', 'wipe-right', Number.NaN), transitioned);
+  assert.equal(setVideoTransition(transitioned, 'first', 'push-right', Number.NaN), transitioned);
 
   const gapped = setVideoClipGap(transitioned, 'second', 500);
   assert.ok(gapped);

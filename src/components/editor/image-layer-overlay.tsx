@@ -9,6 +9,8 @@ type Touch = { pageX: number; pageY: number };
 export function ImageLayerOverlay(props: {
   layer: ImageVisualLayer;
   interactive: boolean;
+  selectable?: boolean;
+  onSelect?: () => void;
   onInteractionStart?: () => void;
   onChange: (patch: Partial<ImageVisualLayer>) => void;
   onEnd: () => void;
@@ -39,13 +41,18 @@ export function ImageLayerOverlay(props: {
   const responder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => propsRef.current.interactive,
+        onStartShouldSetPanResponder: () => Boolean(propsRef.current.interactive || propsRef.current.selectable),
         onMoveShouldSetPanResponder: () => propsRef.current.interactive,
         onPanResponderGrant: (event) => {
+          if (!propsRef.current.interactive) {
+            propsRef.current.onSelect?.();
+            return;
+          }
           propsRef.current.onInteractionStart?.();
           rebase(readTouches(event));
         },
         onPanResponderMove: (event) => {
+          if (!propsRef.current.interactive) return;
           const touches = readTouches(event);
           if (touches.length === 0) return;
           const count = touches.length >= 2 ? 2 : 1;
@@ -135,21 +142,20 @@ function ImageCornerHandle(props: {
 }) {
   const propsRef = useRef(props);
   propsRef.current = props;
-  const start = useRef({ box: props.layer.box, rotation: props.layer.rotation });
+  const start = useRef({ box: props.layer.box });
   const responder = useMemo(
     () => PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
         propsRef.current.onStart?.();
-        start.current = { box: { ...propsRef.current.layer.box }, rotation: propsRef.current.layer.rotation };
+        start.current = { box: { ...propsRef.current.layer.box } };
       },
       onPanResponderMove: (_event, gesture) => {
         const size = propsRef.current.canvas.current;
         const scale = clamp(1 + (gesture.dx + gesture.dy) / Math.max(100, (size.width + size.height) * 0.35), 0.2, 5);
         propsRef.current.onChange({
           box: { width: clamp(start.current.box.width * scale, 0.06, 1.5), height: clamp(start.current.box.height * scale, 0.04, 1.5) },
-          rotation: normalize(start.current.rotation + (gesture.dy - gesture.dx) * 0.32),
         });
       },
       onPanResponderRelease: () => propsRef.current.onEnd(),
@@ -159,7 +165,7 @@ function ImageCornerHandle(props: {
   );
   return (
     <View {...responder.panHandlers} style={{ position: 'absolute', right: -23, bottom: -23, width: 46, height: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 23, backgroundColor: '#64E8FF' }}>
-      <Text pointerEvents="none" style={{ color: '#092028', fontSize: 19, fontWeight: '900' }}>↻</Text>
+      <Text pointerEvents="none" style={{ color: '#092028', fontSize: 19, fontWeight: '900' }}>↘</Text>
     </View>
   );
 }

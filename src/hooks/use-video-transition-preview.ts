@@ -30,6 +30,10 @@ export function useVideoTransitionPreview(options: {
     },
     [options.timelineMs, options.windows],
   );
+  const renderFrame = useMemo(
+    () => frame ?? (preload ? videoTransitionPreviewFrameAt(options.windows, preload.startMs) : undefined),
+    [frame, options.windows, preload],
+  );
   const outgoingPlayer = useVideoPlayer(null, configureTransitionPlayer);
   const incomingPlayer = useVideoPlayer(null, configureTransitionPlayer);
   const [load, setLoad] = useState<PreviewPlayerLoad>({ state: 'idle' });
@@ -95,13 +99,13 @@ export function useVideoTransitionPreview(options: {
 
   useEffect(() => {
     if (
-      !frame
-      || !frame.outgoing
-      || !frame.incoming
-      || frame.outgoingSourceTimeMs == null
-      || frame.incomingSourceTimeMs == null
+      !renderFrame
+      || !renderFrame.outgoing
+      || !renderFrame.incoming
+      || renderFrame.outgoingSourceTimeMs == null
+      || renderFrame.incomingSourceTimeMs == null
       || state !== 'ready'
-      || loadedKey !== frame.key
+      || loadedKey !== renderFrame.key
     ) {
       outgoingPlayer.pause();
       incomingPlayer.pause();
@@ -109,17 +113,17 @@ export function useVideoTransitionPreview(options: {
     }
     synchronizePreviewPlayer(
       outgoingPlayer,
-      frame.outgoingSourceTimeMs,
-      frame.outgoing.playbackRate,
-      options.isPlaying,
+      renderFrame.outgoingSourceTimeMs,
+      renderFrame.outgoing.playbackRate,
+      Boolean(frame && options.isPlaying),
     );
     synchronizePreviewPlayer(
       incomingPlayer,
-      frame.incomingSourceTimeMs,
-      frame.incoming.playbackRate,
-      options.isPlaying,
+      renderFrame.incomingSourceTimeMs,
+      renderFrame.incoming.playbackRate,
+      Boolean(frame && options.isPlaying),
     );
-  }, [frame, incomingPlayer, loadedKey, options.isPlaying, outgoingPlayer, state]);
+  }, [frame, incomingPlayer, loadedKey, options.isPlaying, outgoingPlayer, renderFrame, state]);
 
   useEffect(() => () => {
     mountedRef.current = false;
@@ -129,6 +133,7 @@ export function useVideoTransitionPreview(options: {
 
   return {
     frame,
+    renderFrame,
     outgoingPlayer,
     incomingPlayer,
     ready: Boolean(frame && state === 'ready' && loadedKey === frame.key),
@@ -165,7 +170,7 @@ function synchronizePreviewPlayer(
   player.playbackRate = playbackRate;
   const targetSeconds = targetMs / 1_000;
   const driftMs = Math.abs(player.currentTime - targetSeconds) * 1_000;
-  if (!playing || driftMs > 90) player.currentTime = targetSeconds;
+  if (!playing || !player.playing || driftMs > 500) player.currentTime = targetSeconds;
   if (playing) {
     if (!player.playing) player.play();
   } else {

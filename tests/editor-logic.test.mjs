@@ -727,7 +727,7 @@ test('splitting video changes only clip topology and preserves subtitle identity
     text: 'hello world',
     startMs: 500,
     endMs: 2_500,
-    wordIds: ['left-hello', 'right-world'],
+    wordIds: ['whole-hello', 'whole-world'],
     timingMode: 'timeline',
     sourceAnchor: undefined,
   }]);

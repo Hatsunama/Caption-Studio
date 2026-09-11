@@ -5,14 +5,6 @@ export const VIDEO_TRANSITION_PRESETS = [
   { id: 'flash', name: 'Camera flash', description: 'Fast white burst', durationMs: 350 },
   { id: 'fade-dark', name: 'Soft dark fade', description: 'Gentler dark fade', durationMs: 800 },
   { id: 'crossfade', name: 'Cross dissolve', description: 'Smoothly blends both clips', durationMs: 650 },
-  { id: 'wipe-left', name: 'Wipe left', description: 'Sweeps across to the left', durationMs: 600 },
-  { id: 'wipe-right', name: 'Wipe right', description: 'Sweeps across to the right', durationMs: 600 },
-  { id: 'wipe-up', name: 'Wipe up', description: 'Sweeps upward', durationMs: 600 },
-  { id: 'wipe-down', name: 'Wipe down', description: 'Sweeps downward', durationMs: 600 },
-  { id: 'slide-left', name: 'Slide left', description: 'Bold directional slide', durationMs: 550 },
-  { id: 'slide-right', name: 'Slide right', description: 'Reverse directional slide', durationMs: 550 },
-  { id: 'slide-up', name: 'Slide up', description: 'Slides the next clip upward', durationMs: 550 },
-  { id: 'slide-down', name: 'Slide down', description: 'Slides the next clip downward', durationMs: 550 },
   { id: 'push-left', name: 'Push left', description: 'The next clip pushes the current clip left', durationMs: 600 },
   { id: 'push-right', name: 'Push right', description: 'The next clip pushes the current clip right', durationMs: 600 },
   { id: 'push-up', name: 'Push up', description: 'The next clip pushes the current clip upward', durationMs: 600 },
@@ -53,14 +45,6 @@ const TRANSITION_PREVIEW_KINDS: Record<VideoTransitionType, VideoTransitionPrevi
   flash: 'cover',
   'fade-dark': 'cover',
   crossfade: 'crossfade',
-  'wipe-left': 'directional',
-  'wipe-right': 'directional',
-  'wipe-up': 'directional',
-  'wipe-down': 'directional',
-  'slide-left': 'directional',
-  'slide-right': 'directional',
-  'slide-up': 'directional',
-  'slide-down': 'directional',
   'push-left': 'directional',
   'push-right': 'directional',
   'push-up': 'directional',
@@ -103,19 +87,27 @@ const SUPPORTED_TRANSITION_TYPES = new Set<string>(
   VIDEO_TRANSITION_PRESETS.map((preset) => preset.id),
 );
 
-const RETIRED_TRANSITION_TYPES = new Set<string>([
-  'wipe-diagonal-tl',
-  'wipe-diagonal-tr',
-  'wipe-diagonal-bl',
-  'wipe-diagonal-br',
-  'blinds-horizontal',
-  'blinds-vertical',
-  'checkerboard',
-  'pixel-grid',
-  'radial-clock',
-  'stripes-diagonal',
-  'slice-shuffle',
-  'ripple-rings',
+const RETIRED_TRANSITION_TYPES = new Map<string, VideoTransitionType>([
+  ['wipe-left', 'push-left'],
+  ['wipe-right', 'push-right'],
+  ['wipe-up', 'push-up'],
+  ['wipe-down', 'push-down'],
+  ['slide-left', 'push-left'],
+  ['slide-right', 'push-right'],
+  ['slide-up', 'push-up'],
+  ['slide-down', 'push-down'],
+  ['wipe-diagonal-tl', 'crossfade'],
+  ['wipe-diagonal-tr', 'crossfade'],
+  ['wipe-diagonal-bl', 'crossfade'],
+  ['wipe-diagonal-br', 'crossfade'],
+  ['blinds-horizontal', 'crossfade'],
+  ['blinds-vertical', 'crossfade'],
+  ['checkerboard', 'crossfade'],
+  ['pixel-grid', 'crossfade'],
+  ['radial-clock', 'crossfade'],
+  ['stripes-diagonal', 'crossfade'],
+  ['slice-shuffle', 'crossfade'],
+  ['ripple-rings', 'crossfade'],
 ]);
 
 export const CLEAN_CUT_TRANSITION: VideoTransition = Object.freeze({ type: 'none', durationMs: 0 });
@@ -130,7 +122,7 @@ export function hydrateVideoTransition(value: unknown): VideoTransition {
   const candidate = value as { type?: unknown; durationMs?: unknown };
   const persistedType = candidate.type ?? 'none';
   const type = typeof persistedType === 'string' && RETIRED_TRANSITION_TYPES.has(persistedType)
-    ? 'crossfade'
+    ? RETIRED_TRANSITION_TYPES.get(persistedType)!
     : persistedType;
   if (!isVideoTransitionType(type)) throw new Error('A project video transition is invalid');
   if (type === 'none') return CLEAN_CUT_TRANSITION;

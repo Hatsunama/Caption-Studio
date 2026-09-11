@@ -248,6 +248,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [animationScope, setAnimationScope] = useState<StyleScope>('all');
   const [extractAudioOpen, setExtractAudioOpen] = useState(false);
   const [extractAudioBusy, setExtractAudioBusy] = useState(false);
+  const [transitionTimingOpen, setTransitionTimingOpen] = useState(false);
   const undoStackRef = useRef<CaptionProject[]>([]);
   const redoStackRef = useRef<CaptionProject[]>([]);
   const interactionStartRef = useRef<CaptionProject | undefined>(undefined);
@@ -1671,6 +1672,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     projectStyle={project.projectStyle}
                     currentMs={currentMs}
                     interactive={activeTool !== 'video' && selectedLayerId === 'captions' && Boolean(selectedCaptionId) && displayCaption?.id === selectedCaptionId}
+                    selectable={Boolean(displayCaption)}
+                    onSelect={() => { transport.pause(); setSelectedLayerId('captions'); setSelectedCaptionId(displayCaption?.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setActiveTool('captions'); }}
                     onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                     onTransform={updateSharedCaptionTransform}
                     onTransformEnd={finishHistoryInteraction}
@@ -1690,6 +1693,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                       projectStyle={pair.style}
                       currentMs={currentMs}
                       interactive={activeTool !== 'video' && selectedLayerId === pair.trackId && selectedCaptionId === pair.source.id}
+                      selectable
+                      onSelect={() => { transport.pause(); setSelectedLayerId(pair.trackId); setSelectedTranslationTrackId(pair.trackId); setSelectedCaptionId(pair.source.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setActiveTool('captions'); }}
                       onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                       onTransform={(patch) => {
                         const { position: _ignoredPosition, ...sizePatch } = patch;
@@ -1711,6 +1716,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   projectStyle={layer.style}
                   currentMs={currentMs}
                   interactive={activeTool !== 'video' && selectedLayerId === layer.id}
+                  selectable
+                  preserveLineBreaks
+                  onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setActiveTool('captions'); }}
                   onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                   onTransform={(patch) => updateTextLayerStyle(layer.id, patch)}
                   onTransformEnd={finishHistoryInteraction}
@@ -1723,6 +1731,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 key={layer.id}
                 layer={layer}
                 interactive={activeTool !== 'video' && selectedLayerId === layer.id}
+                selectable
+                onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setActiveTool('captions'); }}
                 onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                 onChange={(patch) => updateImageLayer(layer.id, patch)}
                 onEnd={finishHistoryInteraction}
@@ -1909,7 +1919,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 </ScrollView>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                   {VIDEO_TRANSITION_PRESETS.map((preset) => <Action key={preset.id} label={preset.name} color={selectedClip.transitionAfter.type === preset.id ? chrome.accent : undefined} disabled={preset.id !== 'none' && !transitionBoundaryAvailable} onPress={() => applyTransition(preset.id, preset.durationMs)} />)}
-                  {[250, 500, 1000].map((duration) => <Action key={duration} label={`${duration} ms transition`} color={selectedClip.transitionAfter.durationMs === duration ? chrome.accent : undefined} disabled={!transitionBoundaryAvailable} onPress={() => applyTransition(selectedClip.transitionAfter.type === 'none' ? 'dip-black' : selectedClip.transitionAfter.type, duration)} />)}
+                  <Action label="Transition timing…" color={selectedClip.transitionAfter.type !== 'none' ? chrome.accent : undefined} disabled={!transitionBoundaryAvailable || selectedClip.transitionAfter.type === 'none'} onPress={() => setTransitionTimingOpen(true)} />
                 </ScrollView>
                 {!transitionBoundaryAvailable ? <Text style={{ color: palette.muted, fontSize: 11 }}>Transitions need another clip touching this clip with no empty gap.</Text> : null}
               </View>
@@ -2116,6 +2126,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         onChooseAnother={() => { void addProjectVideoAudio(); }}
         onClose={() => { if (!extractAudioBusy) setExtractAudioOpen(false); }}
       />
+      <TransitionTimingSheet
+        visible={transitionTimingOpen}
+        durationMs={selectedClip?.transitionAfter.durationMs ?? 0}
+        onChoose={(durationMs) => {
+          if (selectedClip && selectedClip.transitionAfter.type !== 'none') applyTransition(selectedClip.transitionAfter.type, durationMs);
+          setTransitionTimingOpen(false);
+        }}
+        onClose={() => setTransitionTimingOpen(false)}
+      />
       <ExtractAudioBusyOverlay visible={extractAudioBusy} />
       <FontBrowser
         visible={fontBrowserOpen}
@@ -2254,6 +2273,28 @@ function Action(props: { label: string; color?: string; danger?: boolean; disabl
       {props.color ? <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: props.color }} /> : null}
       <Text style={{ color: props.danger ? '#FFBBC8' : palette.text, fontSize: 12, fontWeight: '700' }}>{props.label}</Text>
     </Pressable>
+  );
+}
+
+function TransitionTimingSheet(props: { visible: boolean; durationMs: number; onChoose: (durationMs: number) => void; onClose: () => void }) {
+  const options = [200, 350, 500, 650, 800, 1_000, 1_250, 1_500, 2_000];
+  return (
+    <Modal visible={props.visible} transparent animationType="slide" onRequestClose={props.onClose}>
+      <Pressable onPress={props.onClose} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.58)' }}>
+        <Pressable onPress={(event) => event.stopPropagation()} style={{ gap: 12, padding: 18, paddingBottom: 34, borderTopLeftRadius: chrome.radius.xl, borderTopRightRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
+          <Text style={{ color: chrome.text, fontSize: 20, fontWeight: '800' }}>Transition timing</Text>
+          <Text style={{ color: chrome.muted, fontSize: 12, lineHeight: 17 }}>Choose how long the selected transition plays.</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {options.map((durationMs) => (
+              <Pressable key={durationMs} onPress={() => props.onChoose(durationMs)} style={{ minWidth: '30%', minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: chrome.radius.md, borderWidth: durationMs === props.durationMs ? 2 : 1, borderColor: durationMs === props.durationMs ? chrome.accent : chrome.hairline, backgroundColor: chrome.surfaceRaised }}>
+                <Text style={{ color: durationMs === props.durationMs ? chrome.accent : chrome.text, fontSize: 13, fontWeight: '800' }}>{durationMs < 1_000 ? `${durationMs} ms` : `${durationMs / 1_000} sec`}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Action label="Cancel" onPress={props.onClose} />
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 

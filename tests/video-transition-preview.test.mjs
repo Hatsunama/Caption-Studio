@@ -3,7 +3,6 @@ import test from 'node:test';
 
 import {
   buildVideoTransitionPreviewWindows,
-  VIDEO_TRANSITION_PRELOAD_LEAD_MS,
   videoTransitionPreloadWindow,
   videoTransitionPreviewFrameAt,
 } from '../src/lib/video-transition-preview.ts';
@@ -11,6 +10,7 @@ import { buildClipTimeline } from '../src/lib/video-timeline.ts';
 import { readFileSync } from 'node:fs';
 
 const previewOverlaySource = readFileSync(new URL('../src/components/editor/video-transition-overlay.tsx', import.meta.url), 'utf8');
+const previewHookSource = readFileSync(new URL('../src/hooks/use-video-transition-preview.ts', import.meta.url), 'utf8');
 
 const transform = (rotation = 0) => ({
   fit: 'fit',
@@ -122,7 +122,7 @@ test('preview distinguishes exact composition and cover effects without diagram 
   )[0];
 
   assert.deepEqual([makeWindow('crossfade').mode, makeWindow('crossfade').fidelity], ['composite', 'exact']);
-  assert.deepEqual([makeWindow('wipe-left').mode, makeWindow('wipe-left').fidelity], ['composite', 'exact']);
+  assert.deepEqual([makeWindow('push-left').mode, makeWindow('push-left').fidelity], ['composite', 'exact']);
   assert.deepEqual([makeWindow('dip-black').mode, makeWindow('dip-black').fidelity], ['cover', 'exact']);
   assert.deepEqual([makeWindow('iris-circle').mode, makeWindow('iris-circle').fidelity], ['composite', 'exact']);
   assert.deepEqual([makeWindow('iris-diamond').mode, makeWindow('iris-diamond').fidelity], ['composite', 'exact']);
@@ -160,7 +160,7 @@ test('missing and insufficient transition media fail visibly', () => {
   assert.equal(insufficient.outgoing, undefined);
 });
 
-test('auxiliary decoders preload near a valid transition only', () => {
+test('the next valid transition preloads immediately so playback never waits at its boundary', () => {
   const windows = buildVideoTransitionPreviewWindows(
     buildClipTimeline([
       clip('out', 'out-source', { transitionAfter: { type: 'crossfade', durationMs: 600 } }),
@@ -169,16 +169,17 @@ test('auxiliary decoders preload near a valid transition only', () => {
     [source('out-source'), source('in-source')],
   );
 
-  const preloadStartMs = windows[0].startMs - VIDEO_TRANSITION_PRELOAD_LEAD_MS;
-  assert.equal(videoTransitionPreloadWindow(windows, preloadStartMs - 1), undefined);
-  assert.equal(videoTransitionPreloadWindow(windows, preloadStartMs)?.key, windows[0].key);
+  assert.equal(videoTransitionPreloadWindow(windows, 0)?.key, windows[0].key);
   assert.equal(videoTransitionPreloadWindow(windows, 4_300), undefined);
 });
 
 test('composite previews never animate an ExoPlayer shutter or an unrendered surface', () => {
   assert.match(previewOverlaySource, /onFirstFrameRender=\{props\.onFirstFrameRender\}/);
   assert.match(previewOverlaySource, /rendered\.outgoing && rendered\.incoming/);
-  assert.match(previewOverlaySource, /opacity: ready \? 1 : 0/);
+  assert.match(previewOverlaySource, /props\.active && ready/);
   assert.match(previewOverlaySource, /useExoShutter=\{false\}/);
   assert.doesNotMatch(previewOverlaySource, /overflow: 'hidden', backgroundColor: props\.backgroundColor/);
+  assert.doesNotMatch(previewOverlaySource, /LOADING TRANSITION PREVIEW/);
+  assert.match(previewHookSource, /renderFrame/);
+  assert.match(previewHookSource, /driftMs > 500/);
 });

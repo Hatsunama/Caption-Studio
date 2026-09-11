@@ -42,8 +42,6 @@ const COVER_TYPES = new Set<VideoTransitionType>([
   'color-wash-magenta',
 ]);
 
-export const VIDEO_TRANSITION_PRELOAD_LEAD_MS = 750;
-
 export function buildVideoTransitionPreviewWindows(
   entries: readonly ClipTimelineEntry[],
   sources: readonly ProjectVideoSource[],
@@ -181,14 +179,12 @@ export function videoTransitionPreviewFrameAt(
 export function videoTransitionPreloadWindow(
   windows: readonly VideoTransitionPreviewWindow[],
   timelineMs: number,
-  leadMs = VIDEO_TRANSITION_PRELOAD_LEAD_MS,
 ) {
   return windows.find((window) => (
     !window.unavailableReason
     && window.outgoing
     && window.incoming
     && timelineMs < window.endMs
-    && window.startMs - timelineMs <= leadMs
   ));
 }
 

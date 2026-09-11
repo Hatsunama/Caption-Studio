@@ -36,6 +36,9 @@ export function CaptionOverlay(props: {
   projectStyle: CaptionStyle;
   currentMs: number;
   interactive?: boolean;
+  selectable?: boolean;
+  preserveLineBreaks?: boolean;
+  onSelect?: () => void;
   onInteractionStart?: () => void;
   onTransform?: (patch: CaptionStylePatch) => void;
   onTransformEnd?: () => void;
@@ -75,13 +78,18 @@ export function CaptionOverlay(props: {
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => Boolean(propsRef.current.interactive),
+        onStartShouldSetPanResponder: () => Boolean(propsRef.current.interactive || propsRef.current.selectable),
         onMoveShouldSetPanResponder: () => Boolean(propsRef.current.interactive),
         onPanResponderGrant: (event) => {
+          if (!propsRef.current.interactive) {
+            propsRef.current.onSelect?.();
+            return;
+          }
           propsRef.current.onInteractionStart?.();
           rebaseGesture(readTouches(event));
         },
         onPanResponderMove: (event) => {
+          if (!propsRef.current.interactive) return;
           const touches = readTouches(event);
           if (touches.length === 0) return;
           const touchCount = touches.length >= 2 ? 2 : 1;
@@ -194,7 +202,7 @@ export function CaptionOverlay(props: {
           borderColor: chrome.accent,
           borderRadius: props.interactive ? 16 : 0,
         }}>
-        {props.interactive ? (
+        {props.interactive || props.selectable ? (
           <View
             {...panResponder.panHandlers}
             collapsable={false}
@@ -216,6 +224,9 @@ export function CaptionOverlay(props: {
             captionAnimationViewStyle(phraseState, canvasLayout.width),
           ]}>
           {style.textTreatment !== 'solid' ? (
+            props.preserveLineBreaks ? (
+              <AuthoredTextLayer absolute text={caption.text} style={style} canvas={canvasLayout} colorOverride={style.secondaryTextColor} offset={treatmentOffset(style.textTreatment)} transformed={transformed} />
+            ) : (
             <WordLayer
               absolute
               colorOverride={style.secondaryTextColor}
@@ -232,8 +243,11 @@ export function CaptionOverlay(props: {
               fittedFontSize={fittedFontSize}
               transformed={transformed}
             />
+            )
           ) : null}
-          <WordLayer
+          {props.preserveLineBreaks ? (
+            <AuthoredTextLayer text={caption.text} style={style} canvas={canvasLayout} transformed={transformed} />
+          ) : <WordLayer
             words={visibleWords}
             allWords={renderedWords}
             activeIndex={activeIndex}
@@ -245,7 +259,7 @@ export function CaptionOverlay(props: {
             wordProgress={wordProgress}
             fittedFontSize={fittedFontSize}
             transformed={transformed}
-          />
+          />}
           {style.animation.id.startsWith('emoji-') && activeWord && wordProgress !== undefined ? (
             <EmojiEffects
               mode={style.animation.id}
@@ -371,6 +385,35 @@ function WordLayer(props: {
       })}
     </View>
   );
+}
+
+function AuthoredTextLayer(props: {
+  text: string;
+  style: CaptionStyle;
+  canvas: { width: number; height: number };
+  transformed: (text: string) => string;
+  absolute?: boolean;
+  colorOverride?: string;
+  offset?: { x: number; y: number };
+}) {
+  const fontSize = fitAuthoredTextFont(props.style, props.text, props.canvas);
+  return (
+    <View style={{ ...(props.absolute ? { position: 'absolute' as const, inset: 0 } : null), width: '100%', justifyContent: 'center', transform: props.offset ? [{ translateX: props.offset.x }, { translateY: props.offset.y }] : undefined }}>
+      {props.text.replace(/\r\n/g, '\n').split('\n').map((line, index) => (
+        <Text key={index} allowFontScaling={false} numberOfLines={1} style={{ color: props.colorOverride ?? props.style.textColor, fontFamily: props.style.font.family, fontSize, fontWeight: props.style.font.family.startsWith('Caption-') ? '400' : props.style.fontWeight, fontStyle: props.style.italic ? 'italic' : 'normal', lineHeight: fontSize * Math.max(1, props.style.lineHeight), letterSpacing: props.style.letterSpacing, textAlign: props.style.alignment, textShadowColor: props.style.shadow.color, textShadowOffset: { width: props.style.shadow.offsetX, height: props.style.shadow.offsetY }, textShadowRadius: Math.max(props.style.shadow.blur, props.style.stroke.width) }}>{props.transformed(line) || '\u00a0'}</Text>
+      ))}
+    </View>
+  );
+}
+
+function fitAuthoredTextFont(style: CaptionStyle, text: string, canvas: { width: number; height: number }) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const longestLine = Math.max(1, ...lines.map((line) => Array.from(line).length));
+  const availableWidth = Math.max(24, style.box.width * canvas.width - style.background.paddingX * 2);
+  const availableHeight = Math.max(18, style.box.height * canvas.height - style.background.paddingY * 2);
+  const widthCap = availableWidth / Math.max(1, longestLine * 0.62);
+  const heightCap = availableHeight / Math.max(1, lines.length * Math.max(1, style.lineHeight));
+  return clamp(Math.min(style.fontSize, widthCap, heightCap), 9, style.fontSize);
 }
 
 function wordsForAnimation(
@@ -591,10 +634,9 @@ function RotateScaleHandle(props: {
   propsRef.current = props;
   const start = useRef({
     distance: 1,
-    angle: 0,
     box: { width: 0.86, height: 0.2 },
     fontSize: 48,
-    rotation: 0,
+    position: { x: 0.5, y: 0.78 },
   });
   const responder = useMemo(
     () =>
@@ -614,19 +656,17 @@ function RotateScaleHandle(props: {
           };
           start.current = {
             distance: Math.max(8, distance(center, point)),
-            angle: angle(center, point),
             box: { ...style.box },
             fontSize: style.fontSize,
-            rotation: style.rotation,
+            position: { ...style.position },
           };
         },
         onPanResponderMove: (event) => {
-          const style = propsRef.current.styleRef.current;
           const size = propsRef.current.canvas.current;
           const point = firstTouch(event);
           const center = {
-            pageX: size.pageX + style.position.x * size.width,
-            pageY: size.pageY + style.position.y * size.height,
+            pageX: size.pageX + start.current.position.x * size.width,
+            pageY: size.pageY + start.current.position.y * size.height,
           };
           const nextDistance = distance(center, point);
           const scale = nextDistance / start.current.distance;
@@ -635,12 +675,9 @@ function RotateScaleHandle(props: {
             height: clamp(start.current.box.height * scale, 0.06, 1.1),
           };
           propsRef.current.onChange?.({
-            position: clampPositionForBox(style.position, nextBox),
+            position: clampPositionForBox(start.current.position, nextBox),
             box: nextBox,
             fontSize: clamp(start.current.fontSize * scale, 10, 240),
-            rotation: normalizeDegrees(
-              start.current.rotation + shortestAngleDelta(start.current.angle, angle(center, point)),
-            ),
           });
         },
         onPanResponderRelease: () => propsRef.current.onEnd?.(),
@@ -667,7 +704,7 @@ function RotateScaleHandle(props: {
         borderColor: '#11140C',
         backgroundColor: chrome.accent,
       }}>
-      <Text pointerEvents="none" style={{ color: '#11140C', fontSize: 19, fontWeight: '900' }}>↻</Text>
+      <Text pointerEvents="none" style={{ color: '#11140C', fontSize: 19, fontWeight: '900' }}>↘</Text>
     </View>
   );
 }

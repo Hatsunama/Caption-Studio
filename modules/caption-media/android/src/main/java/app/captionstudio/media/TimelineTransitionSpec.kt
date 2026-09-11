@@ -4,8 +4,6 @@ internal object TimelineTransitionSpec {
   val supportedTypes = setOf(
     "none",
     "dip-black", "dip-white", "flash", "fade-dark", "crossfade",
-    "wipe-left", "wipe-right", "wipe-up", "wipe-down",
-    "slide-left", "slide-right", "slide-up", "slide-down",
     "push-left", "push-right", "push-up", "push-down",
     "zoom-in", "zoom-out", "spin",
     "fold-horizontal", "fold-vertical",
