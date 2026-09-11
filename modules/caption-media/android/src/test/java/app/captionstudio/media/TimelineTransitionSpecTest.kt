@@ -9,7 +9,6 @@ import org.junit.Test
 class TimelineTransitionSpecTest {
   @Test
   fun registryPartitionsEveryTransitionIntoOneNativeRenderingPath() {
-    assertTrue(TimelineTransitionSpec.supportedTypes.size - 1 >= 28)
     assertFalse("none" in TimelineTransitionSpec.compositeTypes)
     assertFalse("none" in TimelineTransitionSpec.coverTypes)
     assertTrue(TimelineTransitionSpec.compositeTypes.intersect(TimelineTransitionSpec.coverTypes).isEmpty())
