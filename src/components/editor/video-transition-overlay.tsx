@@ -175,7 +175,6 @@ function CompositeTransition(props: {
       <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
       <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} opacity={phase} onFirstFrameRender={onIncomingFirstFrame} />
       {type === 'fade-dark' ? <View style={[fill, { backgroundColor: '#000000', opacity: frame.peak * 140 / 255 }]} /> : null}
-      {type === 'glitch' ? <GlitchOverlay phase={phase} peak={frame.peak} height={height} /> : null}
     </>
   );
 }
@@ -293,10 +292,6 @@ function CoverTransition(props: { frame: VideoTransitionPreviewFrame; width: num
   const color = frame.type === 'dip-white' || frame.type === 'flash' ? '#FFFFFF' : '#000000';
   const opacity = frame.type === 'flash' ? peak * peak : peak;
   return <View pointerEvents="none" style={[fill, { backgroundColor: color, opacity }]} />;
-}
-
-function GlitchOverlay(props: { phase: number; peak: number; height: number }) {
-  return <View style={fill}>{Array.from({ length: 9 }, (_, row) => <View key={row} style={{ position: 'absolute', left: Math.sin(row * 2 + props.phase * 20) * 24 * props.peak, right: 0, top: row * props.height / 9, height: props.height / 18, backgroundColor: row % 2 === 0 ? '#FF00FF' : '#00FFFF', opacity: props.peak * 100 / 255 }} />)}</View>;
 }
 
 function PreviewNotice(props: { label: string; detail?: string; compact?: boolean }) {

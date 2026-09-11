@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $Repository = 'Hatsunama/Caption-Studio'
-$MinimumVersion = [Version]'1.4.32'
+$MinimumVersion = [Version]'1.4.33'
 $Package = 'com.hatsunama.captionstudio.fixed'
 $AssetName = 'caption-studio-android.apk'
 $TempDir = Join-Path $env:TEMP ("CaptionStudioInstaller-" + [Guid]::NewGuid().ToString('N'))

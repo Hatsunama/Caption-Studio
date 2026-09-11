@@ -19,7 +19,6 @@ export const VIDEO_TRANSITION_PRESETS = [
   { id: 'split-horizontal', name: 'Horizontal split', description: 'Opens outward from a horizontal seam', durationMs: 650 },
   { id: 'split-vertical', name: 'Vertical split', description: 'Opens outward from a vertical seam', durationMs: 650 },
   { id: 'shutter', name: 'Shutter', description: 'Closing camera blades', durationMs: 500 },
-  { id: 'glitch', name: 'RGB glitch', description: 'Color-channel slices', durationMs: 420 },
   { id: 'color-wash-cyan', name: 'Electric cyan wash', description: 'A bright cyan color wash bridges the cut', durationMs: 520 },
   { id: 'color-wash-magenta', name: 'Hot pink wash', description: 'A vivid magenta color wash bridges the cut', durationMs: 520 },
 ] as const;
@@ -35,8 +34,7 @@ export type VideoTransitionPreviewKind =
   | 'fold'
   | 'iris'
   | 'split'
-  | 'shutter'
-  | 'glitch';
+  | 'shutter';
 
 const TRANSITION_PREVIEW_KINDS: Record<VideoTransitionType, VideoTransitionPreviewKind> = {
   none: 'none',
@@ -59,13 +57,17 @@ const TRANSITION_PREVIEW_KINDS: Record<VideoTransitionType, VideoTransitionPrevi
   'split-horizontal': 'split',
   'split-vertical': 'split',
   shutter: 'shutter',
-  glitch: 'glitch',
   'color-wash-cyan': 'cover',
   'color-wash-magenta': 'cover',
 };
 
 export function videoTransitionPreviewKind(type: VideoTransitionType) {
   return TRANSITION_PREVIEW_KINDS[type];
+}
+
+export function videoTransitionUsesCompositeMedia(type: VideoTransitionType) {
+  const kind = videoTransitionPreviewKind(type);
+  return kind !== 'none' && kind !== 'cover' && kind !== 'shutter';
 }
 
 export type VideoTransition = {
@@ -88,6 +90,7 @@ const SUPPORTED_TRANSITION_TYPES = new Set<string>(
 );
 
 const RETIRED_TRANSITION_TYPES = new Map<string, VideoTransitionType>([
+  ['glitch', 'dip-black'],
   ['wipe-left', 'push-left'],
   ['wipe-right', 'push-right'],
   ['wipe-up', 'push-up'],

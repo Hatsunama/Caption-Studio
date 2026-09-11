@@ -1,4 +1,4 @@
-import { effectiveVideoTransition, videoTransitionPreviewKind } from '@/lib/video-transitions';
+import { effectiveVideoTransition, videoTransitionPreviewKind, videoTransitionUsesCompositeMedia } from '@/lib/video-transitions';
 import type { ClipTimelineEntry } from '@/lib/video-timeline';
 import type { ProjectVideoSource, VideoTransform, VideoTransitionType } from '@/types/project';
 
@@ -33,14 +33,7 @@ export type VideoTransitionPreviewFrame = VideoTransitionPreviewWindow & {
   incomingSourceTimeMs?: number;
 };
 
-const COVER_TYPES = new Set<VideoTransitionType>([
-  'dip-black',
-  'dip-white',
-  'flash',
-  'shutter',
-  'color-wash-cyan',
-  'color-wash-magenta',
-]);
+export const TRANSITION_PRELOAD_LEAD_MS = 1_250;
 
 export function buildVideoTransitionPreviewWindows(
   entries: readonly ClipTimelineEntry[],
@@ -63,7 +56,7 @@ export function buildVideoTransitionPreviewWindows(
     const base = {
       key: `${entry.clip.id}:${incomingEntry.clip.id}:${transition.type}:${durationMs}`,
       type: transition.type,
-      mode: COVER_TYPES.has(transition.type) ? 'cover' as const : 'composite' as const,
+      mode: videoTransitionUsesCompositeMedia(transition.type) ? 'composite' as const : 'cover' as const,
       fidelity: 'exact' as const,
       startMs: boundaryMs - beforeBoundaryMs,
       boundaryMs,
@@ -184,6 +177,7 @@ export function videoTransitionPreloadWindow(
     !window.unavailableReason
     && window.outgoing
     && window.incoming
+    && timelineMs >= window.startMs - TRANSITION_PRELOAD_LEAD_MS
     && timelineMs < window.endMs
   ));
 }

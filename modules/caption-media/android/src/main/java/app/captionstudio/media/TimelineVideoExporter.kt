@@ -731,16 +731,6 @@ private class TimelineBitmapOverlay(
         val path = Path().apply { addRect(plan.width / 2f - halfWidth, 0f, plan.width / 2f + halfWidth, plan.height.toFloat(), Path.Direction.CW) }
         drawMaskedTransitionSnapshot(canvas, transition, incomingSourceTimeMs, timeMs, path)
       }
-      "glitch" -> {
-        drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase)
-        val peak = 1f - abs(phase * 2f - 1f)
-        repeat(9) { row ->
-          paint.color = if (row % 2 == 0) Color.MAGENTA else Color.CYAN
-          paint.alpha = (100 * peak).toInt()
-          val top = row * plan.height / 9f
-          canvas.drawRect(sin(row * 2f + phase * 20f) * 24f * peak, top, plan.width.toFloat(), top + plan.height / 18f, paint)
-        }
-      }
       else -> error("Video transition $type has no compositor")
     }
   }

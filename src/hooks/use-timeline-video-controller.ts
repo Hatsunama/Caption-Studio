@@ -12,6 +12,7 @@ import {
 } from '@/lib/video-timeline';
 import {
   CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS,
+  canContinueTimelineClip,
   canSeamlessSwapToClip,
   clipHandoffPrimeAt,
   oppositeTimelineSlot,
@@ -105,7 +106,10 @@ export function useTimelineVideoController(
     primedRef.current = undefined;
   };
 
-  const releaseStandbySurface = useCallback(() => undefined, []);
+  const invalidateStandbyPrime = useCallback(() => {
+    primedRef.current = undefined;
+    players[oppositeTimelineSlot(activeSlotRef.current)].pause();
+  }, [players]);
 
   const stopTransport = useCallback(() => {
     playIntentRef.current = false;
@@ -284,10 +288,10 @@ export function useTimelineVideoController(
     const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
     const targetMs = clamp(timelineMs, 0, duration);
     setCurrentMs(targetMs);
-    releaseStandbySurface();
+    invalidateStandbyPrime();
     desiredRef.current = { generation: ++generationRef.current, timelineMs: targetMs };
     void drainTargetsRef.current();
-  }, [releaseStandbySurface]);
+  }, [invalidateStandbyPrime]);
 
   const play = useCallback(() => {
     const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
@@ -310,10 +314,10 @@ export function useTimelineVideoController(
     const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
     const timelineMs = clamp(currentMsRef.current, 0, duration);
     setCurrentMs(timelineMs);
-    releaseStandbySurface();
+    invalidateStandbyPrime();
     desiredRef.current = { generation: ++generationRef.current, timelineMs };
     void drainTargetsRef.current();
-  }, [releaseStandbySurface]);
+  }, [invalidateStandbyPrime]);
 
   const advanceFrom = (entry: ClipTimelineEntry) => {
     if (!playIntentRef.current || boundaryClipIdRef.current === entry.clip.id) return;
@@ -330,6 +334,19 @@ export function useTimelineVideoController(
       stopTransport();
       setCurrentMs(entry.endMs);
       setPhase('ended');
+      return;
+    }
+    if (canContinueTimelineClip(entry, next)) {
+      const player = activePlayer();
+      activeClipIdRef.current = next.clip.id;
+      confirmedSourceIdRef.current = next.clip.sourceId;
+      boundaryClipIdRef.current = undefined;
+      clearStandbyPrime();
+      player.playbackRate = next.clip.playbackRate;
+      player.muted = next.clip.muted;
+      player.volume = clipPlaybackVolume(next.clip, 0);
+      setCurrentMs(next.startMs);
+      setPhase('ready');
       return;
     }
     setCurrentMs(next.startMs);

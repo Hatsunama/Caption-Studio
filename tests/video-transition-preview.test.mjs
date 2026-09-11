@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildVideoTransitionPreviewWindows,
+  TRANSITION_PRELOAD_LEAD_MS,
   videoTransitionPreloadWindow,
   videoTransitionPreviewFrameAt,
 } from '../src/lib/video-transition-preview.ts';
@@ -160,7 +161,7 @@ test('missing and insufficient transition media fail visibly', () => {
   assert.equal(insufficient.outgoing, undefined);
 });
 
-test('the next valid transition preloads immediately so playback never waits at its boundary', () => {
+test('transition media is admitted only inside a bounded lead window', () => {
   const windows = buildVideoTransitionPreviewWindows(
     buildClipTimeline([
       clip('out', 'out-source', { transitionAfter: { type: 'crossfade', durationMs: 600 } }),
@@ -169,7 +170,8 @@ test('the next valid transition preloads immediately so playback never waits at 
     [source('out-source'), source('in-source')],
   );
 
-  assert.equal(videoTransitionPreloadWindow(windows, 0)?.key, windows[0].key);
+  assert.equal(videoTransitionPreloadWindow(windows, windows[0].startMs - TRANSITION_PRELOAD_LEAD_MS - 1), undefined);
+  assert.equal(videoTransitionPreloadWindow(windows, windows[0].startMs - TRANSITION_PRELOAD_LEAD_MS)?.key, windows[0].key);
   assert.equal(videoTransitionPreloadWindow(windows, 4_300), undefined);
 });
 
@@ -182,4 +184,5 @@ test('composite previews never animate an ExoPlayer shutter or an unrendered sur
   assert.doesNotMatch(previewOverlaySource, /LOADING TRANSITION PREVIEW/);
   assert.match(previewHookSource, /renderFrame/);
   assert.match(previewHookSource, /driftMs > 500/);
+  assert.match(previewHookSource, /replaceAsync\(null\)/);
 });

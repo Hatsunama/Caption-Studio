@@ -19,9 +19,10 @@ test('caption generation consumes the audible timeline and restores real project
   assert.match(moduleSource, /TimelineAudioRenderer\.cancel\(\)/);
 });
 
-test('ordinary transport operations never evict a prepared standby source', async () => {
+test('ordinary transport operations invalidate and pause stale standby media without reloading it', async () => {
   const controller = await readFile(new URL('src/hooks/use-timeline-video-controller.ts', repositoryRoot), 'utf8');
   assert.doesNotMatch(controller, /replaceAsync\(null\)/);
-  assert.match(controller, /const releaseStandbySurface = useCallback\(\(\) => undefined, \[\]\)/);
+  assert.match(controller, /const invalidateStandbyPrime = useCallback/);
+  assert.match(controller, /players\[oppositeTimelineSlot\(activeSlotRef\.current\)\]\.pause\(\)/);
   assert.doesNotMatch(controller, /^\s*setPhase\('loading'\);$/m);
 });

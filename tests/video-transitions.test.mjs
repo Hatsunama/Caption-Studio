@@ -9,6 +9,7 @@ import {
   hydrateVideoTransition,
   hydrateVideoTransitionBoundaries,
   videoTransitionPreviewKind,
+  videoTransitionUsesCompositeMedia,
   VIDEO_TRANSITION_PRESETS,
 } from '../src/lib/video-transitions.ts';
 
@@ -30,6 +31,11 @@ test('the transition catalog contains unique effects routed to preview and nativ
   assert.ok(supportedBlock, 'native transition registry was not found');
   const nativeIds = [...supportedBlock.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(new Set(nativeIds), new Set(ids));
+  const coverBlock = /coverTypes = setOf\(([\s\S]*?)\n  \)/.exec(nativeTransitionSource)?.[1];
+  assert.ok(coverBlock, 'native cover transition registry was not found');
+  const nativeCoverIds = [...coverBlock.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const expectedCoverIds = ids.filter((id) => id !== 'none' && !videoTransitionUsesCompositeMedia(id));
+  assert.deepEqual(new Set(nativeCoverIds), new Set(expectedCoverIds));
 });
 
 test('every advertised transition survives persisted JSON hydration', () => {
@@ -86,6 +92,14 @@ test('retired diagram-only transitions migrate to a real cross dissolve', () => 
   }
 });
 
+test('the retired RGB overlay migrates to a decoder-free cinematic dip', () => {
+  assert.equal(VIDEO_TRANSITION_PRESETS.some((preset) => preset.id === 'glitch'), false);
+  assert.deepEqual(hydrateVideoTransition({ type: 'glitch', durationMs: 420 }), {
+    type: 'dip-black',
+    durationMs: 420,
+  });
+});
+
 test('retired duplicate directional transitions migrate to the matching push direction', () => {
   for (const family of ['wipe', 'slide']) {
     for (const direction of ['left', 'right', 'up', 'down']) {
@@ -125,9 +139,9 @@ test('a gap edit atomically clears its boundary transition and blocks reapplicat
 
   const packed = setVideoClipGap(gapped.project, 'second', 0);
   assert.ok(packed);
-  const restored = setVideoTransition(packed.project, 'first', 'glitch', 420);
-  assert.equal(restored.clips[0].transitionAfter.type, 'glitch');
-  assert.equal(videoTransitionOverlay(buildClipTimeline(restored.clips), 4_000)?.type, 'glitch');
+  const restored = setVideoTransition(packed.project, 'first', 'crossfade', 420);
+  assert.equal(restored.clips[0].transitionAfter.type, 'crossfade');
+  assert.equal(videoTransitionOverlay(buildClipTimeline(restored.clips), 4_000)?.type, 'crossfade');
 });
 
 test('trimming either side of a shared cut clears the transition crossed by new dead space', () => {

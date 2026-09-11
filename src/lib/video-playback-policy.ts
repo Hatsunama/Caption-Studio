@@ -34,7 +34,20 @@ export function clipHandoffPrimeAt(
   if (remainingMs > primeWindowMs || remainingMs < -CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS) return undefined;
   const next = nextClipEntry(entries, entry.clip.id);
   if (!next || next.startMs > entry.endMs + CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS) return undefined;
+  if (canContinueTimelineClip(entry, next)) return undefined;
   return { next, remainingMs: Math.max(0, remainingMs) };
+}
+
+export function canContinueTimelineClip(
+  current: ClipTimelineEntry,
+  next: ClipTimelineEntry | undefined,
+) {
+  return Boolean(
+    next
+    && current.clip.sourceId === next.clip.sourceId
+    && Math.abs(current.clip.sourceEndMs - next.clip.sourceStartMs) <= 1
+    && Math.abs(current.endMs - next.startMs) <= CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS,
+  );
 }
 
 export function canSeamlessSwapToClip(options: {

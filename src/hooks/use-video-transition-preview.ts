@@ -49,19 +49,23 @@ export function useVideoTransitionPreview(options: {
 
   useEffect(() => {
     desiredRef.current = preload;
-    if (!preload?.outgoing || !preload.incoming) {
-      outgoingPlayer.pause();
-      incomingPlayer.pause();
-      return;
-    }
-    if (loadRef.current.key === preload.key && loadRef.current.state === 'ready') return;
     if (drainingRef.current) return;
     drainingRef.current = true;
     void (async () => {
       try {
         while (mountedRef.current) {
           const desired = desiredRef.current;
-          if (!desired?.outgoing || !desired.incoming) return;
+          if (!desired?.outgoing || !desired.incoming) {
+            outgoingPlayer.pause();
+            incomingPlayer.pause();
+            await unloadPreviewPair({
+              outgoingPlayer,
+              incomingPlayer,
+              loadedUris: loadedUrisRef.current,
+            });
+            if (mountedRef.current) setLoad({ state: 'idle' });
+            return;
+          }
           if (loadRef.current.key === desired.key && loadRef.current.state === 'ready') return;
           outgoingPlayer.pause();
           incomingPlayer.pause();
@@ -156,6 +160,21 @@ async function loadPreviewPair(options: {
   if (options.loadedUris.incoming !== options.incomingUri) {
     await options.incomingPlayer.replaceAsync(options.incomingUri);
     options.loadedUris.incoming = options.incomingUri;
+  }
+}
+
+async function unloadPreviewPair(options: {
+  outgoingPlayer: ReturnType<typeof useVideoPlayer>;
+  incomingPlayer: ReturnType<typeof useVideoPlayer>;
+  loadedUris: { outgoing?: string; incoming?: string };
+}) {
+  if (options.loadedUris.outgoing) {
+    await options.outgoingPlayer.replaceAsync(null);
+    options.loadedUris.outgoing = undefined;
+  }
+  if (options.loadedUris.incoming) {
+    await options.incomingPlayer.replaceAsync(null);
+    options.loadedUris.incoming = undefined;
   }
 }
 

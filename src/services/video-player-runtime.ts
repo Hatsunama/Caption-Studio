@@ -1,16 +1,16 @@
 import type { VideoPlayer } from 'expo-video';
 
 export const TIMELINE_PLAYER_BUFFER_OPTIONS = Object.freeze({
-  maxBufferBytes: 24 * 1024 * 1024,
+  maxBufferBytes: 16 * 1024 * 1024,
   minBufferForPlayback: 0.5,
-  preferredForwardBufferDuration: 4,
+  preferredForwardBufferDuration: 3,
   prioritizeTimeOverSizeThreshold: false,
 });
 
 export const TRANSITION_PLAYER_BUFFER_OPTIONS = Object.freeze({
-  maxBufferBytes: 12 * 1024 * 1024,
+  maxBufferBytes: 8 * 1024 * 1024,
   minBufferForPlayback: 0.2,
-  preferredForwardBufferDuration: 2.25,
+  preferredForwardBufferDuration: 1.25,
   prioritizeTimeOverSizeThreshold: false,
 });
 

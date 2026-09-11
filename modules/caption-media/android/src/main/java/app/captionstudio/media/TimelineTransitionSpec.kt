@@ -9,11 +9,11 @@ internal object TimelineTransitionSpec {
     "fold-horizontal", "fold-vertical",
     "iris-circle", "iris-diamond",
     "split-horizontal", "split-vertical",
-    "shutter", "glitch", "color-wash-cyan", "color-wash-magenta",
+    "shutter", "color-wash-cyan", "color-wash-magenta",
   )
 
   val coverTypes = setOf(
-    "dip-black", "dip-white", "flash", "shutter",
+    "dip-black", "dip-white", "flash", "fade-dark", "shutter",
     "color-wash-cyan", "color-wash-magenta",
   )
 
