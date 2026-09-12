@@ -65,11 +65,6 @@ import {
   trackLinkedMediaPermissions,
   trackProjectOwnedAssets,
 } from '@/lib/media-lifecycle';
-import {
-  mergeCaptionScriptBlock,
-  splitCaptionScriptBlockAtTime,
-  type CaptionScriptMutation,
-} from '@/lib/caption-script';
 import { fontChoicePatch, type FontChoice } from '@/lib/font-catalog';
 import { canApplyVideoTransition, VIDEO_TRANSITION_PRESETS } from '@/lib/video-transitions';
 import {
@@ -640,7 +635,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       pushUndo(before);
       projectRef.current = next;
       setProject(next);
-      setSelectedCaptionId(next.captions[0]?.id);
+      selectEditorObject({ kind: 'captions', captionId: next.captions[0]?.id });
       if (before.captionTracks.translations.length > 0 && next.captionTracks.translations.length === 0) {
         Alert.alert(
           'Second language reset',
@@ -717,7 +712,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       ? scope === 'caption' && selectedCaptionId
         ? setTranslationCueStyle(before, pendingChange.translationTrackId, selectedCaptionId, pendingChange.patch, new Date().toISOString())
         : setTranslationTrackStyle(before, pendingChange.translationTrackId, pendingChange.patch, new Date().toISOString())
-      : applyStylePatch(before, selectedCaptionId ?? '', scope, pendingChange.patch);
+      : applyStylePatch(before, selectedCaptionId, scope, pendingChange.patch);
     try {
       await commitPersistedProject(next, (persisted) => {
         pushUndo(before);
@@ -767,7 +762,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const chooseAnimation = (id: CaptionAnimationId) => {
     const preset = findAnimationPreset(id);
-    if (selectedTextLayer) {
+    if (activeTool === 'stickers' && selectedTextLayer) {
       updateTextLayerStyle(selectedTextLayer.id, {
         animation: { id, intensity: preset.intensity, durationMs: preset.durationMs },
       }, true);
@@ -795,7 +790,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         ? scope === 'caption' && selectedCaptionId
           ? setTranslationCueStyle(current, selectedTranslationTrack.id, selectedCaptionId, patch, new Date().toISOString())
           : setTranslationTrackStyle(current, selectedTranslationTrack.id, patch, new Date().toISOString())
-        : applyStylePatch(current, selectedCaptionId ?? '', scope, patch);
+        : applyStylePatch(current, selectedCaptionId, scope, patch);
       projectRef.current = next;
       persistProjectInBackground(next);
       return next;
@@ -1053,56 +1048,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     await translationController.cancel();
   };
 
-  const commitCaptionStructure = async (mutation: CaptionScriptMutation) => {
-    const before = projectRef.current;
-    const next = replaceVisibleCaptionScript(before, mutation.captions);
-    if (next === before) return;
-    const changedCaptionIds = changedPrimaryCaptionTextIds(before, next);
-    await commitPersistedProject(next, (persisted) => {
-      pushUndo(before);
-      projectRef.current = persisted;
-      setProject(persisted);
-      setSelectedCaptionId(mutation.focusedId);
-    });
-    const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
-    if (visibleTranslation && changedCaptionIds.length > 0) {
-      offerTranslationRefresh(changedCaptionIds, visibleTranslation);
-    }
-  };
-
-  const reportCaptionCommitFailure = (caught: unknown) => {
-    Alert.alert(
-      'Caption change not saved',
-      caught instanceof Error ? caught.message : 'The caption change could not be saved. Try again.',
-    );
-  };
-
-  const splitSelectedCaptionAtPlayhead = () => {
-    if (!selectedCaption) return;
-    const mutation = splitCaptionScriptBlockAtTime(
-      timelineCaptions,
-      selectedCaption.id,
-      currentMs,
-      projectRef.current.transcription.words,
-      uniqueId('caption'),
-    );
-    if (!mutation) {
-      Alert.alert('Move the playhead inside this subtitle', 'A split needs a little room on both sides of the playhead.');
-      return;
-    }
-    void commitCaptionStructure(mutation).catch(reportCaptionCommitFailure);
-  };
-
-  const joinSelectedCaption = (direction: 'previous' | 'next') => {
-    if (!selectedCaption) return;
-    const mutation = mergeCaptionScriptBlock(timelineCaptions, selectedCaption.id, direction);
-    if (!mutation) {
-      Alert.alert('Nothing to join', `There is no subtitle immediately ${direction === 'previous' ? 'before' : 'after'} this one.`);
-      return;
-    }
-    void commitCaptionStructure(mutation).catch(reportCaptionCommitFailure);
-  };
-
   const updateTextLayerStyle = (layerId: string, patch: CaptionStylePatch, persist = false) => {
     if (persist) pushUndo();
     setProject((current) => {
@@ -1114,7 +1059,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const updateSharedCaptionTransform = (patch: CaptionStylePatch) => {
-    if (!selectedCaptionId) return;
     setProject((current) => {
       const next = applyStylePatch(current, selectedCaptionId, 'all', patch);
       projectRef.current = next;
@@ -2071,14 +2015,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <Action label={selectedTranslationTrack.visible ? 'Hide second language' : 'Show second language'} onPress={() => { void toggleSelectedTranslationTrack(); }} />
                 <Action label="Remove second language" danger onPress={confirmRemoveSelectedTranslationTrack} />
               </PersistedHorizontalScroll>
-            ) : selectedCaption ? (
+            ) : (
               <PersistedHorizontalScroll id="tool:captions:caption" contentContainerStyle={{ gap: 8 }}>
-                <Action label="Split at playhead" onPress={splitSelectedCaptionAtPlayhead} />
-                <Action label="Join previous" onPress={() => joinSelectedCaption('previous')} />
-                <Action label="Join next" onPress={() => joinSelectedCaption('next')} />
-                <Action label="Edit captions" onPress={beginEditCaption} />
+                <Action label="Edit captions" disabled={timelineCaptions.length === 0} onPress={beginEditCaption} />
                 <Action label="Dual subtitles" color={chrome.accent} onPress={openDualCaptionEditor} />
-                <Action label="Delete subtitle" danger onPress={() => confirmDeleteCaption(selectedCaption.id)} />
+                {selectedCaption ? <Action label="Delete subtitle" danger onPress={() => confirmDeleteCaption(selectedCaption.id)} /> : null}
                 <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
                 <Action label="White" color="#FFFFFF" onPress={() => queueCaptionStyleChange('Text color: white', { textColor: '#FFFFFF' })} />
                 <Action label="Lime" color="#DFFF35" onPress={() => queueCaptionStyleChange('Text color: lime', { textColor: '#DFFF35' })} />
@@ -2092,12 +2033,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     queueMicrotask(finishHistoryInteraction);
                   }}
                 />
-              </PersistedHorizontalScroll>
-            ) : (
-              <PersistedHorizontalScroll id="tool:captions:empty" contentContainerStyle={{ gap: 8 }}>
-                <Action label="Edit captions" disabled={timelineCaptions.length === 0} onPress={beginEditCaption} />
-                <Action label="Dual subtitles" onPress={openDualCaptionEditor} />
-                <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
               </PersistedHorizontalScroll>
             )}
             <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: chrome.hairline, paddingTop: 12 }}>
@@ -2178,6 +2113,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         captions={timelineCaptions}
         words={project.transcription.words}
         initialCaptionId={selectedCaptionId ?? activeCaption?.id}
+        currentMs={currentMs}
+        isPlaying={isPlaying}
+        onSeekTimeline={seekTimeline}
         onSelectCaption={(caption) => {
           transport.pause();
           setSelectedLayerId('captions');
