@@ -202,7 +202,7 @@ public final class NaturalCaptionTranslatorTest {
   }
 
   @Test
-  public void singleCaptionRetryAcceptsOnlyUnwrappedPlainText() throws Exception {
+  public void singleCaptionRetryAcceptsOnlyExactIdJson() throws Exception {
     NaturalCaptionTranslator.Caption expected =
         new NaturalCaptionTranslator.Caption("one", "Okay.");
 
@@ -211,10 +211,12 @@ public final class NaturalCaptionTranslatorTest {
         NaturalCaptionTranslator.parseStrictResponse("好的。", List.of(expected)).get(0).valid
     );
     NaturalCaptionTranslator.Caption accepted =
-        NaturalCaptionTranslator.parseSingleCaptionRetryResponse("  好的。\n", expected);
+        NaturalCaptionTranslator.parseSingleCaptionRetryResponse("  [{\"id\":\"one\",\"text\":\"好的。\"}]\n", expected);
     assertEquals("one", accepted.id);
     assertEquals("好的。", accepted.text);
     assertEquals(true, accepted.valid);
+
+    assertEquals(false, NaturalCaptionTranslator.parseSingleCaptionRetryResponse("  好的。\n", expected).valid);
 
     assertEquals(
         false,
@@ -234,7 +236,7 @@ public final class NaturalCaptionTranslatorTest {
   }
 
   @Test
-  public void individualRepairBindsPlainTextToTheOnlyRequestedCue() throws Exception {
+  public void individualRepairRequiresTheOnlyRequestedCueId() throws Exception {
     File model = modelFixture();
     AtomicInteger calls = new AtomicInteger();
     TranslationRuntime runtime = new TranslationRuntime() {
@@ -242,8 +244,8 @@ public final class NaturalCaptionTranslatorTest {
       public String translate(String prompt) {
         calls.incrementAndGet();
         JsonObject payload = JsonParser.parseString(prompt).getAsJsonObject();
-        return "translate_single_caption".equals(payload.get("task").getAsString())
-            ? "好的。"
+        return payload.has("retry")
+            ? "[{\"id\":\"one\",\"text\":\"好的。\"}]"
             : "not structured JSON";
       }
 

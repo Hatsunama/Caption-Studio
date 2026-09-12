@@ -37,7 +37,7 @@ const NATURAL_TRANSLATION_MODEL = {
   downloadBytes: 1_597_931_520,
   sha256: 'faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9',
   revision: '19edb84c69a0212f29a6ef17ba0d6f278b6a1614',
-  promptVersion: 3,
+  promptVersion: 4,
   downloadUrl: 'https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/19edb84c69a0212f29a6ef17ba0d6f278b6a1614/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
 } as const;
 

@@ -52,8 +52,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final int MAX_OUTPUT_TEXT_CHARACTERS = 2_000;
   static final int MAX_TOTAL_OUTPUT_CHARACTERS = 16_000;
   static final String PROMPT_CONTRACT = "qwen2.5-caption-json-v2";
-  // Bump when the runtime version, backend, token limits, or sampler changes.
-  static final String CHECKPOINT_PROFILE = "v3;litertlm-0.16.1;cpu;4096;1536;topk1;topp1;temperature0;seed0;single-cue-text-repair;strict-boundary";
+  // Bump when runtime settings or response acceptance change; old accepted text is not evidence of validity.
+  static final String CHECKPOINT_PROFILE = "v4;litertlm-0.16.1;cpu;4096;1536;topk1;topp1;temperature0;seed0;single-cue-json-repair;strict-boundary";
 
   static final String INVALID_REQUEST = "E_TRANSLATION_INVALID_REQUEST";
   static final String BUSY = "E_TRANSLATION_BUSY";
@@ -82,7 +82,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           + "Short acknowledgements are complete utterances. On retry, translate the single requested cue using its context; do not translate the context itself. "
           + "Do not leave source-language words untranslated unless they are code-like tokens, URLs, brands, or proper names that have no natural translation. "
           + "For translate_caption_batch requests: Return exactly one JSON array and nothing else. Every array item must be an object with exactly two string fields named id and text. "
-          + "The item count, item order, and every id must exactly match the input. For translate_single_caption requests whose responseFormat is single_caption_text, return only the translated cue text with no id, label, wrapper, or explanation. Never use Markdown or code fences. "
+          + "The item count, item order, and every id must exactly match the input, including on single-cue retries. Never use Markdown or code fences. "
           + "Never echo the source sentence as a fallback. Use the grammar and writing system of the declared target language. "
           + "For zh-Hans use Simplified Chinese characters and for zh-Hant use Traditional Chinese characters.";
 
@@ -428,9 +428,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     if (textCharacterCount(right) > 250) right = right.substring(0, right.offsetByCodePoints(0, 250));
     ValidatedRequest single = new ValidatedRequest(request.sourceLanguage, request.targetLanguage, List.of(request.captions.get(index)), left, right);
     JsonObject payload = com.google.gson.JsonParser.parseString(buildUserPrompt(single)).getAsJsonObject();
-    payload.addProperty("task", "translate_single_caption");
     payload.addProperty("retry", true);
-    payload.addProperty("responseFormat", "single_caption_text");
     return payload.toString();
   }
 
@@ -887,6 +885,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         reader.endObject();
         itemCount += 1;
         if (fields != 2 || id == null || text == null || !expectedById.containsKey(id)
+            || itemCount > expectedCaptions.size() || !expectedCaptions.get(itemCount - 1).id.equals(id)
             || accepted.containsKey(id)) {
           return emptyFallback(expectedCaptions);
         }
@@ -894,6 +893,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         Caption expected = expectedById.get(id);
         if (isBlankText(normalized)
             || textCharacterCount(normalized) > MAX_OUTPUT_TEXT_CHARACTERS
+            || normalized.contains("<|") || containsDisallowedControlCharacter(normalized)
             || !TranslationOutputQuality.isPlausibleCueTranslation(expected.text, normalized)) {
           accepted.put(id, new Caption(id, "", false));
           continue;
@@ -919,19 +919,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
 
   static Caption parseSingleCaptionRetryResponse(String response, Caption expected)
       throws TranslationFailure {
-    Caption structured = parseStrictResponse(response, List.of(expected)).get(0);
-    if (structured.valid) return structured;
-    if (response == null || response.isEmpty() || response.length() > MAX_OUTPUT_CHARACTERS) {
-      return new Caption(expected.id, "", false);
-    }
-    String text = response.trim();
-    if (isBlankText(text) || textCharacterCount(text) > MAX_OUTPUT_TEXT_CHARACTERS
-        || text.startsWith("[") || text.startsWith("{") || text.startsWith("```")
-        || text.contains("<|") || containsDisallowedControlCharacter(text)
-        || !TranslationOutputQuality.isPlausibleCueTranslation(expected.text, text)) {
-      return new Caption(expected.id, "", false);
-    }
-    return new Caption(expected.id, text, true);
+    // Never assign an ID to unstructured model output: it can contain other cues or context.
+    // Retries and restored checkpoints must satisfy the same contract as fresh batches.
+    return parseStrictResponse(response, List.of(expected)).get(0);
   }
 
   private static boolean containsDisallowedControlCharacter(String text) {
