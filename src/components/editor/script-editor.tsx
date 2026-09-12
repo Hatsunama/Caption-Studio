@@ -3,7 +3,6 @@ import {
   Alert,
   FlatList,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   Text,
@@ -32,6 +31,9 @@ export function ScriptEditor(props: {
   words: WordToken[];
   initialCaptionId?: string;
   onSelectCaption: (caption: CaptionBlock) => void;
+  currentMs: number;
+  isPlaying: boolean;
+  onSeekTimeline: (timelineMs: number) => void;
   onCancel: () => void;
   onSave: (captions: CaptionBlock[]) => Promise<void>;
 }) {
@@ -48,6 +50,10 @@ export function ScriptEditor(props: {
   const [journalReady, setJournalReady] = useState(false);
   const [journalError, setJournalError] = useState<string>();
   const wasVisibleRef = useRef(false);
+  const captionLayoutsRef = useRef<Record<string, { y: number; height: number }>>({});
+  const listViewportHeightRef = useRef(0);
+  const listScrollOriginRef = useRef<'playback' | 'user'>('user');
+  const lastTimelineCaptionIdRef = useRef<string>();
 
   const sourceCaptions = useMemo(
     () => [...props.captions].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs),
@@ -129,6 +135,18 @@ export function ScriptEditor(props: {
       clearTimeout(timer);
     };
   }, [draftCaptions, journalReady, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
+
+  useEffect(() => {
+    if (!props.visible || !props.isPlaying) return;
+    const active = sourceCaptions.find((caption) => props.currentMs >= caption.startMs && props.currentMs < caption.endMs);
+    if (!active || lastTimelineCaptionIdRef.current === active.id) return;
+    lastTimelineCaptionIdRef.current = active.id;
+    const index = sourceCaptions.findIndex((caption) => caption.id === active.id);
+    listScrollOriginRef.current = 'playback';
+    listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+    const release = setTimeout(() => { listScrollOriginRef.current = 'user'; }, 260);
+    return () => clearTimeout(release);
+  }, [props.currentMs, props.isPlaying, props.visible, sourceCaptions]);
 
   const selectForEditing = (caption: CaptionBlock) => {
     selectionRef.current[caption.id] ??= { start: caption.text.length, end: caption.text.length };
@@ -251,15 +269,42 @@ export function ScriptEditor(props: {
     ]);
   };
 
+  if (!props.visible) return null;
+
+  const seekToCenteredCaption = (offsetY: number) => {
+    if (props.isPlaying || listScrollOriginRef.current !== 'user' || listViewportHeightRef.current <= 0) return;
+    const centerY = offsetY + listViewportHeightRef.current / 2;
+    const nearest = sourceCaptions.reduce<CaptionBlock | undefined>((closest, caption) => {
+      const layout = captionLayoutsRef.current[caption.id];
+      if (!layout) return closest;
+      if (!closest) return caption;
+      const closestLayout = captionLayoutsRef.current[closest.id];
+      return Math.abs(layout.y + layout.height / 2 - centerY) < Math.abs(closestLayout.y + closestLayout.height / 2 - centerY)
+        ? caption
+        : closest;
+    }, undefined);
+    if (!nearest || lastTimelineCaptionIdRef.current === nearest.id) return;
+    lastTimelineCaptionIdRef.current = nearest.id;
+    props.onSeekTimeline(nearest.startMs);
+  };
+
   return (
-    <Modal
-      visible={props.visible}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={saving ? undefined : cancel}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1, backgroundColor: chrome.background }}>
+        style={{
+          position: 'absolute',
+          zIndex: 100,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: '50%',
+          backgroundColor: chrome.background,
+          borderTopWidth: 1,
+          borderTopColor: chrome.hairline,
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+          overflow: 'hidden',
+        }}>
         <View style={{ minHeight: 76, paddingHorizontal: 18, paddingTop: 18, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
           <Pressable accessibilityRole="button" accessibilityLabel="Cancel caption edits" disabled={saving} hitSlop={10} onPress={cancel} style={{ minWidth: 60, minHeight: 44, justifyContent: 'center' }}>
             <Text style={{ color: chrome.muted, fontSize: 17, fontWeight: '600' }}>Cancel</Text>
@@ -273,17 +318,21 @@ export function ScriptEditor(props: {
           </Pressable>
         </View>
 
-        <FlatList
-          ref={listRef}
-          data={draftCaptions}
-          keyExtractor={(caption) => caption.id}
-          keyboardDismissMode="interactive"
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 48, gap: 8 }}
+        <View style={{ flex: 1 }}>
+          <FlatList
+            ref={listRef}
+            data={draftCaptions}
+            keyExtractor={(caption) => caption.id}
+            keyboardDismissMode="interactive"
+            keyboardShouldPersistTaps="handled"
+            onLayout={(event) => { listViewportHeightRef.current = event.nativeEvent.layout.height; }}
+            onScroll={(event) => seekToCenteredCaption(event.nativeEvent.contentOffset.y)}
+            scrollEventThrottle={32}
+            contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 48, gap: 8 }}
           ListHeaderComponent={(
             <View style={{ marginBottom: 6, gap: 5 }}>
               <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 18 }}>
-                Finish these spoken subtitles before adding a second language. Tap a subtitle to edit it. Use the visible Split and Join controls. Enter and Backspace remain available as keyboard shortcuts. Split and Join keep the same rhythm the translation will try to follow.
+                Keep the video visible while you edit. Scroll this list to seek the video; while it plays, the active subtitle stays at the center guide. Tap a subtitle to edit it.
               </Text>
               {boundaryMessage ? <Text style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{boundaryMessage}</Text> : null}
               {journalError ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{journalError}</Text> : null}
@@ -305,7 +354,7 @@ export function ScriptEditor(props: {
             const editing = item.id === editingCaptionId;
             const invalid = item.id === emptyCaptionId;
             return (
-              <Pressable accessibilityRole="button" accessibilityLabel={`Edit caption ${index + 1} at ${formatTimestamp(item.startMs)}`} onPress={() => selectForEditing(item)} style={{ minHeight: 72, flexDirection: 'row', gap: 12, padding: 14, borderRadius: chrome.radius.lg, backgroundColor: selected ? chrome.surfaceRaised : chrome.surface }}>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Edit caption ${index + 1} at ${formatTimestamp(item.startMs)}`} onLayout={(event) => { captionLayoutsRef.current[item.id] = event.nativeEvent.layout; }} onPress={() => selectForEditing(item)} style={{ minHeight: 72, flexDirection: 'row', gap: 12, padding: 14, borderRadius: chrome.radius.lg, backgroundColor: selected ? chrome.surfaceRaised : chrome.surface }}>
                 <View style={{ width: 54, paddingTop: 3 }}>
                   <Text style={{ color: selected ? chrome.accent : chrome.muted, fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] }}>{formatTimestamp(item.startMs)}</Text>
                   <Text style={{ marginTop: 4, color: '#5E6874', fontSize: 9, fontVariant: ['tabular-nums'] }}>{formatTimestamp(item.endMs)}</Text>
@@ -338,9 +387,10 @@ export function ScriptEditor(props: {
               </Pressable>
             );
           }}
-        />
+          />
+          <View pointerEvents="none" style={{ position: 'absolute', left: 8, right: 8, top: '50%', height: 2, borderRadius: 1, backgroundColor: '#B7FF4A', shadowColor: '#B7FF4A', shadowOpacity: 0.95, shadowRadius: 5, elevation: 5 }} />
+        </View>
       </KeyboardAvoidingView>
-    </Modal>
   );
 }
 

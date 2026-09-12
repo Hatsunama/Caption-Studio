@@ -2178,6 +2178,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         captions={timelineCaptions}
         words={project.transcription.words}
         initialCaptionId={selectedCaptionId ?? activeCaption?.id}
+        currentMs={currentMs}
+        isPlaying={isPlaying}
+        onSeekTimeline={seekTimeline}
         onSelectCaption={(caption) => {
           transport.pause();
           setSelectedLayerId('captions');
