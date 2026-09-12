@@ -188,7 +188,7 @@ export function updatePairedCaptionTexts(
       throw new Error(`Caption track ${update.trackId} does not exist.`);
     }
     if (update.primaryText === undefined && update.translatedText === undefined) return;
-    const pairKey = `${update.trackId}:${update.sourceCaptionId}`;
+    const pairKey = captionPairKey(update.trackId, update.sourceCaptionId);
     if (pairKeys.has(pairKey)) {
       throw new Error(`Caption ${update.sourceCaptionId} has more than one update for track ${update.trackId}.`);
     }
@@ -215,7 +215,7 @@ export function updatePairedCaptionTexts(
   const translations = synchronized.translations.map((track) => ({
     ...track,
     cues: track.cues.map((cue) => {
-      const update = translatedUpdates.get(`${track.id}:${cue.sourceCaptionId}`);
+      const update = translatedUpdates.get(captionPairKey(track.id, cue.sourceCaptionId));
       if (!update?.translatedText) return cue;
       const source = primaryById.get(cue.sourceCaptionId);
       if (!source) throw new Error(`Primary caption ${cue.sourceCaptionId} does not exist.`);
@@ -233,6 +233,12 @@ export function updatePairedCaptionTexts(
     { ...synchronized, translations },
     updatedAt,
   );
+}
+
+// Both identifiers may contain colons. Encode the pair without losing its
+// component boundaries; persisted cue IDs are only unique within their track.
+function captionPairKey(trackId: string, sourceCaptionId: string) {
+  return JSON.stringify([trackId, sourceCaptionId]);
 }
 
 export function setTranslationTrackStyle(
