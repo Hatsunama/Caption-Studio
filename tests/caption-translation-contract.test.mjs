@@ -72,8 +72,9 @@ test('release shrinking preserves the LiteRT-LM JNI contract', async () => {
 });
 
 test('one pinned local model owns every supported multilingual direction', async () => {
-  const [service, languages, catalog] = await Promise.all([
+  const [service, batching, languages, catalog] = await Promise.all([
     readFile(new URL('src/services/caption-translation.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/lib/translation-batching.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/lib/caption-languages.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/services/transcription.ts', repositoryRoot), 'utf8'),
   ]);
@@ -86,8 +87,8 @@ test('one pinned local model owns every supported multilingual direction', async
   assert.match(languages, /if \(normalized === 'en'/);
   assert.match(languages, /return 'zh-Hant'/);
   assert.match(languages, /return 'zh-Hans'/);
-  assert.match(service, /TRANSLATION_BATCH_TOKEN_BUDGET/);
-  assert.match(service, /estimateTranslationTokens/);
+  assert.match(batching, /TRANSLATION_BATCH_TOKEN_BUDGET/);
+  assert.match(batching, /estimateTranslationTokens/);
   assert.doesNotMatch(service, /characters \+ captionLength > 1_000/);
   assert.match(service, /captionTextTail\([^)]*[\s\S]*, 250\)/);
   assert.match(service, /captionTextHead\([^)]*[\s\S]*, 250\)/);

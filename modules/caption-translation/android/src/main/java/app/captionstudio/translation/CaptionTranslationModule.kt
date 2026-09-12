@@ -20,6 +20,18 @@ class CaptionTranslationModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("CaptionTranslation")
 
+    Constants(
+      "limits" to mapOf(
+        "maxCaptionsPerBatch" to NaturalCaptionTranslator.MAX_CAPTIONS,
+        "maxOperationsPerSession" to NaturalCaptionTranslator.MAX_OPERATIONS,
+        "maxBatchesPerSession" to NaturalCaptionTranslator.MAX_BATCHES,
+        "maxCaptionsPerSession" to NaturalCaptionTranslator.MAX_SESSION_CAPTIONS,
+        "maxCharactersPerCaption" to NaturalCaptionTranslator.MAX_CAPTION_CHARACTERS,
+        "maxCaptionCharactersPerBatch" to NaturalCaptionTranslator.MAX_TOTAL_CAPTION_CHARACTERS,
+        "maxCaptionCharactersPerSession" to NaturalCaptionTranslator.MAX_SESSION_CAPTION_CHARACTERS,
+      ),
+    )
+
     AsyncFunction("translateNaturalCaptions") { modelFile: String, request: Map<String, Any?>, promise: Promise ->
       val activeTranslator = synchronized(lifecycleLock) {
         if (destroyed) null

@@ -1,6 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import CaptionMedia from 'caption-media';
 import CaptionTranslation, {
+  type NaturalCaptionTranslationLimits,
   type NaturalCaptionTranslationInput,
 } from 'caption-translation';
 
@@ -15,12 +16,9 @@ import {
   captionTextLength,
   captionTextTail,
 } from '@/lib/caption-text-breaks';
+import { createTranslationBatches } from '@/lib/translation-batching';
 import {
-  TRANSLATION_BATCH_CONTEXT_TOKEN_RESERVE,
-  TRANSLATION_BATCH_STRUCTURAL_TOKEN_BASE,
-  TRANSLATION_BATCH_TOKEN_BUDGET,
   acceptTranslationBoundary,
-  estimateTranslationTokens,
 } from '@/lib/translation-invariants';
 import { requireFreeSpace } from '@/services/storage-policy';
 import {
@@ -42,13 +40,6 @@ const NATURAL_TRANSLATION_MODEL = {
 } as const;
 
 export const NATURAL_TRANSLATION_MODEL_LABEL = NATURAL_TRANSLATION_MODEL.label;
-
-const NATURAL_TRANSLATION_SESSION_LIMITS = {
-  operations: 8,
-  captions: 3_072,
-  captionCharacters: 256_000,
-  batches: 1_024,
-} as const;
 
 export type CaptionTranslationProgress = {
   stage: 'downloading-model' | 'verifying-model' | 'loading-model' | 'translating';
@@ -170,10 +161,11 @@ export async function translateNaturalCaptionOperations(options: {
   operations: NaturalCaptionTranslationOperation[];
   onProgress?: (progress: CaptionTranslationProgress) => void;
 }): Promise<NaturalCaptionTranslationSession> {
+  const limits = requireNaturalCaptionTranslationLimits(CaptionTranslation.limits);
   if (activeTranslation) throw new Error('Another caption translation is already running.');
   if (
     options.operations.length === 0
-    || options.operations.length > NATURAL_TRANSLATION_SESSION_LIMITS.operations
+    || options.operations.length > limits.maxOperationsPerSession
   ) {
     throw new Error('A natural translation session must contain between 1 and 8 operations.');
   }
@@ -188,9 +180,12 @@ export async function translateNaturalCaptionOperations(options: {
     const sourceLanguage = normalizeNaturalCaptionLanguage(operation.sourceLanguage);
     const targetLanguage = normalizeNaturalCaptionLanguage(operation.targetLanguage);
     if (sourceLanguage === targetLanguage) throw new Error('Choose a different language for the second subtitle track.');
-    const originalCaptions = validateTranslationUnits(operation.captions);
+    const originalCaptions = validateTranslationUnits(operation.captions, limits.maxCharactersPerCaption);
     const originalContext = operation.allCaptions?.length
-      ? validateTranslationUnits(operation.allCaptions.filter((caption) => caption.text.trim().length > 0))
+      ? validateTranslationUnits(
+        operation.allCaptions.filter((caption) => caption.text.trim().length > 0),
+        limits.maxCharactersPerCaption,
+      )
       : originalCaptions;
     const keyByOriginalId = new Map<string, string>();
     for (const caption of originalContext) keyByOriginalId.set(caption.id, `c${nextCaptionKey++}`);
@@ -207,7 +202,7 @@ export async function translateNaturalCaptionOperations(options: {
     }));
     const originalIdByKey = new Map(originalCaptions.map((caption) => [keyByOriginalId.get(caption.id)!, caption.id]));
     const contextIndex = new Map(fullContext.map((caption, index) => [caption.id, index]));
-    const batches = createBatches(captions).map((batch) => {
+    const batches = createTranslationBatches(captions, limits).map((batch) => {
       const context = batchContext(fullContext, contextIndex, batch);
       return {
         captions: batch,
@@ -233,9 +228,9 @@ export async function translateNaturalCaptionOperations(options: {
     }
   }
   if (
-    totalCaptions > NATURAL_TRANSLATION_SESSION_LIMITS.captions
-    || totalCharacters > NATURAL_TRANSLATION_SESSION_LIMITS.captionCharacters
-    || totalBatches > NATURAL_TRANSLATION_SESSION_LIMITS.batches
+    totalCaptions > limits.maxCaptionsPerSession
+    || totalCharacters > limits.maxCaptionCharactersPerSession
+    || totalBatches > limits.maxBatchesPerSession
   ) {
     throw new Error('The caption script is too large for one local translation session. Translate a smaller selection.');
   }
@@ -415,7 +410,7 @@ async function verifyTranslationModel(file: File) {
   return true;
 }
 
-function validateTranslationUnits(units: NaturalTranslationUnit[]) {
+function validateTranslationUnits(units: NaturalTranslationUnit[], maxCharactersPerCaption: number) {
   if (units.length === 0) throw new Error('Choose at least one subtitle to translate.');
   const ids = new Set<string>();
   return units.map((unit) => {
@@ -424,35 +419,33 @@ function validateTranslationUnits(units: NaturalTranslationUnit[]) {
     if (!id || captionTextLength(id) > 256) throw new Error('A subtitle has an invalid internal identity.');
     if (ids.has(id)) throw new Error(`Subtitle ${id} was included more than once.`);
     if (!text) throw new Error(`Subtitle ${id} has no text to translate.`);
-    if (captionTextLength(text) > 1_000) throw new Error(`Subtitle ${id} is too long. Split it before translating.`);
+    if (captionTextLength(text) > maxCharactersPerCaption) throw new Error(`Subtitle ${id} is too long. Split it before translating.`);
     ids.add(id);
     return { id, text };
   });
 }
 
-function createBatches(captions: NaturalCaptionTranslationInput[]) {
-  const batches: NaturalCaptionTranslationInput[][] = [];
-  let batch: NaturalCaptionTranslationInput[] = [];
-  let batchTokens = 0;
-  for (const caption of captions) {
-    const captionTokens = estimateTranslationTokens(caption.text);
-    const nextCount = batch.length + 1;
-    const structural = TRANSLATION_BATCH_STRUCTURAL_TOKEN_BASE + nextCount * 12;
-    const outputTokens = Math.ceil((batchTokens + captionTokens) * 1.35);
-    const projected = batchTokens + captionTokens
-      + TRANSLATION_BATCH_CONTEXT_TOKEN_RESERVE
-      + structural
-      + outputTokens;
-    if (batch.length > 0 && projected > TRANSLATION_BATCH_TOKEN_BUDGET) {
-      batches.push(batch);
-      batch = [];
-      batchTokens = 0;
-    }
-    batch.push(caption);
-    batchTokens += captionTokens;
+function requireNaturalCaptionTranslationLimits(
+  limits: NaturalCaptionTranslationLimits,
+) {
+  const values = [
+    limits.maxCaptionsPerBatch,
+    limits.maxOperationsPerSession,
+    limits.maxBatchesPerSession,
+    limits.maxCaptionsPerSession,
+    limits.maxCharactersPerCaption,
+    limits.maxCaptionCharactersPerBatch,
+    limits.maxCaptionCharactersPerSession,
+  ];
+  if (
+    values.some((value) => !Number.isSafeInteger(value) || value < 1)
+    || limits.maxCaptionsPerBatch > limits.maxCaptionsPerSession
+    || limits.maxCharactersPerCaption > limits.maxCaptionCharactersPerBatch
+    || limits.maxCaptionCharactersPerBatch > limits.maxCaptionCharactersPerSession
+  ) {
+    throw new Error('The local translation runtime reported an invalid capacity contract.');
   }
-  if (batch.length > 0) batches.push(batch);
-  return batches;
+  return limits;
 }
 
 function batchContext(

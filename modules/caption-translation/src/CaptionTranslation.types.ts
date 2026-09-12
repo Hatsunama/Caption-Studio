@@ -7,6 +7,16 @@ export type NaturalCaptionTranslationInput = {
   text: string;
 };
 
+export type NaturalCaptionTranslationLimits = {
+  maxCaptionsPerBatch: number;
+  maxOperationsPerSession: number;
+  maxBatchesPerSession: number;
+  maxCaptionsPerSession: number;
+  maxCharactersPerCaption: number;
+  maxCaptionCharactersPerBatch: number;
+  maxCaptionCharactersPerSession: number;
+};
+
 export type NaturalCaptionTranslationBatch = {
   captions: NaturalCaptionTranslationInput[];
   contextBefore?: string;
