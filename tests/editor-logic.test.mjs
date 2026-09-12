@@ -555,7 +555,7 @@ test('hold-drag clip reorder keeps the filmstrip mounted, remaps source captions
   assert.match(editor, /ExtractAudioBusyOverlay/);
   assert.match(editor, /Preparing audio locally/);
   assert.match(editor, /VIDEO CLIP AUDIO/);
-  assert.match(editor, /ToolbarItem label="Audio" active=\{activeTool === 'audio'\} onPress=\{\(\) => \{ setActiveTool\('audio'\); \}\} \/>/);
+  assert.match(editor, /ToolbarItem label="Audio" active=\{activeTool === 'audio'\} onPress=\{\(\) => openEditorTool\('audio'\)\} \/>/);
 
   const project = projectFixture({
     clips: [
@@ -1382,8 +1382,8 @@ test('timeline selection does not move or snap the playhead', () => {
   assert.doesNotMatch(timeline, /edge !== 'move'/);
   assert.match(timeline, /kind: 'audio'/);
   assert.match(timeline, /onPress=\{\(\) => props\.onSelectLayer\(layer\.id\)\}/);
-  assert.match(editor, /onSelectClip=\{\(clipId\) => \{/);
-  assert.match(editor, /onSelectAudioClip=\{\(clipId\) => \{/);
+  assert.match(editor, /onSelectClip=\{\(clipId\) => selectEditorObject\(/);
+  assert.match(editor, /onSelectAudioClip=\{\(clipId\) => selectEditorObject\(/);
   const row = timeline.slice(timeline.indexOf('function TimelineRow'), timeline.indexOf('function TimedBlock'));
   assert.match(row, /pointerEvents="box-none"/);
   assert.doesNotMatch(row, /<Pressable onPress=\{\(event\) => props\.onPressTrack[\s\S]*\{props\.children\}<\/Pressable>/);
@@ -1451,11 +1451,14 @@ test('video transport has dual primed players for seamless clip handoff', () => 
   assert.doesNotMatch(controller, /player\.playing/);
 });
 
-test('animation requires a timeline text target unless scope is All', () => {
+test('caption and text animation stay in their respective edit menus', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   assert.match(editor, /Choose Text From The Timeline First/);
   assert.match(editor, /useState<StyleScope>\('caption'\)/);
-  assert.match(editor, /ToolbarItem label="Stickers" active=\{activeTool === 'captions'\}/);
+  assert.match(editor, /ToolbarItem label="Stickers" active=\{activeTool === 'stickers'\}/);
+  assert.match(editor, /ToolbarItem label="Captions" active=\{activeTool === 'captions'\}/);
+  assert.match(editor, /TEXT ANIMATION/);
+  assert.match(editor, /CAPTION ANIMATION/);
   assert.match(editor, /PersistedHorizontalScroll/);
 });
 

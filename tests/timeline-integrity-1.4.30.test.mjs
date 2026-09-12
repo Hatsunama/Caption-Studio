@@ -33,7 +33,7 @@ test('preview layers own hit testing, authored lines, stable transform baselines
   assert.match(editor, /TransitionTimingSheet/);
   assert.match(editor, /Transition timing…/);
   assert.match(editor, /preserveLineBreaks/);
-  assert.match(editor, /onSelect=\{\(\) => \{ transport\.pause\(\)/);
+  assert.match(editor, /onSelect=\{\(\) => selectEditorObject\(/);
   assert.match(captions, /split\('\\n'\)/);
   assert.match(captions, /numberOfLines=\{1\}/);
   assert.match(captions, /start\.current\.position\.x/);
