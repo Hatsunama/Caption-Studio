@@ -40,7 +40,7 @@ export function resolveCaptionStyle(
 
 export function applyStylePatch(
   project: CaptionProject,
-  captionId: string,
+  captionId: string | undefined,
   scope: StyleScope,
   patch: CaptionStylePatch,
 ): CaptionProject {
@@ -64,6 +64,8 @@ export function applyStylePatch(
       },
     };
   }
+
+  if (!captionId) return project;
 
   return {
     ...project,
