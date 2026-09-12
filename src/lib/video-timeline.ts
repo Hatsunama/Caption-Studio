@@ -3,6 +3,7 @@ import { audioClipEnd, constrainAudioClips } from '@/lib/audio-timeline';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { captionLayoutText } from '@/lib/caption-text-breaks';
 import { effectiveVideoTransition } from '@/lib/video-transitions';
+import { isProjectIdentifier } from '@/lib/project-identifiers';
 
 export const MINIMUM_CLIP_TIMELINE_MS = 120;
 
@@ -139,9 +140,12 @@ export function recoverCanonicalSourceWords(clips: VideoClip[], timelineWords: W
   for (const word of timelineWords) {
     const startEntry = timelineEntryAt(entries, word.startMs);
     const endEntry = timelineEntryAt(entries, Math.max(word.startMs, word.endMs - 1));
-    if (!startEntry || !endEntry || startEntry.clip.sourceId !== endEntry.clip.sourceId) continue;
+    // Recovery is optional, but must be lossless. A gap or a word spanning clips
+    // cannot be inverted reliably (the clips can repeat or reorder a source).
+    if (!startEntry || !endEntry || startEntry !== endEntry) return {};
     const prefix = `${startEntry.clip.id}-`;
     const id = word.id.startsWith(prefix) ? word.id.slice(prefix.length) : word.id;
+    if (!isProjectIdentifier(id)) return {};
     const canonical = {
       ...word,
       id,
@@ -149,13 +153,28 @@ export function recoverCanonicalSourceWords(clips: VideoClip[], timelineWords: W
       endMs: sourceTimeAt(endEntry, word.endMs),
     };
     const sourceWords = wordsBySource.get(startEntry.clip.sourceId) ?? new Map<string, WordToken>();
-    sourceWords.set(`${canonical.id}:${canonical.startMs}:${canonical.endMs}`, canonical);
+    const existing = sourceWords.get(canonical.id);
+    // Clip prefixes scope occurrences, not source identities. In particular a
+    // composed-timeline word can be clipped into two different source ranges.
+    // Keep the original timeline in that case instead of inventing a cache with
+    // duplicate IDs, overwriting a fragment, or guessing that ranges can merge.
+    if (existing && JSON.stringify(existing) !== JSON.stringify(canonical)) return {};
+    sourceWords.set(canonical.id, canonical);
     wordsBySource.set(startEntry.clip.sourceId, sourceWords);
   }
-  return Object.fromEntries([...wordsBySource].map(([sourceId, words]) => [
+  const recovered = Object.fromEntries([...wordsBySource].map(([sourceId, words]) => [
     sourceId,
     [...words.values()].sort((left, right) => left.startMs - right.startMs),
   ]));
+  const projected = mapSourceWordsToTimeline(clips, recovered);
+  if (projected.length !== timelineWords.length) return {};
+  // Repeated clips can otherwise introduce extra occurrences or change timing.
+  const sameWord = (left: WordToken, right: WordToken) => JSON.stringify({ ...left, id: '' })
+    === JSON.stringify({ ...right, id: '' });
+  if (!projected.every((word, index) => sameWord(word, timelineWords[index]))) return {};
+  if (!projected.every((word) => isProjectIdentifier(word.id))) return {};
+  if (new Set(projected.map((word) => word.id)).size !== projected.length) return {};
+  return recovered;
 }
 
 export function anchorCaptionsToClips(

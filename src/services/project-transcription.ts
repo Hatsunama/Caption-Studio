@@ -121,6 +121,7 @@ async function generateProjectCaptionsFromSources(
       language: canonicalCaptionLanguageTag(sourceResults[sourceIds[0]]?.language || 'en'),
       modelId,
       generatedAt: now,
+      wordTiming: 'source',
       words,
       sourceResults,
     },

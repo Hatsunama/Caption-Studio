@@ -369,6 +369,9 @@ export function setTranslationTrackProvider(
 }
 
 export function projectPrimaryCaptionLanguage(project: CaptionProject): string {
+  if (project.transcription.wordTiming === 'timeline') {
+    return canonicalCaptionLanguageTag(project.transcription.language);
+  }
   const sourceIds = [...new Set(project.clips.map((clip) => clip.sourceId))];
   const detected = sourceIds.flatMap((sourceId) => {
     const language = project.transcription.sourceResults[sourceId]?.language;

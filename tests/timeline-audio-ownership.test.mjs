@@ -14,7 +14,7 @@ test('caption generation consumes the audible timeline and restores real project
   assert.match(orchestrator, /timelineSession\.restore/);
   assert.match(renderer, /sourceStartMs: entry\.startMs/);
   assert.match(renderer, /sourceEndMs: entry\.endMs/);
-  assert.match(renderer, /sourceResults: project\.transcription\.sourceResults/);
+  assert.match(renderer, /restoreTimelineTranscription\(project, generated\)/);
   assert.match(moduleSource, /AsyncFunction\("renderTimelineAudio"\)/);
   assert.match(moduleSource, /TimelineAudioRenderer\.cancel\(\)/);
 });
