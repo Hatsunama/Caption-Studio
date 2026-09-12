@@ -590,7 +590,7 @@ function rebuildAfterLayoutEdit(
   const sourceWords = Object.fromEntries(
     Object.entries(project.transcription.sourceResults).map(([sourceId, result]) => [sourceId, result.words]),
   );
-  const hasCanonicalWords = Object.keys(sourceWords).length > 0;
+  const hasCanonicalWords = project.transcription.wordTiming !== 'timeline' && Object.keys(sourceWords).length > 0;
   const currentWords = hasCanonicalWords
     ? mapSourceWordsToTimeline(project.clips, sourceWords)
     : project.transcription.words;

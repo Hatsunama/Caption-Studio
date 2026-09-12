@@ -3,6 +3,7 @@ import { File, Paths } from 'expo-file-system';
 import CaptionMedia from 'caption-media';
 import { buildTimelineAudioRenderPlan } from '@/lib/timeline-audio-render-plan';
 import { buildClipTimeline } from '@/lib/video-timeline';
+import { restoreTimelineTranscription } from '@/lib/timeline-transcription';
 import type { CaptionProject } from '@/types/project';
 
 type TimelineAudioNativeModule = typeof CaptionMedia & {
@@ -84,17 +85,7 @@ export async function createTimelineTranscriptionSession(
 
   return {
     project: syntheticProject,
-    restore: (generated) => ({
-      ...generated,
-      sources: project.sources,
-      clips: project.clips,
-      audioSources: project.audioSources,
-      audioClips: project.audioClips,
-      transcription: {
-        ...generated.transcription,
-        sourceResults: project.transcription.sourceResults,
-      },
-    } as typeof generated),
+    restore: (generated) => restoreTimelineTranscription(project, generated),
     dispose: () => removeTemporaryAudio(output),
   };
 }

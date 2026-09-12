@@ -5,13 +5,12 @@ import {
   decodeEveryPersistedRow,
   extractPersistedContentUris,
 } from '@/lib/persistence-boundaries';
-import { decodeVersionTwoProject } from '@/lib/project-schema';
+import { decodeVersionTwoProject, serializeProjectSnapshot } from '@/lib/project-schema';
+import { hydrateProjectTranscription } from '@/lib/transcription-hydration';
+import { recoverPersistedDuplicateSourceWordIds } from '@/lib/transcription-recovery';
 import { synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import {
-  anchorCaptionsToClips,
-  mapSourceWordsToTimeline,
   MINIMUM_CLIP_TIMELINE_MS,
-  recoverCanonicalSourceWords,
 } from '@/lib/video-timeline';
 import { hydrateVideoTransitionBoundaries } from '@/lib/video-transitions';
 import {
@@ -66,7 +65,7 @@ async function initializeDatabase() {
 
 export async function saveProject(project: CaptionProject) {
   if (deletedProjectIds.has(project.id)) throw new Error('This project has been deleted.');
-  const snapshot = JSON.stringify(project);
+  const snapshot = serializeProjectSnapshot(project);
   const previous = projectWriteQueues.get(project.id) ?? Promise.resolve();
   const operation = previous.catch(() => undefined).then(async () => {
     const database = await getDatabase();
@@ -199,9 +198,11 @@ function parseProject(value: string): CaptionProject {
   const parsed: unknown = JSON.parse(value);
   if (!parsed || typeof parsed !== 'object') throw new Error('Project data is not an object');
   const candidate = parsed as Record<string, unknown>;
-  if (candidate.schemaVersion === 1) return decodeVersionTwoProject(migrateVersionOne(candidate));
+  if (candidate.schemaVersion === 1) {
+    return decodeVersionTwoProject(recoverPersistedDuplicateSourceWordIds(migrateVersionOne(candidate)));
+  }
   if (candidate.schemaVersion !== 2) throw new Error('Project data uses an unsupported version');
-  return decodeVersionTwoProject(candidate);
+  return decodeVersionTwoProject(recoverPersistedDuplicateSourceWordIds(candidate));
 }
 
 function hydrateProject(project: CaptionProject): CaptionProject {
@@ -220,23 +221,7 @@ function hydrateProject(project: CaptionProject): CaptionProject {
   };
   const clips = hydrateClips(project.clips, sources);
   const { audioSources, audioClips } = hydrateAudio(project.audioSources ?? [], project.audioClips ?? []);
-  const persistedSourceResults = project.transcription.sourceResults ?? {};
-  const recoveredFromTimeline = Object.keys(persistedSourceResults).length === 0;
-  const recoveredSourceResults = !recoveredFromTimeline
-    ? persistedSourceResults
-    : recoverCanonicalSourceResults(project, clips);
-  const wordsForAnchoring = Object.keys(recoveredSourceResults).length > 0
-    ? mapSourceWordsToTimeline(
-        clips,
-        Object.fromEntries(Object.entries(recoveredSourceResults).map(([sourceId, result]) => [sourceId, result.words])),
-      )
-    : project.transcription.words;
-  const transcription = {
-    ...project.transcription,
-    words: recoveredFromTimeline ? wordsForAnchoring : project.transcription.words,
-    sourceResults: recoveredSourceResults,
-  };
-  const captions = anchorCaptionsToClips(project.captions, clips, wordsForAnchoring);
+  const { transcription, captions } = hydrateProjectTranscription(project, clips);
   return {
     ...project,
     schemaVersion: 2,
@@ -408,16 +393,6 @@ function finiteNumber(value: number, label: string) {
 function clampNumber(value: number, minimum: number, maximum: number) {
   if (!Number.isFinite(value)) return minimum;
   return Math.min(maximum, Math.max(minimum, value));
-}
-
-function recoverCanonicalSourceResults(project: CaptionProject, clips: VideoClip[]) {
-  const wordsBySource = recoverCanonicalSourceWords(clips, project.transcription.words);
-  return Object.fromEntries(Object.entries(wordsBySource).map(([sourceId, words]) => [sourceId, {
-    language: project.transcription.language,
-    modelId: project.transcription.modelId,
-    generatedAt: project.transcription.generatedAt ?? project.updatedAt,
-    words,
-  }]));
 }
 
 function migrateVersionOne(candidate: Record<string, unknown>): Record<string, unknown> {

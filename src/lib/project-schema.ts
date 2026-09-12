@@ -31,6 +31,14 @@ const ANIMATION_IDS = new Set(ANIMATION_PRESETS.map((preset) => preset.id));
 const COLOR_PATTERN = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
 
+/** Validate the exact snapshot before any database write is queued. */
+export function serializeProjectSnapshot(project: CaptionProject): string {
+  const snapshot = JSON.stringify(project);
+  if (snapshot.length > 64 * 1024 * 1024) throw new Error('Project data exceeds the supported size limit');
+  decodeVersionTwoProject(JSON.parse(snapshot));
+  return snapshot;
+}
+
 export function decodeVersionTwoProject(candidate: Record<string, unknown>): CaptionProject {
   if (candidate.schemaVersion !== 2) throw new Error('Project data uses an unsupported version');
   const createdAt = dateString(candidate.createdAt, 'project creation date');
@@ -259,6 +267,7 @@ function decodeTranscription(value: unknown, fallbackGeneratedAt: string): Capti
     language: optionalNonEmptyString(transcription.language, 'transcription language') ?? 'en',
     modelId: optionalNonEmptyString(transcription.modelId, 'transcription model') ?? 'balanced',
     generatedAt: optionalDateString(transcription.generatedAt, 'transcription generation date'),
+    wordTiming: optionalEnum(transcription.wordTiming, ['source', 'timeline'] as const, 'transcription word timing'),
     words,
     sourceResults,
   };

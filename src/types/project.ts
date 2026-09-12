@@ -381,6 +381,8 @@ export type CaptionProject = {
     language: string;
     modelId: string;
     generatedAt?: string;
+    /** Timeline-mix words must never be reconstructed from per-source caches. */
+    wordTiming?: 'source' | 'timeline';
     words: WordToken[];
     sourceResults: Record<Identifier, SourceTranscription>;
   };
