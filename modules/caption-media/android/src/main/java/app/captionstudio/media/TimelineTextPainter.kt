@@ -377,18 +377,16 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
         animation.glow,
       )
       canvas.restore()
-      if (style.animationId.startsWith("emoji-") && isActive) {
+    }
+    if (style.animationId.startsWith("emoji-")) {
+      captionCueProgress(timeMs, startMs, endMs)?.let { progress ->
         drawEmojiReaction(
           canvas = canvas,
           id = style.animationId,
-          word = word.text,
-          captionText = text,
-          contextWords = timedWords.map(RenderWord::text),
-          activeIndex = timedIndex,
-          centerX = x + word.width / 2f,
-          baselineY = y,
-          timeMs = timeMs,
-          timing = timedWords[timedIndex],
+          emojis = captionCueEmojis(emojiReactions, text),
+          centerX = centerX,
+          baselineY = centerY,
+          progress = progress,
           scaleFactor = scaleFactor,
         )
       }
@@ -680,27 +678,21 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
   private fun drawEmojiReaction(
     canvas: Canvas,
     id: String,
-    word: String,
-    captionText: String,
-    contextWords: List<String>,
-    activeIndex: Int,
+    emojis: List<String>,
     centerX: Float,
     baselineY: Float,
-    timeMs: Long,
-    timing: RenderWord,
+    progress: Float,
     scaleFactor: Float,
   ) {
-    val emojis = emojiReactions.resolve(word, captionText, contextWords, activeIndex)
     if (emojis.isEmpty()) return
-    val progress = ((timeMs - timing.startMs).toFloat() / max(1L, timing.endMs - timing.startMs)).coerceIn(0f, 1f)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 28f * scaleFactor; textAlign = Paint.Align.CENTER }
-    repeat(when (id) { "emoji-rain" -> 5; "emoji-orbit" -> 4; else -> 6 }) { index ->
-      val angle = index / 6f * 2f * PI.toFloat() + progress * if (id == "emoji-orbit") 5f else 1f
+    emojis.forEachIndexed { index, emoji ->
+      val angle = (index.toFloat() / emojis.size + if (id == "emoji-orbit") progress else 0f) * 2f * PI.toFloat()
       val radius = when (id) { "emoji-burst" -> progress * 90f * scaleFactor; "emoji-orbit" -> 55f * scaleFactor; else -> 80f * scaleFactor }
       val x = centerX + cos(angle) * radius
       val y = if (id == "emoji-rain") baselineY - (1f - progress) * 180f * scaleFactor + index * 26f * scaleFactor else baselineY + sin(angle) * radius
       paint.alpha = ((1f - progress * 0.65f) * 255).toInt().coerceIn(0, 255)
-      canvas.drawText(emojis[index % emojis.size], x, y, paint)
+      canvas.drawText(emoji, x, y, paint)
     }
   }
 

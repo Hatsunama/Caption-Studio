@@ -9,7 +9,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { reactionEmojis } from '@/lib/animation-presets';
+import { captionCueEmojis, captionCueProgress } from '@/lib/caption-emoji-animation';
 import {
   captionAnimationClock,
   captionAnimationState,
@@ -49,6 +49,9 @@ export function CaptionOverlay(props: {
   const canvas = useRef<CanvasMetrics>({ width: 1, height: 1, pageX: 0, pageY: 0 });
   const [canvasLayout, setCanvasLayout] = useState({ width: 360, height: 640 });
   const style = caption ? resolveCaptionStyle(props.projectStyle, caption) : props.projectStyle;
+  const cueEmojis = useMemo(() => style.animation.id.startsWith('emoji-')
+    ? captionCueEmojis(caption?.text ?? '')
+    : [], [caption?.text, style.animation.id]);
   const styleRef = useRef(style);
   const propsRef = useRef(props);
   styleRef.current = style;
@@ -174,6 +177,7 @@ export function CaptionOverlay(props: {
   });
   const phraseState = captionAnimationState(style.animation.id, captionClock, style.animation.intensity);
   const wordProgress = realWordAnimationProgress(props.currentMs, activeWord);
+  const cueProgress = captionCueProgress(props.currentMs, caption);
   const fittedFontSize = fitCaptionFont(style, renderedWords, canvasLayout);
   const backgroundAlpha = Math.round(style.background.opacity * 255).toString(16).padStart(2, '0');
   const transformed = (text: string) => {
@@ -270,14 +274,11 @@ export function CaptionOverlay(props: {
             fittedFontSize={fittedFontSize}
             transformed={transformed}
           />}
-          {style.animation.id.startsWith('emoji-') && activeWord && wordProgress !== undefined ? (
+          {style.animation.id.startsWith('emoji-') && cueProgress !== undefined ? (
             <EmojiEffects
               mode={style.animation.id}
-              emojis={reactionEmojis(activeWord.text, caption.text, {
-                words: timedWords.map((word) => word.text),
-                activeIndex,
-              })}
-              progress={wordProgress}
+              emojis={cueEmojis}
+              progress={cueProgress}
             />
           ) : null}
         </View>
@@ -511,10 +512,10 @@ function EmojiEffects(props: { mode: CaptionAnimationId; emojis: string[]; progr
   return (
     <View pointerEvents="none" style={{ position: 'absolute', inset: -42 }}>
       {props.emojis.map((emoji, index) => {
-        const phase = (props.progress + index * 0.17) % 1;
+        const phase = props.progress;
         let style: ViewStyle;
         if (props.mode === 'emoji-rain') {
-          style = { left: `${10 + index * 19}%`, top: `${phase * 105}%`, opacity: 0.95, transform: [{ rotate: `${phase * 240 - 80}deg` }, { scale: 0.8 + index * 0.08 }] };
+          style = { left: `${25 + index * 50}%`, top: `${phase * 105}%`, opacity: 0.95, transform: [{ rotate: `${phase * 240 - 80}deg` }, { scale: 0.8 + index * 0.08 }] };
         } else if (props.mode === 'emoji-orbit') {
           const angle = props.progress * Math.PI * 2 + (index * Math.PI * 2) / props.emojis.length;
           style = { left: '50%', top: '50%', opacity: 0.95, transform: [{ translateX: Math.cos(angle) * 92 - 13 }, { translateY: Math.sin(angle) * 45 - 13 }, { rotate: `${angle * 57.3 + 90}deg` }] };

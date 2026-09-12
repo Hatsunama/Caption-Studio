@@ -41,6 +41,12 @@ test('all 60 effects have one timing domain and all phrase effects have contract
   assert.equal(ANIMATION_PRESETS.length, 60);
   for (const preset of ANIMATION_PRESETS) {
     if (preset.id === 'none') continue;
+    if (preset.timing === 'cue') {
+      assert.equal(preset.group, 'emoji');
+      assert.equal(isWordTimedAnimation(preset.id), false);
+      assert.equal(fixtureIds.has(preset.id), false);
+      continue;
+    }
     assert.equal(isWordTimedAnimation(preset.id) || fixtureIds.has(preset.id), true, preset.id);
     assert.equal(isWordTimedAnimation(preset.id) && fixtureIds.has(preset.id), false, preset.id);
   }
