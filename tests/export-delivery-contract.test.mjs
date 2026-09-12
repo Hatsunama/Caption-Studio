@@ -58,8 +58,8 @@ test('JS export proves the file exists, opens a share sheet, then deletes only t
   assert.match(projectExport, /The exported video file is empty/);
   assert.match(projectExport, /The exported video file is incomplete/);
   assert.match(editor, /Saved to Movies\/Caption Studio/);
-  assert.match(editor, /reportCaptionCommitFailure/);
   assert.match(editor, /Second language visibility not saved/);
   assert.match(editor, /Canvas size not saved/);
   assert.doesNotMatch(editor, /commitCaptionStructure\(mutation\)\.catch\(\(\) => undefined\)/);
+  assert.doesNotMatch(editor, /commitCaptionStructure/);
 });

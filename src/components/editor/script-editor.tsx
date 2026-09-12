@@ -53,7 +53,7 @@ export function ScriptEditor(props: {
   const captionLayoutsRef = useRef<Record<string, { y: number; height: number }>>({});
   const listViewportHeightRef = useRef(0);
   const listScrollOriginRef = useRef<'playback' | 'user'>('user');
-  const lastTimelineCaptionIdRef = useRef<string>();
+  const lastTimelineCaptionIdRef = useRef<string | undefined>(undefined);
 
   const sourceCaptions = useMemo(
     () => [...props.captions].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs),
