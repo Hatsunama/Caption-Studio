@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.40) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.41) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.40/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.41/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.40 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.41 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -73,9 +73,9 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.40** (`v1.4.40`, Android version code 52).
+Current Android build: **1.4.41** (`v1.4.41`, Android version code 53).
 
-Version 1.4.40 makes local translation capacity a native-owned, typed runtime contract. Refresh unfinished, Refresh selected, Refresh all, automatic translation, and every other shared translation caller can now submit an arbitrary valid selection: the service preserves cue identity and order while splitting work by the native 32-caption limit, native character limits, and model token budget inside one resumable translation session. Oversized selections no longer reach the native bridge as an invalid batch, and cancellation, progress, checkpoint reuse, output validation, and user edits retain their existing ownership.
+Version 1.4.41 gives every timeline object a semantic bottom-menu target. Video and audio open their own controls; original and translated captions open Captions; text and images open Stickers. A repeated selection leaves the currently correct menu mounted, preserving its current state and scroll. Caption controls now live under Captions, with caption animation visibly separated from the rest; text animation remains under Stickers.
 
 Version 1.4.39 repairs the transcription identity failure reported on Seeker without discarding project media, captions, or edits. Mixed-clip transcription words are now explicitly timeline-owned, synthetic source caches are restored only when the mapping is lossless, project snapshots are validated before database writes, and an existing project containing the affected duplicate derived cache is recovered at the database boundary. Local translation retries now accept only one exact, ordered JSON result for every requested cue; malformed, duplicated, reordered, or cross-cue output cannot enter checkpoints. Translation ownership keys are collision-free even when track or cue identifiers contain delimiters.
 
@@ -117,7 +117,7 @@ Version 1.4.9 checkpoints completed translation batches in private, backup-exclu
 
 Version 1.4.8 preserves individual subtitle identities through AI translation. Unusable results are marked FAILED - RETRY, successful translations and existing text are saved, and incomplete runs show a summary. Open Edit both languages and tap Refresh to repair an incomplete track. Export errors appear in a dialog; disabled and off-timeline captions no longer block MP4 export. Independent translations remain in subtitle-file output, and draft recovery operations are serialized.
 
-The installer requires release 1.4.40 or newer and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
+The installer requires release 1.4.41 or newer and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
 
 Version 1.4.7 replaces the translation model's false transient-memory rejection with hardware-based capability checks. Eligible 64-bit devices with at least 4 GiB physical RAM now attempt the memory-mapped model load even when Android temporarily reports memory pressure. If the runtime genuinely cannot allocate enough memory, the app keeps captions unchanged and tells the user to close other apps, keep Caption Studio open, and retry.
 

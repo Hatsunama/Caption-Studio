@@ -1,3 +1,4 @@
+import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { NavigationAction } from '@react-navigation/native';
@@ -187,8 +188,6 @@ type PendingStyleChange = {
   translationTrackId?: string;
 };
 
-type EditorTool = 'captions' | 'fonts' | 'animate' | 'video' | 'audio';
-
 export default function EditorScreen() {
   const { projectId } = useLocalSearchParams<{ projectId: string }>();
   const [initialProject, setInitialProject] = useState<CaptionProject>();
@@ -243,6 +242,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [dualLanguagePickerOpen, setDualLanguagePickerOpen] = useState(false);
   const [selectedTranslationTrackId, setSelectedTranslationTrackId] = useState<string>();
   const [activeTool, setActiveTool] = useState<EditorTool>('captions');
+  const activeToolRef = useRef<EditorTool>('captions');
+  const openEditorTool = (tool: EditorTool) => {
+    if (!shouldOpenEditorTool(activeToolRef.current, tool)) return;
+    activeToolRef.current = tool;
+    setActiveTool(tool);
+  };
   const [exporting, setExporting] = useState(false);
   const [exportKind, setExportKind] = useState<'video' | 'subtitle'>('video');
   const [exportProgress, setExportProgress] = useState<ProjectVideoExportProgress>();
@@ -484,7 +489,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const selectedTranslationPair = translationTrackSelected
     ? selectedTranslationPairs.find((pair) => pair.source.id === selectedCaptionId)
     : undefined;
-  const selectedAnimationId = selectedTextLayer
+  const selectedAnimationId = activeTool === 'stickers' && selectedTextLayer
     ? selectedTextLayer.style.animation.id
     : selectedTranslationPair
       ? selectedTranslationPair.style.animation.id
@@ -520,6 +525,22 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       void cancelProjectVideoExport();
     };
   }, []);
+
+  const selectEditorObject = (selection: EditorSelection) => {
+    const next = editorSelectionState(selection);
+    transport.pause();
+    setSelectedCaptionId(next.captionId);
+    setSelectedLayerId(next.layerId);
+    setSelectedClipId(next.clipId);
+    setSelectedAudioClipId(next.audioClipId);
+    setSelectedTranslationTrackId(next.translationTrackId);
+    openEditorTool(next.tool);
+  };
+
+  const selectEditorLayer = (layerId: string) => {
+    const selection = editorLayerSelection(projectRef.current, layerId, selectedCaptionId);
+    if (selection) selectEditorObject(selection);
+  };
 
   const refreshHistoryAvailability = () => {
     setHistoryAvailability({
@@ -714,7 +735,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const chooseFont = (choice: FontChoice) => {
     setFontBrowserOpen(false);
-    if (selectedTextLayer) {
+    if (activeTool === 'stickers' && selectedTextLayer) {
       updateTextLayerStyle(selectedTextLayer.id, fontChoicePatch(choice), true);
       return;
     }
@@ -1181,9 +1202,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       persistProjectInBackground(next);
       return next;
     });
-    transport.pause();
-    setSelectedLayerId(id);
-    setSelectedCaptionId(undefined);
+    selectEditorObject({ kind: 'text', id });
     setEditingLayerId(id);
     setEditingText(result.layer.text);
   };
@@ -1214,9 +1233,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       persistProjectInBackground(next);
       return next;
     });
-    transport.pause();
-    setSelectedLayerId(id);
-    setSelectedCaptionId(undefined);
+    selectEditorObject({ kind: 'image', id });
   };
 
   const moveLayer = (layerId: string, direction: -1 | 1) => {
@@ -1277,7 +1294,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       const firstAdded = next.clips[before.clips.length];
       setSelectedClipId(firstAdded?.id);
       setSelectedCaptionId(undefined);
-      setActiveTool('video');
+      openEditorTool('video');
       if (firstAdded) seekTimeline(beforeDuration);
     } catch (caught) {
       Alert.alert('Could not add videos', caught instanceof Error ? caught.message : 'The selected videos could not be added.');
@@ -1402,7 +1419,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       setSelectedClipId(undefined);
       setSelectedCaptionId(undefined);
       setSelectedTranslationTrackId(undefined);
-      setActiveTool('audio');
+      openEditorTool('audio');
     } catch (caught) {
       Alert.alert('Could not add audio', caught instanceof Error ? caught.message : 'The selected media could not be added.');
     } finally {
@@ -1430,7 +1447,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       setSelectedClipId(undefined);
       setSelectedCaptionId(undefined);
       setSelectedTranslationTrackId(undefined);
-      setActiveTool('audio');
+      openEditorTool('audio');
       setExtractAudioOpen(false);
     } catch (caught) {
       Alert.alert('Could not extract audio', caught instanceof Error ? caught.message : 'The selected video could not be used.');
@@ -1709,7 +1726,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     currentMs={currentMs}
                     interactive={activeTool !== 'video' && selectedLayerId === 'captions' && Boolean(selectedCaptionId) && displayCaption?.id === selectedCaptionId}
                     selectable={Boolean(displayCaption)}
-                    onSelect={() => { transport.pause(); setSelectedLayerId('captions'); setSelectedCaptionId(displayCaption?.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); }}
+                    onSelect={() => selectEditorObject({ kind: 'captions', captionId: displayCaption?.id })}
                     onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                     onTransform={updateSharedCaptionTransform}
                     onTransformEnd={finishHistoryInteraction}
@@ -1730,7 +1747,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                       currentMs={currentMs}
                       interactive={activeTool !== 'video' && selectedLayerId === pair.trackId && selectedCaptionId === pair.source.id}
                       selectable
-                      onSelect={() => { transport.pause(); setSelectedLayerId(pair.trackId); setSelectedTranslationTrackId(pair.trackId); setSelectedCaptionId(pair.source.id); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); }}
+                      onSelect={() => selectEditorObject({ kind: 'translation', id: pair.trackId, captionId: pair.source.id })}
                       onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                       onTransform={(patch) => {
                         const { position: _ignoredPosition, ...sizePatch } = patch;
@@ -1754,7 +1771,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   interactive={activeTool !== 'video' && selectedLayerId === layer.id}
                   selectable
                   preserveLineBreaks
-                  onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedCaptionId(undefined); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); }}
+                  onSelect={() => selectEditorLayer(layer.id)}
                   onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                   onTransform={(patch) => updateTextLayerStyle(layer.id, patch)}
                   onTransformEnd={finishHistoryInteraction}
@@ -1768,7 +1785,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 layer={layer}
                 interactive={activeTool !== 'video' && selectedLayerId === layer.id}
                 selectable
-                onSelect={() => { transport.pause(); setSelectedLayerId(layer.id); setSelectedCaptionId(undefined); setSelectedClipId(undefined); setSelectedAudioClipId(undefined); setSelectedTranslationTrackId(undefined); }}
+                onSelect={() => selectEditorLayer(layer.id)}
                 onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                 onChange={(patch) => updateImageLayer(layer.id, patch)}
                 onEnd={finishHistoryInteraction}
@@ -1873,38 +1890,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onSeek={seekTimeline}
           onScrubStart={transport.pause}
           onClearSelection={clearEditorSelection}
-          onSelectLayer={(layerId) => {
-            transport.pause();
-            setSelectedLayerId(layerId);
-            setSelectedClipId(undefined);
-            setSelectedAudioClipId(undefined);
-            setSelectedTranslationTrackId(undefined);
-            if (layerId !== 'captions') setSelectedCaptionId(undefined);
-          }}
-          onSelectCaption={(caption) => {
-            transport.pause();
-            setSelectedLayerId('captions');
-            setSelectedCaptionId(caption.id);
-            setSelectedClipId(undefined);
-            setSelectedAudioClipId(undefined);
-            setSelectedTranslationTrackId(undefined);
-          }}
-          onSelectTranslationCaption={(trackId, pair) => {
-            transport.pause();
-            setSelectedLayerId(trackId);
-            setSelectedTranslationTrackId(trackId);
-            setSelectedCaptionId(pair.source.id);
-            setSelectedClipId(undefined);
-            setSelectedAudioClipId(undefined);
-          }}
-          onSelectClip={(clipId) => {
-            transport.pause();
-            setSelectedClipId(clipId);
-            setSelectedLayerId(undefined);
-            setSelectedCaptionId(undefined);
-            setSelectedAudioClipId(undefined);
-            setSelectedTranslationTrackId(undefined);
-          }}
+          onSelectLayer={selectEditorLayer}
+          onSelectCaption={(caption) => selectEditorObject({ kind: 'captions', captionId: caption.id })}
+          onSelectTranslationCaption={(trackId, pair) => selectEditorObject({ kind: 'translation', id: trackId, captionId: pair.source.id })}
+          onSelectClip={(clipId) => selectEditorObject({ kind: 'video', id: clipId })}
           onTrimClip={trimClipEdge}
           onSetClipGap={setClipGap}
           onSetClipLeadingGap={setClipLeadingGap}
@@ -1915,14 +1904,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onMoveLayer={moveLayer}
           onDeleteLayer={deleteLayer}
           onAddVideos={() => { void addVideosToTimeline(); }}
-          onSelectAudioClip={(clipId) => {
-            transport.pause();
-            setSelectedAudioClipId(clipId);
-            setSelectedLayerId(undefined);
-            setSelectedClipId(undefined);
-            setSelectedCaptionId(undefined);
-            setSelectedTranslationTrackId(undefined);
-          }}
+          onSelectAudioClip={(clipId) => selectEditorObject({ kind: 'audio', id: clipId })}
         />
         {selectedCaption || selectedTranslationPair || selectedAudioClip || selectedTextLayer || selectedImageLayer ? (
           <Text style={{ color: palette.muted, fontSize: 11 }}>Drag the selected block to move it. Drag either white edge to trim it.</Text>
@@ -2025,103 +2007,110 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             </> : null}
             {!selectedClip && !selectedAudioClip ? <Text style={{ color: palette.muted, fontSize: 12 }}>Select a video clip for its embedded audio, add audio, or tap an audio block in the timeline.</Text> : null}
           </View>
-        ) : activeTool === 'animate' ? (
-          <AnimationBrowser
-            selected={selectedAnimationId}
-            textLayerSelected={Boolean(selectedTextLayer)}
-            scope={animationScope}
-            hasSelectedCaption={Boolean(selectedCaptionId)}
-            onScopeChange={setAnimationScope}
-            onSelect={chooseAnimation}
-          />
-        ) : selectedTextLayer ? (
-          <PersistedHorizontalScroll id="tool:stickers:text" contentContainerStyle={{ gap: 8 }}>
-            <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
-            <Action label="Edit text" onPress={() => { setEditingLayerId(selectedTextLayer.id); setEditingText(selectedTextLayer.text); }} />
-            <Action label="Delete text layer" danger onPress={() => deleteLayer(selectedTextLayer.id)} />
-            <Action label="Add text layer" onPress={addTextLayer} />
-            <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
-          </PersistedHorizontalScroll>
-        ) : selectedImageLayer ? (
-          <PersistedHorizontalScroll id="tool:stickers:image" contentContainerStyle={{ gap: 8 }}>
-            <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
-            <Action label="Delete sticker" danger onPress={() => deleteLayer(selectedImageLayer.id)} />
-            <Action label="Add text layer" onPress={addTextLayer} />
-            <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
-          </PersistedHorizontalScroll>
-        ) : translationTrackSelected && selectedTranslationTrack ? (
-          <PersistedHorizontalScroll id="tool:stickers:translation" contentContainerStyle={{ gap: 8 }}>
-            <Action label="Edit both languages" color={chrome.accent} onPress={() => setDualCaptionEditorOpen(true)} />
-            <Action label="Closer together" disabled={(selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) <= MIN_TRANSLATION_STACK_GAP} onPress={() => adjustTranslationGap(-0.016)} />
-            <Action
-              label={`Distance ${Math.round((selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) * 100)}`}
-              color="#64E8FF"
-              onPress={() => {
-                const before = projectRef.current;
-                commitTranslationTrackPatch(
-                  setTranslationStackGap(before, selectedTranslationTrack.id, DEFAULT_TRANSLATION_STACK_GAP),
-                  before,
-                );
-              }}
-            />
-            <Action label="Farther apart" disabled={(selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) >= MAX_TRANSLATION_STACK_GAP} onPress={() => adjustTranslationGap(0.016)} />
-            <Action label="Smaller type" onPress={() => adjustTranslationFontSize(-4)} />
-            <Action label={`${Math.round(selectedTranslationPair?.style.fontSize ?? 34)} pt`} color="#64E8FF" onPress={() => setFontBrowserOpen(true)} />
-            <Action label="Larger type" onPress={() => adjustTranslationFontSize(4)} />
-            <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
-            <Action label="White" color="#FFFFFF" onPress={() => queueCaptionStyleChange('Translated text color: white', { textColor: '#FFFFFF' })} />
-            <Action label="Lime" color="#DFFF35" onPress={() => queueCaptionStyleChange('Translated text color: lime', { textColor: '#DFFF35' })} />
-            <Action label="Cyan" color="#64D2FF" onPress={() => queueCaptionStyleChange('Translated text color: cyan', { textColor: '#64D2FF' })} />
-            <Action label="Yellow" color="#FFE566" onPress={() => queueCaptionStyleChange('Translated text color: yellow', { textColor: '#FFE566' })} />
-            <Action label="Pink" color="#FF8AD4" onPress={() => queueCaptionStyleChange('Translated text color: pink', { textColor: '#FF8AD4' })} />
-            <Action label="Uppercase" onPress={() => queueCaptionStyleChange('Uppercase translated captions', { textTransform: 'uppercase' })} />
-            {selectedTranslationPair ? <Action label="Refresh this translation" onPress={() => requestTranslationRefresh([selectedTranslationPair.source.id])} /> : null}
-            <Action label={selectedTranslationTrack.visible ? 'Hide second language' : 'Show second language'} onPress={() => { void toggleSelectedTranslationTrack(); }} />
-            <Action label="Remove second language" danger onPress={confirmRemoveSelectedTranslationTrack} />
-          </PersistedHorizontalScroll>
-        ) : selectedCaption ? (
-          <PersistedHorizontalScroll id="tool:stickers:caption" contentContainerStyle={{ gap: 8 }}>
-            <Action label="Split at playhead" onPress={splitSelectedCaptionAtPlayhead} />
-            <Action label="Join previous" onPress={() => joinSelectedCaption('previous')} />
-            <Action label="Join next" onPress={() => joinSelectedCaption('next')} />
-            <Action label="Edit captions" onPress={beginEditCaption} />
-            <Action label="Dual subtitles" color={chrome.accent} onPress={openDualCaptionEditor} />
-            <Action label="Delete subtitle" danger onPress={() => confirmDeleteCaption(selectedCaption.id)} />
-            <Action label="Add text layer" onPress={addTextLayer} />
-            <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
-            <Action
-              label="White"
-              color="#FFFFFF"
-              onPress={() => queueCaptionStyleChange('Text color: white', { textColor: '#FFFFFF' })}
-            />
-            <Action
-              label="Lime"
-              color="#DFFF35"
-              onPress={() => queueCaptionStyleChange('Text color: lime', { textColor: '#DFFF35' })}
-            />
-            <Action
-              label="Active word"
-              color="#FFC247"
-              onPress={() => queueCaptionStyleChange('Active-word color: amber', { activeWordColor: '#FFC247' })}
-            />
-            <Action
-              label="Uppercase"
-              onPress={() => queueCaptionStyleChange('Uppercase captions', { textTransform: 'uppercase' })}
-            />
-            <Action
-              label="Reset all caption boxes"
-              onPress={() => {
-                beginHistoryInteraction();
-                updateSharedCaptionTransform({ position: { x: 0.5, y: 0.78 }, box: { width: 0.86, height: 0.2 }, fontSize: 48, rotation: 0 });
-                queueMicrotask(finishHistoryInteraction);
-              }}
-            />
-          </PersistedHorizontalScroll>
+        ) : activeTool === 'stickers' ? (
+          <View style={{ gap: 12 }}>
+            <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>STICKERS & SCREEN TEXT</Text>
+            {selectedTextLayer ? (
+              <PersistedHorizontalScroll id="tool:stickers:text" contentContainerStyle={{ gap: 8 }}>
+                <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
+                <Action label="Edit text" onPress={() => { setEditingLayerId(selectedTextLayer.id); setEditingText(selectedTextLayer.text); }} />
+                <Action label="Delete text layer" danger onPress={() => deleteLayer(selectedTextLayer.id)} />
+                <Action label="Add text layer" onPress={addTextLayer} />
+                <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
+              </PersistedHorizontalScroll>
+            ) : selectedImageLayer ? (
+              <PersistedHorizontalScroll id="tool:stickers:image" contentContainerStyle={{ gap: 8 }}>
+                <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
+                <Action label="Delete sticker" danger onPress={() => deleteLayer(selectedImageLayer.id)} />
+                <Action label="Add text layer" onPress={addTextLayer} />
+                <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
+              </PersistedHorizontalScroll>
+            ) : (
+              <PersistedHorizontalScroll id="tool:stickers:empty" contentContainerStyle={{ gap: 8 }}>
+                <Action label="Add text layer" onPress={addTextLayer} />
+                <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
+              </PersistedHorizontalScroll>
+            )}
+            {selectedTextLayer ? (
+              <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: chrome.hairline, paddingTop: 12 }}>
+                <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>TEXT ANIMATION</Text>
+                <AnimationBrowser selected={selectedAnimationId} textLayerSelected scope={animationScope} hasSelectedCaption={false} onScopeChange={setAnimationScope} onSelect={chooseAnimation} />
+              </View>
+            ) : null}
+          </View>
         ) : (
-          <PersistedHorizontalScroll id="tool:stickers:empty" contentContainerStyle={{ gap: 8 }}>
-            <Action label="Add text layer" onPress={addTextLayer} />
-            <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
-          </PersistedHorizontalScroll>
+          <View style={{ gap: 12 }}>
+            <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>CAPTION CONTROLS</Text>
+            {translationTrackSelected && selectedTranslationTrack ? (
+              <PersistedHorizontalScroll id="tool:captions:translation" contentContainerStyle={{ gap: 8 }}>
+                <Action label="Edit both languages" color={chrome.accent} onPress={() => setDualCaptionEditorOpen(true)} />
+                <Action label="Closer together" disabled={(selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) <= MIN_TRANSLATION_STACK_GAP} onPress={() => adjustTranslationGap(-0.016)} />
+                <Action
+                  label={`Distance ${Math.round((selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) * 100)}`}
+                  color="#64E8FF"
+                  onPress={() => {
+                    const before = projectRef.current;
+                    commitTranslationTrackPatch(
+                      setTranslationStackGap(before, selectedTranslationTrack.id, DEFAULT_TRANSLATION_STACK_GAP),
+                      before,
+                    );
+                  }}
+                />
+                <Action label="Farther apart" disabled={(selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) >= MAX_TRANSLATION_STACK_GAP} onPress={() => adjustTranslationGap(0.016)} />
+                <Action label="Smaller type" onPress={() => adjustTranslationFontSize(-4)} />
+                <Action label={`${Math.round(selectedTranslationPair?.style.fontSize ?? 34)} pt`} color="#64E8FF" onPress={() => setFontBrowserOpen(true)} />
+                <Action label="Larger type" onPress={() => adjustTranslationFontSize(4)} />
+                <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
+                <Action label="White" color="#FFFFFF" onPress={() => queueCaptionStyleChange('Translated text color: white', { textColor: '#FFFFFF' })} />
+                <Action label="Lime" color="#DFFF35" onPress={() => queueCaptionStyleChange('Translated text color: lime', { textColor: '#DFFF35' })} />
+                <Action label="Cyan" color="#64D2FF" onPress={() => queueCaptionStyleChange('Translated text color: cyan', { textColor: '#64D2FF' })} />
+                <Action label="Yellow" color="#FFE566" onPress={() => queueCaptionStyleChange('Translated text color: yellow', { textColor: '#FFE566' })} />
+                <Action label="Pink" color="#FF8AD4" onPress={() => queueCaptionStyleChange('Translated text color: pink', { textColor: '#FF8AD4' })} />
+                <Action label="Uppercase" onPress={() => queueCaptionStyleChange('Uppercase translated captions', { textTransform: 'uppercase' })} />
+                {selectedTranslationPair ? <Action label="Refresh this translation" onPress={() => requestTranslationRefresh([selectedTranslationPair.source.id])} /> : null}
+                <Action label={selectedTranslationTrack.visible ? 'Hide second language' : 'Show second language'} onPress={() => { void toggleSelectedTranslationTrack(); }} />
+                <Action label="Remove second language" danger onPress={confirmRemoveSelectedTranslationTrack} />
+              </PersistedHorizontalScroll>
+            ) : selectedCaption ? (
+              <PersistedHorizontalScroll id="tool:captions:caption" contentContainerStyle={{ gap: 8 }}>
+                <Action label="Split at playhead" onPress={splitSelectedCaptionAtPlayhead} />
+                <Action label="Join previous" onPress={() => joinSelectedCaption('previous')} />
+                <Action label="Join next" onPress={() => joinSelectedCaption('next')} />
+                <Action label="Edit captions" onPress={beginEditCaption} />
+                <Action label="Dual subtitles" color={chrome.accent} onPress={openDualCaptionEditor} />
+                <Action label="Delete subtitle" danger onPress={() => confirmDeleteCaption(selectedCaption.id)} />
+                <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
+                <Action label="White" color="#FFFFFF" onPress={() => queueCaptionStyleChange('Text color: white', { textColor: '#FFFFFF' })} />
+                <Action label="Lime" color="#DFFF35" onPress={() => queueCaptionStyleChange('Text color: lime', { textColor: '#DFFF35' })} />
+                <Action label="Active word" color="#FFC247" onPress={() => queueCaptionStyleChange('Active-word color: amber', { activeWordColor: '#FFC247' })} />
+                <Action label="Uppercase" onPress={() => queueCaptionStyleChange('Uppercase captions', { textTransform: 'uppercase' })} />
+                <Action
+                  label="Reset all caption boxes"
+                  onPress={() => {
+                    beginHistoryInteraction();
+                    updateSharedCaptionTransform({ position: { x: 0.5, y: 0.78 }, box: { width: 0.86, height: 0.2 }, fontSize: 48, rotation: 0 });
+                    queueMicrotask(finishHistoryInteraction);
+                  }}
+                />
+              </PersistedHorizontalScroll>
+            ) : (
+              <PersistedHorizontalScroll id="tool:captions:empty" contentContainerStyle={{ gap: 8 }}>
+                <Action label="Edit captions" disabled={timelineCaptions.length === 0} onPress={beginEditCaption} />
+                <Action label="Dual subtitles" onPress={openDualCaptionEditor} />
+                <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
+              </PersistedHorizontalScroll>
+            )}
+            <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: chrome.hairline, paddingTop: 12 }}>
+              <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>CAPTION ANIMATION</Text>
+              <AnimationBrowser
+                selected={selectedAnimationId}
+                scope={animationScope}
+                hasSelectedCaption={Boolean(selectedCaptionId)}
+                onScopeChange={setAnimationScope}
+                onSelect={chooseAnimation}
+              />
+            </View>
+          </View>
         )}
 
         {captionInterruptionMessage || error || persistenceError || translationController.error ? (
@@ -2142,11 +2131,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             borderTopWidth: 1,
             borderTopColor: '#20262D',
           }}>
-          <ToolbarItem label="Stickers" active={activeTool === 'captions'} onPress={() => { setSelectedClipId(undefined); setActiveTool('captions'); }} />
-          <ToolbarItem label="Fonts" active={activeTool === 'fonts'} onPress={() => { setSelectedClipId(undefined); setActiveTool('fonts'); setFontBrowserOpen(true); }} />
-          <ToolbarItem label="Animate" active={activeTool === 'animate'} onPress={() => { setSelectedClipId(undefined); setActiveTool('animate'); }} />
-          <ToolbarItem label="Video" active={activeTool === 'video'} onPress={() => setActiveTool('video')} />
-          <ToolbarItem label="Audio" active={activeTool === 'audio'} onPress={() => { setActiveTool('audio'); }} />
+          <ToolbarItem label="Stickers" active={activeTool === 'stickers'} onPress={() => openEditorTool('stickers')} />
+          <ToolbarItem label="Fonts" active={fontBrowserOpen} onPress={() => setFontBrowserOpen(true)} />
+          <ToolbarItem label="Captions" active={activeTool === 'captions'} onPress={() => openEditorTool('captions')} />
+          <ToolbarItem label="Video" active={activeTool === 'video'} onPress={() => openEditorTool('video')} />
+          <ToolbarItem label="Audio" active={activeTool === 'audio'} onPress={() => openEditorTool('audio')} />
           <ToolbarItem label="Export" disabled={exporting} onPress={showExportMenu} />
         </View>
       </View>
@@ -2194,7 +2183,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           setSelectedLayerId('captions');
           setSelectedCaptionId(caption.id);
           setSelectedClipId(undefined);
-          setActiveTool('captions');
+          openEditorTool('captions');
         }}
         onCancel={() => setScriptEditorOpen(false)}
         onSave={commitCaptionScript}
