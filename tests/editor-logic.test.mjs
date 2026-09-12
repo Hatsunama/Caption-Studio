@@ -1338,12 +1338,11 @@ test('caption editing opens the full timestamped script and keeps text-layer edi
   assert.match(scriptEditor, /if \(!active\) return/);
 });
 
-test('selected captions expose direct timeline split and join commands', () => {
+test('caption menus expose the script editor instead of direct split and join commands', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
-  assert.match(editor, /splitCaptionScriptBlockAtTime/);
-  assert.match(editor, /Split at playhead/);
-  assert.match(editor, /Join previous/);
-  assert.match(editor, /Join next/);
+  const captionMenu = editor.slice(editor.indexOf('>CAPTION CONTROLS<'), editor.indexOf('>CAPTION ANIMATION<'));
+  assert.match(captionMenu, /label="Edit captions"/);
+  assert.doesNotMatch(captionMenu, /label="(?:Split[^"\n]*|Join previous|Join next)"/i);
 });
 
 test('the gap close control stays large and on the left of the gap', () => {
