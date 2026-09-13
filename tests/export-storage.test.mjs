@@ -107,14 +107,14 @@ test('stale cleanup policy fails closed and never claims fresh or unrelated cach
   assert.equal(isStaleLegacyCaptionStudioExportCacheArtifact('../Project-1999913600000.mp4', 0, nowMs), false);
 });
 
-test('project export verifies the MP4, hands it to the user, then owns temporary cleanup', () => {
+test('project export verifies publication, offers optional sharing, then owns temporary cleanup', () => {
   const service = readFileSync(new URL('../src/services/project-export.ts', import.meta.url), 'utf8');
   assert.match(service, /estimateVideoExportStorageBytes\(unresolvedPlan\)/);
   assert.match(service, /requireFreeSpace\([\s\S]*'export this video'/);
   assert.match(service, /protectTemporaryVideoExportArtifacts\(outputUri\)/);
   assert.match(service, /assertVideoExportDelivery\(nativeResult\)/);
-  assert.match(service, /confirmLocalExportFile\(outputUri, delivered\.sizeBytes\)/);
-  assert.match(service, /deliverExportedVideo\(outputUri\)/);
+  assert.match(service, /confirmLocalExportFile\(outputUri, sizeBytes\)/);
+  assert.match(service, /deliverExportedVideo\(outputUri, delivered\.sizeBytes\)/);
   assert.match(service, /Sharing\.shareAsync\(outputUri, \{[\s\S]*mimeType: 'video\/mp4'/);
   assert.match(service, /try \{[\s\S]*session\.startNative[\s\S]*\} finally \{[\s\S]*removeTemporaryVideoExportArtifacts\(outputUri\);/);
   assert.match(service, /catch \(error\) \{\s*await removeFailedSubtitleExportArtifact\(uri\);\s*throw error;/);

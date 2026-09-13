@@ -50,9 +50,11 @@ test('native export keeps the local MP4 until JS delivery and never covers the v
   assert.match(exporter, /task\.promise\.reject\("E_EXPORT_CANCELLED"/);
 });
 
-test('JS export proves the file exists, opens a share sheet, then deletes only the cache copy', () => {
+test('JS export owns published success and checks the cache only for optional sharing', () => {
   assert.match(projectExport, /assertVideoExportDelivery\(nativeResult\)/);
-  assert.match(projectExport, /confirmLocalExportFile\(outputUri, delivered\.sizeBytes\)/);
+  assert.match(projectExport, /deliverExportedVideo\(outputUri, delivered\.sizeBytes\)/);
+  assert.match(projectExport, /confirmLocalExportFile\(outputUri, sizeBytes\)/);
+  assert.doesNotMatch(projectExport, /session\.waitFor\((?:confirmLocalExportFile|deliverExportedVideo)/);
   assert.match(projectExport, /Sharing\.shareAsync\(outputUri, \{[\s\S]*mimeType: 'video\/mp4'/);
   assert.match(projectExport, /The exported video file is missing/);
   assert.match(projectExport, /The exported video file is empty/);
