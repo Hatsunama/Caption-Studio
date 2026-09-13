@@ -405,7 +405,7 @@ test('dual editor save preserves stacked preview overlays with independent timin
   }
   function preview() {
     const activeCaption = project.captions.find((caption) => 1000 >= caption.startMs && 1000 < caption.endMs);
-    const displayCaption = evaluate(declarations.get('displayCaption'), { isPlaying: true, activeCaption });
+    const displayCaption = evaluate(declarations.get('displayCaption'), { scriptEditorOpen: false, isPlaying: true, activeCaption });
     const translationTimelineTracks = project.captionTracks.translations.map((track) => ({
       ...track, pairs: resolveCaptionPairs(project, track.id).filter((pair) => pair.timelineVisible),
     }));
