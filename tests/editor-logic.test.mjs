@@ -943,8 +943,9 @@ test('clip audio fades are resolved by timeline position', () => {
 test('editor back navigation is an explicit save-or-discard transaction', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   assert.match(editor, /addListener\('beforeRemove'/);
-  assert.match(editor, /saveEditorDraft\(projectRef\.current,\s*\{/);
-  assert.match(editor, /discardEditorSession\(initialProject, projectRef\.current,\s*\{/);
+  assert.match(editor, /editorSession\.finish\(async \(latest\)/);
+  assert.match(editor, /saveEditorDraft\(latest, ledger\)/);
+  assert.match(editor, /discardEditorSession\(initialProject, latest, ledger\)/);
 });
 
 test('screens delegate project mutations to domain and workflow layers', () => {

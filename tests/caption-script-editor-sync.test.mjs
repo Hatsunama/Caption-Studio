@@ -40,7 +40,7 @@ function evaluate(expression, context = {}) {
 function workspaceValue(name, context) {
   const declaration = workspace.body.statements.filter(ts.isVariableStatement)
     .flatMap((node) => [...node.declarationList.declarations]).find((node) => node.name.getText(editorAst) === name);
-  return evaluate(declaration.initializer.getText(editorAst), { scriptKeyboardOpen: false, ...context });
+  return evaluate(declaration.initializer.getText(editorAst), { scriptEditorOpen: true, scriptKeyboardOpen: false, ...context });
 }
 function jsxProp(node, name, context) {
   const attribute = node.openingElement.attributes.properties.find((prop) => prop.name?.text === name);
@@ -453,7 +453,7 @@ test('draft text, empty text, splits, joins and recovery reach the actual parent
     const previewCaptions = workspaceValue('previewCaptions', { scriptEditorOpen, scriptDraftCaptions, timelineCaptions: cues });
     const selectedCaption = workspaceValue('selectedCaption', { previewCaptions, selectedCaptionId });
     const activeCaption = workspaceValue('activeCaption', { previewCaptions, currentMs, useMemo: (fn) => fn() });
-    return workspaceValue('displayCaption', { isPlaying, selectedCaption, activeCaption });
+    return workspaceValue('displayCaption', { scriptEditorOpen, isPlaying, selectedCaption, activeCaption });
   };
   h.edit(1); h.act(() => h.input(1).onChangeText('live draft'));
   assert.equal(display().text, 'live draft');

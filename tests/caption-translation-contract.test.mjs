@@ -221,7 +221,8 @@ test('dual-subtitle refresh commits translated text instead of leaving a pending
   assert.match(editor, /setTranslationStackGap/);
   assert.match(editor, /key=\{selectedTranslationTrack\?\.id \?\? 'none'\}/);
   assert.doesNotMatch(editor, /cues\.map\(\(cue\) => `\$\{cue\.sourceCaptionId\}:\$\{cue\.text\}`\)/);
-  assert.match(editor, /projectRef\.current = next;\s*setProject\(next\);/);
+  assert.match(editor, /const setProject = editorSession\.update;/);
+  assert.match(editor, /await commitEditorProject\(\(current\)/);
   assert.match(editor, /Closer together/);
   assert.match(editor, /Farther apart/);
   assert.match(editor, /filter\(\(cue\) => !cue\.text\.trim\(\) && !cue\.translationSkipped\)/);
