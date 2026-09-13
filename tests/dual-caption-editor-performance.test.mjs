@@ -410,7 +410,7 @@ test('dual editor save preserves stacked preview overlays with independent timin
       ...track, pairs: resolveCaptionPairs(project, track.id).filter((pair) => pair.timelineVisible),
     }));
     const translations = evaluate(declarations.get('displayTranslationPairs'), {
-      useMemo: (factory) => factory(), displayCaption, translationTimelineTracks,
+      useMemo: (factory) => factory(), currentMs: 1000, displayCaption, translationTimelineTracks,
     });
     return [
       { caption: evaluate(attribute(primary, 'caption'), { displayCaption }),
