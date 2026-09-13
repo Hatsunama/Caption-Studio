@@ -215,6 +215,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
+  const [workspaceHeight, setWorkspaceHeight] = useState(height);
   const [project, setProject] = useState(initialProject);
   const projectRef = useRef(project);
   const ownedAssetLedgerRef = useRef(createProjectOwnedAssetLedger(initialProject));
@@ -500,7 +501,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       : [],
     [displayCaption, translationTimelineTracks],
   );
-  const previewHeight = Math.min(Math.max(280, height * 0.43), 500);
+  // Script editing shares the actual resized root with the keyboard. The
+  // normal preview minimum would consume nearly all of a short Android window.
+  const previewHeight = scriptEditorOpen
+    ? Math.min(500, workspaceHeight * 0.4)
+    : Math.min(Math.max(280, height * 0.43), 500);
   const canvasSize = fitRect(
     Math.max(1, project.canvas.aspectWidth / project.canvas.aspectHeight),
     width - 24,
@@ -1579,7 +1584,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: palette.background }}>
+    <View
+      onLayout={(event) => setWorkspaceHeight(event.nativeEvent.layout.height)}
+      style={{ flex: 1, backgroundColor: palette.background }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Clear editor selection"
@@ -1764,7 +1771,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         </View>
       </Pressable>
 
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, display: scriptEditorOpen ? 'none' : 'flex' }}>
         <ScrollView
           nestedScrollEnabled
           keyboardShouldPersistTaps="handled"
