@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Modal,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
@@ -14,10 +14,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import {
-  adoptCommittedDualCaptionDrafts,
   committedDualCaptionText,
   dualCaptionDraftsFromPairs,
-  dualCaptionDraftsMatch,
   mergeRecoveredDualCaptionDrafts,
   shouldRestoreDualCaptionJournal,
   type DualCaptionDraft,
@@ -30,7 +28,7 @@ import {
   type EditorDraftKind,
 } from '@/services/editor-draft-journal';
 
-export function DualCaptionEditor(props: {
+type DualCaptionEditorProps = {
   visible: boolean;
   projectId: string;
   baseRevision: string;
@@ -53,53 +51,40 @@ export function DualCaptionEditor(props: {
   onToggleVisibility: () => void;
   onRemove: () => void;
   onCancelBusy: () => void;
-}) {
+};
+
+export function DualCaptionEditor(props: DualCaptionEditorProps) {
+  // Closing or changing projects/tracks owns a new draft and recovery lifetime.
+  return props.visible ? <DualCaptionEditorSession key={JSON.stringify([props.projectId, props.trackId])} {...props} /> : null;
+}
+
+function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const insets = useSafeAreaInsets();
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
-  const [drafts, setDrafts] = useState<Record<string, DualCaptionDraft>>(() => sourceDrafts);
-  const [committedDrafts, setCommittedDrafts] = useState<Record<string, DualCaptionDraft>>(() => sourceDrafts);
+  const [store] = useState(() => new DualCaptionDraftStore(sourceDrafts));
+  const editCount = useSyncExternalStore(store.subscribeDirty, store.getDirtyCount, store.getDirtyCount);
   const [journalReady, setJournalReady] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [journalError, setJournalError] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-  const openSessionRef = useRef<string | undefined>(undefined);
-  const sourceDraftsRef = useRef<Record<string, DualCaptionDraft>>(sourceDrafts);
+  const stopJournalRef = useRef<(() => void) | undefined>(undefined);
   const journalKind = `dual-captions-${props.trackId}` as EditorDraftKind;
-  const displayDrafts = useMemo(
-    () => adoptCommittedDualCaptionDrafts(committedDrafts, sourceDrafts, drafts),
-    [committedDrafts, drafts, sourceDrafts],
-  );
+  useLayoutEffect(() => { store.reconcile(sourceDrafts); }, [sourceDrafts, store]);
 
   useEffect(() => {
-    sourceDraftsRef.current = sourceDrafts;
-  }, [sourceDrafts]);
-
-  useEffect(() => {
-    if (!props.visible) {
-      openSessionRef.current = undefined;
-      return;
-    }
-    if (openSessionRef.current === props.trackId) return;
-    openSessionRef.current = props.trackId;
-    const openingDrafts = sourceDraftsRef.current;
+    const openingDrafts = store.committed;
     const allowedIds = Object.keys(openingDrafts);
     let active = true;
     void Promise.resolve().then(() => {
       if (!active) return undefined;
-      setCommittedDrafts(openingDrafts);
-      setDrafts(openingDrafts);
-      setSelectedIds(new Set());
-      setJournalReady(false);
-      setJournalError(undefined);
       return readEditorDraftJournal(props.projectId, journalKind);
     }).then((journal) => {
       if (!active) return;
       const recovered = decodeDualDraft(journal?.payload, allowedIds);
-      const nextCommitted = sourceDraftsRef.current;
+      const nextCommitted = store.committed;
       if (!recovered || !shouldRestoreDualCaptionJournal(recovered, nextCommitted)) {
-        setCommittedDrafts(nextCommitted);
-        setDrafts((current) => adoptCommittedDualCaptionDrafts(openingDrafts, nextCommitted, current));
-        if (recovered) void clearEditorDraftJournal(props.projectId, journalKind).catch(() => setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'));
+        if (recovered) void clearEditorDraftJournal(props.projectId, journalKind).catch(() => { if (active) setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'); });
         setJournalReady(true);
         return;
       }
@@ -107,8 +92,8 @@ export function DualCaptionEditor(props: {
         'Restore unsaved dual-subtitle edits?',
         'Caption Studio found typed edits that were not saved. Keeping the current translation leaves the second language as it is now.',
         [
-          { text: 'Keep current translation', style: 'cancel', onPress: () => { const current = sourceDraftsRef.current; setCommittedDrafts(current); setDrafts(current); void clearEditorDraftJournal(props.projectId, journalKind).catch(() => setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.')); setJournalReady(true); } },
-          { text: 'Restore unsaved typing', onPress: () => { const current = sourceDraftsRef.current; setCommittedDrafts(current); setDrafts(mergeRecoveredDualCaptionDrafts(recovered, current)); setJournalReady(true); } },
+          { text: 'Keep current translation', style: 'cancel', onPress: () => { if (!active) return; store.replace(store.committed); void clearEditorDraftJournal(props.projectId, journalKind).catch(() => { if (active) setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'); }); setJournalReady(true); } },
+          { text: 'Restore unsaved typing', onPress: () => { if (!active) return; store.replace(mergeRecoveredDualCaptionDrafts(recovered, store.committed)); setJournalReady(true); } },
         ],
       );
     }).catch(() => {
@@ -118,59 +103,59 @@ export function DualCaptionEditor(props: {
       }
     });
     return () => { active = false; };
-  }, [journalKind, props.projectId, props.trackId, props.visible]);
+  }, [journalKind, props.projectId, store]);
 
   useEffect(() => {
-    if (!props.visible || !journalReady || props.busy) return;
-    if (dualCaptionDraftsMatch(displayDrafts, sourceDrafts)) {
-      void clearEditorDraftJournal(props.projectId, journalKind).catch(() => setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'));
-      return;
-    }
+    if (!journalReady || props.busy || saving || closing) return;
     let active = true;
-    const timer = setTimeout(() => {
-      void writeEditorDraftJournal(props.projectId, journalKind, props.baseRevision, displayDrafts)
-        .then(() => { if (active) setJournalError(undefined); })
-        .catch(() => { if (active) setJournalError('Dual-subtitle recovery could not be saved. Keep this editor open until you save.'); });
-    }, 600);
-    return () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stop = () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [displayDrafts, journalKind, journalReady, props.baseRevision, props.busy, props.pairs, props.projectId, props.visible, sourceDrafts]);
+    stopJournalRef.current = stop;
+    const schedule = () => {
+      if (!active) return;
+      clearTimeout(timer);
+      if (!store.hasRecoveryChanges()) {
+        void clearEditorDraftJournal(props.projectId, journalKind)
+          .catch(() => { if (active) setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'); });
+        return;
+      }
+      timer = setTimeout(() => {
+        // Snapshot once after typing settles, not on every character. Journal
+        // operations may be queued, so never pass the mutable draft map itself.
+        void writeEditorDraftJournal(props.projectId, journalKind, props.baseRevision, store.snapshot())
+          .then(() => { if (active) setJournalError(undefined); })
+          .catch(() => { if (active) setJournalError('Dual-subtitle recovery could not be saved. Keep this editor open until you save.'); });
+      }, 600);
+    };
+    const unsubscribe = store.subscribeChanges(schedule);
+    schedule();
+    return () => { stop(); unsubscribe(); };
+  }, [closing, journalKind, journalReady, props.baseRevision, props.busy, props.projectId, saving, store]);
 
-  const edits = useMemo(() => props.pairs.flatMap((pair) => {
-    const draft = displayDrafts[pair.source.id];
-    if (!draft) return [];
-    const primaryText = committedDualCaptionText(draft.primaryText, pair.source.text);
-    const translatedText = committedDualCaptionText(draft.translatedText, pair.translation.text);
-    const primaryChanged = primaryText !== pair.source.text.trim();
-    const translatedChanged = translatedText !== pair.translation.text.trim();
-    return primaryChanged || translatedChanged ? [{
-      sourceCaptionId: pair.source.id,
-      primaryText,
-      translatedText,
-      primaryChanged,
-      translatedChanged,
-    }] : [];
-  }), [displayDrafts, props.pairs]);
-
-  const includedPairs = props.pairs.filter((pair) => !pair.translation.translationSkipped);
-  const missingCount = includedPairs.filter((pair) => !pair.translation.text.trim()).length;
-  const needsRefresh = includedPairs.filter((pair) => (
+  const includedPairs = useMemo(() => props.pairs.filter((pair) => !pair.translation.translationSkipped), [props.pairs]);
+  const missingCount = useMemo(() => includedPairs.filter((pair) => !pair.translation.text.trim()).length, [includedPairs]);
+  const needsRefresh = useMemo(() => includedPairs.filter((pair) => (
     !pair.translation.text.trim() || pair.translation.status === 'pending' || pair.translation.status === 'stale' || pair.translation.status === 'failed'
-  ));
-  const selectedPairs = includedPairs.filter((pair) => selectedIds.has(pair.source.id));
+  )), [includedPairs]);
+  const selectedPairs = useMemo(() => includedPairs.filter((pair) => selectedIds.has(pair.source.id)), [includedPairs, selectedIds]);
   const skippedCount = props.pairs.length - includedPairs.length;
-  const dirty = edits.length > 0;
+  const dirty = editCount > 0;
+  const disabled = props.busy || saving || closing || !journalReady;
 
   const closeAfterClearingJournal = () => {
+    stopJournalRef.current?.();
+    setClosing(true);
     void clearEditorDraftJournal(props.projectId, journalKind).then(props.onClose)
-      .catch(() => setJournalError('Recovery data could not be cleared. Your edits are still here; try Save or Close again.'));
+      .catch(() => setJournalError('Recovery data could not be cleared. Your edits are still here; try Save or Close again.'))
+      .finally(() => setClosing(false));
   };
 
   const requestClose = () => {
-    if (props.busy || saving) return;
-    if (!dirty) {
+    if (disabled) return;
+    if (store.getDirtyCount() === 0) {
       closeAfterClearingJournal();
       return;
     }
@@ -181,7 +166,10 @@ export function DualCaptionEditor(props: {
   };
 
   const save = async () => {
-    if (saving || edits.length === 0) return;
+    if (disabled) return;
+    const edits = store.getEdits(props.pairs);
+    if (edits.length === 0) return;
+    stopJournalRef.current?.();
     setSaving(true);
     try {
       if (await props.onSave(edits)) await clearEditorDraftJournal(props.projectId, journalKind);
@@ -192,17 +180,20 @@ export function DualCaptionEditor(props: {
     }
   };
 
-  const setDraft = (captionId: string, field: keyof DualCaptionDraft, value: string) => {
-    const baseline = displayDrafts[captionId] ?? { primaryText: '', translatedText: '' };
-    setCommittedDrafts(sourceDrafts);
-    setDrafts({
-      ...displayDrafts,
-      [captionId]: {
-        ...baseline,
-        [field]: value,
-      },
+  const toggleSelection = useCallback((captionId: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(captionId)) next.delete(captionId); else next.add(captionId);
+      return next;
     });
-  };
+  }, []);
+  const { automaticTranslation, sourceLanguageLabel, targetLanguageLabel, onRefresh, onSkip } = props;
+  const renderItem = useCallback(({ item: pair, index }: { item: CaptionPair; index: number }) => (
+    <DualCaptionRow pair={pair} index={index} store={store} disabled={disabled} dirty={dirty}
+      selected={selectedIds.has(pair.source.id)} onToggleSelection={toggleSelection}
+      automaticTranslation={automaticTranslation} sourceLanguageLabel={sourceLanguageLabel}
+      targetLanguageLabel={targetLanguageLabel} onRefresh={onRefresh} onSkip={onSkip} />
+  ), [automaticTranslation, dirty, disabled, onRefresh, onSkip, selectedIds, sourceLanguageLabel, store, targetLanguageLabel, toggleSelection]);
 
   return (
     <Modal visible={props.visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={requestClose}>
@@ -215,91 +206,46 @@ export function DualCaptionEditor(props: {
                 {props.sourceLanguageLabel} + {props.targetLanguageLabel} · independent text and timing
               </Text>
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close dual subtitle editor" disabled={props.busy} onPress={requestClose} hitSlop={10}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close dual subtitle editor" disabled={disabled} onPress={requestClose} hitSlop={10}>
               <Text style={{ color: chrome.text, fontSize: 28, lineHeight: 30 }}>×</Text>
             </Pressable>
           </View>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
             <HeaderAction
               label={`${props.trackVisible ? 'Hide' : 'Show'} ${props.targetLanguageLabel} line`}
-              disabled={props.busy || dirty}
+              disabled={disabled || dirty}
               onPress={props.onToggleVisibility}
             />
             <HeaderAction
                 label={`Refresh unfinished (${needsRefresh.length})`}
-                disabled={props.busy || dirty || needsRefresh.length === 0}
+                disabled={disabled || dirty || needsRefresh.length === 0}
                 onPress={() => props.onRefresh(needsRefresh.map((pair) => pair.source.id))}
               />
-            <HeaderAction label={`Refresh selected (${selectedPairs.length})`} disabled={props.busy || dirty || selectedPairs.length === 0}
+            <HeaderAction label={`Refresh selected (${selectedPairs.length})`} disabled={disabled || dirty || selectedPairs.length === 0}
               onPress={() => props.onRefresh(selectedPairs.map((pair) => pair.source.id))} />
-            <HeaderAction label={`Refresh all (${includedPairs.length})`} disabled={props.busy || dirty || includedPairs.length === 0}
+            <HeaderAction label={`Refresh all (${includedPairs.length})`} disabled={disabled || dirty || includedPairs.length === 0}
               onPress={() => props.onRefresh(includedPairs.map((pair) => pair.source.id))} />
-            <HeaderAction label={selectedPairs.length === includedPairs.length && includedPairs.length > 0 ? 'Clear selection' : 'Select all'} disabled={props.busy || includedPairs.length === 0}
+            <HeaderAction label={selectedPairs.length === includedPairs.length && includedPairs.length > 0 ? 'Clear selection' : 'Select all'} disabled={disabled || includedPairs.length === 0}
               onPress={() => setSelectedIds(selectedPairs.length === includedPairs.length ? new Set() : new Set(includedPairs.map((pair) => pair.source.id)))} />
-            <HeaderAction label="Remove second language" danger disabled={props.busy || dirty} onPress={props.onRemove} />
+            <HeaderAction label="Remove second language" danger disabled={disabled || dirty} onPress={props.onRemove} />
           </View>
           <Text style={{ marginTop: 11, color: chrome.muted, fontSize: 12, lineHeight: 17 }}>
             {missingCount} need translation; {needsRefresh.length - missingCount} have text to review; {skippedCount} skipped. You can export available text anyway. Save typed edits before refreshing. Refresh replaces only the selected second-language text.
           </Text>
         </View>
 
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 10, padding: 14, paddingBottom: 120 }}>
-          {props.pairs.map((pair, index) => {
-            const draft = displayDrafts[pair.source.id] ?? { primaryText: pair.source.text, translatedText: pair.translation.text };
-            const refreshRequired = pair.translation.status === 'pending' || pair.translation.status === 'stale' || pair.translation.status === 'failed';
-            const skipped = Boolean(pair.translation.translationSkipped);
-            const textChanged = draft.primaryText.trim() !== pair.source.text.trim() || draft.translatedText.trim() !== pair.translation.text.trim();
-            return (
-              <View key={pair.source.id} style={{ gap: 9, padding: 14, borderRadius: chrome.radius.lg, borderWidth: 1, borderColor: refreshRequired ? chrome.warning : chrome.hairline, backgroundColor: chrome.surface }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selectedIds.has(pair.source.id), disabled: props.busy || skipped }}
-                    accessibilityLabel={`Select subtitle ${index + 1} for refresh`} disabled={props.busy || skipped}
-                    onPress={() => setSelectedIds((current) => { const next = new Set(current); if (next.has(pair.source.id)) next.delete(pair.source.id); else next.add(pair.source.id); return next; })}
-                    hitSlop={8} style={{ paddingVertical: 8 }}>
-                    <Text style={{ color: chrome.accent, fontSize: 12, fontWeight: '700' }}>{selectedIds.has(pair.source.id) ? '[x]' : '[ ]'} #{index + 1} · {formatTime(pair.startMs)}</Text>
-                  </Pressable>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
-                    <Text style={{ color: statusColor(pair.translation.status), fontSize: 10, fontWeight: '900' }}>
-                      {skipped ? 'SKIPPED' : statusLabel(pair.translation.status)}
-                    </Text>
-                    {props.automaticTranslation ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Refresh translation for subtitle ${index + 1}`}
-                        disabled={props.busy || dirty || skipped}
-                        onPress={() => props.onRefresh([pair.source.id])}
-                        hitSlop={8}>
-                        <Text style={{ color: chrome.accent, fontSize: 13, fontWeight: '700' }}>Refresh</Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                </View>
-                <HeaderAction label={skipped ? 'Include second line' : 'Skip second line'} disabled={props.busy || dirty}
-                  onPress={() => props.onSkip(pair.source.id, !skipped)} />
-                {textChanged || pair.translation.status === 'stale' || pair.translation.status === 'reviewed' ? (
-                  <Text accessibilityRole="alert" style={{ color: chrome.warning, fontSize: 12, lineHeight: 17 }}>
-                    Text was edited. Check whether the other language still matches. Refresh is optional and replaces {props.targetLanguageLabel}; keeping your text is fine.
-                  </Text>
-                ) : null}
-                <LanguageInput
-                  label={props.sourceLanguageLabel}
-                  value={draft.primaryText}
-                  disabled={props.busy}
-                  inputKey={`${pair.source.id}:primary:${pair.source.text}`}
-                  onChangeText={(value) => setDraft(pair.source.id, 'primaryText', value)}
-                />
-                <LanguageInput
-                  label={props.targetLanguageLabel}
-                  value={draft.translatedText}
-                  disabled={props.busy}
-                  inputKey={`${pair.source.id}:translated:${pair.translation.text}`}
-                  placeholder="Translation pending"
-                  onChangeText={(value) => setDraft(pair.source.id, 'translatedText', value)}
-                />
-              </View>
-            );
-          })}
-        </ScrollView>
+        <FlatList
+          style={{ flex: 1 }}
+          data={props.pairs}
+          keyExtractor={captionPairKey}
+          renderItem={renderItem}
+          initialNumToRender={6}
+          maxToRenderPerBatch={6}
+          windowSize={5}
+          removeClippedSubviews={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ gap: 10, padding: 14, paddingBottom: 120 }}
+        />
 
         {props.busy || props.errorMessage ? (
           <View style={{ position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.78)' }}>
@@ -334,12 +280,12 @@ export function DualCaptionEditor(props: {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Save dual subtitle edits"
-              disabled={edits.length === 0 || saving}
+              disabled={editCount === 0 || disabled}
               onPress={() => { void save(); }}
-              style={{ alignItems: 'center', paddingVertical: 16, borderRadius: chrome.radius.lg, backgroundColor: edits.length > 0 ? chrome.accent : chrome.fill }}>
-              <Text style={{ color: edits.length > 0 ? chrome.accentInk : chrome.muted, fontSize: 16, fontWeight: '700' }}>
-                {edits.length > 0
-                  ? `Save ${edits.length} change${edits.length === 1 ? '' : 's'}`
+              style={{ alignItems: 'center', paddingVertical: 16, borderRadius: chrome.radius.lg, backgroundColor: editCount > 0 ? chrome.accent : chrome.fill }}>
+              <Text style={{ color: editCount > 0 ? chrome.accentInk : chrome.muted, fontSize: 16, fontWeight: '700' }}>
+                {editCount > 0
+                  ? `Save ${editCount} change${editCount === 1 ? '' : 's'}`
                   : 'No unsaved changes'}
               </Text>
             </Pressable>
@@ -350,11 +296,81 @@ export function DualCaptionEditor(props: {
   );
 }
 
+function captionPairKey(pair: CaptionPair) { return pair.source.id; }
+
+const DualCaptionRow = memo(function DualCaptionRow(props: {
+  pair: CaptionPair;
+  index: number;
+  store: DualCaptionDraftStore;
+  disabled: boolean;
+  dirty: boolean;
+  selected: boolean;
+  onToggleSelection: (captionId: string) => void;
+} & Pick<DualCaptionEditorProps, 'automaticTranslation' | 'sourceLanguageLabel' | 'targetLanguageLabel' | 'onRefresh' | 'onSkip'>) {
+  const { pair, index, store } = props;
+  const subscribe = useCallback((listener: () => void) => store.subscribeCue(pair.source.id, listener), [pair.source.id, store]);
+  const getSnapshot = useCallback(() => store.getDraft(pair.source.id), [pair.source.id, store]);
+  const draftValue = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const draft = draftValue ?? { primaryText: pair.source.text, translatedText: pair.translation.text };
+  const refreshRequired = pair.translation.status === 'pending' || pair.translation.status === 'stale' || pair.translation.status === 'failed';
+  const skipped = Boolean(pair.translation.translationSkipped);
+  const textChanged = draft.primaryText.trim() !== pair.source.text.trim() || draft.translatedText.trim() !== pair.translation.text.trim();
+  return (
+    <View key={pair.source.id} style={{ gap: 9, padding: 14, borderRadius: chrome.radius.lg, borderWidth: 1, borderColor: refreshRequired ? chrome.warning : chrome.hairline, backgroundColor: chrome.surface }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: props.selected, disabled: props.disabled || skipped }}
+          accessibilityLabel={`Select subtitle ${index + 1} for refresh`} disabled={props.disabled || skipped}
+          onPress={() => props.onToggleSelection(pair.source.id)}
+          hitSlop={8} style={{ paddingVertical: 8 }}>
+          <Text style={{ color: chrome.accent, fontSize: 12, fontWeight: '700' }}>{props.selected ? '[x]' : '[ ]'} #{index + 1} · {formatTime(pair.startMs)}</Text>
+        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
+          <Text style={{ color: statusColor(pair.translation.status), fontSize: 10, fontWeight: '900' }}>
+            {skipped ? 'SKIPPED' : statusLabel(pair.translation.status)}
+          </Text>
+          {props.automaticTranslation ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Refresh translation for subtitle ${index + 1}`}
+              disabled={props.disabled || props.dirty || skipped}
+              onPress={() => props.onRefresh([pair.source.id])}
+              hitSlop={8}>
+              <Text style={{ color: chrome.accent, fontSize: 13, fontWeight: '700' }}>Refresh</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+      <HeaderAction label={skipped ? 'Include second line' : 'Skip second line'} disabled={props.disabled || props.dirty}
+        onPress={() => props.onSkip(pair.source.id, !skipped)} />
+      {textChanged || pair.translation.status === 'stale' || pair.translation.status === 'reviewed' ? (
+        <Text accessibilityRole="alert" style={{ color: chrome.warning, fontSize: 12, lineHeight: 17 }}>
+          Text was edited. Check whether the other language still matches. Refresh is optional and replaces {props.targetLanguageLabel}; keeping your text is fine.
+        </Text>
+      ) : null}
+      <LanguageInput
+        label={props.sourceLanguageLabel}
+        value={draft.primaryText}
+        disabled={props.disabled}
+        cueNumber={index + 1}
+        onChangeText={(value) => props.store.setDraft(pair.source.id, 'primaryText', value)}
+      />
+      <LanguageInput
+        label={props.targetLanguageLabel}
+        value={draft.translatedText}
+        disabled={props.disabled}
+        cueNumber={index + 1}
+        placeholder="Translation pending"
+        onChangeText={(value) => props.store.setDraft(pair.source.id, 'translatedText', value)}
+      />
+    </View>
+  );
+});
+
 function LanguageInput(props: {
   label: string;
   value: string;
   disabled: boolean;
-  inputKey: string;
+  cueNumber: number;
   placeholder?: string;
   onChangeText: (value: string) => void;
 }) {
@@ -362,8 +378,7 @@ function LanguageInput(props: {
     <View style={{ gap: 5 }}>
       <Text style={{ color: chrome.muted, fontSize: 11, fontWeight: '700', letterSpacing: 0.4 }}>{props.label.toUpperCase()}</Text>
       <TextInput
-        key={props.inputKey}
-        accessibilityLabel={`${props.label} subtitle text`}
+        accessibilityLabel={`${props.label} subtitle ${props.cueNumber} text`}
         value={props.value}
         editable={!props.disabled}
         multiline
@@ -408,6 +423,108 @@ function formatTime(milliseconds: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds - minutes * 60;
   return `${minutes}:${seconds.toFixed(1).padStart(4, '0')}`;
+}
+
+// Drafts outlive virtualized rows. A keystroke replaces one immutable cue
+// snapshot, updates its dirty membership, and notifies only that cue. Document
+// work is reserved for incoming pairs, recovery, and explicit save boundaries.
+class DualCaptionDraftStore {
+  committed: Record<string, DualCaptionDraft>;
+  private drafts = new Map<string, DualCaptionDraft>();
+  private edits = new Map<string, DualCaptionTextEdit>();
+  private recoveryIds = new Set<string>();
+  private cueListeners = new Map<string, Set<() => void>>();
+  private dirtyListeners = new Set<() => void>();
+  private changeListeners = new Set<() => void>();
+
+  constructor(committed: Record<string, DualCaptionDraft>) {
+    this.committed = committed;
+    this.drafts = new Map(Object.entries(committed));
+  }
+
+  getDraft = (id: string) => this.drafts.get(id);
+  getDirtyCount = () => this.edits.size;
+  hasRecoveryChanges = () => this.recoveryIds.size > 0;
+  snapshot = () => Object.fromEntries(this.drafts);
+  getEdits = (pairs: CaptionPair[]) => pairs.flatMap((pair) => {
+    const edit = this.edits.get(pair.source.id);
+    return edit ? [edit] : [];
+  });
+
+  subscribeCue = (id: string, listener: () => void) => {
+    let listeners = this.cueListeners.get(id);
+    if (!listeners) { listeners = new Set(); this.cueListeners.set(id, listeners); }
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.cueListeners.delete(id);
+    };
+  };
+  subscribeDirty = (listener: () => void) => {
+    this.dirtyListeners.add(listener);
+    return () => { this.dirtyListeners.delete(listener); };
+  };
+  subscribeChanges = (listener: () => void) => {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  };
+
+  setDraft(id: string, field: keyof DualCaptionDraft, value: string) {
+    const current = this.drafts.get(id);
+    if (!current || current[field] === value) return;
+    const previousCount = this.edits.size;
+    this.update(id, { ...current, [field]: value });
+    this.notify(previousCount);
+  }
+
+  reconcile(next: Record<string, DualCaptionDraft>) {
+    if (next === this.committed) return;
+    const previous = this.committed;
+    const previousCount = this.edits.size;
+    this.committed = next;
+    for (const [id, committed] of Object.entries(next)) {
+      const draft = this.drafts.get(id);
+      this.update(id, {
+        primaryText: !draft || !previous[id] || draft.primaryText === previous[id].primaryText ? committed.primaryText : draft.primaryText,
+        translatedText: !draft || !previous[id] || draft.translatedText === previous[id].translatedText ? committed.translatedText : draft.translatedText,
+      });
+    }
+    for (const id of this.drafts.keys()) {
+      if (Object.hasOwn(next, id)) continue;
+      this.drafts.delete(id);
+      this.edits.delete(id);
+      this.recoveryIds.delete(id);
+      this.cueListeners.get(id)?.forEach((listener) => listener());
+    }
+    this.notify(previousCount);
+  }
+
+  replace(next: Record<string, DualCaptionDraft>) {
+    const previousCount = this.edits.size;
+    for (const [id, committed] of Object.entries(this.committed)) this.update(id, next[id] ?? committed);
+    this.notify(previousCount);
+  }
+
+  private update(id: string, draft: DualCaptionDraft) {
+    const committed = this.committed[id];
+    const previous = this.drafts.get(id);
+    const primaryText = committedDualCaptionText(draft.primaryText, committed.primaryText);
+    const translatedText = committedDualCaptionText(draft.translatedText, committed.translatedText);
+    const primaryChanged = primaryText !== committed.primaryText.trim();
+    const translatedChanged = translatedText !== committed.translatedText.trim();
+    if (primaryChanged || translatedChanged) this.edits.set(id, { sourceCaptionId: id, primaryText, translatedText, primaryChanged, translatedChanged });
+    else this.edits.delete(id);
+    if (draft.primaryText !== committed.primaryText || draft.translatedText !== committed.translatedText) this.recoveryIds.add(id);
+    else this.recoveryIds.delete(id);
+    if (previous?.primaryText === draft.primaryText && previous?.translatedText === draft.translatedText) return;
+    this.drafts.set(id, draft);
+    this.cueListeners.get(id)?.forEach((listener) => listener());
+  }
+
+  private notify(previousCount: number) {
+    if (previousCount !== this.edits.size) this.dirtyListeners.forEach((listener) => listener());
+    this.changeListeners.forEach((listener) => listener());
+  }
 }
 
 function decodeDualDraft(value: unknown, allowedIds: string[]): Record<string, DualCaptionDraft> | null {
