@@ -37,6 +37,7 @@ import {
 import { generateProjectCaptions } from '@/services/project-transcription';
 import { persistProjectCheckpoint } from '@/services/project-persistence';
 import { cleanupStaleProjectRecoveryCache } from '@/services/project-recovery';
+import { clearProjectEditorDraftJournals } from '@/services/editor-draft-journal';
 import CaptionMedia from 'caption-media';
 import { createCaptionGenerationSession } from '@/services/caption-generation-session';
 import {
@@ -303,6 +304,7 @@ export async function discardEditorSession(
   const discardedUris = abandonedProjectOwnedUris(currentProject, initialProject);
   const abandonedSessionUris = ledger ? abandonedLedgerAssets(ledger.owned, initialProject) : [];
   await runBestEffortCleanup('discarded editor media reconciliation', [
+    clearProjectEditorDraftJournals(initialProject.id),
     deleteProjectOwnedFiles(initialProject.id, [...discardedUris, ...abandonedSessionUris]),
   ]);
   await releaseUnreferencedReadPermissions([
@@ -314,6 +316,7 @@ export async function discardEditorSession(
 export async function deleteProjectCompletely(projectId: string) {
   const deletedProject = await deleteProjectRecord(projectId);
   await runBestEffortCleanup('deleted project cleanup', [
+    clearProjectEditorDraftJournals(projectId),
     deleteProjectFiles(projectId),
     deletedProject
       ? releaseUnreferencedReadPermissions(linkedMediaUris(deletedProject))
@@ -324,6 +327,7 @@ export async function deleteProjectCompletely(projectId: string) {
 export async function deleteUnreadableProjectCompletely(projectId: string) {
   const linkedUris = await deleteUnreadableProjectRecord(projectId);
   await runBestEffortCleanup('deleted unreadable project cleanup', [
+    clearProjectEditorDraftJournals(projectId),
     deleteProjectFiles(projectId),
     releaseUnreferencedReadPermissions(linkedUris),
   ]);

@@ -49,14 +49,17 @@ export function ScriptEditor(props: {
   words: WordToken[];
   initialCaptionId?: string;
   onSelectCaption: (caption: CaptionBlock) => void;
+  onDraftChange: (captions: CaptionBlock[] | null) => void;
+  onKeyboardChange: (open: boolean) => void;
   currentMs: number;
   isPlaying: boolean;
   onSeekTimeline: (timelineMs: number) => void;
   onCancel: () => void;
   onSave: (captions: CaptionBlock[]) => Promise<void>;
 }) {
-  const { onSeekTimeline, onSelectCaption } = props;
+  const { onSeekTimeline, onSelectCaption, onDraftChange, onKeyboardChange } = props;
   const listRef = useRef<FlatList<CaptionBlock>>(null);
+  const inputRefs = useRef<Record<string, TextInput | null>>({});
   const sheetRef = useRef<View>(null);
   const selectionRef = useRef<Record<string, { start: number; end: number }>>({});
   const splitCounterRef = useRef(0);
@@ -74,11 +77,14 @@ export function ScriptEditor(props: {
   const listViewportHeightRef = useRef(0);
   const listOffsetRef = useRef(0);
   const userScrollingRef = useRef(false);
+  // Ownership survives gesture completion: delayed layouts must not undo a
+  // user's scroll. Only an explicit selection or playback follow takes it back.
+  const scrollOwnerRef = useRef<'user' | 'programmatic'>('programmatic');
   const pendingScrollSeekRef = useRef(false);
   const scrollEndTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastScrollSeekIdRef = useRef<string | undefined>(undefined);
   const lastTimelineCaptionIdRef = useRef<string | undefined>(undefined);
-  const navigationRef = useRef<{ id: string; attempts: number } | undefined>(undefined);
+  const navigationRef = useRef<{ id: string; attempts: number; center: boolean } | undefined>(undefined);
   const navigationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const sessionRef = useRef<{ visible: boolean; captions: CaptionBlock[] }>({ visible: false, captions: [] });
   const [listViewportHeight, setListViewportHeight] = useState(0);
@@ -88,13 +94,37 @@ export function ScriptEditor(props: {
   useEffect(() => {
     if (!props.visible) return;
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardOpen(true));
-    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardOpen(false));
+    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
+      setKeyboardOpen(false);
+      setEditingCaptionId(undefined);
+    });
     return () => { show.remove(); hide.remove(); };
   }, [props.visible]);
 
   useEffect(() => {
     sessionRef.current = { visible: props.visible, captions: draftCaptions };
   }, [draftCaptions, props.visible]);
+
+  // Preview is transient state, separate from the project and recovery journal.
+  // Publish every mutation (including recovery, splits and joins) without debounce.
+  useEffect(() => {
+    // Opening initializes below. Do not publish an empty or previous session's
+    // state before that initialization has committed.
+    if (props.visible && wasVisibleRef.current) onDraftChange(draftCaptions);
+  }, [draftCaptions, onDraftChange, props.visible]);
+
+  useEffect(() => {
+    onKeyboardChange(props.visible && keyboardOpen);
+  }, [keyboardOpen, onKeyboardChange, props.visible]);
+
+  useEffect(() => () => {
+    onDraftChange(null);
+    onKeyboardChange(false);
+  }, [onDraftChange, onKeyboardChange, props.visible]);
+
+  useEffect(() => {
+    if (editingCaptionId) inputRefs.current[editingCaptionId]?.focus();
+  }, [editingCaptionId]);
 
   const cancelNavigation = useCallback(() => {
     clearTimeout(navigationTimerRef.current);
@@ -104,23 +134,28 @@ export function ScriptEditor(props: {
 
   const revealCaption = useCallback((id: string, center = false, attempts = 0) => {
     const session = sessionRef.current;
-    if (!session.visible || userScrollingRef.current || listViewportHeightRef.current <= 0) return;
+    if (!session.visible || scrollOwnerRef.current === 'user' || userScrollingRef.current || listViewportHeightRef.current <= 0) return;
     pendingScrollSeekRef.current = false;
     const index = session.captions.findIndex((caption) => caption.id === id);
     if (index < 0) return;
     const layout = captionLayoutsRef.current[id];
     const viewport = listViewportHeightRef.current;
-    if (!center && layout?.index === index && layout.y >= listOffsetRef.current + 8
-      && layout.y + layout.height <= listOffsetRef.current + viewport - 8) return;
-    cancelNavigation();
-    navigationRef.current = { id, attempts };
     const tall = layout?.index === index && layout.height > viewport - 16;
-    listRef.current?.scrollToIndex({ index, animated: false, viewPosition: tall ? 0 : 0.5, viewOffset: tall ? 8 : 0 });
+    const viewPosition = center && !tall ? 0.5 : 0;
+    const viewOffset = viewPosition === 0 ? 8 : 0;
+    const targetOffset = layout?.index === index
+      ? Math.max(0, layout.y - viewPosition * (viewport - layout.height) - viewOffset)
+      : undefined;
+    if (targetOffset !== undefined && Math.abs(targetOffset - listOffsetRef.current) <= 1) return;
+    cancelNavigation();
+    navigationRef.current = { id, attempts, center };
+    listRef.current?.scrollToIndex({ index, animated: false, viewPosition, viewOffset });
   }, [cancelNavigation]);
 
   useEffect(() => {
     if (props.visible) return;
     userScrollingRef.current = false;
+    scrollOwnerRef.current = 'programmatic';
     pendingScrollSeekRef.current = false;
     clearTimeout(scrollEndTimerRef.current);
     cancelNavigation();
@@ -150,6 +185,7 @@ export function ScriptEditor(props: {
     wasVisibleRef.current = props.visible;
     if (!opening) return;
     setDraftCaptions(sourceCaptions);
+    onDraftChange(sourceCaptions);
     setSelectedCaptionId(sourceCaptions[initialIndex]?.id);
     setEditingCaptionId(undefined);
     setEmptyCaptionId(undefined);
@@ -196,7 +232,7 @@ export function ScriptEditor(props: {
     return () => {
       active = false;
     };
-  }, [initialIndex, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
+  }, [initialIndex, onDraftChange, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
 
   useEffect(() => {
     if (!props.visible || !journalReady || sameCaptionDraft(draftCaptions, sourceCaptions)) return;
@@ -218,21 +254,25 @@ export function ScriptEditor(props: {
     const changed = lastTimelineCaptionIdRef.current !== active?.id;
     lastTimelineCaptionIdRef.current = active?.id;
     // A transport tick must never take the input (or a drag) off screen.
-    if (editingCaptionId || userScrollingRef.current || !props.isPlaying || !active || !changed) return;
+    if (editingCaptionId || userScrollingRef.current || pendingScrollSeekRef.current || !props.isPlaying || !active || !changed) return;
+    scrollOwnerRef.current = 'programmatic';
     setSelectedCaptionId(active.id);
     revealCaption(active.id, true);
   }, [draftCaptions, editingCaptionId, props.currentMs, props.isPlaying, props.visible, revealCaption]);
 
   useEffect(() => {
     const id = editingCaptionId ?? selectedCaptionId;
-    if (id) revealCaption(id);
-  }, [draftCaptions, editingCaptionId, selectedCaptionId, keyboardOpen, listViewportHeight, props.visible, revealCaption]);
+    if (id) revealCaption(id, !editingCaptionId && props.isPlaying);
+  }, [draftCaptions, editingCaptionId, selectedCaptionId, keyboardOpen, listViewportHeight, props.isPlaying, props.visible, revealCaption]);
 
   const seekToCenteredCaption = useCallback((offsetY: number) => {
     listOffsetRef.current = offsetY;
     if ((!userScrollingRef.current && !pendingScrollSeekRef.current) || listViewportHeightRef.current <= 0) return;
     const centerY = offsetY + listViewportHeightRef.current / 2;
-    const nearest = draftCaptions.reduce<CaptionBlock | undefined>((closest, caption, index) => {
+    const firstLayout = captionLayoutsRef.current[draftCaptions[0]?.id];
+    // The first short cue cannot reach the center guide at offset zero.
+    // Give the leading edge explicit ownership of the first caption/time.
+    const nearest = offsetY <= Math.max(0, firstLayout?.y ?? 0) ? draftCaptions[0] : draftCaptions.reduce<CaptionBlock | undefined>((closest, caption, index) => {
       const layout = captionLayoutsRef.current[caption.id];
       if (!layout || layout.index !== index) return closest;
       // A fast fling can outrun virtualization. Wait for the cell at the guide
@@ -262,12 +302,13 @@ export function ScriptEditor(props: {
       seekToCenteredCaption(listOffsetRef.current);
       return;
     }
-    if (id === (editingCaptionId ?? selectedCaptionId)) revealCaption(id);
-  }, [editingCaptionId, selectedCaptionId, revealCaption, seekToCenteredCaption]);
+    if (id === (editingCaptionId ?? selectedCaptionId)) revealCaption(id, !editingCaptionId && props.isPlaying);
+  }, [editingCaptionId, selectedCaptionId, props.isPlaying, revealCaption, seekToCenteredCaption]);
 
   const selectForEditing = (caption: CaptionBlock) => {
     clearTimeout(scrollEndTimerRef.current);
     userScrollingRef.current = false;
+    scrollOwnerRef.current = 'programmatic';
     pendingScrollSeekRef.current = false;
     cancelNavigation();
     selectionRef.current[caption.id] ??= { start: caption.text.length, end: caption.text.length };
@@ -277,13 +318,25 @@ export function ScriptEditor(props: {
     setBoundaryMessage(undefined);
     props.onSelectCaption(caption);
     props.onSeekTimeline(caption.startMs);
+    inputRefs.current[caption.id]?.focus();
+    revealCaption(caption.id);
   };
 
   const focusCaption = (captionId: string, captions: CaptionBlock[]) => {
+    clearTimeout(scrollEndTimerRef.current);
+    userScrollingRef.current = false;
+    scrollOwnerRef.current = 'programmatic';
+    pendingScrollSeekRef.current = false;
+    cancelNavigation();
     setDraftCaptions(captions);
     setSelectedCaptionId(captionId);
     setEditingCaptionId(captionId);
     setEmptyCaptionId(undefined);
+    const caption = captions.find((candidate) => candidate.id === captionId);
+    if (caption) {
+      onSelectCaption(caption);
+      onSeekTimeline(caption.startMs);
+    }
   };
 
   const updateText = (caption: CaptionBlock, text: string) => {
@@ -347,9 +400,8 @@ export function ScriptEditor(props: {
     if (saving) return;
     const empty = draftCaptions.find((caption) => !caption.text.trim());
     if (empty) {
+      focusCaption(empty.id, draftCaptions);
       setEmptyCaptionId(empty.id);
-      setSelectedCaptionId(empty.id);
-      setEditingCaptionId(empty.id);
       return;
     }
     setSaving(true);
@@ -434,20 +486,24 @@ export function ScriptEditor(props: {
             data={draftCaptions}
             keyExtractor={(caption) => caption.id}
             CellRendererComponent={CaptionCell}
-            keyboardDismissMode="on-drag"
-            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="none"
+            keyboardShouldPersistTaps="always"
+            // Focus capture retains the active cell in VirtualizedList's render
+            // mask; disabling native clipping also keeps its Android input attached.
+            removeClippedSubviews={false}
             onLayout={(event) => {
               listViewportHeightRef.current = event.nativeEvent.layout.height;
               setListViewportHeight(event.nativeEvent.layout.height);
               const id = editingCaptionId ?? selectedCaptionId;
-              if (id) revealCaption(id);
+              if (id) revealCaption(id, !editingCaptionId && props.isPlaying);
             }}
             onScrollBeginDrag={() => {
               clearTimeout(scrollEndTimerRef.current);
               cancelNavigation();
               userScrollingRef.current = true;
+              scrollOwnerRef.current = 'user';
+              pendingScrollSeekRef.current = false;
               lastScrollSeekIdRef.current = undefined;
-              setEditingCaptionId(undefined);
             }}
             onScroll={(event) => {
               listOffsetRef.current = event.nativeEvent.contentOffset.y;
@@ -466,7 +522,7 @@ export function ScriptEditor(props: {
               finishUserScroll();
             }}
             scrollEventThrottle={32}
-            contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 48, gap: 8 }}
+            contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: Math.max(48, listViewportHeight), gap: 8 }}
           ListHeaderComponent={(
             <View style={{ marginBottom: 6, gap: 5 }}>
               {!keyboardOpen ? <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 18 }}>
@@ -485,11 +541,11 @@ export function ScriptEditor(props: {
           )}
           onScrollToIndexFailed={({ index, averageItemLength }) => {
             const pending = navigationRef.current;
-            if (!pending || userScrollingRef.current || !props.visible
+            if (!pending || scrollOwnerRef.current === 'user' || userScrollingRef.current || !props.visible
               || draftCaptions[index]?.id !== pending.id || pending.attempts >= 3) return;
             listRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: false });
             clearTimeout(navigationTimerRef.current);
-            navigationTimerRef.current = setTimeout(() => revealCaption(pending.id, true, pending.attempts + 1), 80);
+            navigationTimerRef.current = setTimeout(() => revealCaption(pending.id, pending.center, pending.attempts + 1), 80);
           }}
           renderItem={({ item, index }) => {
             const selected = item.id === selectedCaptionId;
@@ -502,31 +558,29 @@ export function ScriptEditor(props: {
                   <Text style={{ marginTop: 4, color: '#5E6874', fontSize: 9, fontVariant: ['tabular-nums'] }}>{formatTimestamp(item.endMs)}</Text>
                 </View>
                 <View style={{ flex: 1, justifyContent: 'center' }}>
-                  {editing ? (
                     <View style={{ gap: 9 }}>
                       <TextInput
-                        autoFocus
+                        ref={(input) => { inputRefs.current[item.id] = input; }}
                         multiline
-                        scrollEnabled
+                        scrollEnabled={editing}
+                        submitBehavior="newline"
                         maxLength={500}
                         value={item.text}
                         onChangeText={(text) => updateText(item, text)}
-                        onFocus={() => revealCaption(item.id)}
-                        onContentSizeChange={() => revealCaption(item.id)}
+                        onFocus={() => selectForEditing(item)}
+                        onPressIn={() => { if (editing) selectForEditing(item); }}
+                        onContentSizeChange={() => { if (editing) revealCaption(item.id); }}
                         onSelectionChange={(event) => { selectionRef.current[item.id] = event.nativeEvent.selection; }}
                         onKeyPress={(event) => { if (event.nativeEvent.key === 'Backspace') mergeWithPrevious(item); }}
                         selectionColor={chrome.accent}
-                        style={{ minHeight: Math.min(44, Math.max(24, listViewportHeight / 2)), maxHeight: Math.max(24, listViewportHeight / 2), padding: 0, color: chrome.text, fontSize: 17, lineHeight: 23, fontWeight: '400', textAlignVertical: 'top' }}
+                        style={{ minHeight: editing ? Math.min(46, Math.max(24, listViewportHeight / 2)) : undefined, maxHeight: editing ? Math.max(24, listViewportHeight / 2) : undefined, padding: 0, color: chrome.text, fontSize: 17, lineHeight: 23, fontWeight: '400', textAlignVertical: 'top' }}
                       />
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+                      {editing ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
                         <ScriptAction label="Split here" onPress={() => splitAtCursor(item)} />
                         <ScriptAction label="Join previous" onPress={() => mergeWithPrevious(item, false)} />
                         <ScriptAction label="Join next" onPress={() => mergeWithNext(item)} />
-                      </View>
+                      </View> : null}
                     </View>
-                  ) : (
-                    <Text style={{ color: chrome.text, fontSize: 17, lineHeight: 23, fontWeight: '400' }}>{item.text}</Text>
-                  )}
                   {invalid ? <Text style={{ marginTop: 4, color: '#FF8FA2', fontSize: 11 }}>A subtitle cannot be empty. Merge it or delete its timeline block.</Text> : null}
                 </View>
               </Pressable>

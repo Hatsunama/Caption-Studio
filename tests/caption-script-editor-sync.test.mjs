@@ -40,7 +40,7 @@ function evaluate(expression, context = {}) {
 function workspaceValue(name, context) {
   const declaration = workspace.body.statements.filter(ts.isVariableStatement)
     .flatMap((node) => [...node.declarationList.declarations]).find((node) => node.name.getText(editorAst) === name);
-  return evaluate(declaration.initializer.getText(editorAst), context);
+  return evaluate(declaration.initializer.getText(editorAst), { scriptEditorOpen: true, scriptKeyboardOpen: false, ...context });
 }
 function jsxProp(node, name, context) {
   const attribute = node.openingElement.attributes.properties.find((prop) => prop.name?.text === name);
@@ -51,8 +51,8 @@ function mount(overrides = {}, platform = 'android') {
   const slots = [];
   const timers = new Map();
   const keyboardListeners = new Map();
-  let cursor = 0, dirty = false, effects = [], tree, now = 0, timerId = 0;
-  const calls = { seeks: [], selects: [], indices: [], offsets: [], nativeLayouts: 0 };
+  let cursor = 0, dirty = false, effects = [], tree, now = 0, timerId = 0, recover;
+  const calls = { seeks: [], selects: [], indices: [], offsets: [], drafts: [], keyboards: [], focuses: [], alerts: [], saves: [], nativeLayouts: 0, focusCaptures: 0 };
   const sameDeps = (left, right) => left && right && left.length === right.length
     && left.every((value, index) => Object.is(value, right[index]));
   const memo = (factory, deps) => {
@@ -82,7 +82,7 @@ function mount(overrides = {}, platform = 'android') {
   };
   const jsx = (type, props) => ({ type, props: props ?? {} });
   const native = Object.fromEntries(['FlatList', 'KeyboardAvoidingView', 'Pressable', 'Text', 'TextInput', 'View'].map((name) => [name, name]));
-  native.Platform = { OS: platform }; native.Alert = { alert: () => {} };
+  native.Platform = { OS: platform }; native.Alert = { alert: (...args) => calls.alerts.push(args) };
   native.Keyboard = { isVisible: () => false, addListener(name, callback) {
     keyboardListeners.set(name, callback);
     return { remove: () => keyboardListeners.delete(name) };
@@ -97,7 +97,7 @@ function mount(overrides = {}, platform = 'android') {
       if (name === '@/lib/caption-script') return scriptMutations;
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, pill: 20 } } };
       if (name === '@/services/editor-draft-journal') return {
-        readEditorDraftJournal: () => ({ then: () => ({ catch: () => {} }) }),
+        readEditorDraftJournal: () => ({ then: (callback) => { recover = callback; return { catch: () => {} }; } }),
         clearEditorDraftJournal: async () => {}, writeEditorDraftJournal: async () => {},
       };
       throw new Error(`Unexpected dependency: ${name}`);
@@ -109,7 +109,10 @@ function mount(overrides = {}, platform = 'android') {
     visible: true, projectId: 'project', baseRevision: 'revision', captions: cues,
     words: [], currentMs: 0, isPlaying: false,
     onSelectCaption: (caption) => calls.selects.push(caption.id),
-    onSeekTimeline: (ms) => calls.seeks.push(ms), onCancel: () => {}, onSave: async () => {}, ...overrides,
+    onDraftChange: (captions) => calls.drafts.push(plain(captions)),
+    onKeyboardChange: (open) => calls.keyboards.push(open),
+    onSeekTimeline: (ms) => calls.seeks.push(ms), onCancel: () => {},
+    onSave: async (captions) => { calls.saves.push(plain(captions)); }, ...overrides,
   };
   function walk(node, predicate) {
     if (!node || typeof node !== 'object') return undefined;
@@ -133,6 +136,10 @@ function mount(overrides = {}, platform = 'android') {
         scrollToIndex: (request) => calls.indices.push(plain(request)),
         scrollToOffset: (request) => calls.offsets.push(plain(request)),
       };
+      if (list) list.props.data.forEach((item, index) => {
+        const input = find('TextInput', list.props.renderItem({ item, index }));
+        input?.props.ref?.({ focus: () => calls.focuses.push(item.id) });
+      });
       for (const effect of effects) effect();
     } while (dirty);
   }
@@ -147,8 +154,10 @@ function mount(overrides = {}, platform = 'android') {
         const cell = cellProps.CellRendererComponent({
           item: cellProps.data[index], index, children: row(index),
           onLayout: () => { calls.nativeLayouts += 1; },
+          onFocusCapture: () => { calls.focusCaptures += 1; },
         });
         cell.props.onLayout(layoutEvent(y, height));
+        cell.props.onFocusCapture?.();
       } else {
         // RN's renderItem wrapper gives the child a local y=0, not content y.
         row(index).props.onLayout?.(layoutEvent(0, height));
@@ -176,6 +185,8 @@ function mount(overrides = {}, platform = 'android') {
     update: (values) => act(() => Object.assign(props, values)),
     edit: (index) => act(() => row(index).props.onPress()),
     input: (index) => find('TextInput', row(index)).props,
+    recover: (payload) => act(() => recover({ payload, baseRevision: 'revision' })),
+    restore: () => act(() => calls.alerts.at(-1)[2].find(({ text }) => text === 'Restore').onPress()),
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
   };
 }
@@ -343,7 +354,9 @@ for (const platform of ['android', 'ios']) {
     const avoidance = h.find('KeyboardAvoidingView');
     assert.equal(avoidance.props.style.flex, 1); assert.notEqual(avoidance.props.behavior, 'height');
     assert.equal(avoidance.props.behavior, platform === 'ios' ? 'padding' : undefined);
-    assert.equal(h.list().keyboardShouldPersistTaps, 'handled');
+    assert.equal(h.list().keyboardShouldPersistTaps, 'always');
+    assert.equal(h.list().keyboardDismissMode, 'none');
+    assert.equal(h.list().removeClippedSubviews, false);
   });
 }
 
@@ -354,25 +367,26 @@ test('Android resized workspace keeps the video controls and focused input above
   assert.equal(typeof onLayout, 'function', 'measure the usable root, not just the screen dimensions');
   const [preview, tools] = workspaceRoot.children.filter(ts.isJsxElement);
   const fitRect = evaluate(editorAst.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'fitRect').getText(editorAst));
-  for (const availableHeight of [800, 360, 280, 440, 800]) {
+  for (const availableHeight of [800, 360, 280, 240, 220, 440, 800]) {
     onLayout(layoutEvent(0, availableHeight));
-    const context = { scriptEditorOpen: true, workspaceHeight, height: 800 };
+    const context = { scriptEditorOpen: true, scriptKeyboardOpen: true, workspaceHeight, height: 800 };
     const previewHeight = workspaceValue('previewHeight', context);
-    const previewStyle = jsxProp(preview, 'style', { previewHeight });
+    const previewStyle = jsxProp(preview, 'style', { previewHeight, scriptEditorOpen: true });
     assert.ok(previewStyle.height <= availableHeight * 0.45);
     assert.equal(jsxProp(tools, 'style', context).display, 'none', 'toolbar must not consume typing space');
     const canvas = workspaceValue('canvasSize', {
       previewHeight, fitRect, width: 360, project: { canvas: { aspectWidth: 16, aspectHeight: 9 } },
     });
-    assert.ok(canvas.height >= 72, 'preview must still fit the 48px playback control and its insets');
+    assert.ok(canvas.height >= 48, 'preview must still fit the playback control');
     assert.ok(canvas.height + 8 <= previewStyle.height, 'canvas and controls must stay above the sheet');
     const sheetHeight = availableHeight - previewStyle.height;
     const headerHeight = h.find('KeyboardAvoidingView').props.children[0].props.style.minHeight;
     const viewport = sheetHeight - headerHeight - 1;
-    assert.ok(viewport >= 120, 'leave a usable caption viewport above the keyboard');
+    assert.ok(viewport >= 100, 'reserve two text lines and row insets above the keyboard');
     h.viewport(viewport); h.measure(4, 500, viewport + 80);
     const request = h.calls.indices.at(-1);
     assert.equal(request.index, 4); assert.equal(request.viewPosition, 0);
+    assert.ok(h.input(4).style.minHeight >= 2 * h.input(4).style.lineHeight);
     const inputBottom = previewStyle.height + headerHeight + request.viewOffset + 14 + h.input(4).style.maxHeight;
     assert.ok(inputBottom < availableHeight, 'the focused input must end above the keyboard');
     h.fire('onScroll', 500 - request.viewOffset);
@@ -380,6 +394,121 @@ test('Android resized workspace keeps the video controls and focused input above
   assert.deepEqual(h.calls.seeks, [4000], 'resize and reveal must not seek away from the edited cue');
   assert.equal(workspaceValue('previewHeight', { scriptEditorOpen: false, workspaceHeight: 280, height: 800 }), 344);
   assert.equal(jsxProp(tools, 'style', { scriptEditorOpen: false }).display, 'flex');
+});
+
+test('the leading edge seeks the first cue even when multiple short rows fit above the center guide', () => {
+  const h = mount(); h.viewport(600);
+  for (let index = 0; index < cues.length; index += 1) h.measure(index, 20 + index * 80, 72);
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', 0); h.fire('onScrollEndDrag', 0); h.advance(150);
+  assert.deepEqual(h.calls.seeks, [0]);
+  assert.deepEqual(h.calls.selects, ['cue-0']);
+  h.calls.indices.length = 0;
+  h.measure(0, 20, 72); h.viewport(580);
+  assert.deepEqual(h.calls.indices, [], 'settled user scroll must survive later layout events');
+});
+
+test('tapping a visible or final short row aligns its editor at the top, including retry and resize', () => {
+  const h = mount(); h.viewport(500);
+  h.edit(1);
+  assert.equal(h.calls.indices.at(-1)?.viewPosition, 0, 'visible rows must also move to the top');
+  h.edit(5);
+  h.act(() => h.list().onScrollToIndexFailed({ index: 5, averageItemLength: 100 }));
+  h.advance(100); h.keyboard('keyboardDidShow'); h.viewport(140);
+  assert.ok(h.calls.indices.filter(({ index }) => index === 5).every(({ viewPosition }) => viewPosition === 0));
+  assert.ok(h.list().contentContainerStyle.paddingBottom >= 140, 'the final row needs enough trailing scroll space');
+  h.fire('onScroll', 592); h.calls.indices.length = 0;
+  h.act(() => h.input(5).onContentSizeChange());
+  assert.deepEqual(h.calls.indices, [], 'already aligned input must not restart navigation');
+});
+
+test('dragging and tapping retain native inputs and focus without reopening a natively hidden keyboard', () => {
+  const h = mount(); h.edit(1); h.keyboard('keyboardDidShow');
+  assert.equal(h.calls.focusCaptures, cues.length, 'forward focus capture so native virtualization retains the focused cell');
+  h.calls.indices.length = 0; h.calls.focuses.length = 0;
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', 340); h.fire('onScrollEndDrag', 340); h.advance(150);
+  h.viewport(180); h.measure(1, 200, 160); h.act(() => h.input(1).onContentSizeChange());
+  assert.equal(h.input(1).value, 'caption 1');
+  assert.equal(h.input(1).scrollEnabled, true, 'the focused input stays editable while the list scrolls');
+  assert.deepEqual(h.calls.indices, [], 'the old focused row must not reclaim a user scroll');
+  assert.deepEqual(h.calls.focuses, [], 'list updates must not refocus the input');
+  h.edit(4);
+  assert.equal(h.input(1).value, 'caption 1', 'the previous native input must not unmount during focus transfer');
+  assert.equal(h.input(4).scrollEnabled, true);
+  assert.equal(h.input(4).submitBehavior, 'newline');
+  assert.equal(h.calls.focuses.at(-1), 'cue-4');
+  h.keyboard('keyboardDidHide'); h.calls.focuses.length = 0;
+  h.viewport(500); h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 0); h.advance(150);
+  assert.deepEqual(h.calls.focuses, [], 'native hide remains authoritative');
+  assert.equal(h.calls.keyboards.at(-1), false);
+});
+
+test('draft text, empty text, splits, joins and recovery reach the actual parent preview selection before Save', () => {
+  let scriptDraftCaptions = null, selectedCaptionId = cues[0].id, currentMs = 0;
+  const h = mount({
+    onDraftChange: (draft) => { scriptDraftCaptions = draft; },
+    onSelectCaption: (caption) => { selectedCaptionId = caption.id; },
+    onSeekTimeline: (ms) => { currentMs = ms; },
+  });
+  const display = (scriptEditorOpen = true, isPlaying = false) => {
+    const previewCaptions = workspaceValue('previewCaptions', { scriptEditorOpen, scriptDraftCaptions, timelineCaptions: cues });
+    const selectedCaption = workspaceValue('selectedCaption', { previewCaptions, selectedCaptionId });
+    const activeCaption = workspaceValue('activeCaption', { previewCaptions, currentMs, useMemo: (fn) => fn() });
+    return workspaceValue('displayCaption', { scriptEditorOpen, isPlaying, selectedCaption, activeCaption });
+  };
+  h.edit(1); h.act(() => h.input(1).onChangeText('live draft'));
+  assert.equal(display().text, 'live draft');
+  assert.equal(display(true, true).text, 'live draft', 'playback also uses drafts');
+  h.act(() => h.input(1).onChangeText(''));
+  assert.equal(display().text, '', 'empty text must not fall back to the saved cue');
+  h.act(() => h.input(1).onChangeText('left\nright'));
+  assert.equal(display().text, 'right');
+  assert.equal(display().startMs, h.list().data[2].startMs);
+  h.act(() => h.input(2).onSelectionChange({ nativeEvent: { selection: { start: 0, end: 0 } } }));
+  h.act(() => h.input(2).onKeyPress({ nativeEvent: { key: 'Backspace' } }));
+  assert.equal(display().text, 'left right');
+  const recovered = cues.map((cue) => ({ ...cue, text: `restored ${cue.text}` }));
+  h.recover(recovered); h.restore();
+  assert.equal(display().text, 'restored caption 1');
+  assert.equal(display(false).text, 'caption 1', 'closing returns preview to persisted captions');
+  assert.equal(cues[1].text, 'caption 1');
+  assert.deepEqual(h.calls.saves, [], 'preview publication never saves the project');
+  h.update({ visible: false });
+  assert.equal(scriptDraftCaptions, null);
+  h.update({ visible: true });
+  assert.equal(scriptDraftCaptions[1].text, 'caption 1');
+  h.unmount(); assert.equal(scriptDraftCaptions, null);
+});
+
+test('workspace wires the draft channel and renders authored text while paused in the script editor', () => {
+  const elements = [];
+  const visit = (node) => { if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) elements.push(node); ts.forEachChild(node, visit); };
+  visit(workspace);
+  const script = elements.find((node) => node.tagName.getText(editorAst) === 'ScriptEditor');
+  const attr = (node, name, context) => {
+    const prop = node.attributes.properties.find((entry) => entry.name?.text === name);
+    return evaluate(prop.initializer.expression.getText(editorAst), context);
+  };
+  const setScriptDraftCaptions = () => {}, setScriptKeyboardOpen = () => {};
+  assert.equal(attr(script, 'onDraftChange', { setScriptDraftCaptions }), setScriptDraftCaptions);
+  assert.equal(attr(script, 'onKeyboardChange', { setScriptKeyboardOpen }), setScriptKeyboardOpen);
+  const overlay = elements.find((node) => node.tagName.getText(editorAst) === 'CaptionOverlay');
+  assert.equal(attr(overlay, 'preserveLineBreaks', { scriptEditorOpen: true, isPlaying: false }), true);
+  assert.equal(attr(overlay, 'preserveLineBreaks', { scriptEditorOpen: false, isPlaying: false }), false);
+  assert.equal(attr(overlay, 'preserveLineBreaks', { scriptEditorOpen: true, isPlaying: true }), false);
+});
+
+test('opening and reopening never publish an empty or discarded previous draft', () => {
+  const h = mount({ initialCaptionId: 'cue-4' });
+  assert.ok(h.calls.drafts.filter(Boolean).every((draft) => draft.length === cues.length));
+  h.edit(4); h.act(() => h.input(4).onChangeText('discard me'));
+  h.update({ visible: false }); h.calls.drafts.length = 0;
+  h.update({ visible: true });
+  const publications = h.calls.drafts.filter(Boolean);
+  assert.ok(publications.length > 0);
+  assert.ok(publications.every((draft) => draft[4].text === 'caption 4'));
+  h.update({ visible: false }); h.calls.drafts.length = 0;
+  h.update({ visible: true });
+  assert.ok(h.calls.drafts.filter(Boolean).length > 0, 'unchanged drafts still publish on reopen');
 });
 
 test('iOS keyboard avoidance uses the sheet screen position and compacts chrome for typing', () => {

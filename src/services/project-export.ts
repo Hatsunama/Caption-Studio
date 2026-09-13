@@ -45,8 +45,9 @@ export async function exportProjectVideo(project: CaptionProject, allowIncomplet
         toNativeRenderPlan(renderPlan),
       ));
       const delivered = assertVideoExportDelivery(nativeResult);
-      await session.waitFor(confirmLocalExportFile(outputUri, delivered.sizeBytes));
-      await session.waitFor(deliverExportedVideo(outputUri));
+      // Native delivery already verified the published MediaStore copy. Optional
+      // sharing must not turn that success into a failed or cancelled export.
+      await deliverExportedVideo(outputUri, delivered.sizeBytes);
       return delivered;
     } finally {
       try {
@@ -115,13 +116,17 @@ async function confirmLocalExportFile(outputUri: string, sizeBytes: number) {
   }
 }
 
-async function deliverExportedVideo(outputUri: string) {
-  if (!await Sharing.isAvailableAsync()) {
-    throw new Error('Android file sharing is unavailable on this device.');
+async function deliverExportedVideo(outputUri: string, sizeBytes: number) {
+  try {
+    if (!await Sharing.isAvailableAsync()) return;
+    await confirmLocalExportFile(outputUri, sizeBytes);
+    await Sharing.shareAsync(outputUri, {
+      mimeType: 'video/mp4',
+      dialogTitle: 'Share exported video',
+      UTI: 'public.mpeg-4',
+    });
+  } catch {
+    // The cache copy and share sheet are best-effort. The user can still open
+    // or share the published video from Movies/Caption Studio.
   }
-  await Sharing.shareAsync(outputUri, {
-    mimeType: 'video/mp4',
-    dialogTitle: 'Save exported video',
-    UTI: 'public.mpeg-4',
-  });
 }

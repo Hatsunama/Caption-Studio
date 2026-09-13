@@ -1,5 +1,6 @@
 import { mergePatch, mergeStyle } from '@/lib/style-resolver';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
+import { totalClipDuration } from '@/lib/video-timeline';
 import {
   canonicalCaptionLanguageTag,
   captionLanguageFamily,
@@ -282,28 +283,33 @@ export function setTranslationCueTiming(
   endMs: number,
   updatedAt = project.updatedAt,
 ) {
-  const timelineEndMs = Math.max(80, project.clips.reduce(
-    (total, clip) => total + clip.gapBeforeMs + (clip.sourceEndMs - clip.sourceStartMs) / clip.playbackRate,
-    0,
-  ));
+  const timelineEndMs = Math.max(80, totalClipDuration(project.clips));
   return mapTranslationTrack(project, trackId, (track) => ({
     ...track,
     cues: track.cues.map((cue) => {
       if (cue.sourceCaptionId !== sourceCaptionId) return cue;
       const source = project.captions.find((caption) => caption.id === sourceCaptionId);
-      const currentStart = cue.startMs ?? source?.startMs ?? 0;
-      const currentEnd = cue.endMs ?? source?.endMs ?? currentStart + 80;
-      const currentDuration = Math.max(80, currentEnd - currentStart);
+      const previousStart = cue.startMs ?? source?.startMs ?? 0;
+      const previousEnd = cue.endMs ?? source?.endMs ?? previousStart + 80;
+      const finiteStart = Number.isFinite(previousStart) ? previousStart : 0;
+      const finiteEnd = Number.isFinite(previousEnd) ? previousEnd : finiteStart + 80;
+      // Normalize stale bounds before editing either edge, while retaining the
+      // original duration for moves whenever it fits on the timeline.
+      const currentStart = Math.max(0, Math.min(finiteStart, timelineEndMs - 80));
+      const currentEnd = Math.min(timelineEndMs, Math.max(finiteEnd, currentStart + 80));
+      const currentDuration = Math.min(timelineEndMs, Math.max(80, finiteEnd - finiteStart));
+      const requestedStart = Number.isFinite(startMs) ? startMs : currentStart;
+      const requestedEnd = Number.isFinite(endMs) ? endMs : currentEnd;
       const safeStart = edge === 'start'
-        ? Math.max(0, Math.min(startMs, currentEnd - 80))
+        ? Math.max(0, Math.min(requestedStart, currentEnd - 80))
         : edge === 'move'
-          ? Math.max(0, Math.min(startMs, timelineEndMs - currentDuration))
+          ? Math.max(0, Math.min(requestedStart, timelineEndMs - currentDuration))
           : currentStart;
       const safeEnd = edge === 'start'
         ? currentEnd
         : edge === 'move'
           ? safeStart + currentDuration
-          : Math.min(timelineEndMs, Math.max(endMs, currentStart + 80));
+          : Math.min(timelineEndMs, Math.max(requestedEnd, currentStart + 80));
       return { ...cue, startMs: safeStart, endMs: safeEnd, timelineVisible: true };
     }),
   }), updatedAt);
