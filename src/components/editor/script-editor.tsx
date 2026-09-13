@@ -55,7 +55,7 @@ export function ScriptEditor(props: {
   onCancel: () => void;
   onSave: (captions: CaptionBlock[]) => Promise<void>;
 }) {
-  const { onSeekTimeline } = props;
+  const { onSeekTimeline, onSelectCaption } = props;
   const listRef = useRef<FlatList<CaptionBlock>>(null);
   const sheetRef = useRef<View>(null);
   const selectionRef = useRef<Record<string, { start: number; end: number }>>({});
@@ -226,7 +226,7 @@ export function ScriptEditor(props: {
   useEffect(() => {
     const id = editingCaptionId ?? selectedCaptionId;
     if (id) revealCaption(id);
-  }, [draftCaptions, editingCaptionId, selectedCaptionId, listViewportHeight, props.visible, revealCaption]);
+  }, [draftCaptions, editingCaptionId, selectedCaptionId, keyboardOpen, listViewportHeight, props.visible, revealCaption]);
 
   const seekToCenteredCaption = useCallback((offsetY: number) => {
     listOffsetRef.current = offsetY;
@@ -250,8 +250,11 @@ export function ScriptEditor(props: {
     if (!nearest || lastScrollSeekIdRef.current === nearest.id) return;
     lastScrollSeekIdRef.current = nearest.id;
     setSelectedCaptionId(nearest.id);
+    // Paused preview rendering prefers the parent's selected caption. Publish
+    // that selection with the seek, only while this gesture owns navigation.
+    onSelectCaption(nearest);
     onSeekTimeline(nearest.startMs);
-  }, [draftCaptions, onSeekTimeline]);
+  }, [draftCaptions, onSeekTimeline, onSelectCaption]);
 
   const reportCellLayout = useCallback((id: string, index: number, layout: LayoutRectangle) => {
     captionLayoutsRef.current[id] = { ...layout, index };
@@ -263,6 +266,10 @@ export function ScriptEditor(props: {
   }, [editingCaptionId, selectedCaptionId, revealCaption, seekToCenteredCaption]);
 
   const selectForEditing = (caption: CaptionBlock) => {
+    clearTimeout(scrollEndTimerRef.current);
+    userScrollingRef.current = false;
+    pendingScrollSeekRef.current = false;
+    cancelNavigation();
     selectionRef.current[caption.id] ??= { start: caption.text.length, end: caption.text.length };
     setSelectedCaptionId(caption.id);
     setEditingCaptionId(caption.id);
@@ -389,10 +396,9 @@ export function ScriptEditor(props: {
           sheetRef.current?.measureInWindow((_x, y) => setKeyboardVerticalOffset(y));
         }}
         style={{
-          // Reserve space below the preview. A half-height absolute overlay can
-          // cover its fixed minimum height when Android resizes for the keyboard.
-          height: '50%',
-          flexShrink: 1,
+          // The workspace reserves the preview above us. Fill its remaining
+          // space, including when Android resizes the root for the keyboard.
+          flex: 1,
           minHeight: 0,
           zIndex: 100,
           backgroundColor: chrome.background,

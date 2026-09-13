@@ -22,6 +22,31 @@ const layoutEvent = (y, height) => ({ nativeEvent: { layout: { x: 0, y, width: 3
 const scrollEvent = (y) => ({ nativeEvent: { contentOffset: { x: 0, y } } });
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
+// Evaluate the real workspace expressions without loading its unrelated native
+// services. This covers the parent selection and the layout the sheet receives.
+const editorSource = readFileSync(process.env.CAPTION_EDITOR_SOURCE
+  ?? new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
+const editorAst = ts.createSourceFile('editor.tsx', editorSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const workspace = editorAst.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'EditorWorkspace');
+const workspaceRoot = workspace.body.statements.find(ts.isReturnStatement).expression.expression;
+function evaluate(expression, context = {}) {
+  const sandbox = { result: undefined, ...context };
+  const compiled = ts.transpileModule(`result = (${expression});`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  });
+  runInNewContext(compiled.outputText, sandbox);
+  return sandbox.result;
+}
+function workspaceValue(name, context) {
+  const declaration = workspace.body.statements.filter(ts.isVariableStatement)
+    .flatMap((node) => [...node.declarationList.declarations]).find((node) => node.name.getText(editorAst) === name);
+  return evaluate(declaration.initializer.getText(editorAst), context);
+}
+function jsxProp(node, name, context) {
+  const attribute = node.openingElement.attributes.properties.find((prop) => prop.name?.text === name);
+  return attribute ? evaluate(attribute.initializer.expression.getText(editorAst), context) : undefined;
+}
+
 function mount(overrides = {}, platform = 'android') {
   const slots = [];
   const timers = new Map();
@@ -159,6 +184,7 @@ test('drag seeks using cell-content coordinates and preserves native layout repo
   const h = mount();
   h.fire('onScrollBeginDrag'); h.fire('onScroll', 240); h.fire('onScroll', 242);
   assert.deepEqual(h.calls.seeks, [2000]);
+  assert.deepEqual(h.calls.selects, ['cue-2']);
   assert.equal(h.calls.nativeLayouts, cues.length);
 });
 
@@ -167,6 +193,7 @@ test('programmatic initial and delayed scroll notifications never seek', () => {
   h.advance(2000); h.fire('onScroll', 400); h.fire('onMomentumScrollBegin');
   h.fire('onScroll', 450); h.fire('onMomentumScrollEnd', 450);
   assert.deepEqual(h.calls.seeks, []);
+  assert.deepEqual(h.calls.selects, []);
 });
 
 test('playback ticks cannot strand scroll ownership and a drag can seek during playback', () => {
@@ -201,6 +228,45 @@ test('playback follows changing cues without reverse seeks', () => {
   assert.equal(h.calls.indices.at(-1)?.index, 3);
   h.fire('onScroll', 340); h.advance(2000); h.fire('onScroll', 342);
   assert.deepEqual(h.calls.seeks, []);
+  assert.deepEqual(h.calls.selects, [], 'following playback must not pause or select through the parent');
+});
+
+test('paused scroll publishes preview selection and time together across parent rerenders', () => {
+  let selectedCaption = cues[0], currentMs = 0, isPlaying = false;
+  const publications = [];
+  const h = mount({
+    initialCaptionId: selectedCaption.id,
+    onSelectCaption: (caption) => { selectedCaption = caption; isPlaying = false; },
+    onSeekTimeline: (ms) => {
+      currentMs = ms;
+      const activeCaption = cues.find((cue) => ms >= cue.startMs && ms < cue.endMs);
+      const display = workspaceValue('displayCaption', { isPlaying, selectedCaption, activeCaption });
+      publications.push([ms, display?.id]);
+    },
+  });
+  h.fire('onScrollBeginDrag');
+  for (const offset of [140, 240, 340]) {
+    h.fire('onScroll', offset);
+    h.update({ currentMs, isPlaying, initialCaptionId: selectedCaption.id });
+    h.fire('onScroll', offset + 2);
+  }
+  h.fire('onScrollEndDrag', 340); h.advance(150);
+  h.fire('onScroll', 440);
+  assert.deepEqual(publications, [[1000, 'cue-1'], [2000, 'cue-2'], [3000, 'cue-3']]);
+  assert.deepEqual(h.calls.indices, [], 'parent updates must not recenter a user scroll');
+});
+
+test('tapping during momentum hands navigation to the focused input before keyboard resize', () => {
+  const h = mount();
+  h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 240); h.fire('onMomentumScrollBegin');
+  h.edit(4);
+  h.calls.seeks.length = 0; h.calls.selects.length = 0; h.calls.indices.length = 0;
+  h.keyboard('keyboardDidShow'); h.viewport(120); h.measure(4, 500, 200);
+  h.fire('onScroll', 540); h.fire('onMomentumScrollEnd', 540); h.advance(200);
+  assert.equal(h.input(4).value, 'caption 4');
+  assert.equal(h.calls.indices.at(-1)?.index, 4);
+  assert.equal(h.calls.indices.at(-1)?.viewPosition, 0);
+  assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.selects, []);
 });
 
 test('selecting an offscreen caption seeks it and keeps its input visible during playback', () => {
@@ -268,10 +334,10 @@ test('reopening resets gestures and reveals the new initial cue', () => {
 });
 
 for (const platform of ['android', 'ios']) {
-  test(`${platform} lower-half sheet is bounded independently of keyboard avoidance`, () => {
+  test(`${platform} script fills reserved space independently of keyboard avoidance`, () => {
     const h = mount({}, platform), sheet = h.find('View');
     assert.equal(sheet.props.testID, 'caption-script-sheet');
-    assert.equal(sheet.props.style.height, '50%'); assert.equal(sheet.props.style.flexShrink, 1);
+    assert.equal(sheet.props.style.height, undefined); assert.equal(sheet.props.style.flex, 1);
     assert.notEqual(sheet.props.style.position, 'absolute'); assert.equal(sheet.props.style.minHeight, 0);
     assert.equal(sheet.props.style.overflow, 'hidden');
     const avoidance = h.find('KeyboardAvoidingView');
@@ -280,6 +346,41 @@ for (const platform of ['android', 'ios']) {
     assert.equal(h.list().keyboardShouldPersistTaps, 'handled');
   });
 }
+
+test('Android resized workspace keeps the video controls and focused input above the keyboard', () => {
+  const h = mount(); h.edit(4); h.keyboard('keyboardDidShow');
+  let workspaceHeight = 800;
+  const onLayout = jsxProp(workspaceRoot, 'onLayout', { setWorkspaceHeight: (value) => { workspaceHeight = value; } });
+  assert.equal(typeof onLayout, 'function', 'measure the usable root, not just the screen dimensions');
+  const [preview, tools] = workspaceRoot.children.filter(ts.isJsxElement);
+  const fitRect = evaluate(editorAst.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'fitRect').getText(editorAst));
+  for (const availableHeight of [800, 360, 280, 440, 800]) {
+    onLayout(layoutEvent(0, availableHeight));
+    const context = { scriptEditorOpen: true, workspaceHeight, height: 800 };
+    const previewHeight = workspaceValue('previewHeight', context);
+    const previewStyle = jsxProp(preview, 'style', { previewHeight });
+    assert.ok(previewStyle.height <= availableHeight * 0.45);
+    assert.equal(jsxProp(tools, 'style', context).display, 'none', 'toolbar must not consume typing space');
+    const canvas = workspaceValue('canvasSize', {
+      previewHeight, fitRect, width: 360, project: { canvas: { aspectWidth: 16, aspectHeight: 9 } },
+    });
+    assert.ok(canvas.height >= 72, 'preview must still fit the 48px playback control and its insets');
+    assert.ok(canvas.height + 8 <= previewStyle.height, 'canvas and controls must stay above the sheet');
+    const sheetHeight = availableHeight - previewStyle.height;
+    const headerHeight = h.find('KeyboardAvoidingView').props.children[0].props.style.minHeight;
+    const viewport = sheetHeight - headerHeight - 1;
+    assert.ok(viewport >= 120, 'leave a usable caption viewport above the keyboard');
+    h.viewport(viewport); h.measure(4, 500, viewport + 80);
+    const request = h.calls.indices.at(-1);
+    assert.equal(request.index, 4); assert.equal(request.viewPosition, 0);
+    const inputBottom = previewStyle.height + headerHeight + request.viewOffset + 14 + h.input(4).style.maxHeight;
+    assert.ok(inputBottom < availableHeight, 'the focused input must end above the keyboard');
+    h.fire('onScroll', 500 - request.viewOffset);
+  }
+  assert.deepEqual(h.calls.seeks, [4000], 'resize and reveal must not seek away from the edited cue');
+  assert.equal(workspaceValue('previewHeight', { scriptEditorOpen: false, workspaceHeight: 280, height: 800 }), 344);
+  assert.equal(jsxProp(tools, 'style', { scriptEditorOpen: false }).display, 'flex');
+});
 
 test('iOS keyboard avoidance uses the sheet screen position and compacts chrome for typing', () => {
   const h = mount({}, 'ios');
@@ -308,5 +409,6 @@ test('a fast fling waits for virtualized cells and resolves its final seek after
   assert.deepEqual(h.calls.seeks, []);
   h.measure(49); assert.deepEqual(h.calls.seeks, []);
   h.measure(50); assert.deepEqual(h.calls.seeks, [50000]);
+  assert.deepEqual(h.calls.selects, ['cue-50']);
   h.fire('onScroll', 5140); assert.deepEqual(h.calls.seeks, [50000]);
 });
