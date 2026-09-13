@@ -13,7 +13,7 @@ import {
 import {
   mergeCaptionScriptBlock,
   splitCaptionScriptBlock,
-  updateCaptionScriptText,
+  updateCaptionScriptInput,
 } from '@/lib/caption-script';
 import {
   clearEditorDraftJournal,
@@ -169,25 +169,19 @@ export function ScriptEditor(props: {
   };
 
   const updateText = (caption: CaptionBlock, text: string) => {
-    const newlineIndex = text.indexOf('\n');
-    if (newlineIndex >= 0) {
-      const withTypedText = updateCaptionScriptText(draftCaptions, caption.id, text.replace('\n', ''));
-      const result = splitCaptionScriptBlock(
-        withTypedText,
-        caption.id,
-        newlineIndex,
-        props.words,
-        nextSplitCaptionId(caption.id, withTypedText, splitCounterRef),
-      );
-      if (result) {
-        setBoundaryMessage(undefined);
-        focusCaption(result.focusedId, result.captions);
-        return;
-      }
-      setBoundaryMessage('Place the cursor between two words to split this subtitle.');
-      return;
+    const result = updateCaptionScriptInput(
+      draftCaptions,
+      caption.id,
+      text,
+      props.words,
+      (captions) => nextSplitCaptionId(caption.id, captions, splitCounterRef),
+    );
+    setBoundaryMessage(undefined);
+    if (result.focusedId !== caption.id) {
+      focusCaption(result.focusedId, result.captions);
+    } else {
+      setDraftCaptions(result.captions);
     }
-    setDraftCaptions((current) => updateCaptionScriptText(current, caption.id, text));
     if (text.trim()) setEmptyCaptionId(undefined);
   };
 
@@ -213,7 +207,7 @@ export function ScriptEditor(props: {
   const splitAtCursor = (caption: CaptionBlock) => {
     const selection = selectionRef.current[caption.id];
     if (!selection || selection.start !== selection.end) {
-      setBoundaryMessage('Tap between two words, then choose Split here.');
+      setBoundaryMessage('Place the cursor where you want to split, then choose Split here.');
       return;
     }
     const result = splitCaptionScriptBlock(
@@ -224,7 +218,7 @@ export function ScriptEditor(props: {
       nextSplitCaptionId(caption.id, draftCaptions, splitCounterRef),
     );
     if (!result) {
-      setBoundaryMessage('Place the cursor between two words to split this subtitle.');
+      setBoundaryMessage('Splitting needs text on both sides and at least 0.16 seconds.');
       return;
     }
     setBoundaryMessage(undefined);
