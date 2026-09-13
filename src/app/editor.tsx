@@ -144,6 +144,7 @@ import {
   type CaptionAnimationId,
   type CaptionProject,
   type CaptionStylePatch,
+  type CaptionBlock,
   type ImageVisualLayer,
   type VideoClip,
   type VideoTransformPatch,
@@ -234,6 +235,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [editingText, setEditingText] = useState<string>();
   const [editingLayerId, setEditingLayerId] = useState<string>();
   const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
+  const [scriptDraftCaptions, setScriptDraftCaptions] = useState<CaptionBlock[] | null>(null);
+  const [scriptKeyboardOpen, setScriptKeyboardOpen] = useState(false);
   const [dualCaptionEditorOpen, setDualCaptionEditorOpen] = useState(false);
   const [dualLanguagePickerOpen, setDualLanguagePickerOpen] = useState(false);
   const [selectedTranslationTrackId, setSelectedTranslationTrackId] = useState<string>();
@@ -469,11 +472,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     () => selectedTranslationTrack ? resolveCaptionPairs(project, selectedTranslationTrack.id).filter((pair) => pair.timelineVisible) : [],
     [project, selectedTranslationTrack],
   );
+  const previewCaptions = scriptEditorOpen ? scriptDraftCaptions ?? timelineCaptions : timelineCaptions;
   const activeCaption = useMemo(
-    () => timelineCaptions.find((caption) => currentMs >= caption.startMs && currentMs < caption.endMs),
-    [currentMs, timelineCaptions],
+    () => previewCaptions.find((caption) => currentMs >= caption.startMs && currentMs < caption.endMs),
+    [currentMs, previewCaptions],
   );
-  const selectedCaption = timelineCaptions.find((caption) => caption.id === selectedCaptionId);
+  const selectedCaption = previewCaptions.find((caption) => caption.id === selectedCaptionId);
   const selectedClip = project.clips.find((clip) => clip.id === selectedClipId);
   const selectedClipIndex = project.clips.findIndex((clip) => clip.id === selectedClipId);
   const transitionBoundaryAvailable = canApplyVideoTransition(project.clips, selectedClipIndex);
@@ -504,7 +508,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   // Script editing shares the actual resized root with the keyboard. The
   // normal preview minimum would consume nearly all of a short Android window.
   const previewHeight = scriptEditorOpen
-    ? Math.min(500, workspaceHeight * 0.4)
+    ? scriptKeyboardOpen
+      // Reserve the 44px header and at least 100px of list (two 23px
+      // caption lines plus row insets), even in a short resized window.
+      ? Math.max(0, Math.min(96, workspaceHeight * 0.3, workspaceHeight - 145))
+      : Math.min(500, workspaceHeight * 0.4)
     : Math.min(Math.max(280, height * 0.43), 500);
   const canvasSize = fitRect(
     Math.max(1, project.canvas.aspectWidth / project.canvas.aspectHeight),
@@ -805,6 +813,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const beginEditCaption = () => {
     if (timelineCaptions.length === 0) return;
     transport.pause();
+    setScriptDraftCaptions(null);
+    setScriptKeyboardOpen(false);
     setScriptEditorOpen(true);
   };
 
@@ -1593,7 +1603,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         onPress={(event) => {
           if (event.target === event.currentTarget) clearEditorSelection();
         }}
-        style={{ height: previewHeight, alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
+        style={{ height: previewHeight, flexShrink: 0, overflow: scriptEditorOpen ? 'hidden' : 'visible', alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
         <View
           style={{
             width: canvasSize.width,
@@ -1672,6 +1682,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <View key={layer.id} pointerEvents="box-none" style={{ position: 'absolute', inset: 0 }}>
                   <CaptionOverlay
                     caption={displayCaption}
+                    preserveLineBreaks={scriptEditorOpen && !isPlaying}
                     words={project.transcription.words}
                     projectStyle={project.projectStyle}
                     currentMs={currentMs}
@@ -2123,6 +2134,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         currentMs={currentMs}
         isPlaying={isPlaying}
         onSeekTimeline={seekTimeline}
+        onDraftChange={setScriptDraftCaptions}
+        onKeyboardChange={setScriptKeyboardOpen}
         onSelectCaption={(caption) => {
           transport.pause();
           setSelectedLayerId('captions');
