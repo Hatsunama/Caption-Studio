@@ -556,7 +556,7 @@ internal class TimelineVideoCompositorSettings(
   }
 }
 
-private class TimelineBitmapOverlay(
+internal class TimelineBitmapOverlay(
   private val context: Context,
   private val plan: TimelineRenderPlan,
   private val transitionTimeline: TimelineTransitionTimeline,
@@ -577,10 +577,12 @@ private class TimelineBitmapOverlay(
     val timeMs = (presentationTimeUs / 1_000L).coerceIn(0L, plan.durationMs)
     return outputBuffer.render(Color.TRANSPARENT) { canvas ->
       val transition = transitionTimeline.activeAt(timeMs)
-      if (transition != null && transition.outgoing.transitionType in TimelineTransitionSpec.compositeTypes) {
-        drawCompositeTransition(canvas, transition, timeMs)
-      } else {
-        if (transition != null) drawCoverTransition(canvas, transition, timeMs)
+      if (transition != null) {
+        when (TimelineTransitionSpec.renderingPath(transition.outgoing.transitionType)) {
+          TimelineTransitionSpec.RenderingPath.NONE -> Unit
+          TimelineTransitionSpec.RenderingPath.COVER -> drawCoverTransition(canvas, transition, timeMs)
+          TimelineTransitionSpec.RenderingPath.COMPOSITE -> drawCompositeTransition(canvas, transition, timeMs)
+        }
       }
       plan.layers.asReversed().forEach { layer ->
         if (!layer.visible) return@forEach
@@ -622,7 +624,8 @@ private class TimelineBitmapOverlay(
         paint.alpha = (255 * if (transition.outgoing.transitionType == "flash") peak * peak else peak).toInt()
         canvas.drawRect(0f, 0f, plan.width.toFloat(), plan.height.toFloat(), paint)
       }
-      "dip-black" -> {
+      // Preview uses a full black cover at the cut for both effects.
+      "dip-black", "fade-dark" -> {
         paint.color = Color.BLACK
         paint.alpha = (255 * peak).toInt()
         canvas.drawRect(0f, 0f, plan.width.toFloat(), plan.height.toFloat(), paint)
@@ -642,6 +645,7 @@ private class TimelineBitmapOverlay(
         val edge = if (phase < 0.5f) plan.width * phase * 2f else plan.width * (2f - phase * 2f)
         canvas.drawRect(0f, 0f, edge, plan.height.toFloat(), paint)
       }
+      else -> error("Video transition ${transition.outgoing.transitionType} has no cover renderer")
     }
   }
 
@@ -649,9 +653,9 @@ private class TimelineBitmapOverlay(
     val phase = transition.phaseAt(timeMs)
     val outgoingSourceTimeMs = transition.outgoingSourceTimeMs(timeMs)
     val incomingSourceTimeMs = transition.incomingSourceTimeMs(timeMs)
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     val type = transition.outgoing.transitionType
-    if (type.startsWith("push-")) {
+    require(type in TimelineTransitionSpec.compositeTypes) { "Video transition $type has no compositor" }
+    if (type in setOf("push-left", "push-right", "push-up", "push-down")) {
       val outgoingX = when (type) {
         "push-left" -> -plan.width * phase
         "push-right" -> plan.width * phase
@@ -680,12 +684,6 @@ private class TimelineBitmapOverlay(
     drawTransitionSnapshot(canvas, transition.outgoing, outgoingSourceTimeMs, timeMs, 1f)
     when (type) {
       "crossfade" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase)
-      "fade-dark" -> {
-        drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase)
-        paint.color = Color.BLACK
-        paint.alpha = ((1f - abs(phase * 2f - 1f)) * 140f).toInt()
-        canvas.drawRect(0f, 0f, plan.width.toFloat(), plan.height.toFloat(), paint)
-      }
       "wipe-left", "wipe-right", "wipe-up", "wipe-down" -> {
         val clipRect = when (transition.outgoing.transitionType) {
           "wipe-left" -> RectF(plan.width * (1f - phase), 0f, plan.width.toFloat(), plan.height.toFloat())
