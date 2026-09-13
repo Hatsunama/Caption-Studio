@@ -142,6 +142,14 @@ function mount(initialProject = fixture()) {
   const jsx = (type, props) => ({ type, props: props ?? {} });
   const native = Object.fromEntries(['ActivityIndicator', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View'].map((name) => [name, name]));
   native.Alert = { alert: (...args) => calls.alerts.push(args) };
+  native.Animated = {
+    ValueXY: class {
+      constructor(value) { this.value = value; }
+      setValue(value) { this.value = value; }
+      getTranslateTransform() { return [{ translateX: this.value.x }, { translateY: this.value.y }]; }
+    },
+    timing: () => ({ start: () => {}, stop: () => {} }),
+  };
   native.useWindowDimensions = () => ({ width: 360, height: 800 });
   const exports = {};
   runInNewContext(compiled, {
@@ -414,7 +422,7 @@ test('portrait, square and landscape preview geometry share the positive actual 
       h.actions.beginEditCaption(); h.actions.setScriptKeyboardOpen(keyboard); h.render();
       const transition = h.all((node) => node.type === 'VideoTransitionOverlay')[0].props;
       assert.ok(Math.abs(transition.width / transition.height - width / height) < 1e-10);
-      const canvas = h.all((node) => node.type === 'View' && node.props.style?.borderRadius === 20)[0].props.style;
+       const canvas = h.all((node) => node.props.testID === 'script-preview-canvas')[0].props.style;
       assert.equal(canvas.width, transition.width);
       assert.equal(canvas.height, transition.height);
     }

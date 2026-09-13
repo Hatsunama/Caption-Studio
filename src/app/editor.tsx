@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Modal,
   Pressable,
   ScrollView,
@@ -361,6 +362,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
   const [scriptDraftCaptions, setScriptDraftCaptions] = useState<CaptionBlock[] | null>(null);
   const [scriptKeyboardOpen, setScriptKeyboardOpen] = useState(false);
+  const [scriptEditingCaptionId, setScriptEditingCaptionId] = useState<string>();
   const [dualCaptionEditorOpen, setDualCaptionEditorOpen] = useState(false);
   const [dualLanguagePickerOpen, setDualLanguagePickerOpen] = useState(false);
   const [selectedTranslationTrackId, setSelectedTranslationTrackId] = useState<string>();
@@ -612,7 +614,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     : selectedCaption
       ? resolveCaptionStyle(project.projectStyle, selectedCaption).animation.id
       : project.projectStyle.animation.id;
-  const displayCaption = scriptEditorOpen && !isPlaying ? selectedCaption ?? activeCaption : activeCaption;
+  const scriptEditingCaption = scriptEditorOpen && scriptKeyboardOpen
+    ? previewCaptions.find((caption) => caption.id === scriptEditingCaptionId)
+    : undefined;
+  const displayCaption = scriptEditorOpen
+    ? scriptEditingCaption ?? (!isPlaying ? selectedCaption ?? activeCaption : activeCaption)
+    : activeCaption;
   const displayTranslationPairs = useMemo(
     () => translationTimelineTracks.flatMap((track) => track.visible
       ? track.pairs.filter((pair) => pair.translation.text.trim()
@@ -626,10 +633,40 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     ? scriptKeyboardOpen
       // Reserve the 44px header and at least 100px of list (two 23px
       // caption lines plus row insets), even in a short resized window.
-      ? Math.max(0, Math.min(96, workspaceHeight * 0.3, workspaceHeight - 145))
+      ? Math.max(0, Math.min(180, workspaceHeight * 0.4, workspaceHeight - 145))
       : Math.min(500, workspaceHeight * 0.4)
     : Math.min(Math.max(280, height * 0.43), 500);
-  const canvasSize = fitRect(
+  const scriptCropActive = scriptEditorOpen && scriptKeyboardOpen;
+  const cropCaptionStyle = displayCaption ? resolveCaptionStyle(project.projectStyle, displayCaption) : undefined;
+  const [lastCropPosition, setLastCropPosition] = useState(project.projectStyle.position);
+  // Hold the camera through timing gaps; draft selection and authored position
+  // changes retarget it without changing the original canvas or its overlays.
+  if (cropCaptionStyle && (cropCaptionStyle.position.x !== lastCropPosition.x
+    || cropCaptionStyle.position.y !== lastCropPosition.y)) {
+    setLastCropPosition(cropCaptionStyle.position);
+  }
+  const scriptCrop = captionPreviewCrop(
+    project.canvas.aspectWidth / project.canvas.aspectHeight,
+    width - 80, // 24px outer inset plus a separate 48px transport and 8px gap.
+    previewHeight - 8,
+    cropCaptionStyle?.position ?? lastCropPosition,
+  );
+  const [cropOffset] = useState(() => new Animated.ValueXY({ x: 0, y: 0 }));
+  useEffect(() => {
+    if (!scriptCropActive) {
+      cropOffset.setValue({ x: 0, y: 0 });
+      return;
+    }
+    const animation = Animated.timing(cropOffset, {
+      toValue: { x: scriptCrop.x, y: scriptCrop.y },
+      duration: 180,
+      useNativeDriver: true,
+      isInteraction: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [cropOffset, scriptCropActive, scriptCrop.x, scriptCrop.y]);
+  const canvasSize = scriptCropActive ? scriptCrop.canvas : fitRect(
     project.canvas.aspectWidth / project.canvas.aspectHeight,
     width - 24,
     previewHeight - 8,
@@ -1587,10 +1624,26 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         style={{ height: previewHeight, flexShrink: 0, overflow: scriptEditorOpen ? 'hidden' : 'visible', alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
         <View
           style={{
-            width: canvasSize.width,
-            height: canvasSize.height,
+            width: scriptCropActive ? width - 24 : canvasWidth,
+            height: scriptCropActive ? scriptCrop.viewport.height : canvasHeight,
             overflow: 'hidden',
             borderRadius: 20,
+          }}>
+          <View
+            testID="script-preview-viewport"
+            style={{
+              width: scriptCropActive ? scriptCrop.viewport.width : canvasWidth,
+              height: scriptCropActive ? scriptCrop.viewport.height : canvasHeight,
+              overflow: 'hidden',
+              borderRadius: 20,
+            }}>
+          <Animated.View
+          testID="script-preview-canvas"
+          style={{
+            width: canvasWidth,
+            height: canvasHeight,
+            transform: scriptCropActive ? cropOffset.getTranslateTransform() : undefined,
+            overflow: 'hidden',
             backgroundColor: project.canvas.backgroundColor,
           }}>
           <View
@@ -1736,6 +1789,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               />
             );
           })}
+          </Animated.View>
+          </View>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={isPlaying ? 'Pause video' : 'Play video'}
@@ -1750,8 +1805,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             }}
             style={{
               position: 'absolute',
-              right: 12,
-              bottom: 12,
+              right: scriptCropActive ? 0 : 12,
+              bottom: scriptCropActive ? Math.max(0, (scriptCrop.viewport.height - 48) / 2) : 12,
               width: 48,
               height: 48,
               alignItems: 'center',
@@ -2115,6 +2170,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         onSeekTimeline={seekTimeline}
         onDraftChange={setScriptDraftCaptions}
         onKeyboardChange={setScriptKeyboardOpen}
+        onEditingCaptionChange={setScriptEditingCaptionId}
         onSelectCaption={(caption) => {
           transport.pause();
           setSelectedLayerId('captions');
@@ -2454,6 +2510,31 @@ function trimHistoryStack(stack: CaptionProject[]) {
       break;
     }
   }
+}
+
+function captionPreviewCrop(
+  aspect: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  position: { x: number; y: number },
+) {
+  aspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+  const viewport = {
+    width: Math.max(0, Number.isFinite(viewportWidth) ? viewportWidth : 0),
+    height: Math.max(0, Number.isFinite(viewportHeight) ? viewportHeight : 0),
+  };
+  // Cover the crop window at full width rather than containing the complete
+  // canvas in the keyboard strip. Only the camera offset follows the caption.
+  const canvas = { width: Math.max(viewport.width, viewport.height * aspect), height: 0 };
+  canvas.height = canvas.width / aspect;
+  const x = Number.isFinite(position.x) ? position.x : 0.5;
+  const y = Number.isFinite(position.y) ? position.y : 0.5;
+  return {
+    canvas,
+    viewport,
+    x: -clamp(x * canvas.width - viewport.width / 2, 0, canvas.width - viewport.width),
+    y: -clamp(y * canvas.height - viewport.height / 2, 0, canvas.height - viewport.height),
+  };
 }
 
 function fitRect(aspect: number, maxWidth: number, maxHeight: number) {

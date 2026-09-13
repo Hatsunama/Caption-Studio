@@ -4,6 +4,8 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as scriptMutations from '../src/lib/caption-script.ts';
+import { resolveCaptionStyle } from '../src/lib/style-resolver.ts';
+import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 
 // Execute the complete component with deterministic hooks, native layout events,
 // and timers. Native rendering and recovery storage are test doubles. The source
@@ -40,19 +42,24 @@ function evaluate(expression, context = {}) {
 function workspaceValue(name, context) {
   const declaration = workspace.body.statements.filter(ts.isVariableStatement)
     .flatMap((node) => [...node.declarationList.declarations]).find((node) => node.name.getText(editorAst) === name);
-  return evaluate(declaration.initializer.getText(editorAst), { scriptEditorOpen: true, scriptKeyboardOpen: false, ...context });
+  return evaluate(declaration.initializer.getText(editorAst), { scriptEditorOpen: true, scriptKeyboardOpen: false, scriptEditingCaption: undefined, scriptCropActive: false, ...context });
 }
 function jsxProp(node, name, context) {
   const attribute = node.openingElement.attributes.properties.find((prop) => prop.name?.text === name);
   return attribute ? evaluate(attribute.initializer.expression.getText(editorAst), context) : undefined;
 }
 
+const crop = evaluate(editorAst.statements.find((node) => ts.isFunctionDeclaration(node)
+  && node.name?.text === 'captionPreviewCrop')?.getText(editorAst) ?? 'undefined', {
+  clamp: (value, min, max) => Math.min(max, Math.max(min, value)),
+});
+
 function mount(overrides = {}, platform = 'android') {
   const slots = [];
   const timers = new Map();
   const keyboardListeners = new Map();
   let cursor = 0, dirty = false, effects = [], tree, now = 0, timerId = 0, recover;
-  const calls = { seeks: [], selects: [], indices: [], offsets: [], drafts: [], keyboards: [], focuses: [], alerts: [], saves: [], nativeLayouts: 0, focusCaptures: 0 };
+  const calls = { seeks: [], selects: [], indices: [], offsets: [], drafts: [], keyboards: [], editing: [], focuses: [], alerts: [], saves: [], nativeLayouts: 0, focusCaptures: 0 };
   const sameDeps = (left, right) => left && right && left.length === right.length
     && left.every((value, index) => Object.is(value, right[index]));
   const memo = (factory, deps) => {
@@ -111,6 +118,7 @@ function mount(overrides = {}, platform = 'android') {
     onSelectCaption: (caption) => calls.selects.push(caption.id),
     onDraftChange: (captions) => calls.drafts.push(plain(captions)),
     onKeyboardChange: (open) => calls.keyboards.push(open),
+    onEditingCaptionChange: (id) => calls.editing.push(id),
     onSeekTimeline: (ms) => calls.seeks.push(ms), onCancel: () => {},
     onSave: async (captions) => { calls.saves.push(plain(captions)); }, ...overrides,
   };
@@ -193,7 +201,7 @@ function mount(overrides = {}, platform = 'android') {
 
 test('drag seeks using cell-content coordinates and preserves native layout reporting', () => {
   const h = mount();
-  h.fire('onScrollBeginDrag'); h.fire('onScroll', 240); h.fire('onScroll', 242);
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', 292); h.fire('onScroll', 294);
   assert.deepEqual(h.calls.seeks, [2000]);
   assert.deepEqual(h.calls.selects, ['cue-2']);
   assert.equal(h.calls.nativeLayouts, cues.length);
@@ -210,34 +218,34 @@ test('programmatic initial and delayed scroll notifications never seek', () => {
 test('playback ticks cannot strand scroll ownership and a drag can seek during playback', () => {
   const h = mount({ isPlaying: true, currentMs: 1100 });
   h.update({ currentMs: 1150 }); h.update({ currentMs: 1200 }); h.advance(1000);
-  h.fire('onScrollBeginDrag'); h.fire('onScroll', 340);
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', 392);
   assert.deepEqual(h.calls.seeks, [3000]);
-  h.update({ isPlaying: false }); h.fire('onScroll', 440);
+  h.update({ isPlaying: false }); h.fire('onScroll', 492);
   assert.deepEqual(h.calls.seeks, [3000, 4000]);
 });
 
 test('user momentum seeks across transport rerenders then releases ownership', () => {
   const h = mount();
-  h.fire('onScrollBeginDrag'); h.fire('onScroll', 140); h.fire('onScrollEndDrag', 240);
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', 192); h.fire('onScrollEndDrag', 292);
   h.fire('onMomentumScrollBegin'); h.update({ currentMs: 2050, isPlaying: true });
-  h.advance(400); h.fire('onScroll', 340); h.fire('onMomentumScrollEnd', 440);
+  h.advance(400); h.fire('onScroll', 392); h.fire('onMomentumScrollEnd', 492);
   assert.deepEqual(h.calls.seeks, [1000, 2000, 3000, 4000]);
-  h.fire('onScroll', 540); assert.equal(h.calls.seeks.length, 4);
+  h.fire('onScroll', 592); assert.equal(h.calls.seeks.length, 4);
 });
 
 test('end-drag without momentum releases across ticks; new gestures can revisit a cue', () => {
   const h = mount();
-  h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 240);
-  h.update({ currentMs: 2100 }); h.advance(150); h.fire('onScroll', 440);
+  h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 292);
+  h.update({ currentMs: 2100 }); h.advance(150); h.fire('onScroll', 492);
   assert.deepEqual(h.calls.seeks, [2000]);
-  h.fire('onScrollBeginDrag'); h.fire('onScroll', 240);
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', 292);
   assert.deepEqual(h.calls.seeks, [2000, 2000]);
 });
 
 test('playback follows changing cues without reverse seeks', () => {
   const h = mount({ isPlaying: true }); h.update({ currentMs: 3100 });
   assert.equal(h.calls.indices.at(-1)?.index, 3);
-  h.fire('onScroll', 340); h.advance(2000); h.fire('onScroll', 342);
+  h.fire('onScroll', 392); h.advance(2000); h.fire('onScroll', 342);
   assert.deepEqual(h.calls.seeks, []);
   assert.deepEqual(h.calls.selects, [], 'following playback must not pause or select through the parent');
 });
@@ -256,24 +264,24 @@ test('paused scroll publishes preview selection and time together across parent 
     },
   });
   h.fire('onScrollBeginDrag');
-  for (const offset of [140, 240, 340]) {
+  for (const offset of [192, 292, 392]) {
     h.fire('onScroll', offset);
     h.update({ currentMs, isPlaying, initialCaptionId: selectedCaption.id });
     h.fire('onScroll', offset + 2);
   }
-  h.fire('onScrollEndDrag', 340); h.advance(150);
-  h.fire('onScroll', 440);
+  h.fire('onScrollEndDrag', 392); h.advance(150);
+  h.fire('onScroll', 492);
   assert.deepEqual(publications, [[1000, 'cue-1'], [2000, 'cue-2'], [3000, 'cue-3']]);
   assert.deepEqual(h.calls.indices, [], 'parent updates must not recenter a user scroll');
 });
 
 test('tapping during momentum hands navigation to the focused input before keyboard resize', () => {
   const h = mount();
-  h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 240); h.fire('onMomentumScrollBegin');
+  h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 292); h.fire('onMomentumScrollBegin');
   h.edit(4);
   h.calls.seeks.length = 0; h.calls.selects.length = 0; h.calls.indices.length = 0;
   h.keyboard('keyboardDidShow'); h.viewport(120); h.measure(4, 500, 200);
-  h.fire('onScroll', 540); h.fire('onMomentumScrollEnd', 540); h.advance(200);
+  h.fire('onScroll', 592); h.fire('onMomentumScrollEnd', 592); h.advance(200);
   assert.equal(h.input(4).value, 'caption 4');
   assert.equal(h.calls.indices.at(-1)?.index, 4);
   assert.equal(h.calls.indices.at(-1)?.viewPosition, 0);
@@ -306,9 +314,9 @@ test('split and merge navigation and scrolling use current draft identities and 
   const split = h.list().data[2];
   assert.notEqual(split.id, cues[2].id); assert.equal(h.calls.indices.at(-1)?.index, 2);
   h.measure(2, 300, 80); h.calls.seeks.length = 0;
-  h.fire('onScrollBeginDrag'); h.fire('onScroll', 240);
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', 292);
   assert.deepEqual(h.calls.seeks, [split.startMs]);
-  h.fire('onScrollEndDrag', 240); h.advance(150); h.edit(2);
+  h.fire('onScrollEndDrag', 292); h.advance(150); h.edit(2);
   h.act(() => h.input(2).onSelectionChange({ nativeEvent: { selection: { start: 0, end: 0 } } }));
   h.act(() => h.input(2).onKeyPress({ nativeEvent: { key: 'Backspace' } }));
   assert.equal(h.list().data.length, cues.length);
@@ -337,11 +345,11 @@ for (const interrupt of ['drag', 'close', 'unmount']) {
 }
 
 test('reopening resets gestures and reveals the new initial cue', () => {
-  const h = mount(); h.fire('onScrollBeginDrag'); h.fire('onScroll', 140);
+  const h = mount(); h.fire('onScrollBeginDrag'); h.fire('onScroll', 192);
   h.update({ visible: false }); h.update({ visible: true, initialCaptionId: 'cue-4' });
   h.calls.indices.length = 0; h.viewport(200);
   assert.equal(h.calls.indices.at(-1)?.index, 4);
-  h.calls.seeks.length = 0; h.fire('onScroll', 440); assert.deepEqual(h.calls.seeks, []);
+  h.calls.seeks.length = 0; h.fire('onScroll', 492); assert.deepEqual(h.calls.seeks, []);
 });
 
 for (const platform of ['android', 'ios']) {
@@ -374,11 +382,13 @@ test('Android resized workspace keeps the video controls and focused input above
     const previewStyle = jsxProp(preview, 'style', { previewHeight, scriptEditorOpen: true });
     assert.ok(previewStyle.height <= availableHeight * 0.45);
     assert.equal(jsxProp(tools, 'style', context).display, 'none', 'toolbar must not consume typing space');
+    const scriptCrop = crop(16 / 9, 280, previewHeight - 8, { x: 0.5, y: 0.78 });
     const canvas = workspaceValue('canvasSize', {
-      previewHeight, fitRect, width: 360, project: { canvas: { aspectWidth: 16, aspectHeight: 9 } },
+      scriptCropActive: true, scriptCrop, previewHeight, fitRect, width: 360, project: { canvas: { aspectWidth: 16, aspectHeight: 9 } },
     });
-    assert.ok(canvas.height >= 48, 'preview must still fit the playback control');
-    assert.ok(canvas.height + 8 <= previewStyle.height, 'canvas and controls must stay above the sheet');
+    assert.ok(scriptCrop.viewport.height >= 48, 'preview must still fit the playback control');
+    assert.ok(scriptCrop.viewport.height + 8 <= previewStyle.height, 'crop and controls must stay above the sheet');
+    assert.ok(canvas.width >= 280, 'retain readable canvas scale while the keyboard resizes');
     const sheetHeight = availableHeight - previewStyle.height;
     const headerHeight = h.find('KeyboardAvoidingView').props.children[0].props.style.minHeight;
     const viewport = sheetHeight - headerHeight - 1;
@@ -396,7 +406,7 @@ test('Android resized workspace keeps the video controls and focused input above
   assert.equal(jsxProp(tools, 'style', { scriptEditorOpen: false }).display, 'flex');
 });
 
-test('the leading edge seeks the first cue even when multiple short rows fit above the center guide', () => {
+test('the leading edge seeks the first cue even when multiple short rows fit in the viewport', () => {
   const h = mount(); h.viewport(600);
   for (let index = 0; index < cues.length; index += 1) h.measure(index, 20 + index * 80, 72);
   h.fire('onScrollBeginDrag'); h.fire('onScroll', 0); h.fire('onScrollEndDrag', 0); h.advance(150);
@@ -415,7 +425,7 @@ test('tapping a visible or final short row aligns its editor at the top, includi
   h.act(() => h.list().onScrollToIndexFailed({ index: 5, averageItemLength: 100 }));
   h.advance(100); h.keyboard('keyboardDidShow'); h.viewport(140);
   assert.ok(h.calls.indices.filter(({ index }) => index === 5).every(({ viewPosition }) => viewPosition === 0));
-  assert.ok(h.list().contentContainerStyle.paddingBottom >= 140, 'the final row needs enough trailing scroll space');
+  assert.ok(h.list().ListFooterComponent.props.style.height >= 132, 'the final row needs enough trailing scroll space to reach the 8px anchor');
   h.fire('onScroll', 592); h.calls.indices.length = 0;
   h.act(() => h.input(5).onContentSizeChange());
   assert.deepEqual(h.calls.indices, [], 'already aligned input must not restart navigation');
@@ -425,7 +435,7 @@ test('dragging and tapping retain native inputs and focus without reopening a na
   const h = mount(); h.edit(1); h.keyboard('keyboardDidShow');
   assert.equal(h.calls.focusCaptures, cues.length, 'forward focus capture so native virtualization retains the focused cell');
   h.calls.indices.length = 0; h.calls.focuses.length = 0;
-  h.fire('onScrollBeginDrag'); h.fire('onScroll', 340); h.fire('onScrollEndDrag', 340); h.advance(150);
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', 392); h.fire('onScrollEndDrag', 392); h.advance(150);
   h.viewport(180); h.measure(1, 200, 160); h.act(() => h.input(1).onContentSizeChange());
   assert.equal(h.input(1).value, 'caption 1');
   assert.equal(h.input(1).scrollEnabled, true, 'the focused input stays editable while the list scrolls');
@@ -532,12 +542,194 @@ test('a fast fling waits for virtualized cells and resolves its final seek after
   h.update({ visible: false }); h.update({ visible: true, captions }); h.viewport(200);
   h.measure(0); h.measure(1);
   h.calls.seeks.length = 0;
-  h.fire('onScrollBeginDrag'); h.fire('onScroll', 5040);
-  h.fire('onScrollEndDrag', 5040); h.fire('onMomentumScrollBegin');
-  h.fire('onMomentumScrollEnd', 5040);
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', 5092);
+  h.fire('onScrollEndDrag', 5092); h.fire('onMomentumScrollBegin');
+  h.fire('onMomentumScrollEnd', 5092);
   assert.deepEqual(h.calls.seeks, []);
   h.measure(49); assert.deepEqual(h.calls.seeks, []);
   h.measure(50); assert.deepEqual(h.calls.seeks, [50000]);
   assert.deepEqual(h.calls.selects, ['cue-50']);
-  h.fire('onScroll', 5140); assert.deepEqual(h.calls.seeks, [50000]);
+  h.fire('onScroll', 5192); assert.deepEqual(h.calls.seeks, [50000]);
+});
+
+for (const viewport of [120, 300, 600]) {
+  for (const heights of [[72, 72, 72, 72, 72, 72], [340, 72, 180, 90, 240, 72]]) {
+    test(`first, second and final cues reach the same anchor with ${viewport}px viewport and ${heights[0]}px first row`, () => {
+      const h = mount(); h.viewport(viewport);
+      const header = h.list().ListHeaderComponent.props;
+      const leading = header.style.minHeight;
+      const trailing = h.list().ListFooterComponent.props.style.height;
+      const gap = h.list().ItemSeparatorComponent().props.style.height;
+      h.act(() => header.onLayout(layoutEvent(0, leading)));
+      assert.ok(leading > 8, 'first cue has real scroll travel below the anchor');
+      assert.ok(trailing >= viewport - 8, 'final cue has explicit trailing travel');
+      let nextY = leading;
+      const positions = heights.map((rowHeight, index) => {
+        const y = nextY;
+        h.measure(index, y, rowHeight); nextY += rowHeight + gap;
+        return y;
+      });
+      const maximumOffset = Math.max(0, nextY - gap + trailing - viewport);
+      h.fire('onScrollBeginDrag'); h.fire('onScroll', 0);
+      h.fire('onScroll', leading - 8); h.fire('onScrollEndDrag', leading - 8); h.advance(150);
+      assert.deepEqual(h.calls.seeks, [0], 'leading space and the exact first anchor must never select cue 2');
+      for (const index of [0, 1, 5]) {
+        h.calls.indices.length = 0; h.edit(index);
+        // An already aligned row may need no native request.
+        const request = h.calls.indices.at(-1) ?? { index, viewPosition: 0, viewOffset: 8 };
+        assert.equal(request.index, index); assert.equal(request.viewPosition, 0);
+        const requestedOffset = positions[index] - request.viewOffset;
+        const nativeOffset = Math.max(0, Math.min(maximumOffset, requestedOffset));
+        assert.equal(positions[index] - nativeOffset, 8, 'native clamping must not prevent top alignment');
+        h.calls.seeks.length = 0; h.calls.selects.length = 0;
+        h.fire('onScroll', nativeOffset);
+        assert.deepEqual(h.calls.seeks, [], 'programmatic alignment must not seek transport');
+        h.fire('onScrollBeginDrag'); h.fire('onScroll', nativeOffset);
+        h.fire('onScrollEndDrag', nativeOffset); h.advance(150);
+        assert.deepEqual(h.calls.seeks, [cues[index].startMs]);
+        assert.deepEqual(h.calls.selects, [cues[index].id]);
+      }
+    });
+  }
+}
+
+test('unmeasured first cue owns the leading edge, including overscroll and delayed second-cell layout', () => {
+  const h = mount(); h.update({ visible: false }); h.update({ visible: true }); h.viewport(500);
+  h.measure(1, 176, 72);
+  h.calls.seeks.length = 0; h.calls.selects.length = 0;
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', -18); h.fire('onScroll', 0);
+  h.measure(1, 176, 72); h.measure(0, 96, 72);
+  h.fire('onScrollEndDrag', 0); h.advance(150);
+  assert.deepEqual(h.calls.seeks, [0]); assert.deepEqual(h.calls.selects, ['cue-0']);
+});
+
+test('forward scrolling stays user-owned across keyboard resize and late layouts without reverse seeks', () => {
+  const h = mount(); h.edit(0); h.keyboard('keyboardDidShow');
+  h.calls.seeks.length = 0; h.calls.indices.length = 0;
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', 192);
+  h.fire('onScroll', 292); h.viewport(140); h.measure(0, 100, 180);
+  h.fire('onScrollEndDrag', 292); h.advance(150); h.measure(1, 200, 80);
+  assert.deepEqual(h.calls.seeks, [1000, 2000]);
+  assert.deepEqual(h.calls.indices, []);
+  assert.equal(h.calls.editing.at(-1), undefined, 'a user scroll releases the old input camera target');
+  h.edit(2); assert.equal(h.calls.editing.at(-1), 'cue-2');
+});
+
+test('offscreen retry includes measured leading space and the top editing anchor', () => {
+  const h = mount();
+  h.act(() => h.list().ListHeaderComponent.props.onLayout(layoutEvent(0, 148)));
+  h.edit(5); h.act(() => h.list().onScrollToIndexFailed({ index: 5, averageItemLength: 100 }));
+  assert.equal(h.calls.offsets.at(-1).offset, 148 + 500 - 8);
+  h.advance(100);
+  assert.equal(h.calls.indices.at(-1).viewOffset, 8);
+});
+
+for (const aspect of [9 / 16, 16 / 9, 1]) {
+  test(`keyboard crop retains canvas scale, caption position and video context at aspect ${aspect}`, () => {
+    for (const viewportHeight of [64, 104, 136, 172]) {
+      for (const position of [{ x: 0.1, y: 0.08 }, { x: 0.5, y: 0.5 }, { x: 0.9, y: 0.92 }]) {
+        const result = crop(aspect, 280, viewportHeight, position);
+        assert.ok(result.canvas.width >= 280, 'never contain the whole frame in a thumbnail');
+        assert.ok(Math.abs(result.canvas.width / result.canvas.height - aspect) < 1e-9);
+        assert.ok(result.canvas.height >= viewportHeight);
+        assert.ok(result.x <= 0 && result.y <= 0);
+        assert.ok(result.x + result.canvas.width >= result.viewport.width - 1e-9);
+        assert.ok(result.y + result.canvas.height >= result.viewport.height - 1e-9);
+        const captionX = position.x * result.canvas.width + result.x;
+        const captionY = position.y * result.canvas.height + result.y;
+        assert.ok(captionX >= 0 && captionX <= 280);
+        assert.ok(captionY >= 0 && captionY <= viewportHeight);
+        assert.ok(Math.min(captionY, viewportHeight - captionY) >= Math.min(viewportHeight / 2, result.canvas.height * 0.08) - 1e-9,
+          'retain visible canvas context on both sides of the caption center');
+      }
+    }
+    const top = crop(aspect, 280, 64, { x: 0.5, y: 0.2 });
+    const bottom = crop(aspect, 280, 64, { x: 0.5, y: 0.8 });
+    assert.deepEqual(plain(top.canvas), plain(bottom.canvas), 'selection pans without rescaling the composition');
+    assert.ok(top.y > bottom.y, 'different authored positions produce different crops');
+    const a = crop(aspect, 280, 64, { x: 0.5, y: 0.5 });
+    const b = crop(aspect, 280, 64, { x: 0.5, y: 0.5001 });
+    assert.ok(Math.abs(a.y - b.y) < 0.1, 'small position edits cannot jump between crop presets');
+  });
+}
+
+test('crop clamps invalid dimensions and positions without NaN or exposed canvas edges', () => {
+  for (const aspect of [0, -1, NaN, Infinity]) {
+    const result = crop(aspect, 280, 100, { x: NaN, y: Infinity });
+    assert.equal(result.canvas.width, result.canvas.height);
+    assert.ok(Number.isFinite(result.x) && Number.isFinite(result.y));
+  }
+  const empty = crop(1, -20, NaN, { x: -10, y: 10 });
+  assert.equal(empty.viewport.width, 0); assert.equal(empty.viewport.height, 0);
+  const low = crop(1, 280, 100, { x: -10, y: -10 });
+  const high = crop(1, 280, 100, { x: 10, y: 10 });
+  assert.equal(Math.abs(low.y), 0); assert.equal(high.y, -180);
+});
+
+test('crop uses current draft overrides and editing, paused selection, playback timing, and gap fallback', () => {
+  const previewCaptions = cues.map((cue, index) => ({ ...cue, styleOverride: { position: { y: 0.15 + index * 0.13 } } }));
+  const selectedCaption = previewCaptions[1];
+  const activeAt = (currentMs) => workspaceValue('activeCaption', { previewCaptions, currentMs, useMemo: (fn) => fn() });
+  const editing = workspaceValue('scriptEditingCaption', { previewCaptions, scriptKeyboardOpen: true, scriptEditingCaptionId: 'cue-0' });
+  const resolveCrop = (displayCaption) => {
+    const cropCaptionStyle = workspaceValue('cropCaptionStyle', { displayCaption, project: { projectStyle: DEFAULT_CAPTION_STYLE }, resolveCaptionStyle });
+    return workspaceValue('scriptCrop', {
+      captionPreviewCrop: crop, width: 360, previewHeight: 112, cropCaptionStyle,
+      lastCropPosition: { x: 0.5, y: 0.78 },
+      project: { canvas: { aspectWidth: 9, aspectHeight: 16 } },
+    });
+  };
+  const focusedDisplay = workspaceValue('displayCaption', { scriptEditingCaption: editing, selectedCaption, activeCaption: activeAt(3100), isPlaying: true });
+  assert.equal(focusedDisplay.id, 'cue-0', 'an actively edited input remains the camera target during playback');
+  const pausedDisplay = workspaceValue('displayCaption', { selectedCaption, activeCaption: activeAt(3100), isPlaying: false });
+  assert.equal(pausedDisplay.id, 'cue-1');
+  const playingDisplay = workspaceValue('displayCaption', { selectedCaption, activeCaption: activeAt(3100), isPlaying: true });
+  assert.equal(playingDisplay.id, 'cue-3');
+  assert.ok(resolveCrop(focusedDisplay).y > resolveCrop(pausedDisplay).y);
+  assert.ok(resolveCrop(pausedDisplay).y > resolveCrop(playingDisplay).y);
+  previewCaptions[1].styleOverride.position.y = 0.9;
+  assert.ok(resolveCrop(pausedDisplay).y < resolveCrop(playingDisplay).y, 'live position overrides retarget the crop');
+  const gapDisplay = workspaceValue('displayCaption', { selectedCaption, activeCaption: activeAt(9000), isPlaying: true });
+  assert.equal(gapDisplay, undefined);
+  assert.deepEqual(plain(resolveCrop(gapDisplay)), plain(crop(9 / 16, 280, 104, { x: 0.5, y: 0.78 })));
+});
+
+test('crop animation retargets on the native driver and cancels stale motion on exit', () => {
+  const effect = workspace.body.statements.find((node) => ts.isExpressionStatement(node)
+    && ts.isCallExpression(node.expression) && node.expression.expression.getText(editorAst) === 'useEffect'
+    && node.getText(editorAst).includes('Animated.timing(cropOffset'));
+  const calls = [];
+  const cropOffset = { setValue: (value) => calls.push(['set', plain(value)]) };
+  const Animated = { timing: (value, config) => {
+    assert.equal(value, cropOffset); calls.push(['target', plain(config)]);
+    return { start: () => calls.push(['start']), stop: () => calls.push(['stop']) };
+  } };
+  const run = (scriptCropActive, scriptCrop) => evaluate(effect.expression.arguments[0].getText(editorAst), { cropOffset, Animated, scriptCropActive, scriptCrop })();
+  const cancelFirst = run(true, { x: 0, y: -100 }); cancelFirst();
+  const cancelNext = run(true, { x: 0, y: -300 }); cancelNext(); run(false, { x: 0, y: -300 });
+  assert.deepEqual(calls.map(([kind]) => kind), ['target', 'start', 'stop', 'target', 'start', 'stop', 'set']);
+  assert.equal(calls[0][1].useNativeDriver, true); assert.equal(calls[0][1].isInteraction, false);
+  assert.equal(calls[0][1].duration, 180);
+  assert.deepEqual(calls[3][1].toValue, { x: 0, y: -300 });
+  assert.deepEqual(calls.at(-1), ['set', { x: 0, y: 0 }]);
+});
+
+test('video and caption overlays share the cropped canvas while playback controls stay outside it', () => {
+  const nodes = [];
+  const visit = (node) => { if (ts.isJsxElement(node)) nodes.push(node); ts.forEachChild(node, visit); };
+  visit(workspaceRoot);
+  const byId = (id) => nodes.find((node) => node.openingElement.attributes.properties.some((prop) => prop.name?.text === 'testID' && prop.initializer?.text === id));
+  const viewport = byId('script-preview-viewport'), canvas = byId('script-preview-canvas');
+  assert.equal(canvas.parent, viewport);
+  assert.equal(canvas.openingElement.tagName.getText(editorAst), 'Animated.View');
+  const canvasSource = canvas.getText(editorAst);
+  assert.ok(canvasSource.includes('<VideoView')); assert.ok(canvasSource.includes('<CaptionOverlay'));
+  const play = nodes.find((node) => node.openingElement.attributes.properties.some((prop) => prop.name?.text === 'accessibilityLabel'
+    && prop.initializer?.expression?.getText(editorAst).includes("'Pause video'")));
+  assert.equal(play.parent, viewport.parent, 'playback stays outside the moving and clipped canvas');
+  const scriptCrop = crop(9 / 16, 280, 104, { x: 0.5, y: 0.78 });
+  assert.equal(jsxProp(viewport, 'style', { scriptCropActive: true, scriptCrop }).overflow, 'hidden');
+  const style = jsxProp(play, 'style', { scriptCropActive: true, scriptCrop });
+  assert.equal(style.width, 48); assert.equal(style.height, 48);
+  assert.ok(style.bottom >= 0 && style.bottom + style.height <= scriptCrop.viewport.height);
 });
