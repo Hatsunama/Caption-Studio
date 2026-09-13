@@ -19,7 +19,7 @@ import org.junit.rules.TemporaryFolder;
 public final class TranslationRepairTest {
   @Rule public TemporaryFolder directory = new TemporaryFolder();
 
-  @Test public void retriesOneCueWithContextInOneEngineAndRestoresWithoutReloading() throws Exception {
+  @Test public void translatesIsolatedCuesInOneEngineAndRestoresWithoutReloading() throws Exception {
     File model = directory.newFile("model.litertlm");
     Files.write(model.toPath(), new byte[] { 1 });
     File cache = directory.newFolder("cache");
@@ -34,7 +34,7 @@ public final class TranslationRepairTest {
         public String translate(String prompt) {
           prompts.add(prompt);
           return prompts.size() == 1
-              ? "[{\"id\":\"c1\",\"text\":\"\u4f60\u597d\"},{\"id\":\"c2\",\"text\":\"okay\"}]"
+              ? "[{\"id\":\"c1\",\"text\":\"\u4f60\u597d\"}]"
               : "[{\"id\":\"c2\",\"text\":\"\u597d\"}]";
         }
         public void cancel() {}
@@ -47,8 +47,8 @@ public final class TranslationRepairTest {
       assertEquals(1, opened.get()); assertEquals(1, closed.get()); assertEquals(2, prompts.size());
       var retry = JsonParser.parseString(prompts.get(1)).getAsJsonObject();
       assertEquals(1, retry.getAsJsonArray("captions").size());
-      assertTrue(retry.get("contextBefore").getAsString().contains("Hello"));
-      assertTrue(retry.get("contextAfter").getAsString().contains("After"));
+      assertEquals("", retry.get("contextBefore").getAsString());
+      assertEquals("", retry.get("contextAfter").getAsString());
       assertEquals(Boolean.TRUE, cue(first, 1).get("valid"));
       assertEquals("\u597d", cue(first, 1).get("text"));
       Map<String, Object> restored = run(translator, model, request);

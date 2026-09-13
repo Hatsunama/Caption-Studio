@@ -58,7 +58,7 @@ export function acceptTranslationBoundary(
   const translations = new Map<string, string>();
   const rejected = new Set<string>();
   for (const item of actual) {
-    const id = typeof item.id === 'string' ? item.id.trim() : '';
+    const id = typeof item.id === 'string' ? item.id : '';
     if (!id || !expectedIds.has(id) || seen.has(id)) {
       throw new Error('The local model returned an incomplete translation. No captions were changed.');
     }
@@ -82,20 +82,19 @@ export function acceptTranslationBoundary(
   return { translations, rejected };
 }
 
-/** UTF-8 / token estimate matching NaturalCaptionTranslator.estimateTokens. */
+/** Conservative UTF-8 byte fallback bound, including JSON string escaping. */
 export function estimateTranslationTokens(value: string): number {
-  let asciiCharacters = 0;
-  let nonAsciiTokens = 0;
-  for (const character of value.normalize('NFC')) {
+  let bytes = 0;
+  for (const character of value) {
     const codePoint = character.codePointAt(0)!;
-    if (codePoint <= 0x7f) asciiCharacters += 1;
-    else nonAsciiTokens += codePoint > 0xffff ? 2 : 1;
+    if (codePoint < 0x20 || codePoint === 0x3c || codePoint === 0x3e) bytes += 6;
+    else if (codePoint === 0x22 || codePoint === 0x5c) bytes += 2;
+    else bytes += codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
   }
-  return Math.floor((asciiCharacters + 2) / 3) + nonAsciiTokens;
+  return bytes;
 }
 
 /** Native prompt/runtime batch budget (see NaturalCaptionTranslator.MAX_ESTIMATED_REQUEST_TOKENS). */
 export const TRANSLATION_BATCH_TOKEN_BUDGET = 3_600;
 export const TRANSLATION_BATCH_CONTEXT_TOKEN_RESERVE = 200;
 export const TRANSLATION_BATCH_STRUCTURAL_TOKEN_BASE = 384;
-

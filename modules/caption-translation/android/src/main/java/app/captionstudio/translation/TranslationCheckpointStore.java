@@ -23,10 +23,12 @@ import java.util.Comparator;
 final class TranslationCheckpointStore {
   static final int MAX_RESPONSE_BYTES = 262_144;
   static final long MAX_BYTES = 32L * 1024L * 1024L;
-  static final int MAX_ENTRIES = 512;
+  static final int MAX_ENTRIES = 8_192;
   static final long RETENTION_MS = 30L * 24L * 60L * 60L * 1000L;
   private static final int MAGIC = 0x43535431;
   private final File directory;
+  private long storedBytes;
+  private int storedEntries;
 
   TranslationCheckpointStore(File directory) throws IOException {
     this.directory = directory.getCanonicalFile();
@@ -67,8 +69,12 @@ final class TranslationCheckpointStore {
 
   void write(String key, String response) throws IOException {
     byte[] content = response.getBytes(StandardCharsets.UTF_8);
-    if (content.length == 0 || content.length > MAX_RESPONSE_BYTES) return;
+    if (content.length == 0 || content.length > MAX_RESPONSE_BYTES) {
+      throw new IOException("Checkpoint response exceeds storage capacity");
+    }
     File destination = ownedFile(key, ".checkpoint");
+    long previousBytes = destination.length();
+    boolean replacing = destination.isFile();
     File staging = ownedFile(key, ".writing");
     try (FileOutputStream stream = new FileOutputStream(staging);
          DataOutputStream output = new DataOutputStream(stream)) {
@@ -80,7 +86,10 @@ final class TranslationCheckpointStore {
       stream.getFD().sync();
     }
     commitStaging(staging, destination);
-    prune();
+    storedBytes += destination.length() - previousBytes;
+    if (!replacing) storedEntries++;
+    // Avoid scanning and sorting the entire directory after every fragment.
+    if (storedEntries > MAX_ENTRIES || storedBytes > MAX_BYTES) prune();
   }
 
   private static void commitStaging(File staging, File destination) throws IOException {
@@ -128,12 +137,17 @@ final class TranslationCheckpointStore {
     long retainedBytes = 0;
     int retainedCount = 0;
     long now = System.currentTimeMillis();
+    storedBytes = 0;
+    storedEntries = 0;
     for (File file : files) {
       if (!file.isFile() || !directory.equals(file.getCanonicalFile().getParentFile())) continue;
       retainedBytes += file.length();
       retainedCount += 1;
       if (now - file.lastModified() > RETENTION_MS || retainedCount > MAX_ENTRIES || retainedBytes > MAX_BYTES) {
         if (!file.delete()) throw new IOException("Checkpoint storage limit could not be maintained");
+      } else {
+        storedBytes += file.length();
+        storedEntries++;
       }
     }
   }

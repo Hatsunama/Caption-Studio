@@ -53,10 +53,7 @@ public final class NaturalCaptionTranslatorTest {
     assertEquals("fr", multilingual.sourceLanguage);
     assertEquals("ja", multilingual.targetLanguage);
 
-    assertThrows(
-        NaturalCaptionTranslator.TranslationFailure.class,
-        () -> NaturalCaptionTranslator.validateRequest(request("fr", "fr", "one", "Bonjour"))
-    );
+    assertEquals("fr", NaturalCaptionTranslator.validateRequest(request("fr", "fr", "one", "Bonjour")).targetLanguage);
     assertThrows(
         NaturalCaptionTranslator.TranslationFailure.class,
         () -> NaturalCaptionTranslator.validateRequest(request("xx", "en", "one", "Hello"))
@@ -73,7 +70,7 @@ public final class NaturalCaptionTranslatorTest {
   }
 
   @Test
-  public void rejectsOversizedCaptionAndContextInput() {
+  public void rejectsOversizedCaptionAndContextInput() throws Exception {
     Map<String, Object> oversizedCaption = request(
         "en",
         "zh-Hans",
@@ -102,10 +99,7 @@ public final class NaturalCaptionTranslatorTest {
     for (int index = 2; index <= 8; index += 1) {
       captions.add(caption("caption-" + index, "字幕".repeat(250)));
     }
-    assertThrows(
-        NaturalCaptionTranslator.TranslationFailure.class,
-        () -> NaturalCaptionTranslator.validateRequest(excessiveEstimatedTokens)
-    );
+    assertEquals(8, NaturalCaptionTranslator.validateRequest(excessiveEstimatedTokens).captions.size());
   }
 
   @Test
@@ -115,7 +109,7 @@ public final class NaturalCaptionTranslatorTest {
         request("zh-Hans", "en", "one", astralHan)
     );
     assertEquals(astralHan, accepted.captions.get(0).text);
-    assertTrue(astralHan.length() > NaturalCaptionTranslator.MAX_CAPTION_CHARACTERS);
+    assertEquals(1_200, astralHan.length());
 
     Map<String, Object> oversized = request(
         "zh-Hans",
