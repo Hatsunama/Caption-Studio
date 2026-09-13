@@ -46,7 +46,7 @@ final class TranslationOutputQuality {
       case "hi": return !has(text, DEVANAGARI);
       case "bn": return !has(text, BENGALI);
       case "ru": return !has(text, CYRILLIC);
-      case "en": return has(text, HAN);
+      case "en": return !has(text, LATIN) || has(text, HAN);
       default: return !has(text, LATIN);
     }
   }

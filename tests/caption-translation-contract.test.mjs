@@ -47,7 +47,7 @@ test('LiteRT runtime is pinned, identity-gated, serialized, and deterministicall
   assert.match(runtime, /ENGINE_TOKEN_LIMIT = 4_096/);
   assert.match(runtime, /OUTPUT_TOKEN_LIMIT = 1_536/);
   assert.match(runtime, /Backend\.CPU\(/);
-  assert.match(runtime, /engine\.createConversation\(conversationConfig\)/);
+  assert.match(runtime, /engine\.createConversation\(conversationConfig\.copy\(maxOutputToken = maxOutputTokens\)\)/);
   assert.match(runtime, /currentConversation\.compareAndSet\(conversation, null\)/);
   assert.match(runtime, /currentConversation\.get\(\)\?\.cancelProcess\(\)/);
   assert.match(runtime, /conversation\.close\(\)/);
@@ -265,9 +265,9 @@ test('native translation boundary is exact-ID, empty-reject, and checkpoint-atom
   ]);
   assert.match(translator, /strict-boundary/);
   assert.match(translator, /emptyFallback/);
-  assert.match(translator, /batchFullyValid/);
+  assert.match(translator, /usable\(candidate, part, request\.targetLanguage\)/);
   assert.doesNotMatch(translator, /sourceFallback/);
-  assert.match(translator, /writeCheckpoint\(checkpoints, checkpointKey, checkpointResponse\(batchResult\)\)/);
+  assert.match(translator, /writeCheckpoint\(checkpoints, checkpointKey,\s*checkpointResponse\(List\.of\(new Caption\("fragment", candidate\.text\)\)\)\)/);
   assert.doesNotMatch(translator, /writeCheckpoint\(checkpoints, checkpointKey, modelResponse\)/);
   assert.match(quality, /isPlausibleCueTranslation/);
   assert.doesNotMatch(quality, /codePointCount\(0, text\.length\) > 500/);

@@ -6,6 +6,7 @@ import {
   captionTextNearestSpokenBoundary,
   captionTextOffsetForSpokenBoundary,
   captionTextPrefixLength,
+  safeCaptionTextOffset,
 } from '@/lib/caption-text-breaks';
 import type { CaptionBlock, WordToken } from '@/types/project';
 
@@ -24,6 +25,49 @@ export function updateCaptionScriptText(captions: CaptionBlock[], captionId: str
     : caption);
 }
 
+export function updateCaptionScriptInput(
+  captions: CaptionBlock[],
+  captionId: string,
+  requestedText: string,
+  words: WordToken[],
+  createCaptionId: (captions: CaptionBlock[]) => string,
+): CaptionScriptMutation {
+  const caption = captions.find((candidate) => candidate.id === captionId);
+  if (!caption) return { captions, focusedId: captionId };
+
+  // Only newly entered newlines request a split. Retained line breaks must not
+  // be retried when the user subsequently types or deletes ordinary text.
+  let prefix = 0;
+  while (prefix < caption.text.length && prefix < requestedText.length && caption.text[prefix] === requestedText[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < caption.text.length - prefix
+    && suffix < requestedText.length - prefix
+    && caption.text[caption.text.length - suffix - 1] === requestedText[requestedText.length - suffix - 1]
+  ) suffix += 1;
+
+  let next = updateCaptionScriptText(captions, captionId, requestedText);
+  let focusedId = captionId;
+  // Work backwards so splitting off a suffix leaves earlier input offsets valid.
+  for (let offset = requestedText.length - suffix - 1; offset >= prefix; offset -= 1) {
+    if (requestedText[offset] !== '\n') continue;
+    const current = next.find((candidate) => candidate.id === captionId)!;
+    const text = current.text.slice(0, offset) + current.text.slice(offset + 1);
+    const cursor = safeCaptionTextOffset(text, offset);
+    const withTypedText = updateCaptionScriptText(next, captionId, text);
+    const result = splitCaptionScriptBlock(withTypedText, captionId, cursor, words, createCaptionId(withTypedText));
+    if (result) {
+      next = result.captions;
+      if (focusedId === captionId) focusedId = result.focusedId;
+    } else {
+      // An edge or a short cue cannot form two nonempty timed captions. Keep
+      // the line break and all typed content in the existing cue instead.
+      next = updateCaptionScriptText(next, captionId, `${text.slice(0, cursor)}\n${text.slice(cursor)}`);
+    }
+  }
+  return { captions: next, focusedId };
+}
+
 export function splitCaptionScriptBlock(
   captions: CaptionBlock[],
   captionId: string,
@@ -32,26 +76,30 @@ export function splitCaptionScriptBlock(
   newCaptionId: string,
 ): CaptionScriptMutation | null {
   const index = captions.findIndex((caption) => caption.id === captionId);
-  if (index < 0 || captions.some((caption) => caption.id === newCaptionId)) return null;
+  if (index < 0 || !Number.isFinite(cursor) || captions.some((caption) => caption.id === newCaptionId)) return null;
   const caption = captions[index];
-  const splitBoundary = captionSplitBoundaryAtCursor(caption.text, cursor);
-  if (!splitBoundary) return null;
-  const beforeText = normalizeText(caption.text.slice(0, splitBoundary.offset));
-  const afterText = normalizeText(caption.text.slice(splitBoundary.offset));
-  if (!beforeText || !afterText || caption.endMs - caption.startMs < MINIMUM_CAPTION_MS * 2) return null;
+  const offset = safeCaptionTextOffset(caption.text, cursor);
+  const beforeText = caption.text.slice(0, offset).replace(/[^\S\r\n]+$/u, '');
+  const afterText = caption.text.slice(offset).replace(/^[^\S\r\n]+/u, '');
+  if (
+    !beforeText.trim() || !afterText.trim()
+    || !Number.isFinite(caption.startMs) || !Number.isFinite(caption.endMs)
+    || caption.endMs - caption.startMs < MINIMUM_CAPTION_MS * 2
+  ) return null;
 
   const wordById = new Map(words.map((word) => [word.id, word]));
-  const timedWordIds = caption.wordIds.filter((wordId) => wordById.has(wordId));
-  const splitIndex = wordSplitIndex(caption.text, splitBoundary.offset, splitBoundary.tokenIndex, timedWordIds.length);
-  const leftWordIds = timedWordIds.slice(0, splitIndex);
-  const rightWordIds = timedWordIds.slice(splitIndex);
+  // Spoken boundaries are timing hints, not restrictions on manual text edits.
+  const splitBoundary = captionSplitBoundaryAtCursor(caption.text, offset);
+  const splitIndex = wordSplitIndex(caption.text, offset, splitBoundary?.tokenIndex ?? 0, caption.wordIds.length);
+  const leftWordIds = caption.wordIds.slice(0, splitIndex);
+  const rightWordIds = caption.wordIds.slice(splitIndex);
   const leftWord = wordById.get(leftWordIds.at(-1) ?? '');
   const rightWord = wordById.get(rightWordIds[0] ?? '');
   const proportionalTime = caption.startMs
     + (caption.endMs - caption.startMs)
-      * clamp(captionTextPrefixLength(caption.text, splitBoundary.offset) / Math.max(1, captionTextLength(caption.text)), 0, 1);
-  const timedBoundary = leftWord && rightWord ? (leftWord.endMs + rightWord.startMs) / 2 : proportionalTime;
-  const splitMs = clamp(timedBoundary, caption.startMs + MINIMUM_CAPTION_MS, caption.endMs - MINIMUM_CAPTION_MS);
+      * clamp(captionTextPrefixLength(caption.text, offset) / Math.max(1, captionTextLength(caption.text)), 0, 1);
+  const timedBoundary = splitBoundary && leftWord && rightWord ? (leftWord.endMs + rightWord.startMs) / 2 : proportionalTime;
+  const splitMs = clamp(Number.isFinite(timedBoundary) ? timedBoundary : proportionalTime, caption.startMs + MINIMUM_CAPTION_MS, caption.endMs - MINIMUM_CAPTION_MS);
   const sourceSplitMs = caption.sourceAnchor
     ? caption.sourceAnchor.sourceStartMs
       + (caption.sourceAnchor.sourceEndMs - caption.sourceAnchor.sourceStartMs)
