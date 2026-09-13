@@ -40,6 +40,7 @@ export type NaturalCaptionTranslationOutput = {
   id: string;
   text: string;
   valid?: boolean;
+  failureReason?: string;
 };
 
 export type NaturalCaptionTranslationOperationResult = {

@@ -1,4 +1,3 @@
-import { captionTextLength } from '@/lib/caption-text-breaks';
 import {
   TRANSLATION_BATCH_CONTEXT_TOKEN_RESERVE,
   TRANSLATION_BATCH_STRUCTURAL_TOKEN_BASE,
@@ -24,7 +23,8 @@ export function createTranslationBatches<T extends { text: string }>(
   let batchCharacters = 0;
   for (const caption of captions) {
     const captionTokens = estimateTranslationTokens(caption.text);
-    const captionCharacters = captionTextLength(caption.text);
+    // Match native transport limits without normalizing away combining code points.
+    const captionCharacters = Array.from(caption.text).length;
     if (captionCharacters > capacity.maxCaptionCharactersPerBatch) {
       throw new Error('A caption exceeds the local translation batch capacity.');
     }
