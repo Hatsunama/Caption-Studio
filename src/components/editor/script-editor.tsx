@@ -27,6 +27,9 @@ import { chrome } from '@/lib/ui-theme';
 import type { CaptionBlock, WordToken } from '@/types/project';
 
 const CaptionCellLayoutContext = createContext<(id: string, index: number, layout: LayoutRectangle) => void>(() => {});
+const SCRIPT_ANCHOR = 8;
+const SCRIPT_LEADING_SPACE = 96;
+const SCRIPT_ROW_GAP = 8;
 
 // The cell, unlike renderItem's child, is positioned in list-content coordinates.
 function CaptionCell({ item, index, onLayout, onFocusCapture, style, children }: CellRendererProps<CaptionBlock>) {
@@ -51,13 +54,14 @@ export function ScriptEditor(props: {
   onSelectCaption: (caption: CaptionBlock) => void;
   onDraftChange: (captions: CaptionBlock[] | null) => void;
   onKeyboardChange: (open: boolean) => void;
+  onEditingCaptionChange: (id: string | undefined) => void;
   currentMs: number;
   isPlaying: boolean;
   onSeekTimeline: (timelineMs: number) => void;
   onCancel: () => void;
   onSave: (captions: CaptionBlock[]) => Promise<void>;
 }) {
-  const { onSeekTimeline, onSelectCaption, onDraftChange, onKeyboardChange } = props;
+  const { onSeekTimeline, onSelectCaption, onDraftChange, onKeyboardChange, onEditingCaptionChange } = props;
   const listRef = useRef<FlatList<CaptionBlock>>(null);
   const inputRefs = useRef<Record<string, TextInput | null>>({});
   const sheetRef = useRef<View>(null);
@@ -76,6 +80,7 @@ export function ScriptEditor(props: {
   const captionLayoutsRef = useRef<Record<string, { y: number; height: number; index: number }>>({});
   const listViewportHeightRef = useRef(0);
   const listOffsetRef = useRef(0);
+  const leadingSpaceRef = useRef(SCRIPT_LEADING_SPACE);
   const userScrollingRef = useRef(false);
   // Ownership survives gesture completion: delayed layouts must not undo a
   // user's scroll. Only an explicit selection or playback follow takes it back.
@@ -84,7 +89,7 @@ export function ScriptEditor(props: {
   const scrollEndTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastScrollSeekIdRef = useRef<string | undefined>(undefined);
   const lastTimelineCaptionIdRef = useRef<string | undefined>(undefined);
-  const navigationRef = useRef<{ id: string; attempts: number; center: boolean } | undefined>(undefined);
+  const navigationRef = useRef<{ id: string; attempts: number } | undefined>(undefined);
   const navigationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const sessionRef = useRef<{ visible: boolean; captions: CaptionBlock[] }>({ visible: false, captions: [] });
   const [listViewportHeight, setListViewportHeight] = useState(0);
@@ -117,10 +122,15 @@ export function ScriptEditor(props: {
     onKeyboardChange(props.visible && keyboardOpen);
   }, [keyboardOpen, onKeyboardChange, props.visible]);
 
+  useEffect(() => {
+    onEditingCaptionChange(props.visible ? editingCaptionId : undefined);
+  }, [editingCaptionId, onEditingCaptionChange, props.visible]);
+
   useEffect(() => () => {
     onDraftChange(null);
     onKeyboardChange(false);
-  }, [onDraftChange, onKeyboardChange, props.visible]);
+    onEditingCaptionChange(undefined);
+  }, [onDraftChange, onKeyboardChange, onEditingCaptionChange, props.visible]);
 
   useEffect(() => {
     if (editingCaptionId) inputRefs.current[editingCaptionId]?.focus();
@@ -132,24 +142,20 @@ export function ScriptEditor(props: {
     navigationRef.current = undefined;
   }, []);
 
-  const revealCaption = useCallback((id: string, center = false, attempts = 0) => {
+  const revealCaption = useCallback((id: string, attempts = 0) => {
     const session = sessionRef.current;
     if (!session.visible || scrollOwnerRef.current === 'user' || userScrollingRef.current || listViewportHeightRef.current <= 0) return;
     pendingScrollSeekRef.current = false;
     const index = session.captions.findIndex((caption) => caption.id === id);
     if (index < 0) return;
     const layout = captionLayoutsRef.current[id];
-    const viewport = listViewportHeightRef.current;
-    const tall = layout?.index === index && layout.height > viewport - 16;
-    const viewPosition = center && !tall ? 0.5 : 0;
-    const viewOffset = viewPosition === 0 ? 8 : 0;
     const targetOffset = layout?.index === index
-      ? Math.max(0, layout.y - viewPosition * (viewport - layout.height) - viewOffset)
+      ? Math.max(0, layout.y - SCRIPT_ANCHOR)
       : undefined;
     if (targetOffset !== undefined && Math.abs(targetOffset - listOffsetRef.current) <= 1) return;
     cancelNavigation();
-    navigationRef.current = { id, attempts, center };
-    listRef.current?.scrollToIndex({ index, animated: false, viewPosition, viewOffset });
+    navigationRef.current = { id, attempts };
+    listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0, viewOffset: SCRIPT_ANCHOR });
   }, [cancelNavigation]);
 
   useEffect(() => {
@@ -162,6 +168,7 @@ export function ScriptEditor(props: {
     captionLayoutsRef.current = {};
     listViewportHeightRef.current = 0;
     listOffsetRef.current = 0;
+    leadingSpaceRef.current = SCRIPT_LEADING_SPACE;
     lastScrollSeekIdRef.current = undefined;
     lastTimelineCaptionIdRef.current = undefined;
   }, [cancelNavigation, props.visible]);
@@ -257,34 +264,31 @@ export function ScriptEditor(props: {
     if (editingCaptionId || userScrollingRef.current || pendingScrollSeekRef.current || !props.isPlaying || !active || !changed) return;
     scrollOwnerRef.current = 'programmatic';
     setSelectedCaptionId(active.id);
-    revealCaption(active.id, true);
+    revealCaption(active.id);
   }, [draftCaptions, editingCaptionId, props.currentMs, props.isPlaying, props.visible, revealCaption]);
 
   useEffect(() => {
     const id = editingCaptionId ?? selectedCaptionId;
-    if (id) revealCaption(id, !editingCaptionId && props.isPlaying);
+    if (id) revealCaption(id);
   }, [draftCaptions, editingCaptionId, selectedCaptionId, keyboardOpen, listViewportHeight, props.isPlaying, props.visible, revealCaption]);
 
-  const seekToCenteredCaption = useCallback((offsetY: number) => {
+  const seekToAnchoredCaption = useCallback((offsetY: number) => {
     listOffsetRef.current = offsetY;
     if ((!userScrollingRef.current && !pendingScrollSeekRef.current) || listViewportHeightRef.current <= 0) return;
-    const centerY = offsetY + listViewportHeightRef.current / 2;
+    const anchorY = offsetY + SCRIPT_ANCHOR;
     const firstLayout = captionLayoutsRef.current[draftCaptions[0]?.id];
-    // The first short cue cannot reach the center guide at offset zero.
-    // Give the leading edge explicit ownership of the first caption/time.
-    const nearest = offsetY <= Math.max(0, firstLayout?.y ?? 0) ? draftCaptions[0] : draftCaptions.reduce<CaptionBlock | undefined>((closest, caption, index) => {
+    const firstY = firstLayout?.index === 0 ? firstLayout.y : leadingSpaceRef.current;
+    // Blank leading space belongs to the first actual cue, even before its
+    // virtualized cell is measured. All other rows use the same top anchor.
+    const nearest = offsetY <= 0 || anchorY <= firstY ? draftCaptions[0] : draftCaptions.reduce<CaptionBlock | undefined>((closest, caption, index) => {
       const layout = captionLayoutsRef.current[caption.id];
       if (!layout || layout.index !== index) return closest;
       // A fast fling can outrun virtualization. Wait for the cell at the guide
       // instead of seeking to a distant, previously measured row.
-      const atGuide = Math.abs(layout.y + layout.height / 2 - centerY) <= layout.height / 2 + 8;
-      const atEdge = (index === 0 && centerY < layout.y)
-        || (index === draftCaptions.length - 1 && centerY > layout.y + layout.height);
+      const atGuide = anchorY >= layout.y - 1 && anchorY < layout.y + layout.height + SCRIPT_ROW_GAP;
+      const atEdge = index === draftCaptions.length - 1 && anchorY >= layout.y;
       if (!atGuide && !atEdge) return closest;
-      if (!closest) return caption;
-      const closestLayout = captionLayoutsRef.current[closest.id];
-      return Math.abs(layout.y + layout.height / 2 - centerY) < Math.abs(closestLayout.y + closestLayout.height / 2 - centerY)
-        ? caption : closest;
+      return caption;
     }, undefined);
     pendingScrollSeekRef.current = !nearest;
     if (!nearest || lastScrollSeekIdRef.current === nearest.id) return;
@@ -299,11 +303,13 @@ export function ScriptEditor(props: {
   const reportCellLayout = useCallback((id: string, index: number, layout: LayoutRectangle) => {
     captionLayoutsRef.current[id] = { ...layout, index };
     if (userScrollingRef.current || pendingScrollSeekRef.current) {
-      seekToCenteredCaption(listOffsetRef.current);
+      // Layout changes alone do not own a seek. Only resolve a gesture that
+      // explicitly waited for an unmeasured row at its current anchor.
+      if (pendingScrollSeekRef.current) seekToAnchoredCaption(listOffsetRef.current);
       return;
     }
-    if (id === (editingCaptionId ?? selectedCaptionId)) revealCaption(id, !editingCaptionId && props.isPlaying);
-  }, [editingCaptionId, selectedCaptionId, props.isPlaying, revealCaption, seekToCenteredCaption]);
+    if (id === (editingCaptionId ?? selectedCaptionId)) revealCaption(id);
+  }, [editingCaptionId, selectedCaptionId, revealCaption, seekToAnchoredCaption]);
 
   const selectForEditing = (caption: CaptionBlock) => {
     clearTimeout(scrollEndTimerRef.current);
@@ -314,6 +320,7 @@ export function ScriptEditor(props: {
     selectionRef.current[caption.id] ??= { start: caption.text.length, end: caption.text.length };
     setSelectedCaptionId(caption.id);
     setEditingCaptionId(caption.id);
+    onEditingCaptionChange(caption.id);
     setEmptyCaptionId(undefined);
     setBoundaryMessage(undefined);
     props.onSelectCaption(caption);
@@ -331,6 +338,7 @@ export function ScriptEditor(props: {
     setDraftCaptions(captions);
     setSelectedCaptionId(captionId);
     setEditingCaptionId(captionId);
+    onEditingCaptionChange(captionId);
     setEmptyCaptionId(undefined);
     const caption = captions.find((candidate) => candidate.id === captionId);
     if (caption) {
@@ -495,22 +503,23 @@ export function ScriptEditor(props: {
               listViewportHeightRef.current = event.nativeEvent.layout.height;
               setListViewportHeight(event.nativeEvent.layout.height);
               const id = editingCaptionId ?? selectedCaptionId;
-              if (id) revealCaption(id, !editingCaptionId && props.isPlaying);
+              if (id) revealCaption(id);
             }}
             onScrollBeginDrag={() => {
               clearTimeout(scrollEndTimerRef.current);
               cancelNavigation();
               userScrollingRef.current = true;
               scrollOwnerRef.current = 'user';
+              onEditingCaptionChange(undefined);
               pendingScrollSeekRef.current = false;
               lastScrollSeekIdRef.current = undefined;
             }}
             onScroll={(event) => {
               listOffsetRef.current = event.nativeEvent.contentOffset.y;
-              seekToCenteredCaption(event.nativeEvent.contentOffset.y);
+              seekToAnchoredCaption(event.nativeEvent.contentOffset.y);
             }}
             onScrollEndDrag={(event) => {
-              seekToCenteredCaption(event.nativeEvent.contentOffset.y);
+              seekToAnchoredCaption(event.nativeEvent.contentOffset.y);
               // Momentum begins after end-drag. Only this gesture owns the gap;
               // playback rerenders cannot cancel its release.
               clearTimeout(scrollEndTimerRef.current);
@@ -518,15 +527,17 @@ export function ScriptEditor(props: {
             }}
             onMomentumScrollBegin={() => { clearTimeout(scrollEndTimerRef.current); }}
             onMomentumScrollEnd={(event) => {
-              seekToCenteredCaption(event.nativeEvent.contentOffset.y);
+              seekToAnchoredCaption(event.nativeEvent.contentOffset.y);
               finishUserScroll();
             }}
             scrollEventThrottle={32}
-            contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: Math.max(48, listViewportHeight), gap: 8 }}
+            contentContainerStyle={{ paddingHorizontal: 14 }}
+            ItemSeparatorComponent={() => <View style={{ height: SCRIPT_ROW_GAP }} />}
+            ListFooterComponent={<View testID="script-trailing-space" style={{ height: Math.max(48, listViewportHeight - SCRIPT_ANCHOR) }} />}
           ListHeaderComponent={(
-            <View style={{ marginBottom: 6, gap: 5 }}>
+            <View testID="script-leading-space" onLayout={(event) => { leadingSpaceRef.current = event.nativeEvent.layout.height; }} style={{ minHeight: SCRIPT_LEADING_SPACE, paddingTop: 14, paddingBottom: 8, gap: 5 }}>
               {!keyboardOpen ? <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 18 }}>
-                Keep the video visible while you edit. Scroll this list to seek the video; while it plays, the active subtitle stays at the center guide. Tap a subtitle to edit it.
+                Scroll this list to seek the video. The subtitle at the top guide is selected; playback follows the same guide. Tap a subtitle to edit it.
               </Text> : null}
               {boundaryMessage ? <Text style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{boundaryMessage}</Text> : null}
               {journalError ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{journalError}</Text> : null}
@@ -543,9 +554,9 @@ export function ScriptEditor(props: {
             const pending = navigationRef.current;
             if (!pending || scrollOwnerRef.current === 'user' || userScrollingRef.current || !props.visible
               || draftCaptions[index]?.id !== pending.id || pending.attempts >= 3) return;
-            listRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: false });
+            listRef.current?.scrollToOffset({ offset: Math.max(0, leadingSpaceRef.current + index * averageItemLength - SCRIPT_ANCHOR), animated: false });
             clearTimeout(navigationTimerRef.current);
-            navigationTimerRef.current = setTimeout(() => revealCaption(pending.id, pending.center, pending.attempts + 1), 80);
+            navigationTimerRef.current = setTimeout(() => revealCaption(pending.id, pending.attempts + 1), 80);
           }}
           renderItem={({ item, index }) => {
             const selected = item.id === selectedCaptionId;
@@ -588,7 +599,7 @@ export function ScriptEditor(props: {
           }}
           />
           </CaptionCellLayoutContext.Provider>
-          <View pointerEvents="none" style={{ position: 'absolute', left: 8, right: 8, top: '50%', height: 2, borderRadius: 1, backgroundColor: '#B7FF4A', shadowColor: '#B7FF4A', shadowOpacity: 0.95, shadowRadius: 5, elevation: 5 }} />
+          <View pointerEvents="none" style={{ position: 'absolute', left: 8, right: 8, top: SCRIPT_ANCHOR, height: 2, borderRadius: 1, backgroundColor: '#B7FF4A', shadowColor: '#B7FF4A', shadowOpacity: 0.95, shadowRadius: 5, elevation: 5 }} />
         </View>
       </KeyboardAvoidingView>
       </View>
