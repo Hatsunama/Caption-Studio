@@ -142,6 +142,14 @@ function mount(initialProject = fixture()) {
   const jsx = (type, props) => ({ type, props: props ?? {} });
   const native = Object.fromEntries(['ActivityIndicator', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View'].map((name) => [name, name]));
   native.Alert = { alert: (...args) => calls.alerts.push(args) };
+  native.Animated = {
+    ValueXY: class {
+      constructor(value) { this.value = value; }
+      setValue(value) { this.value = value; }
+      getTranslateTransform() { return [{ translateX: this.value.x }, { translateY: this.value.y }]; }
+    },
+    timing: () => ({ start: () => {}, stop: () => {} }),
+  };
   native.useWindowDimensions = () => ({ width: 360, height: 800 });
   const exports = {};
   runInNewContext(compiled, {
