@@ -422,7 +422,7 @@ test('portrait, square and landscape preview geometry share the positive actual 
       h.actions.beginEditCaption(); h.actions.setScriptKeyboardOpen(keyboard); h.render();
       const transition = h.all((node) => node.type === 'VideoTransitionOverlay')[0].props;
       assert.ok(Math.abs(transition.width / transition.height - width / height) < 1e-10);
-      const canvas = h.all((node) => node.type === 'View' && node.props.style?.borderRadius === 20)[0].props.style;
+       const canvas = h.all((node) => node.props.testID === 'script-preview-canvas')[0].props.style;
       assert.equal(canvas.width, transition.width);
       assert.equal(canvas.height, transition.height);
     }
