@@ -16,7 +16,7 @@ import {
 import {
   mergeCaptionScriptBlock,
   splitCaptionScriptBlock,
-  updateCaptionScriptInput,
+  updateCaptionScriptText,
 } from '@/lib/caption-script';
 import {
   clearEditorDraftJournal,
@@ -68,6 +68,7 @@ export function ScriptEditor(props: {
   const selectionRef = useRef<Record<string, { start: number; end: number }>>({});
   const splitCounterRef = useRef(0);
   const [draftCaptions, setDraftCaptions] = useState<CaptionBlock[]>([]);
+  const [inputHeights, setInputHeights] = useState<Record<string, number>>({});
   const [editingCaptionId, setEditingCaptionId] = useState<string>();
   const [selectedCaptionId, setSelectedCaptionId] = useState<string>();
   const [emptyCaptionId, setEmptyCaptionId] = useState<string>();
@@ -192,6 +193,7 @@ export function ScriptEditor(props: {
     wasVisibleRef.current = props.visible;
     if (!opening) return;
     setDraftCaptions(sourceCaptions);
+    setInputHeights({});
     onDraftChange(sourceCaptions);
     setSelectedCaptionId(sourceCaptions[initialIndex]?.id);
     setEditingCaptionId(undefined);
@@ -348,25 +350,14 @@ export function ScriptEditor(props: {
   };
 
   const updateText = (caption: CaptionBlock, text: string) => {
-    const result = updateCaptionScriptInput(
-      draftCaptions,
-      caption.id,
-      text,
-      props.words,
-      (captions) => nextSplitCaptionId(caption.id, captions, splitCounterRef),
-    );
+    // Wrapping and literal newlines are text edits. Only the explicit split/join
+    // actions below may change cue boundaries or move text to another caption.
+    setDraftCaptions(updateCaptionScriptText(draftCaptions, caption.id, text));
     setBoundaryMessage(undefined);
-    if (result.focusedId !== caption.id) {
-      focusCaption(result.focusedId, result.captions);
-    } else {
-      setDraftCaptions(result.captions);
-    }
     if (text.trim()) setEmptyCaptionId(undefined);
   };
 
-  const mergeWithPrevious = (caption: CaptionBlock, requireCursorAtStart = true) => {
-    const selection = selectionRef.current[caption.id];
-    if (requireCursorAtStart && (!selection || selection.start !== 0 || selection.end !== 0)) return;
+  const mergeWithPrevious = (caption: CaptionBlock) => {
     const result = mergeCaptionScriptBlock(draftCaptions, caption.id);
     if (!result) return;
     setBoundaryMessage(undefined);
@@ -568,27 +559,36 @@ export function ScriptEditor(props: {
                   <Text style={{ color: selected ? chrome.accent : chrome.muted, fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] }}>{formatTimestamp(item.startMs)}</Text>
                   <Text style={{ marginTop: 4, color: '#5E6874', fontSize: 9, fontVariant: ['tabular-nums'] }}>{formatTimestamp(item.endMs)}</Text>
                 </View>
-                <View style={{ flex: 1, justifyContent: 'center' }}>
+                <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
                     <View style={{ gap: 9 }}>
                       <TextInput
                         ref={(input) => { inputRefs.current[item.id] = input; }}
                         multiline
-                        scrollEnabled={editing}
+                        scrollEnabled={false}
                         submitBehavior="newline"
-                        maxLength={500}
                         value={item.text}
                         onChangeText={(text) => updateText(item, text)}
                         onFocus={() => selectForEditing(item)}
                         onPressIn={() => { if (editing) selectForEditing(item); }}
-                        onContentSizeChange={() => { if (editing) revealCaption(item.id); }}
+                        onContentSizeChange={(event) => {
+                          const height = Math.ceil(event.nativeEvent.contentSize.height);
+                          if (!Number.isFinite(height) || height <= 0) return;
+                          // Measure every row, including prefilled/recovered text before
+                          // focus. Native measurement accounts for width and font scale;
+                          // no guessed line count or viewport cap can truncate the input.
+                          setInputHeights((previous) => previous[item.id] === height
+                            ? previous : { ...previous, [item.id]: height });
+                          // The cell's subsequent onLayout re-anchors the focused row
+                          // using its committed size, without seeking the video.
+                          if (editing) revealCaption(item.id);
+                        }}
                         onSelectionChange={(event) => { selectionRef.current[item.id] = event.nativeEvent.selection; }}
-                        onKeyPress={(event) => { if (event.nativeEvent.key === 'Backspace') mergeWithPrevious(item); }}
                         selectionColor={chrome.accent}
-                        style={{ minHeight: editing ? Math.min(46, Math.max(24, listViewportHeight / 2)) : undefined, maxHeight: editing ? Math.max(24, listViewportHeight / 2) : undefined, padding: 0, color: chrome.text, fontSize: 17, lineHeight: 23, fontWeight: '400', textAlignVertical: 'top' }}
+                        style={{ height: inputHeights[item.id], minHeight: editing ? 46 : 23, padding: 0, color: chrome.text, fontSize: 17, lineHeight: 23, fontWeight: '400', textAlignVertical: 'top' }}
                       />
                       {editing ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
                         <ScriptAction label="Split here" onPress={() => splitAtCursor(item)} />
-                        <ScriptAction label="Join previous" onPress={() => mergeWithPrevious(item, false)} />
+                        <ScriptAction label="Join previous" onPress={() => mergeWithPrevious(item)} />
                         <ScriptAction label="Join next" onPress={() => mergeWithNext(item)} />
                       </View> : null}
                     </View>

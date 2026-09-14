@@ -22,6 +22,7 @@ const cues = Array.from({ length: 6 }, (_, index) => ({
 }));
 const layoutEvent = (y, height) => ({ nativeEvent: { layout: { x: 0, y, width: 360, height } } });
 const scrollEvent = (y) => ({ nativeEvent: { contentOffset: { x: 0, y } } });
+const contentSizeEvent = (height, width = 240) => ({ nativeEvent: { contentSize: { width, height } } });
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 // Evaluate the real workspace expressions without loading its unrelated native
@@ -193,6 +194,7 @@ function mount(overrides = {}, platform = 'android') {
     update: (values) => act(() => Object.assign(props, values)),
     edit: (index) => act(() => row(index).props.onPress()),
     input: (index) => find('TextInput', row(index)).props,
+    action: (index, label) => act(() => walk(row(index), (node) => node.props?.label === label).props.onPress()),
     recover: (payload) => act(() => recover({ payload, baseRevision: 'revision' })),
     restore: () => act(() => calls.alerts.at(-1)[2].find(({ text }) => text === 'Restore').onPress()),
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
@@ -302,15 +304,103 @@ test('keyboard resize and growing input reveal the focused cue without seeking',
   const h = mount(); h.edit(3); h.fire('onScroll', 350);
   h.calls.indices.length = 0; h.calls.seeks.length = 0;
   h.viewport(120); h.measure(3, 400, 180);
-  h.act(() => h.input(3).onContentSizeChange?.());
+  h.act(() => h.input(3).onContentSizeChange(contentSizeEvent(230)));
   assert.equal(h.calls.indices.at(-1)?.index, 3);
   assert.equal(h.calls.indices.at(-1)?.viewPosition, 0);
-  assert.ok(h.input(3).style.maxHeight <= 120);
+  assert.equal(h.input(3).style.height, 230);
+  assert.equal(h.input(3).style.maxHeight, undefined);
   assert.deepEqual(h.calls.seeks, []);
 });
 
+for (const platform of ['android', 'ios', 'web']) {
+  test(`${platform} script input expands before focus and grows/shrinks with native wrapping`, () => {
+    const text = 'A long sentence that must remain fully editable without clipping. '.repeat(12);
+    const h = mount({ captions: [{ ...cues[0], text }, cues[1]] }, platform);
+    assert.equal(h.input(0).value, text);
+    assert.equal(h.input(0).multiline, true);
+    assert.equal(h.input(0).style.maxHeight, undefined);
+    // Native events include the first layout, narrower widths, font-scale
+    // changes and deletion. Heights are not derived from character counts.
+    for (const [height, width] of [[276.2, 240], [552.4, 120], [690, 120], [46, 240]]) {
+      h.act(() => h.input(0).onContentSizeChange(contentSizeEvent(height, width)));
+      assert.equal(h.input(0).style.height, Math.ceil(height));
+      assert.equal(h.input(1).style.height, undefined, 'measurement belongs only to its caption');
+      assert.equal(h.input(0).value, text, 'visual wrapping never inserts newlines');
+    }
+    assert.equal(h.input(0).maxLength, undefined, 'existing long captions must still accept typing');
+    assert.deepEqual(h.calls.seeks, []);
+    assert.deepEqual(h.calls.focuses, [], 'measurement before editing must not open the keyboard');
+    h.edit(0); h.viewport(100);
+    h.calls.seeks.length = 0; h.calls.selects.length = 0; h.calls.focuses.length = 0;
+    h.act(() => h.input(0).onChangeText(`${text}\n\nAnother line\n`));
+    h.act(() => h.input(0).onContentSizeChange(contentSizeEvent(805.3, 120)));
+    h.measure(0, 120, 870);
+    assert.equal(h.input(0).style.height, 806, 'typing may grow beyond the keyboard viewport');
+    assert.equal(h.input(0).scrollEnabled, false);
+    assert.equal(h.calls.indices.at(-1).index, 0);
+    assert.equal(h.calls.indices.at(-1).viewPosition, 0);
+    assert.deepEqual(h.calls.seeks, []);
+    assert.deepEqual(h.calls.selects, []);
+    assert.deepEqual(h.calls.focuses, [], 'resizing must not recreate or refocus the input');
+    h.act(() => h.input(0).onChangeText('short'));
+    h.act(() => h.input(0).onContentSizeChange(contentSizeEvent(23)));
+    assert.equal(h.input(0).style.height, 23, 'deletion removes obsolete measured height');
+    assert.equal(h.input(0).style.minHeight, 46, 'retain a usable editing touch target');
+  });
+}
+
+test('script input retains explicit whitespace and metadata through typing, Backspace and Save', async () => {
+  const original = {
+    ...cues[0], text: '\nOriginal  line\r\n\nlast\n', textMode: 'automatic', timingMode: 'source',
+    wordIds: ['word-0'], sourceAnchor: { clipId: 'clip', sourceStartMs: 100, sourceEndMs: 1100, wordIds: ['word-0'] },
+    styleOverride: { fontSize: 37, textColor: '#abcdef', position: { x: 0.3, y: 0.8 }, maxWidth: 0.72 },
+    timelineVisible: true,
+  };
+  const snapshot = structuredClone(original);
+  const h = mount({ captions: [original, cues[1]] }); h.edit(0);
+  h.calls.seeks.length = 0;
+  assert.equal(h.input(0).value, original.text);
+  for (const text of ['\n\nLeading  spaces\r\n\nnext\n', '\n\nLeading  spaces\r\n\nnext!\n', '  \n\t\n', 'final\n\n']) {
+    h.act(() => h.input(0).onChangeText(text));
+    h.act(() => h.input(0).onContentSizeChange(contentSizeEvent(138)));
+    h.act(() => h.input(0).onSelectionChange({ nativeEvent: { selection: { start: 0, end: 0 } } }));
+    h.act(() => h.input(0).onKeyPress?.({ nativeEvent: { key: 'Backspace' } }));
+    assert.equal(h.list().data.length, 2, 'ordinary typing must never split or join timed cues');
+    assert.equal(h.input(0).value, text);
+    assert.deepEqual(plain(h.list().data[0]), { ...snapshot, text, textMode: 'manual' });
+    assert.equal(h.list().data[1], cues[1]);
+    assert.deepEqual(h.calls.drafts.at(-1)[0], { ...snapshot, text, textMode: 'manual' });
+  }
+  const done = h.find('KeyboardAvoidingView').props.children[0].props.children[2];
+  h.act(() => done.props.onPress());
+  await Promise.resolve();
+  assert.deepEqual(h.calls.saves[0][0], { ...snapshot, text: 'final\n\n', textMode: 'manual' });
+  assert.deepEqual(h.calls.seeks, []);
+  assert.deepEqual(original, snapshot, 'authored caption must remain immutable');
+});
+
+test('script input measurements survive focus transfer, reject invalid events and reset on reopen', () => {
+  const h = mount();
+  h.act(() => h.input(0).onContentSizeChange(contentSizeEvent(345)));
+  h.edit(0); h.edit(1);
+  assert.equal(h.input(0).style.height, 345);
+  for (const height of [0, -1, NaN, Infinity, 345]) {
+    h.act(() => h.input(0).onContentSizeChange(contentSizeEvent(height)));
+    assert.equal(h.input(0).style.height, 345);
+  }
+  h.update({ visible: false }); h.update({ visible: true });
+  assert.equal(h.input(0).style.height, undefined, 'a new session must measure its own text and width');
+  const restored = cues.map((cue) => ({ ...cue, text: `${cue.text}\n\n${'restored text '.repeat(30)}\n` }));
+  h.recover(restored); h.restore();
+  h.act(() => h.input(0).onContentSizeChange(contentSizeEvent(506)));
+  assert.equal(h.input(0).value, restored[0].text);
+  assert.equal(h.input(0).style.height, 506, 'recovery is measured without requiring focus');
+});
+
 test('split and merge navigation and scrolling use current draft identities and timings', () => {
-  const h = mount(); h.edit(1); h.act(() => h.input(1).onChangeText('cap\ntion 1'));
+  const h = mount(); h.edit(1);
+  h.act(() => h.input(1).onSelectionChange({ nativeEvent: { selection: { start: 3, end: 3 } } }));
+  h.action(1, 'Split here');
   const split = h.list().data[2];
   assert.notEqual(split.id, cues[2].id); assert.equal(h.calls.indices.at(-1)?.index, 2);
   h.measure(2, 300, 80); h.calls.seeks.length = 0;
@@ -318,7 +408,7 @@ test('split and merge navigation and scrolling use current draft identities and 
   assert.deepEqual(h.calls.seeks, [split.startMs]);
   h.fire('onScrollEndDrag', 292); h.advance(150); h.edit(2);
   h.act(() => h.input(2).onSelectionChange({ nativeEvent: { selection: { start: 0, end: 0 } } }));
-  h.act(() => h.input(2).onKeyPress({ nativeEvent: { key: 'Backspace' } }));
+  h.action(2, 'Join previous');
   assert.equal(h.list().data.length, cues.length);
   assert.ok(!h.list().data.some(({ id }) => id === split.id));
   assert.equal(h.input(1).value, 'cap tion 1');
@@ -397,8 +487,9 @@ test('Android resized workspace keeps the video controls and focused input above
     const request = h.calls.indices.at(-1);
     assert.equal(request.index, 4); assert.equal(request.viewPosition, 0);
     assert.ok(h.input(4).style.minHeight >= 2 * h.input(4).style.lineHeight);
-    const inputBottom = previewStyle.height + headerHeight + request.viewOffset + 14 + h.input(4).style.maxHeight;
-    assert.ok(inputBottom < availableHeight, 'the focused input must end above the keyboard');
+    const inputTop = previewStyle.height + headerHeight + request.viewOffset + 14;
+    assert.ok(inputTop + h.input(4).style.lineHeight < availableHeight, 'the focused input starts above the keyboard; long text extends in the list');
+    assert.equal(h.input(4).style.maxHeight, undefined, 'keyboard resize must never cap the text height');
     h.fire('onScroll', 500 - request.viewOffset);
   }
   assert.deepEqual(h.calls.seeks, [4000], 'resize and reveal must not seek away from the edited cue');
@@ -427,7 +518,7 @@ test('tapping a visible or final short row aligns its editor at the top, includi
   assert.ok(h.calls.indices.filter(({ index }) => index === 5).every(({ viewPosition }) => viewPosition === 0));
   assert.ok(h.list().ListFooterComponent.props.style.height >= 132, 'the final row needs enough trailing scroll space to reach the 8px anchor');
   h.fire('onScroll', 592); h.calls.indices.length = 0;
-  h.act(() => h.input(5).onContentSizeChange());
+  h.act(() => h.input(5).onContentSizeChange(contentSizeEvent(69)));
   assert.deepEqual(h.calls.indices, [], 'already aligned input must not restart navigation');
 });
 
@@ -436,14 +527,14 @@ test('dragging and tapping retain native inputs and focus without reopening a na
   assert.equal(h.calls.focusCaptures, cues.length, 'forward focus capture so native virtualization retains the focused cell');
   h.calls.indices.length = 0; h.calls.focuses.length = 0;
   h.fire('onScrollBeginDrag'); h.fire('onScroll', 392); h.fire('onScrollEndDrag', 392); h.advance(150);
-  h.viewport(180); h.measure(1, 200, 160); h.act(() => h.input(1).onContentSizeChange());
+  h.viewport(180); h.measure(1, 200, 160); h.act(() => h.input(1).onContentSizeChange(contentSizeEvent(92)));
   assert.equal(h.input(1).value, 'caption 1');
-  assert.equal(h.input(1).scrollEnabled, true, 'the focused input stays editable while the list scrolls');
+  assert.equal(h.input(1).scrollEnabled, false, 'the list scrolls the fully expanded input');
   assert.deepEqual(h.calls.indices, [], 'the old focused row must not reclaim a user scroll');
   assert.deepEqual(h.calls.focuses, [], 'list updates must not refocus the input');
   h.edit(4);
   assert.equal(h.input(1).value, 'caption 1', 'the previous native input must not unmount during focus transfer');
-  assert.equal(h.input(4).scrollEnabled, true);
+  assert.equal(h.input(4).scrollEnabled, false);
   assert.equal(h.input(4).submitBehavior, 'newline');
   assert.equal(h.calls.focuses.at(-1), 'cue-4');
   h.keyboard('keyboardDidHide'); h.calls.focuses.length = 0;
@@ -471,10 +562,15 @@ test('draft text, empty text, splits, joins and recovery reach the actual parent
   h.act(() => h.input(1).onChangeText(''));
   assert.equal(display().text, '', 'empty text must not fall back to the saved cue');
   h.act(() => h.input(1).onChangeText('left\nright'));
+  assert.equal(display().text, 'left\nright');
+  assert.equal(display().startMs, cues[1].startMs);
+  h.act(() => h.input(1).onChangeText('left right'));
+  h.act(() => h.input(1).onSelectionChange({ nativeEvent: { selection: { start: 4, end: 4 } } }));
+  h.action(1, 'Split here');
   assert.equal(display().text, 'right');
   assert.equal(display().startMs, h.list().data[2].startMs);
   h.act(() => h.input(2).onSelectionChange({ nativeEvent: { selection: { start: 0, end: 0 } } }));
-  h.act(() => h.input(2).onKeyPress({ nativeEvent: { key: 'Backspace' } }));
+  h.action(2, 'Join previous');
   assert.equal(display().text, 'left right');
   const recovered = cues.map((cue) => ({ ...cue, text: `restored ${cue.text}` }));
   h.recover(recovered); h.restore();
@@ -530,7 +626,7 @@ test('iOS keyboard avoidance uses the sheet screen position and compacts chrome 
   h.keyboard('keyboardWillShow');
   assert.equal(h.find('KeyboardAvoidingView').props.children[0].props.style.minHeight, 44);
   h.edit(3); h.viewport(48);
-  assert.ok(h.input(3).style.maxHeight < 48);
+  assert.equal(h.input(3).style.maxHeight, undefined);
   h.keyboard('keyboardWillHide');
   assert.equal(h.find('KeyboardAvoidingView').props.children[0].props.style.minHeight, 76);
 });

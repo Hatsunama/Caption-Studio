@@ -215,10 +215,10 @@ test('manual line boundaries preserve surrogate pairs, combining marks, and join
   }
 });
 
-test('the TextInput handler uses the tested input mutation instead of rejecting within-word Enter', () => {
+test('the TextInput handler preserves literal newlines without changing cue timing', () => {
   const source = readFileSync(new URL('../src/components/editor/script-editor.tsx', import.meta.url), 'utf8');
   const handler = source.slice(source.indexOf('const updateText ='), source.indexOf('const mergeWithPrevious ='));
   assert.match(source, /onChangeText=\{\(text\) => updateText\(item, text\)\}/);
-  assert.match(handler, /updateCaptionScriptInput\(/);
-  assert.doesNotMatch(handler, /between two words|text\.replace\(/);
+  assert.match(handler, /updateCaptionScriptText\(/);
+  assert.doesNotMatch(handler, /updateCaptionScriptInput\(|splitCaptionScriptBlock\(|text\.replace\(/);
 });
