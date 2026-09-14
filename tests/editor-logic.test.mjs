@@ -1330,7 +1330,8 @@ test('caption editing opens the full timestamped script and keeps text-layer edi
   assert.match(scriptEditor, /<FlatList/);
   assert.match(scriptEditor, /formatTimestamp\(item\.startMs\)/);
   assert.match(scriptEditor, /Scroll this list to seek the video/);
-  assert.match(scriptEditor, /Backspace/);
+  assert.doesNotMatch(scriptEditor, /onKeyPress=.*Backspace/);
+  assert.match(scriptEditor, /updateCaptionScriptText\(draftCaptions, caption\.id, text\)/);
   assert.match(scriptEditor, /Split here/);
   assert.match(scriptEditor, /Join previous/);
   assert.match(scriptEditor, /Join next/);
