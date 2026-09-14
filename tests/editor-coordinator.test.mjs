@@ -167,6 +167,15 @@ function mount(initialProject = fixture()) {
     require(name) {
       if (name === 'react') return react;
       if (name === 'react-native') return native;
+      if (name === '@react-navigation/native') return {
+        usePreventRemove(prevent, callback) {
+          react.useEffect(() => {
+            if (!prevent) return;
+            listeners.set('preventRemove', callback);
+            return () => listeners.delete('preventRemove');
+          }, [prevent, callback]);
+        },
+      };
       throw new Error('Unexpected exit dependency: ' + name);
     },
     requestAnimationFrame(callback) { frames.set(++frameId, callback); return frameId; },
@@ -180,6 +189,15 @@ function mount(initialProject = fixture()) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return native;
+      if (name === '@react-navigation/native') return {
+        usePreventRemove(prevent, callback) {
+          react.useEffect(() => {
+            if (!prevent) return;
+            listeners.set('preventRemove', callback);
+            return () => listeners.delete('preventRemove');
+          }, [prevent, callback]);
+        },
+      };
       if (name === 'expo-router') return { useNavigation: () => navigation };
       if (name === 'expo-video') return { VideoView: 'VideoView' };
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ bottom: 0 }) };
@@ -223,9 +241,26 @@ function mount(initialProject = fixture()) {
     keyboard(value) { keyboardVisible = value; if (!value) listeners.get('keyboardDidHide')?.(); },
     frame() { const pending = [...frames.values()]; frames.clear(); pending.forEach((callback) => callback()); },
     exit(decision) {
-      listeners.get('beforeRemove')({ preventDefault() {}, data: { action: { type: 'GO_BACK' } } });
       const label = decision === 'save' ? 'Save draft' : 'Discard';
-      calls.alerts.at(-1)[2].find((button) => button.text === label).onPress();
+      const alertCount = calls.alerts.length;
+      const scroll = all((node) => node.type === 'ScrollView' && node.props.ref)[0];
+      const anchor = all((node) => node.type === 'View' && node.props.children?.type === 'LayerTimeline')[0];
+      const layout = (y, height) => ({ nativeEvent: { layout: { x: 0, y, width: 360, height } } });
+      scroll.props.onLayout(layout(0, 420));
+      scroll.props.onContentSizeChange(360, 1200);
+      anchor.props.onLayout(layout(146, 320));
+      let prompt;
+      for (let step = 0; step < 8 && !prompt; step += 1) {
+        listeners.get('preventRemove')({ data: { action: { type: 'GO_BACK' } } });
+        render();
+        const pending = [...frames.values()];
+        frames.clear();
+        pending.forEach((callback) => callback());
+        render();
+        prompt = calls.alerts.slice(alertCount).findLast(([title]) => title === 'Save this draft?');
+      }
+      assert.ok(prompt, 'Back must eventually reach the root save-or-discard prompt');
+      prompt[2].find((button) => button.text === label).onPress();
       render();
     },
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
@@ -242,7 +277,7 @@ for (const exit of ['Done', 'Cancel']) {
     const draft = before.captions.map((cue) => ({ ...cue, text: cue.text + ' edited' }));
     script.onDraftChange(draft); h.render();
     script = h.all((node) => node.type === 'ScriptEditor')[0].props;
-    if (exit === 'Done') await script.onSave(draft);
+    if (exit === 'Done') { assert.equal(await script.onSave(draft), true); script.onCancel(); }
     else script.onCancel();
     h.render(); h.frame();
     assert.equal(h.actions.scriptEditorOpen, false);

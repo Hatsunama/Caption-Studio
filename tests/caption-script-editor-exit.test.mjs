@@ -128,11 +128,11 @@ test('Done and Cancel share presentation-only cleanup; rejected or stale saves s
     selectedCaptionId: 'cue-1', setSelectedCaptionId: () => assert.fail('existing selection must survive'),
     changedPrimaryCaptionTextIds: () => [], scriptExit: { close },
   });
-  receipt = null; await save([]); assert.equal(closes, 0);
-  receipt = { current: false }; await save([]); assert.equal(closes, 0);
+  receipt = null; assert.equal(await save([]), false); assert.equal(closes, 0);
+  receipt = { current: false }; assert.equal(await save([]), false); assert.equal(closes, 0);
   receipt = new Error('save failed'); await assert.rejects(save([]), /save failed/); assert.equal(closes, 0);
   receipt = { current: true, before: {}, project: { captions: [{ id: 'cue-1' }], captionTracks: { translations: [] } } };
-  await save([]); assert.equal(closes, 1);
+  assert.equal(await save([]), true); assert.equal(closes, 0, 'the draft owner closes only after recovery cleanup');
 
   const nodes = [];
   const visit = (node) => { if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) nodes.push(node); ts.forEachChild(node, visit); };
@@ -141,10 +141,12 @@ test('Done and Cancel share presentation-only cleanup; rejected or stale saves s
   const attr = (node, name) => node.attributes.properties.find((prop) => prop.name?.text === name)?.initializer?.expression;
   assert.equal(evaluate(attr(script, 'onCancel'), { scriptExit: { close } }), close);
   assert.equal(attr(script, 'onSave').getText(ast), 'commitCaptionScript');
+  assert.equal(attr(script, 'onBackRequestChange').getText(ast), 'registerScriptBackRequest');
   const scroller = nodes.find((node) => node.tagName.getText(ast) === 'ScrollView' && attr(node, 'ref')?.getText(ast) === 'editorScrollRef');
   assert.ok(scroller);
   assert.equal(attr(scroller, 'onLayout').getText(ast), 'scriptExit.onScrollLayout');
-  assert.equal(attr(scroller, 'onContentSizeChange').getText(ast), 'scriptExit.scheduleTimelineReveal');
+  assert.equal(attr(scroller, 'onScroll').getText(ast), 'scriptExit.onScroll');
+  assert.equal(attr(scroller, 'onContentSizeChange').getText(ast), 'scriptExit.onContentSizeChange');
   const timeline = nodes.find((node) => node.tagName.getText(ast) === 'LayerTimeline');
   assert.equal(attr(timeline.parent.openingElement, 'onLayout').getText(ast), 'scriptExit.onTimelineLayout');
   assert.equal(attr(timeline, 'onSeek').getText(ast), 'seekTimeline', 'vertical reveal must not replace timeline seeking');

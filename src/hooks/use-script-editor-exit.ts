@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
-import { Keyboard, type LayoutChangeEvent, type ScrollView } from 'react-native';
+import {
+  Keyboard,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  type ScrollView,
+} from 'react-native';
 
 // The workspace owns this vertical reveal. It never seeks the timeline or
 // changes selection, project contents, or the active tool.
@@ -7,7 +13,18 @@ export function useScriptEditorExit(open: boolean, scrollRef: RefObject<ScrollVi
   const pendingRef = useRef(false);
   const timelineTopRef = useRef<number | undefined>(undefined);
   const scrollReadyRef = useRef(false);
+  const viewportHeightRef = useRef(0);
+  const contentHeightRef = useRef(0);
+  const scrollOffsetRef = useRef(0);
   const frameRef = useRef<number | undefined>(undefined);
+
+  const timelineRootOffset = useCallback(() => {
+    if (!scrollReadyRef.current || timelineTopRef.current === undefined) return undefined;
+    const maximumOffset = contentHeightRef.current > 0
+      ? Math.max(0, contentHeightRef.current - viewportHeightRef.current)
+      : timelineTopRef.current;
+    return Math.max(0, Math.min(timelineTopRef.current, maximumOffset));
+  }, []);
 
   const scheduleTimelineReveal = useCallback(() => {
     if (open || !pendingRef.current) return;
@@ -16,12 +33,13 @@ export function useScriptEditorExit(open: boolean, scrollRef: RefObject<ScrollVi
     // have no usable scroll range, and keyboard dismissal may resize it again.
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = undefined;
-      if (!pendingRef.current || Keyboard.isVisible() || !scrollReadyRef.current
-        || timelineTopRef.current === undefined || !scrollRef.current) return;
-      scrollRef.current.scrollTo({ y: timelineTopRef.current, animated: false });
+      const rootOffset = timelineRootOffset();
+      if (!pendingRef.current || Keyboard.isVisible() || rootOffset === undefined || !scrollRef.current) return;
+      scrollRef.current.scrollTo({ y: rootOffset, animated: false });
+      scrollOffsetRef.current = rootOffset;
       pendingRef.current = false;
     });
-  }, [open, scrollRef]);
+  }, [open, scrollRef, timelineRootOffset]);
 
   useEffect(() => {
     if (open) {
@@ -45,7 +63,18 @@ export function useScriptEditorExit(open: boolean, scrollRef: RefObject<ScrollVi
 
   const onScrollLayout = (event: LayoutChangeEvent) => {
     if (open) return;
-    scrollReadyRef.current = event.nativeEvent.layout.height > 0;
+    viewportHeightRef.current = Math.max(0, event.nativeEvent.layout.height);
+    scrollReadyRef.current = viewportHeightRef.current > 0;
+    scheduleTimelineReveal();
+  };
+
+  const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (open) return;
+    scrollOffsetRef.current = Math.max(0, event.nativeEvent.contentOffset.y);
+  };
+
+  const onContentSizeChange = (_width: number, height: number) => {
+    if (Number.isFinite(height) && height > 0) contentHeightRef.current = height;
     scheduleTimelineReveal();
   };
 
@@ -55,5 +84,25 @@ export function useScriptEditorExit(open: boolean, scrollRef: RefObject<ScrollVi
     scheduleTimelineReveal();
   };
 
-  return { close, onScrollLayout, onTimelineLayout, scheduleTimelineReveal };
+  const timelineRooted = () => {
+    const rootOffset = timelineRootOffset();
+    return rootOffset !== undefined && !pendingRef.current
+      && Math.abs(scrollOffsetRef.current - rootOffset) <= 2;
+  };
+
+  const revealTimeline = () => {
+    pendingRef.current = true;
+    scheduleTimelineReveal();
+  };
+
+  return {
+    close,
+    onScrollLayout,
+    onScroll,
+    onContentSizeChange,
+    onTimelineLayout,
+    scheduleTimelineReveal,
+    timelineRooted,
+    revealTimeline,
+  };
 }

@@ -238,6 +238,6 @@ test('all persistence writes validate before database access and editor exit wai
   const database = readFileSync(new URL('../src/services/database.ts', import.meta.url), 'utf8');
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   assert.match(database, /const snapshot = serializeProjectSnapshot\(project\);[\s\S]*const database = await getDatabase\(\)/);
-  assert.match(editor, /await editorSession\.finish[\s\S]*return saveEditorDraft\(latest, ledger\)[\s\S]*exitApprovedRef\.current = true;[\s\S]*navigation\.dispatch\(action\)/);
+  assert.match(editor, /await editorSession\.finish[\s\S]*return saveEditorDraft\(latest, ledger\)[\s\S]*setExitApproved\(true\)[\s\S]*if \(!exitApproved\) return;[\s\S]*navigation\.dispatch\(action\)/);
   assert.match(editor, /catch \(caught\) \{\s*exitPromptOpenRef\.current = false;[\s\S]*setFinishingSession\(false\)[\s\S]*Alert\.alert\('Could not leave the editor'/);
 });

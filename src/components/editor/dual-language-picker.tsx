@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -10,19 +10,26 @@ export function DualLanguagePicker(props: {
   sourceLanguageTag: string;
   sourceLanguageLabel: string;
   automaticModelLabel: string;
+  onBackRequestChange?: (request: (() => void) | undefined) => void;
   onClose: () => void;
   onChoose: (choice: DualCaptionLanguageChoice) => Promise<void>;
 }) {
+  const { onBackRequestChange, onClose, visible } = props;
   const insets = useSafeAreaInsets();
   const choices = dualCaptionLanguageChoices(props.sourceLanguageTag);
   const [pendingTag, setPendingTag] = useState<string>();
   const [selectionError, setSelectionError] = useState<string>();
 
-  const close = () => {
+  const close = useCallback(() => {
     if (pendingTag) return;
     setSelectionError(undefined);
-    props.onClose();
-  };
+    onClose();
+  }, [onClose, pendingTag]);
+
+  useEffect(() => {
+    onBackRequestChange?.(visible ? close : undefined);
+    return () => onBackRequestChange?.(undefined);
+  }, [close, onBackRequestChange, visible]);
 
   const choose = async (choice: DualCaptionLanguageChoice) => {
     if (pendingTag) return;

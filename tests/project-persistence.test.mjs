@@ -37,7 +37,7 @@ test('editor save and translation workflows cannot swallow persistence failures'
   assert.match(editor, /await editorSession\.commit/);
   assert.match(editor, /commitProject:\s*async[\s\S]*await commitEditorProject\(\(current\)/);
   assert.match(editor, /catch \(caught\)[\s\S]*setPersistenceError\(caught\.message\)[\s\S]*throw caught/);
-  assert.match(scriptEditor, /await props\.onSave\(draftCaptions\)[\s\S]*setSaveError/);
+  assert.match(scriptEditor, /await props\.onSave\(savingDraft\)[\s\S]*draftVersionRef\.current !== savingVersion[\s\S]*setSaveError/);
   assert.match(translationController, /await optionsRef\.current\.commitProject\(baseline, next\)/);
   assert.match(persistenceService, /throw new ProjectPersistenceError\(cause\)/);
   assert.match(persistenceService, /publishAfterDurableWrite/);

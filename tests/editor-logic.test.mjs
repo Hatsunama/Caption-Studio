@@ -942,7 +942,7 @@ test('clip audio fades are resolved by timeline position', () => {
 
 test('editor back navigation is an explicit save-or-discard transaction', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
-  assert.match(editor, /addListener\('beforeRemove'/);
+  assert.match(editor, /usePreventRemove\(!exitApproved/);
   assert.match(editor, /editorSession\.finish\(async \(latest\)/);
   assert.match(editor, /saveEditorDraft\(latest, ledger\)/);
   assert.match(editor, /discardEditorSession\(initialProject, latest, ledger\)/);
@@ -1335,7 +1335,8 @@ test('caption editing opens the full timestamped script and keeps text-layer edi
   assert.match(scriptEditor, /Split here/);
   assert.match(scriptEditor, /Join previous/);
   assert.match(scriptEditor, /Join next/);
-  assert.match(scriptEditor, /onSave\(draftCaptions\)/);
+  assert.match(scriptEditor, /onSave\(savingDraft\)/);
+  assert.match(scriptEditor, /draftVersionRef\.current !== savingVersion/);
   assert.match(scriptEditor, /Caption recovery storage could not be read/);
   assert.match(scriptEditor, /if \(!active\) return/);
 });
