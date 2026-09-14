@@ -733,3 +733,63 @@ test('video and caption overlays share the cropped canvas while playback control
   assert.equal(style.width, 48); assert.equal(style.height, 48);
   assert.ok(style.bottom >= 0 && style.bottom + style.height <= scriptCrop.viewport.height);
 });
+
+test('keyboard exit restores full preview with a persistent transform and independent layout owner', () => {
+  const nodes = [];
+  const visit = (node) => { if (ts.isJsxElement(node)) nodes.push(node); ts.forEachChild(node, visit); };
+  visit(workspaceRoot);
+  const byId = (id) => nodes.find((node) => node.openingElement.attributes.properties.some((prop) => prop.name?.text === 'testID' && prop.initializer?.text === id));
+  const canvas = byId('script-preview-canvas');
+  const layout = byId('editor-preview-layout');
+  const viewport = byId('script-preview-viewport');
+  const fitRect = evaluate(editorAst.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'fitRect').getText(editorAst));
+  const effect = workspace.body.statements.find((node) => ts.isExpressionStatement(node)
+    && ts.isCallExpression(node.expression) && node.expression.expression.getText(editorAst) === 'useEffect'
+    && node.getText(editorAst).includes('Animated.timing(cropOffset'));
+  const x = { value: 0 }, y = { value: 0 };
+  const cropOffset = {
+    getTranslateTransform: () => [{ translateX: x }, { translateY: y }],
+    setValue: (value) => { x.value = value.x; y.value = value.y; },
+  };
+  let stopped = 0;
+  const Animated = { timing: (_offset, config) => ({
+    start: () => cropOffset.setValue(config.toValue), stop: () => { stopped++; },
+  }) };
+  assert.ok(layout, 'plain View must own preview dimensions outside native Animated props');
+  assert.equal(layout.openingElement.tagName.getText(editorAst), 'View');
+  assert.equal(layout.parent, canvas);
+  assert.equal(canvas.parent, viewport);
+  for (const aspect of [9 / 16, 16 / 9]) {
+    const h = mount(); h.edit(4); h.keyboard('keyboardDidShow');
+    let cleanup;
+    for (const [open, keyboard, workspaceHeight, height] of [
+      [true, true, 240, 440], [false, true, 240, 440], [false, false, 700, 800],
+      [true, true, 280, 480], [true, false, 700, 800], [false, false, 700, 800],
+    ]) {
+      h.update({ visible: open });
+      if (!keyboard) h.keyboard('keyboardDidHide');
+      const scriptCropActive = workspaceValue('scriptCropActive', { scriptEditorOpen: open, scriptKeyboardOpen: keyboard });
+      const previewHeight = workspaceValue('previewHeight', { scriptEditorOpen: open, scriptKeyboardOpen: keyboard, workspaceHeight, height });
+      const scriptCrop = crop(aspect, 280, previewHeight - 8, { x: 0.5, y: 0.78 });
+      const size = workspaceValue('canvasSize', { scriptCropActive, scriptCrop, previewHeight, fitRect, width: 360, project: { canvas: { aspectWidth: aspect, aspectHeight: 1 } } });
+      const context = { scriptCropActive, cropOffset, canvasWidth: size.width, canvasHeight: size.height, project: { canvas: { backgroundColor: '#000' } } };
+      const animatedStyle = jsxProp(canvas, 'style', context);
+      assert.equal(animatedStyle.transform[0].translateX, x, 'exit must not detach the native crop graph');
+      assert.equal(animatedStyle.transform[1].translateY, y);
+      assert.equal(animatedStyle.height, undefined);
+      assert.equal(animatedStyle.width, undefined);
+      cleanup?.();
+      cleanup = evaluate(effect.expression.arguments[0].getText(editorAst), { cropOffset, Animated, scriptCropActive, scriptCrop })();
+      const layoutStyle = jsxProp(layout, 'style', context);
+      assert.equal(layoutStyle.height, size.height);
+      if (!open) {
+        assert.ok(previewHeight >= 280);
+        assert.ok(layoutStyle.height > 180, 'normal preview must not remain a keyboard strip');
+        assert.equal(x.value, 0); assert.equal(y.value, 0);
+        assert.equal(h.calls.keyboards.at(-1), false, 'closing cannot depend on receiving keyboard hide');
+      }
+    }
+    h.unmount();
+  }
+  assert.equal(stopped, 4, 'each keyboard crop animation stops before restoration');
+});
