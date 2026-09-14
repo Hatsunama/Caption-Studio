@@ -47,6 +47,7 @@ test {
   classpath += files(fileTree(layout.buildDirectory.dir('test-aars')) { include '*.jar' })
   workingDir repositoryRoot
   maxHeapSize = '1536m'
+  systemProperty 'captionStudio.fontDir', file("${repositoryRoot}/assets/fonts").absolutePath
   systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
   testLogging { events 'passed', 'failed'; exceptionFormat 'full' }
 }

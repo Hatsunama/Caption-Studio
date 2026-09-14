@@ -27,7 +27,12 @@ class TextPresentationTest {
   private fun cue(text: String, style: RenderTextStyle = style()) = RenderCaption("cue", text, 0, 2000, style, emptyList())
 
   @Test fun authoredLineBreaksAndBlankLinesSurviveEveryBundledFont() {
-    val fonts = File("assets/fonts").listFiles { file -> file.extension == "ttf" }!!.toList()
+    val fontDirectory = File(checkNotNull(System.getProperty("captionStudio.fontDir")) {
+      "Gradle must provide the repository font directory"
+    })
+    val fonts = checkNotNull(fontDirectory.listFiles { file -> file.extension == "ttf" }) {
+      "Bundled font directory is unavailable: ${fontDirectory.absolutePath}"
+    }.toList()
     assertTrue(fonts.size > 50)
     val fits = mutableSetOf<Float>()
     TimelineTextPainter(RuntimeEnvironment.getApplication()).use { painter ->
