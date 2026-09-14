@@ -39,6 +39,7 @@ import { useProjectAudioWaveforms } from '@/hooks/use-project-audio-waveforms';
 import { useProjectCaptionTranslation } from '@/hooks/use-project-caption-translation';
 import { useForegroundOperation } from '@/hooks/use-foreground-operation';
 import { useEditorRuntimePolicy } from '@/hooks/use-editor-runtime-policy';
+import { useScriptEditorExit } from '@/hooks/use-script-editor-exit';
 import { deleteAudioClip, duplicateAudioClip, moveAudioClip, splitAudioClip, updateAudioClip } from '@/lib/audio-timeline';
 import { applyTimelineItemTiming, type TimelineItemReference, type TimelineTimingEdge } from '@/lib/timeline-item-editor';
 import { findAnimationPreset } from '@/lib/animation-presets';
@@ -363,6 +364,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [scriptDraftCaptions, setScriptDraftCaptions] = useState<CaptionBlock[] | null>(null);
   const [scriptKeyboardOpen, setScriptKeyboardOpen] = useState(false);
   const [scriptEditingCaptionId, setScriptEditingCaptionId] = useState<string>();
+  const editorScrollRef = useRef<ScrollView>(null);
+  const scriptExit = useScriptEditorExit(scriptEditorOpen, editorScrollRef, () => {
+    setScriptKeyboardOpen(false);
+    setScriptEditingCaptionId(undefined);
+    setScriptDraftCaptions(null);
+    setScriptEditorOpen(false);
+  });
   const [dualCaptionEditorOpen, setDualCaptionEditorOpen] = useState(false);
   const [dualLanguagePickerOpen, setDualLanguagePickerOpen] = useState(false);
   const [selectedTranslationTrackId, setSelectedTranslationTrackId] = useState<string>();
@@ -954,7 +962,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     const changedCaptionIds = changedPrimaryCaptionTextIds(before, next);
     const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
     if (visibleTranslation && changedCaptionIds.length > 0) offerTranslationRefresh(changedCaptionIds, visibleTranslation);
-    setScriptEditorOpen(false);
+    scriptExit.close();
   };
 
   const openDualCaptionEditor = () => {
@@ -1639,10 +1647,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             }}>
           <Animated.View
           testID="script-preview-canvas"
+          // Keep the native transform attached through exit. React owns canvas
+          // dimensions on the child; native animation owns only translation.
+          style={{ transform: cropOffset.getTranslateTransform() }}>
+          <View
+          testID="editor-preview-layout"
           style={{
             width: canvasWidth,
             height: canvasHeight,
-            transform: scriptCropActive ? cropOffset.getTranslateTransform() : undefined,
             overflow: 'hidden',
             backgroundColor: project.canvas.backgroundColor,
           }}>
@@ -1789,6 +1801,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               />
             );
           })}
+          </View>
           </Animated.View>
           </View>
           <Pressable
@@ -1821,6 +1834,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
       <View style={{ flex: 1, display: scriptEditorOpen ? 'none' : 'flex' }}>
         <ScrollView
+          ref={editorScrollRef}
+          onLayout={scriptExit.onScrollLayout}
+          onContentSizeChange={scriptExit.scheduleTimelineReveal}
           nestedScrollEnabled
           keyboardShouldPersistTaps="handled"
           style={{ flex: 1 }}
@@ -1871,6 +1887,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           )}
         </View>
 
+        <View onLayout={scriptExit.onTimelineLayout}>
         <LayerTimeline
           projectId={project.id}
           durationMs={timelineDurationMs}
@@ -1905,6 +1922,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onAddVideos={() => { void addVideosToTimeline(); }}
           onSelectAudioClip={(clipId) => selectEditorObject({ kind: 'audio', id: clipId })}
         />
+        </View>
         {selectedCaption || selectedTranslationPair || selectedAudioClip || selectedTextLayer || selectedImageLayer ? (
           <Text style={{ color: palette.muted, fontSize: 11 }}>Drag the selected block to move it. Drag either white edge to trim it.</Text>
         ) : null}
@@ -2178,7 +2196,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           setSelectedClipId(undefined);
           openEditorTool('captions');
         }}
-        onCancel={() => setScriptEditorOpen(false)}
+        onCancel={scriptExit.close}
         onSave={commitCaptionScript}
       />
       <DualCaptionEditor

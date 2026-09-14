@@ -24,6 +24,7 @@ const captured = [
   'setCanvasPreset', 'generateCaptions', 'addVideosToTimeline', 'addAudio', 'addProjectVideoAudio',
   'beginEditCaption', 'updateSharedCaptionTransform', 'beginHistoryInteraction',
   'finishHistoryInteraction', 'undo', 'redo', 'persistProjectInBackground',
+  'activeTool', 'openEditorTool',
 ].join(', ');
 const instrumented = source.slice(0, returnNode.getStart(ast))
   + '__capture({' + captured + '});\n'
@@ -32,6 +33,9 @@ const instrumented = source.slice(0, returnNode.getStart(ast))
 const compiled = ts.transpileModule(instrumented, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
   fileName: 'editor.tsx',
+}).outputText;
+const exitHookCompiled = ts.transpileModule(readFileSync(new URL('../src/hooks/use-script-editor-exit.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
 
 function deferred() {
@@ -68,9 +72,10 @@ function fixture() {
 }
 
 function mount(initialProject = fixture()) {
-  const slots = [], pendingWrites = [], listeners = new Map();
+  const slots = [], pendingWrites = [], listeners = new Map(), frames = new Map();
+  let keyboardVisible = false, frameId = 0;
   let cursor = 0, dirty = true, effects = [], tree, actions, appState = 'active', disk = initialProject;
-  const calls = { writes: [], alerts: [], audio: [], synchronizations: [], plays: 0, pauses: 0, exits: [], selections: [] };
+  const calls = { writes: [], alerts: [], audio: [], synchronizations: [], plays: 0, pauses: 0, exits: [], selections: [], scrolls: [], dismisses: 0 };
   let translationOptions, waveform;
   const sameDeps = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
   const memo = (factory, deps) => {
@@ -151,6 +156,23 @@ function mount(initialProject = fixture()) {
     timing: () => ({ start: () => {}, stop: () => {} }),
   };
   native.useWindowDimensions = () => ({ width: 360, height: 800 });
+  native.Keyboard = {
+    isVisible: () => keyboardVisible,
+    dismiss: () => { calls.dismisses++; },
+    addListener(name, callback) { listeners.set(name, callback); return { remove: () => listeners.delete(name) }; },
+  };
+  const exitHooks = {};
+  runInNewContext(exitHookCompiled, {
+    exports: exitHooks,
+    require(name) {
+      if (name === 'react') return react;
+      if (name === 'react-native') return native;
+      throw new Error('Unexpected exit dependency: ' + name);
+    },
+    requestAnimationFrame(callback) { frames.set(++frameId, callback); return frameId; },
+    cancelAnimationFrame(id) { frames.delete(id); },
+  });
+  hooks.useScriptEditorExit = exitHooks.useScriptEditorExit;
   const exports = {};
   runInNewContext(compiled, {
     exports, Error, setTimeout, clearTimeout, queueMicrotask, __capture: (value) => { actions = value; },
@@ -176,6 +198,9 @@ function mount(initialProject = fixture()) {
       assert.ok(++passes < 25, 'workspace must settle');
       dirty = false; cursor = 0; effects = [];
       tree = exports.Workspace({ initialProject });
+      for (const scroll of all((node) => node.type === 'ScrollView' && node.props.ref)) {
+        scroll.props.ref.current = { scrollTo: (request) => calls.scrolls.push(plain(request)) };
+      }
       for (const effect of effects) effect();
     } while (dirty);
   }
@@ -195,6 +220,8 @@ function mount(initialProject = fixture()) {
     holdWrite() { const gate = deferred(); pendingWrites.push(gate); return gate; },
     async flush() { await tick(); render(); await tick(); render(); },
     appState(value) { appState = value; render(); },
+    keyboard(value) { keyboardVisible = value; if (!value) listeners.get('keyboardDidHide')?.(); },
+    frame() { const pending = [...frames.values()]; frames.clear(); pending.forEach((callback) => callback()); },
     exit(decision) {
       listeners.get('beforeRemove')({ preventDefault() {}, data: { action: { type: 'GO_BACK' } } });
       const label = decision === 'save' ? 'Save draft' : 'Discard';
@@ -203,6 +230,42 @@ function mount(initialProject = fixture()) {
     },
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
   };
+}
+
+for (const exit of ['Done', 'Cancel']) {
+  test(`${exit} after keyboard editing restores preview and reveals timeline without changing time or tool`, async () => {
+    const h = mount(), before = h.project, currentMs = h.transport.currentMs;
+    h.actions.beginEditCaption(); h.actions.openEditorTool('audio'); h.render();
+    h.keyboard(true);
+    let script = h.all((node) => node.type === 'ScriptEditor')[0].props;
+    script.onKeyboardChange(true);
+    const draft = before.captions.map((cue) => ({ ...cue, text: cue.text + ' edited' }));
+    script.onDraftChange(draft); h.render();
+    script = h.all((node) => node.type === 'ScriptEditor')[0].props;
+    if (exit === 'Done') await script.onSave(draft);
+    else script.onCancel();
+    h.render(); h.frame();
+    assert.equal(h.actions.scriptEditorOpen, false);
+    assert.equal(h.calls.dismisses, 1);
+    assert.deepEqual(h.calls.scrolls, [], 'wait for keyboard and restored layout');
+    const scroll = h.all((node) => node.type === 'ScrollView' && node.props.ref)[0];
+    const anchor = h.all((node) => node.type === 'View' && node.props.children?.type === 'LayerTimeline')[0];
+    const event = (y, height) => ({ nativeEvent: { layout: { x: 0, y, width: 360, height } } });
+    scroll.props.onLayout(event(0, 420)); anchor.props.onLayout(event(146, 320));
+    scroll.props.onContentSizeChange(360, 1200); h.keyboard(false); h.frame();
+    assert.deepEqual(h.calls.scrolls, [{ y: 146, animated: false }]);
+    assert.equal(h.actions.activeTool, 'audio');
+    assert.equal(h.transport.currentMs, currentMs);
+    assert.deepEqual(h.project.clips, before.clips);
+    assert.deepEqual(h.project.audioClips, before.audioClips);
+    assert.deepEqual(h.project.captions.map(({ startMs, endMs }) => [startMs, endMs]), before.captions.map(({ startMs, endMs }) => [startMs, endMs]));
+    assert.equal(h.project.captions[0].text, exit === 'Done' ? draft[0].text : before.captions[0].text);
+    const preview = h.all((node) => node.props.testID === 'editor-preview-layout')[0];
+    assert.ok(preview.props.style.height > 180);
+    const canvas = h.all((node) => node.props.testID === 'script-preview-canvas')[0];
+    assert.deepEqual(plain(canvas.props.style.transform), [{ translateX: 0 }, { translateY: 0 }]);
+    h.unmount();
+  });
 }
 
 test('queued publications derive from the latest durable revision and serialize their writes', async () => {
@@ -422,7 +485,7 @@ test('portrait, square and landscape preview geometry share the positive actual 
       h.actions.beginEditCaption(); h.actions.setScriptKeyboardOpen(keyboard); h.render();
       const transition = h.all((node) => node.type === 'VideoTransitionOverlay')[0].props;
       assert.ok(Math.abs(transition.width / transition.height - width / height) < 1e-10);
-       const canvas = h.all((node) => node.props.testID === 'script-preview-canvas')[0].props.style;
+      const canvas = h.all((node) => node.props.testID === 'editor-preview-layout')[0].props.style;
       assert.equal(canvas.width, transition.width);
       assert.equal(canvas.height, transition.height);
     }
