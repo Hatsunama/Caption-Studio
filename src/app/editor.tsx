@@ -1169,15 +1169,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
+  const updateSelectedCaptionTransform = (patch: CaptionStylePatch) => {
+    if (!selectedCaptionId) return;
+    setProject((current) => applyStylePatch(current, selectedCaptionId, 'caption', patch));
+  };
+
   const updateTranslationTransform = (patch: CaptionStylePatch) => {
     const track = selectedTranslationTrack;
-    if (!track) return;
-    const { position: _ignoredPosition, ...sizePatch } = patch;
-    if (sizePatch.box === undefined && sizePatch.fontSize === undefined && sizePatch.rotation === undefined) return;
-    setProject((current) => {
-      const next = setTranslationTrackStyle(current, track.id, sizePatch, new Date().toISOString());
-      return next;
-    });
+    if (!track || !selectedCaptionId) return;
+    setProject((current) => setTranslationCueStyle(current, track.id, selectedCaptionId, patch, new Date().toISOString()));
   };
 
   const commitTranslationTrackPatch = (operation: EditorProjectOperation) => {
@@ -1737,7 +1737,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     selectable={Boolean(displayCaption)}
                     onSelect={() => selectEditorObject({ kind: 'captions', captionId: displayCaption?.id })}
                     onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
-                    onTransform={updateSharedCaptionTransform}
+                    onTransform={updateSelectedCaptionTransform}
                     onTransformEnd={finishHistoryInteraction}
                     onDelete={selectedCaptionId ? () => confirmDeleteCaption(selectedCaptionId) : undefined}
                   />
@@ -1758,10 +1758,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                       selectable
                       onSelect={() => selectEditorObject({ kind: 'translation', id: pair.trackId, captionId: pair.source.id })}
                       onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
-                      onTransform={(patch) => {
-                        const { position: _ignoredPosition, ...sizePatch } = patch;
-                        updateTranslationTransform(sizePatch);
-                      }}
+                      onTransform={updateTranslationTransform}
                       onTransformEnd={finishHistoryInteraction}
                     />
                   ))}

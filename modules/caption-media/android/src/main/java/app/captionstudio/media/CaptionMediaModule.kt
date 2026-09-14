@@ -49,6 +49,15 @@ class CaptionMediaModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("CaptionMedia")
 
+    View(CaptionPresentationView::class) {
+      Prop("caption") { view: CaptionPresentationView, value: Map<String, Any> -> view.setCaption(value) }
+      Prop("geometry") { view: CaptionPresentationView, value: Map<String, Any> -> view.setGeometry(value) }
+      Prop("currentMs") { view: CaptionPresentationView, value: Double -> view.currentMs = value.toLong(); view.invalidate() }
+      Prop("authored") { view: CaptionPresentationView, value: Boolean -> view.authored = value; view.invalidate() }
+      Prop("editingPreview") { view: CaptionPresentationView, value: Boolean -> view.editingPreview = value; view.invalidate() }
+      OnViewDestroys { view: CaptionPresentationView -> view.close() }
+    }
+
     AsyncFunction("persistReadPermission") { inputUri: String ->
       persistReadPermission(inputUri)
     }

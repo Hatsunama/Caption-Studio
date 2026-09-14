@@ -787,7 +787,7 @@ internal class TimelineBitmapOverlay(
     val containedScale = min(width / bitmap.width, height / bitmap.height)
     val matrix = Matrix().apply {
       postTranslate(-bitmap.width / 2f, -bitmap.height / 2f)
-      postScale(containedScale, containedScale)
+      postScale(containedScale * layer.scale * layer.scaleX, containedScale * layer.scale * layer.scaleY)
       postRotate(layer.rotation)
       postTranslate(layer.positionX * plan.width, layer.positionY * plan.height)
     }

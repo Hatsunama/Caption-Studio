@@ -244,7 +244,7 @@ function hydrateProject(project: CaptionProject): CaptionProject {
             },
           }
         : layer.kind === 'image'
-          ? { ...layer, timelineVisible: layer.timelineVisible ?? true }
+          ? { ...layer, scale: layer.scale ?? 1, scaleX: layer.scaleX ?? 1, scaleY: layer.scaleY ?? 1, timelineVisible: layer.timelineVisible ?? true }
           : layer,
     ),
     clips,

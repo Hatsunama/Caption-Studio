@@ -1,4 +1,5 @@
 import { ANIMATION_PRESETS } from '@/lib/animation-presets';
+import { positiveLayerScale } from '@/lib/layer-geometry';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
 import { emptyCaptionTrackCollection, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { sameCaptionLanguageFamily } from '@/lib/caption-languages';
@@ -531,6 +532,9 @@ function decodeImageLayer(layer: Record<string, unknown>, index: number): ImageV
     endMs: finiteNumber(layer.endMs, `image layer ${index + 1} end`, startMs, Number.MAX_SAFE_INTEGER),
     position: decodePoint(layer.position, `image layer ${index + 1} position`, -4, 4),
     box: decodeBox(layer.box, `image layer ${index + 1} box`),
+    scale: positiveLayerScale(layer.scale),
+    scaleX: positiveLayerScale(layer.scaleX),
+    scaleY: positiveLayerScale(layer.scaleY),
     rotation: finiteNumber(layer.rotation, `image layer ${index + 1} rotation`, -360_000, 360_000),
     opacity: finiteNumber(layer.opacity, `image layer ${index + 1} opacity`, 0, 1),
     sourceAnchors: decodeSourceAnchors(layer.sourceAnchors, `image layer ${index + 1}`),
@@ -556,6 +560,9 @@ function decodeCaptionStyle(value: unknown, fallback: CaptionStyle, label: strin
   const style = record(value, label);
   return {
     font: decodeFont(style.font, fallback.font, `${label} font`),
+    scale: positiveLayerScale(style.scale),
+    scaleX: positiveLayerScale(style.scaleX),
+    scaleY: positiveLayerScale(style.scaleY),
     fontSize: optionalNumber(style.fontSize, fallback.fontSize, `${label} font size`, 6, 400),
     fontWeight: optionalEnum(style.fontWeight, ['400', '500', '600', '700', '800', '900'] as const, `${label} font weight`) ?? fallback.fontWeight,
     italic: optionalBoolean(style.italic, fallback.italic, `${label} italic state`),
@@ -582,6 +589,9 @@ function decodeCaptionStylePatch(value: unknown, label: string): CaptionStylePat
   if (value === undefined) return undefined;
   const patch = record(value, label);
   const decoded: CaptionStylePatch = {};
+  if (patch.scale !== undefined) decoded.scale = positiveLayerScale(patch.scale);
+  if (patch.scaleX !== undefined) decoded.scaleX = positiveLayerScale(patch.scaleX);
+  if (patch.scaleY !== undefined) decoded.scaleY = positiveLayerScale(patch.scaleY);
   if (patch.font !== undefined) decoded.font = decodeFontPatch(patch.font, `${label} font`);
   if (patch.fontSize !== undefined) decoded.fontSize = finiteNumber(patch.fontSize, `${label} font size`, 6, 400);
   if (patch.fontWeight !== undefined) decoded.fontWeight = enumValue(patch.fontWeight, ['400', '500', '600', '700', '800', '900'] as const, `${label} font weight`);
