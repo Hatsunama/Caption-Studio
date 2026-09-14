@@ -1,4 +1,5 @@
 import { mergePatch, mergeStyle } from '@/lib/style-resolver';
+import { layerExtent } from '@/lib/layer-geometry';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
 import { totalClipDuration } from '@/lib/video-timeline';
 import {
@@ -26,6 +27,9 @@ export const CHINESE_TRADITIONAL_TRACK_ID = 'translation-zh-Hant';
 export const ENGLISH_TRACK_ID = 'translation-en';
 
 const DEFAULT_TRANSLATION_TRACK_STYLE = {
+  scale: 1,
+  scaleX: 1,
+  scaleY: 1,
   font: { id: 'system-sans', family: 'sans-serif', source: 'system' as const },
   fontSize: 34,
   fontWeight: '700' as const,
@@ -666,11 +670,6 @@ export function setTranslationStackGap(
   return mapTranslationTrack(project, trackId, (track) => ({
     ...track,
     stackGap: nextGap,
-    styleOverride: omitStylePosition(track.styleOverride),
-    cues: track.cues.map((cue) => ({
-      ...cue,
-      styleOverride: omitStylePosition(cue.styleOverride),
-    })),
   }), updatedAt);
 }
 
@@ -688,28 +687,17 @@ export function stackedTranslationLayout(
   stackGap = DEFAULT_TRANSLATION_STACK_GAP,
 ) {
   const gap = clampStackGap(stackGap);
-  const width = clamp(translation.box.width, 0.2, 1);
-  const minHeight = 0.06;
-  const desiredHeight = clamp(translation.box.height, minHeight, 0.4);
-  const primaryBottom = primary.position.y + Math.max(0.04, primary.box.height / 2);
-  const canvasBottom = 0.98;
-  let top = primaryBottom + gap;
-  let height = desiredHeight;
-  if (top + height > canvasBottom) {
-    height = Math.max(minHeight, canvasBottom - top);
-  }
-  if (top + minHeight > canvasBottom) {
-    height = minHeight;
-    top = Math.max(primaryBottom + MIN_TRANSLATION_STACK_GAP, canvasBottom - height);
-  }
-  const y = top + height / 2;
-  const horizontalLimit = Math.max(0.05, (1 - width) / 2);
+  const primaryExtent = layerExtent(primary);
+  const { width, height } = layerExtent(translation);
+  const primaryBottom = primary.position.y + primaryExtent.height / 2;
+  const horizontalLimit = Math.min(0.5, width / 2);
+  const verticalLimit = Math.min(0.5, height / 2);
   return {
     position: {
       x: clamp(primary.position.x, horizontalLimit, 1 - horizontalLimit),
-      y: Math.max(primary.position.y + 0.02, y),
+      y: clamp(primaryBottom + gap + height / 2, verticalLimit, 1 - verticalLimit),
     },
-    box: { width, height },
+    box: { ...translation.box },
   };
 }
 
@@ -720,12 +708,6 @@ function clamp(value: number, minimum: number, maximum: number) {
 function clampStackGap(value: number | undefined) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_TRANSLATION_STACK_GAP;
   return clamp(value, MIN_TRANSLATION_STACK_GAP, MAX_TRANSLATION_STACK_GAP);
-}
-
-function omitStylePosition(patch: CaptionStylePatch | undefined) {
-  if (!patch) return undefined;
-  const { position: _position, ...rest } = patch;
-  return Object.keys(rest).length > 0 ? rest : undefined;
 }
 
 function requiredDisplayName(value: string) {
