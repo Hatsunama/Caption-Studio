@@ -601,6 +601,9 @@ test('workspace wires the draft channel and renders authored text while paused i
   assert.equal(attr(overlay, 'preserveLineBreaks', { scriptEditorOpen: true, isPlaying: false }), true);
   assert.equal(attr(overlay, 'preserveLineBreaks', { scriptEditorOpen: false, isPlaying: false }), false);
   assert.equal(attr(overlay, 'preserveLineBreaks', { scriptEditorOpen: true, isPlaying: true }), false);
+  assert.equal(attr(overlay, 'editingPreview', { scriptEditorOpen: true, isPlaying: false }), true);
+  assert.equal(attr(overlay, 'editingPreview', { scriptEditorOpen: false, isPlaying: false }), false);
+  assert.equal(attr(overlay, 'editingPreview', { scriptEditorOpen: true, isPlaying: true }), false);
 });
 
 test('opening and reopening never publish an empty or discarded previous draft', () => {
