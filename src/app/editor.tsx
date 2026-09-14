@@ -1729,6 +1729,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   <CaptionOverlay
                     caption={displayCaption}
                     preserveLineBreaks={scriptEditorOpen && !isPlaying}
+                    editingPreview={scriptEditorOpen && !isPlaying}
                     words={project.transcription.words}
                     projectStyle={project.projectStyle}
                     currentMs={currentMs}

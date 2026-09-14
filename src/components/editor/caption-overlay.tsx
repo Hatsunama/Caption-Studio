@@ -38,6 +38,7 @@ export function CaptionOverlay(props: {
   interactive?: boolean;
   selectable?: boolean;
   preserveLineBreaks?: boolean;
+  editingPreview?: boolean;
   onSelect?: () => void;
   onInteractionStart?: () => void;
   onTransform?: (patch: CaptionStylePatch) => void;
@@ -235,11 +236,11 @@ export function CaptionOverlay(props: {
               paddingVertical: style.background.paddingY,
               backgroundColor: `${style.background.color}${backgroundAlpha}`,
             },
-            captionAnimationViewStyle(phraseState, canvasLayout.width),
+            props.editingPreview ? undefined : captionAnimationViewStyle(phraseState, canvasLayout.width),
           ]}>
           {style.textTreatment !== 'solid' ? (
             props.preserveLineBreaks ? (
-              <AuthoredTextLayer absolute text={caption.text} style={style} canvas={canvasLayout} colorOverride={style.secondaryTextColor} offset={treatmentOffset(style.textTreatment)} transformed={transformed} />
+              <AuthoredTextLayer absolute text={caption.text} style={style} canvas={canvasLayout} colorOverride={style.secondaryTextColor} offset={treatmentOffset(style.textTreatment)} transformed={transformed} editingPreview={props.editingPreview} />
             ) : (
             <WordLayer
               absolute
@@ -260,7 +261,7 @@ export function CaptionOverlay(props: {
             )
           ) : null}
           {props.preserveLineBreaks ? (
-            <AuthoredTextLayer text={caption.text} style={style} canvas={canvasLayout} transformed={transformed} />
+            <AuthoredTextLayer text={caption.text} style={style} canvas={canvasLayout} transformed={transformed} editingPreview={props.editingPreview} />
           ) : <WordLayer
             words={visibleWords}
             allWords={renderedWords}
@@ -274,7 +275,7 @@ export function CaptionOverlay(props: {
             fittedFontSize={fittedFontSize}
             transformed={transformed}
           />}
-          {style.animation.id.startsWith('emoji-') && cueProgress !== undefined ? (
+          {!props.editingPreview && style.animation.id.startsWith('emoji-') && cueProgress !== undefined ? (
             <EmojiEffects
               mode={style.animation.id}
               emojis={cueEmojis}
@@ -406,8 +407,9 @@ function AuthoredTextLayer(props: {
   absolute?: boolean;
   colorOverride?: string;
   offset?: { x: number; y: number };
+  editingPreview?: boolean;
 }) {
-  const fontSize = fitAuthoredTextFont(props.style, props.text, props.canvas);
+  const fontSize = fitAuthoredTextFont(props.style, props.text, props.canvas, props.editingPreview);
   return (
     <View style={{ ...(props.absolute ? { position: 'absolute' as const, inset: 0 } : null), width: '100%', justifyContent: 'center', transform: props.offset ? [{ translateX: props.offset.x }, { translateY: props.offset.y }] : undefined }}>
       {props.text.replace(/\r\n/g, '\n').split('\n').map((line, index) => (
@@ -417,14 +419,16 @@ function AuthoredTextLayer(props: {
   );
 }
 
-function fitAuthoredTextFont(style: CaptionStyle, text: string, canvas: { width: number; height: number }) {
+function fitAuthoredTextFont(style: CaptionStyle, text: string, canvas: { width: number; height: number }, editingPreview = false) {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const longestLine = Math.max(1, ...lines.map((line) => Array.from(line).length));
   const availableWidth = Math.max(24, style.box.width * canvas.width - style.background.paddingX * 2);
   const availableHeight = Math.max(18, style.box.height * canvas.height - style.background.paddingY * 2);
-  const widthCap = availableWidth / Math.max(1, longestLine * 0.62);
+  const letterSpacingWidth = Math.max(0, style.letterSpacing) * Math.max(0, longestLine - 1);
+  const glyphWidth = editingPreview ? 1.1 : 0.62;
+  const widthCap = Math.max(1, availableWidth - letterSpacingWidth) / Math.max(1, longestLine * glyphWidth);
   const heightCap = availableHeight / Math.max(1, lines.length * Math.max(1, style.lineHeight));
-  return clamp(Math.min(style.fontSize, widthCap, heightCap), 9, style.fontSize);
+  return clamp(Math.min(style.fontSize, widthCap, heightCap), editingPreview ? 1 : 9, style.fontSize);
 }
 
 function wordsForAnimation(
