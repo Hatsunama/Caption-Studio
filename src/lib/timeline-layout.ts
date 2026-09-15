@@ -76,9 +76,12 @@ export function timelineCuePage<T extends TimelineInterval>(
   const selectedIndex = selectedId === undefined ? undefined : index.byId.get(selectedId);
   const selected = selectedIndex === undefined ? undefined : index.ordered[selectedIndex];
   const selectedIntersects = selected && selected.startMs <= endMs && selected.endMs >= startMs;
-  const anchor = selectedIntersects ? selectedIndex! : (index.byId.get(query.cues[0]?.id) ?? 0);
-  const first = capacity > 0 ? Math.max(0, Math.floor(anchor / capacity) * capacity) : 0;
-  const cues = query.cues.length ? index.ordered.slice(first, first + capacity) : [];
+  const cues = query.cues.slice(0, capacity);
+  if (selectedIntersects && capacity > 0 && !cues.some((cue) => cue.id === selected.id)) {
+    if (cues.length === capacity) cues.pop();
+    cues.push(selected);
+  }
+  const first = index.byId.get(cues[0]?.id) ?? 0;
   const dense = query.cues.length > MAX_TIMELINE_BODY_CUES;
   const bodies = dense ? (selectedIntersects ? [selected] : []) : query.cues;
   const layout = packTimelineLanes(bodies);
