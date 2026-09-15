@@ -8,19 +8,22 @@ import type { CaptionProject } from '@/types/project';
  */
 export function projectTimelineDuration(project: CaptionProject): number {
   let duration = totalClipDuration(project.clips ?? []);
-  for (const clip of project.audioClips ?? []) duration = Math.max(duration, audioClipEnd(clip));
+  const extend = (endMs: number) => {
+    if (Number.isFinite(endMs) && endMs >= 0) duration = Math.max(duration, endMs);
+  };
+  for (const clip of project.audioClips ?? []) extend(audioClipEnd(clip));
   for (const layer of project.layers ?? []) {
-    if (layer.kind !== 'captions' && layer.timelineVisible !== false) duration = Math.max(duration, layer.endMs);
+    if (layer.kind !== 'captions' && layer.timelineVisible !== false) extend(layer.endMs);
   }
   const captionById = new Map((project.captions ?? []).map((caption) => [caption.id, caption]));
   for (const caption of project.captions ?? []) {
-    if (caption.timelineVisible !== false) duration = Math.max(duration, caption.endMs);
+    if (caption.timelineVisible !== false) extend(caption.endMs);
   }
   for (const track of project.captionTracks?.translations ?? []) {
     for (const cue of track.cues) {
       const source = captionById.get(cue.sourceCaptionId);
       if (source && source.timelineVisible !== false && cue.timelineVisible !== false) {
-        duration = Math.max(duration, cue.endMs ?? source.endMs);
+        extend(cue.endMs ?? source.endMs);
       }
     }
   }

@@ -24,3 +24,12 @@ test('source-hidden or cue-hidden translations do not retain deleted footage dur
   project.captionTracks.translations[0].cues[0].timelineVisible = false;
   assert.equal(projectTimelineDuration(project), 2000);
 });
+
+test('invalid draft endpoints cannot poison the shared project duration', () => {
+  const project = {
+    clips: [], audioClips: [], layers: [{ kind: 'text', timelineVisible: true, endMs: Number.NaN }],
+    captions: [{ id: 'valid', endMs: 2000, timelineVisible: true }, { id: 'invalid', endMs: Infinity, timelineVisible: true }],
+    captionTracks: { translations: [{ cues: [{ sourceCaptionId: 'valid', endMs: Number.NaN, timelineVisible: true }] }] },
+  };
+  assert.equal(projectTimelineDuration(project), 2000);
+});
