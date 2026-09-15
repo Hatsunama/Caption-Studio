@@ -1,7 +1,8 @@
+import { projectTimelineDuration } from '@/lib/project-timeline';
 import { resolveCaptionStyle } from '@/lib/style-resolver';
 import { resolveLayerGeometry } from '@/lib/layer-geometry';
 import { exportCaptionPairs } from '@/lib/export-caption-pairs';
-import { buildClipTimeline, totalClipDuration } from '@/lib/video-timeline';
+import { buildClipTimeline } from '@/lib/video-timeline';
 import { effectiveVideoTransition } from '@/lib/video-transitions';
 import { resolveVideoTransform } from '@/lib/video-transform';
 import { selectExportFrameRate } from '@/lib/video-source-metadata';
@@ -84,8 +85,8 @@ export function buildTimelineRenderPlan(
   resolvedFontUris: ResolvedFontUris = new Map(),
   allowIncompleteTranslations = false,
 ): TimelineRenderPlan {
-  const durationMs = totalClipDuration(project.clips);
-  if (durationMs <= 0) throw new Error('Add at least one visible video clip before exporting.');
+  const durationMs = projectTimelineDuration(project);
+  if (durationMs <= 0) throw new Error('Add timed content before exporting.');
   const captionsEnabled = project.export.burnCaptions && project.layers.some((layer) => layer.kind === 'captions' && layer.visible);
   const activeSources = activeProjectVideoSources(project);
   const { width, height } = outputDimensions(project, activeSources);

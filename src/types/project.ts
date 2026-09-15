@@ -183,6 +183,8 @@ export type TranslationCaptionCue = {
 };
 
 export type TranslationCaptionTrack = {
+  /** Primary geometry captured for this track's automatic stacking layout. */
+  layoutAnchor?: NormalizedTransform;
   id: Identifier;
   kind: 'translation';
   sourceTrackId: 'captions';
@@ -230,6 +232,8 @@ export type TextVisualLayer = {
   startMs: number;
   endMs: number;
   style: CaptionStyle;
+  /** Timeline ownership keeps explicit canvas ranges independent of clip edits. */
+  timingMode?: 'source' | 'timeline';
   sourceAnchors?: LayerSourceAnchor[];
   timelineVisible?: boolean;
 };
@@ -246,6 +250,8 @@ export type ImageVisualLayer = NormalizedTransform & {
   box: { width: number; height: number };
   rotation: number;
   opacity: number;
+  /** Timeline ownership keeps explicit canvas ranges independent of clip edits. */
+  timingMode?: 'source' | 'timeline';
   sourceAnchors?: LayerSourceAnchor[];
   timelineVisible?: boolean;
 };
@@ -385,6 +391,8 @@ export type CaptionProject = {
   };
   captions: CaptionBlock[];
   captionTracks: CaptionTrackCollection;
+  /** Absent in legacy snapshots. Set atomically by an explicit primary transform. */
+  captionGeometryMode?: 'legacy-cue' | 'track';
   projectStyle: CaptionStyle;
   layers: VisualLayer[];
   clips: VideoClip[];

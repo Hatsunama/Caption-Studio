@@ -42,7 +42,7 @@ function fixture() {
     projectStyle: structuredClone(DEFAULT_CAPTION_STYLE),
     captions: ['first', 'second'].map((id) => ({
       id, text: id, startMs: 0, endMs: 1000, wordIds: [],
-      styleOverride: { textColor: '#123456', fontSize: 80, italic: true, position: { x: 0.1 }, animation: { id: 'none' } },
+      styleOverride: { textColor: '#123456', fontSize: 80, italic: true, position: { x: 0.1 }, scale: 2, scaleX: 3, scaleY: 4, animation: { id: 'none' } },
     })),
     transcription: { words: [{ id: 'word', styleOverride: { textColor: '#654321', fontSize: 90, italic: true } }] },
     captionTracks: { translations: [] },
@@ -188,6 +188,9 @@ for (const selected of [false, true]) {
       assert.equal(style.position.y, 0.78);
       assert.equal(style.box.width, 0.86);
       assert.equal(style.fontSize, 48);
+      assert.equal(style.scale, 1);
+      assert.equal(style.scaleX, 1);
+      assert.equal(style.scaleY, 1);
       assert.equal(style.italic, true);
     }
     assert.equal(w.state.project.transcription.words[0].styleOverride.fontSize, undefined);

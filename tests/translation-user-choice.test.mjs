@@ -7,6 +7,7 @@ import { exportCaptionPairs, exportTranslationSummary } from '../src/lib/export-
 import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
 import { serializeSrt, serializeAss } from '../src/lib/subtitle-export.ts';
 import { usableAutomaticTranslation } from '../src/lib/caption-translation-commit.ts';
+import { projectTimelineDuration, projectTimelineSegmentAt } from '../src/lib/project-timeline.ts';
 
 function fixture() {
   const project = createCaptionProject({ id: 'p1', name: 'Translation choices', sources: [{
@@ -68,12 +69,24 @@ test('a reviewed translation becoming stale still saves and reloads with human p
   assert.equal(restored.captionTracks.translations[0].cues[0].reviewed, true);
 });
 
-test('hidden, skipped and off-timeline missing lines do not inflate export warnings', () => {
+test('missing translations deliberately moved beyond footage extend canvas and require export consent', () => {
   let project = fixture();
   const trackId = project.captionTracks.translations[0].id;
   project = setTranslationCueSkipped(project, trackId, 'c2', true);
-  project.captionTracks.translations[0].cues[2].startMs = 9000;
-  project.captionTracks.translations[0].cues[2].endMs = 10000;
+  project = setTranslationCueTiming(project, trackId, 'c3', 'move', 9000, 10500);
+  project = decodeVersionTwoProject(JSON.parse(JSON.stringify(project)));
+  assert.equal(projectTimelineDuration(project), 10500);
+  assert.deepEqual(projectTimelineSegmentAt(project, 9500), { kind: 'gap', startMs: 6000, endMs: 10500 });
+  assert.deepEqual(exportTranslationSummary(project), { missing: 1, needsReview: 0 });
+  assert.throws(() => exportCaptionPairs(project), /Export anyway/);
+  assert.throws(() => buildTimelineRenderPlan(project), /Export anyway/);
+  assert.throws(() => serializeSrt(project), /Export anyway/);
+  assert.throws(() => serializeAss(project), /Export anyway/);
+  const plan = buildTimelineRenderPlan(project, undefined, true);
+  assert.equal(plan.durationMs, 10500);
+  assert.equal(plan.backgroundColor, project.canvas.backgroundColor);
+  assert.equal(exportCaptionPairs(project, true).length, 1);
+  project.captionTracks.translations[0].cues[2].timelineVisible = false;
   assert.deepEqual(exportTranslationSummary(project), { missing: 0, needsReview: 0 });
   assert.equal(exportCaptionPairs(project).length, 1);
 });

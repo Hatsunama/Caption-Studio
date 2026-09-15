@@ -1,5 +1,8 @@
+import { projectTimelineDuration } from '@/lib/project-timeline';
 import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
+import { captionPreviewState, projectHasEditorLayer } from '@/lib/caption-preview';
+import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
@@ -652,7 +655,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   }, [exitApproved, navigation]);
 
   const clipTimeline = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
-  const timelineDurationMs = totalClipDuration(project.clips);
+  const timelineDurationMs = projectTimelineDuration(project);
   const seekTimeline = transport.seek;
 
   useEffect(() => {
@@ -690,12 +693,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     () => selectedTranslationTrack ? resolveCaptionPairs(project, selectedTranslationTrack.id).filter((pair) => pair.timelineVisible) : [],
     [project, selectedTranslationTrack],
   );
-  const previewCaptions = scriptEditorOpen ? scriptDraftCaptions ?? timelineCaptions : timelineCaptions;
-  const activeCaption = useMemo(
-    () => previewCaptions.find((caption) => currentMs >= caption.startMs && currentMs < caption.endMs),
-    [currentMs, previewCaptions],
+  const previewCaptions = useMemo(() => scriptEditorOpen
+    ? reconcileCaptionScriptDraft(project, scriptDraftCaptions ?? timelineCaptions) : timelineCaptions,
+  [project, scriptEditorOpen, scriptDraftCaptions, timelineCaptions]);
+  const { active: activeCaption, activeCaptions, selected: selectedCaption } = useMemo(
+    () => captionPreviewState(previewCaptions, currentMs, selectedCaptionId),
+    [currentMs, previewCaptions, selectedCaptionId],
   );
-  const selectedCaption = previewCaptions.find((caption) => caption.id === selectedCaptionId);
   const selectedClip = project.clips.find((clip) => clip.id === selectedClipId);
   const selectedClipIndex = project.clips.findIndex((clip) => clip.id === selectedClipId);
   const transitionBoundaryAvailable = canApplyVideoTransition(project.clips, selectedClipIndex);
@@ -856,7 +860,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     transport.synchronizeProject(previous);
     setProject(previous);
     setSelectedCaptionId((id) => previous.captions.some((caption) => caption.id === id) ? id : undefined);
-    setSelectedLayerId((id) => previous.layers.some((layer) => layer.id === id) ? id : undefined);
+    setSelectedLayerId((id) => projectHasEditorLayer(previous, id) ? id : undefined);
+    setSelectedTranslationTrackId((id) => previous.captionTracks.translations.some((track) => track.id === id) ? id : undefined);
     persistProjectInBackground();
   };
 
@@ -870,7 +875,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     transport.synchronizeProject(next);
     setProject(next);
     setSelectedCaptionId((id) => next.captions.some((caption) => caption.id === id) ? id : undefined);
-    setSelectedLayerId((id) => next.layers.some((layer) => layer.id === id) ? id : undefined);
+    setSelectedLayerId((id) => projectHasEditorLayer(next, id) ? id : undefined);
+    setSelectedTranslationTrackId((id) => next.captionTracks.translations.some((track) => track.id === id) ? id : undefined);
     persistProjectInBackground();
   };
 
@@ -1262,7 +1268,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const updateSelectedCaptionTransform = (patch: CaptionStylePatch) => {
     if (!selectedCaptionId) return;
-    setProject((current) => applyStylePatch(current, selectedCaptionId, 'caption', patch));
+    updateSharedCaptionTransform(patch);
   };
 
   const updateTranslationTransform = (patch: CaptionStylePatch) => {
@@ -1343,7 +1349,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         ownedAssetLedgerRef.current = trackProjectOwnedAssets(ownedAssetLedgerRef.current, [stored.uri]);
         return addImageLayerToProject(before, {
           id, name: stored.name, uri: stored.uri, currentMs,
-          durationMs: Math.max(500, totalClipDuration(before.clips)),
+          durationMs: Math.max(500, projectTimelineDuration(before)),
         }).project;
       });
       if (editorSession.isCurrent(receipt)) selectEditorObject({ kind: 'image', id });
@@ -1454,7 +1460,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const deleteSelectedClip = () => {
-    if (!selectedClipId || editorSession.current().clips.length <= 1) return;
+    if (!selectedClipId) return;
     const result = deleteVideoClip(editorSession.current(), selectedClipId);
     if (!result) return;
     pushUndo();
@@ -1476,7 +1482,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject(next);
     persistProjectInBackground();
     transport.pause();
-    queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, totalClipDuration(next.clips) - 1))));
+    queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, projectTimelineDuration(next) - 1))));
   };
 
   const setClipGap = (clipId: string, gapMs: number, edge: 'before' | 'after' = 'before') => {
@@ -1546,6 +1552,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const commitAudioProject = (next: CaptionProject) => {
+    transport.synchronizeProject(next);
     setProject(next);
     persistProjectInBackground();
   };
@@ -1622,7 +1629,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject(result.project);
     persistProjectInBackground();
     transport.pause();
-    queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, totalClipDuration(result.project.clips) - 1))));
+    queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, projectTimelineDuration(result.project) - 1))));
   };
 
   const exportVideo = async () => {
@@ -1780,7 +1787,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           </View>
           {transport.isGap ? (
             <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
-              <Text style={{ color: '#7F8996', fontSize: 12, fontWeight: '800' }}>EMPTY TIMELINE GAP</Text>
             </View>
           ) : transport.phase === 'loading' ? (
             <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
@@ -1820,12 +1826,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <View key={layer.id} pointerEvents="box-none" style={{ position: 'absolute', inset: 0 }}>
                   <CaptionOverlay
                     caption={displayCaption}
+                    captions={scriptEditorOpen ? undefined : activeCaptions}
+                    interactionId="captions"
+                    selectionCaption={selectedLayerId === 'captions' ? selectedCaption : undefined}
                     preserveLineBreaks={scriptEditorOpen && !isPlaying}
                     editingPreview={scriptEditorOpen && !isPlaying}
                     words={project.transcription.words}
                     projectStyle={project.projectStyle}
                     currentMs={currentMs}
-                    interactive={activeTool !== 'video' && selectedLayerId === 'captions' && Boolean(selectedCaptionId) && displayCaption?.id === selectedCaptionId}
+                    interactive={activeTool !== 'video' && selectedLayerId === 'captions' && Boolean(selectedCaption)}
                     selectable={Boolean(displayCaption)}
                     onSelect={() => selectEditorObject({ kind: 'captions', captionId: displayCaption?.id })}
                     onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
@@ -1833,27 +1842,31 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     onTransformEnd={finishHistoryInteraction}
                     onDelete={selectedCaptionId ? () => confirmDeleteCaption(selectedCaptionId) : undefined}
                   />
-                  {displayTranslationPairs.map((pair) => (
-                    <CaptionOverlay
-                      key={pair.translation.id}
-                      caption={{
-                        id: pair.translation.id,
-                        text: pair.translation.text,
-                        startMs: pair.startMs,
-                        endMs: pair.endMs,
-                        wordIds: [],
-                      }}
+                  {translationTimelineTracks.filter((track) => track.visible).map((track) => {
+                    const active = displayTranslationPairs.filter((pair) => pair.trackId === track.id);
+                    const selected = selectedTranslationPair?.trackId === track.id ? selectedTranslationPair : undefined;
+                    if (!active.length && !selected) return null;
+                    const captions = active.map((pair) => ({ id: pair.translation.id, text: pair.translation.text,
+                      startMs: pair.startMs, endMs: pair.endMs, wordIds: [], styleOverride: pair.style }));
+                    return <CaptionOverlay
+                      key={track.id}
+                      interactionId={track.id}
+                      caption={captions[0]}
+                      captions={captions}
+                      selectionCaption={selected ? { id: selected.translation.id, text: selected.translation.text,
+                        startMs: selected.startMs, endMs: selected.endMs, wordIds: [] } : undefined}
+                      selectionStyle={selected?.style}
                       words={[]}
-                      projectStyle={pair.style}
+                      projectStyle={selected?.style ?? active[0].style}
                       currentMs={currentMs}
-                      interactive={activeTool !== 'video' && selectedLayerId === pair.trackId && selectedCaptionId === pair.source.id}
-                      selectable
-                      onSelect={() => selectEditorObject({ kind: 'translation', id: pair.trackId, captionId: pair.source.id })}
+                      interactive={activeTool !== 'video' && Boolean(selected)}
+                      selectable={active.length > 0}
+                      onSelect={() => selectEditorObject({ kind: 'translation', id: track.id, captionId: active[0]?.source.id })}
                       onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                       onTransform={updateTranslationTransform}
                       onTransformEnd={finishHistoryInteraction}
-                    />
-                  ))}
+                    />;
+                  })}
                 </View>
               );
             }
@@ -2028,7 +2041,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 </Text>
                 <PersistedHorizontalScroll id="tool:video:clip-actions" contentContainerStyle={{ gap: 8 }}>
                   <Action label="Split at playhead" onPress={splitClipAtPlayhead} />
-                  <Action label="Delete + close gap" danger disabled={project.clips.length <= 1} onPress={deleteSelectedClip} />
+                  <Action label="Delete + close gap" danger onPress={deleteSelectedClip} />
                   <Action label="Gap −0.5s" disabled={selectedClip.gapBeforeMs <= 0} onPress={() => setClipGap(selectedClip.id, Math.max(0, selectedClip.gapBeforeMs - 500))} />
                   <Action label={selectedClip.gapBeforeMs > 0 ? `Remove ${formatSeconds(selectedClip.gapBeforeMs)} gap` : 'No gap'} color={selectedClip.gapBeforeMs > 0 ? '#FF7C8D' : '#64E8FF'} disabled={selectedClip.gapBeforeMs <= 0} onPress={() => setClipGap(selectedClip.id, 0)} />
                   <Action label="Gap +0.5s" onPress={() => setClipGap(selectedClip.id, selectedClip.gapBeforeMs + 500)} />
@@ -2191,7 +2204,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   label="Reset all caption boxes"
                   onPress={() => {
                     beginHistoryInteraction();
-                    updateSharedCaptionTransform({ position: { x: 0.5, y: 0.78 }, box: { width: 0.86, height: 0.2 }, fontSize: 48, rotation: 0 });
+                    updateSharedCaptionTransform({ position: { x: 0.5, y: 0.78 }, box: { width: 0.86, height: 0.2 }, fontSize: 48, rotation: 0, scale: 1, scaleX: 1, scaleY: 1 });
                     queueMicrotask(finishHistoryInteraction);
                   }}
                 />

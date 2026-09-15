@@ -1,0 +1,524 @@
+{
+  "originMain": "f359293b8a1d069f91f45a8a25f0f694a60f29e1",
+  "project": {
+    "schemaVersion": 2,
+    "id": "legacy-layout",
+    "name": "Legacy layout",
+    "createdAt": "2026-09-15T02:40:36.922Z",
+    "updatedAt": "2026-09-15T02:40:36.922Z",
+    "lifecycle": {
+      "status": "draft"
+    },
+    "sources": [
+      {
+        "id": "video",
+        "uri": "file:///legacy.mp4",
+        "storageMode": "copied",
+        "displayName": "Legacy",
+        "durationMs": 5000,
+        "width": 1080,
+        "height": 1920,
+        "rotation": 0,
+        "frameRate": 30
+      }
+    ],
+    "transcription": {
+      "language": "en",
+      "modelId": "balanced",
+      "words": [],
+      "sourceResults": {}
+    },
+    "captions": [
+      {
+        "id": "c0",
+        "text": "Legacy caption 0",
+        "startMs": 0,
+        "endMs": 1800,
+        "wordIds": [],
+        "styleOverride": {
+          "italic": true,
+          "textColor": "#00FF00",
+          "position": {
+            "x": 0.2,
+            "y": 0.2
+          },
+          "box": {
+            "width": 0.6,
+            "height": 0.1
+          },
+          "rotation": 12,
+          "scale": 1.3,
+          "scaleX": 1.1,
+          "scaleY": 0.9
+        }
+      },
+      {
+        "id": "c1",
+        "text": "Legacy caption 1",
+        "startMs": 2000,
+        "endMs": 3800,
+        "wordIds": [],
+        "styleOverride": {
+          "italic": true,
+          "textColor": "#00FF00",
+          "position": {
+            "x": 0.7,
+            "y": 0.5
+          },
+          "box": {
+            "width": 0.4,
+            "height": 0.15
+          },
+          "rotation": -20,
+          "scale": 0.8,
+          "scaleX": 1.1,
+          "scaleY": 0.9
+        }
+      }
+    ],
+    "captionTracks": {
+      "schemaVersion": 1,
+      "primaryTrackId": "captions",
+      "translations": [
+        {
+          "id": "fr",
+          "kind": "translation",
+          "sourceTrackId": "captions",
+          "sourceLanguageTag": "en",
+          "languageTag": "fr",
+          "displayName": "fr",
+          "visible": true,
+          "origin": "manual",
+          "provider": {
+            "id": "manual"
+          },
+          "stackGap": 0.028,
+          "cues": [
+            {
+              "id": "fr:c0",
+              "sourceCaptionId": "c0",
+              "sourceTextSnapshot": "Legacy caption 0",
+              "text": "First translation",
+              "status": "translated",
+              "reviewed": false,
+              "startMs": 0,
+              "endMs": 1800,
+              "timelineVisible": true
+            },
+            {
+              "id": "fr:c1",
+              "sourceCaptionId": "c1",
+              "sourceTextSnapshot": "Legacy caption 1",
+              "text": "Second translation",
+              "status": "translated",
+              "reviewed": false,
+              "startMs": 2000,
+              "endMs": 3800,
+              "timelineVisible": true,
+              "styleOverride": {
+                "box": {
+                  "width": 0.85
+                },
+                "scaleY": 1.2,
+                "textColor": "#FF0000"
+              }
+            }
+          ]
+        },
+        {
+          "id": "de",
+          "kind": "translation",
+          "sourceTrackId": "captions",
+          "sourceLanguageTag": "en",
+          "languageTag": "de",
+          "displayName": "de",
+          "visible": true,
+          "origin": "manual",
+          "provider": {
+            "id": "manual"
+          },
+          "stackGap": 0.028,
+          "cues": [
+            {
+              "id": "de:c0",
+              "sourceCaptionId": "c0",
+              "sourceTextSnapshot": "Legacy caption 0",
+              "text": "First translation",
+              "status": "translated",
+              "reviewed": false,
+              "startMs": 0,
+              "endMs": 1800,
+              "timelineVisible": true
+            },
+            {
+              "id": "de:c1",
+              "sourceCaptionId": "c1",
+              "sourceTextSnapshot": "Legacy caption 1",
+              "text": "Second translation",
+              "status": "translated",
+              "reviewed": false,
+              "startMs": 2000,
+              "endMs": 3800,
+              "timelineVisible": true
+            }
+          ]
+        }
+      ]
+    },
+    "projectStyle": {
+      "scale": 1,
+      "scaleX": 1,
+      "scaleY": 1,
+      "font": {
+        "id": "inter-bold",
+        "family": "sans-serif",
+        "source": "system"
+      },
+      "fontSize": 48,
+      "fontWeight": "800",
+      "italic": false,
+      "textColor": "#FFFFFF",
+      "secondaryTextColor": "#FF4FD8",
+      "textTreatment": "solid",
+      "activeWordColor": "#64D2FF",
+      "stroke": {
+        "color": "#111111",
+        "width": 3
+      },
+      "shadow": {
+        "color": "#000000",
+        "opacity": 0.45,
+        "blur": 4,
+        "offsetX": 0,
+        "offsetY": 3
+      },
+      "background": {
+        "color": "#000000",
+        "opacity": 0,
+        "radius": 18,
+        "paddingX": 16,
+        "paddingY": 10
+      },
+      "alignment": "center",
+      "letterSpacing": 0,
+      "lineHeight": 1.05,
+      "textTransform": "none",
+      "position": {
+        "x": 0.5,
+        "y": 0.78
+      },
+      "box": {
+        "width": 0.86,
+        "height": 0.2
+      },
+      "rotation": 0,
+      "maxLines": 2,
+      "animation": {
+        "id": "active-word",
+        "intensity": 0.12,
+        "durationMs": 140
+      }
+    },
+    "layers": [
+      {
+        "id": "captions",
+        "kind": "captions",
+        "name": "Captions",
+        "visible": true
+      }
+    ],
+    "clips": [
+      {
+        "id": "clip-video-0",
+        "sourceId": "video",
+        "availableSourceStartMs": 0,
+        "availableSourceEndMs": 5000,
+        "sourceStartMs": 0,
+        "sourceEndMs": 5000,
+        "gapBeforeMs": 0,
+        "gapAfterMs": 0,
+        "playbackRate": 1,
+        "volume": 1,
+        "muted": false,
+        "fadeInMs": 0,
+        "fadeOutMs": 0,
+        "transitionAfter": {
+          "type": "none",
+          "durationMs": 0
+        },
+        "transform": {
+          "fit": "fit",
+          "position": {
+            "x": 0.5,
+            "y": 0.5
+          },
+          "scale": 1,
+          "rotation": 0
+        }
+      }
+    ],
+    "audioSources": [],
+    "audioClips": [],
+    "canvas": {
+      "preset": "source",
+      "aspectWidth": 1080,
+      "aspectHeight": 1920,
+      "backgroundColor": "#000000"
+    },
+    "videoTransform": {
+      "fit": "fit",
+      "position": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "scale": 1,
+      "rotation": 0
+    },
+    "backgroundReplacement": {
+      "enabled": false,
+      "mask": {
+        "qualityPreset": "stable",
+        "threshold": 0.46,
+        "softness": 0.14,
+        "temporalStability": 0.78,
+        "edgeFeather": 0.45
+      },
+      "personTransform": {
+        "position": {
+          "x": 0.5,
+          "y": 0.5
+        },
+        "scale": 1,
+        "rotation": 0
+      },
+      "keyframes": []
+    },
+    "export": {
+      "resolution": "1080p",
+      "format": "mp4",
+      "burnCaptions": true
+    }
+  },
+  "styles": {
+    "fr": [
+      {
+        "font": {
+          "id": "system-sans",
+          "family": "sans-serif",
+          "source": "system"
+        },
+        "fontSize": 34,
+        "fontWeight": "700",
+        "italic": true,
+        "textColor": "#FFFFFF",
+        "secondaryTextColor": "#FF4FD8",
+        "textTreatment": "solid",
+        "activeWordColor": "#64D2FF",
+        "stroke": {
+          "color": "#111111",
+          "width": 3
+        },
+        "shadow": {
+          "color": "#000000",
+          "opacity": 0.45,
+          "blur": 4,
+          "offsetX": 0,
+          "offsetY": 3
+        },
+        "background": {
+          "color": "#000000",
+          "opacity": 0,
+          "radius": 18,
+          "paddingX": 16,
+          "paddingY": 10
+        },
+        "alignment": "center",
+        "letterSpacing": 0,
+        "lineHeight": 1.05,
+        "textTransform": "none",
+        "position": {
+          "x": 0.45,
+          "y": 0.34650000000000003
+        },
+        "box": {
+          "width": 0.9,
+          "height": 0.12
+        },
+        "rotation": 12,
+        "scale": 1,
+        "scaleX": 1,
+        "scaleY": 1,
+        "maxLines": 2,
+        "animation": {
+          "id": "none",
+          "intensity": 1,
+          "durationMs": 220
+        }
+      },
+      {
+        "font": {
+          "id": "system-sans",
+          "family": "sans-serif",
+          "source": "system"
+        },
+        "fontSize": 34,
+        "fontWeight": "700",
+        "italic": true,
+        "textColor": "#FF0000",
+        "secondaryTextColor": "#FF4FD8",
+        "textTreatment": "solid",
+        "activeWordColor": "#64D2FF",
+        "stroke": {
+          "color": "#111111",
+          "width": 3
+        },
+        "shadow": {
+          "color": "#000000",
+          "opacity": 0.45,
+          "blur": 4,
+          "offsetX": 0,
+          "offsetY": 3
+        },
+        "background": {
+          "color": "#000000",
+          "opacity": 0,
+          "radius": 18,
+          "paddingX": 16,
+          "paddingY": 10
+        },
+        "alignment": "center",
+        "letterSpacing": 0,
+        "lineHeight": 1.05,
+        "textTransform": "none",
+        "position": {
+          "x": 0.575,
+          "y": 0.654
+        },
+        "box": {
+          "width": 0.85,
+          "height": 0.12
+        },
+        "rotation": -20,
+        "scale": 1,
+        "scaleX": 1,
+        "scaleY": 1.2,
+        "maxLines": 2,
+        "animation": {
+          "id": "none",
+          "intensity": 1,
+          "durationMs": 220
+        }
+      }
+    ],
+    "de": [
+      {
+        "font": {
+          "id": "system-sans",
+          "family": "sans-serif",
+          "source": "system"
+        },
+        "fontSize": 34,
+        "fontWeight": "700",
+        "italic": true,
+        "textColor": "#FFFFFF",
+        "secondaryTextColor": "#FF4FD8",
+        "textTreatment": "solid",
+        "activeWordColor": "#64D2FF",
+        "stroke": {
+          "color": "#111111",
+          "width": 3
+        },
+        "shadow": {
+          "color": "#000000",
+          "opacity": 0.45,
+          "blur": 4,
+          "offsetX": 0,
+          "offsetY": 3
+        },
+        "background": {
+          "color": "#000000",
+          "opacity": 0,
+          "radius": 18,
+          "paddingX": 16,
+          "paddingY": 10
+        },
+        "alignment": "center",
+        "letterSpacing": 0,
+        "lineHeight": 1.05,
+        "textTransform": "none",
+        "position": {
+          "x": 0.45,
+          "y": 0.34650000000000003
+        },
+        "box": {
+          "width": 0.9,
+          "height": 0.12
+        },
+        "rotation": 12,
+        "scale": 1,
+        "scaleX": 1,
+        "scaleY": 1,
+        "maxLines": 2,
+        "animation": {
+          "id": "none",
+          "intensity": 1,
+          "durationMs": 220
+        }
+      },
+      {
+        "font": {
+          "id": "system-sans",
+          "family": "sans-serif",
+          "source": "system"
+        },
+        "fontSize": 34,
+        "fontWeight": "700",
+        "italic": true,
+        "textColor": "#FFFFFF",
+        "secondaryTextColor": "#FF4FD8",
+        "textTreatment": "solid",
+        "activeWordColor": "#64D2FF",
+        "stroke": {
+          "color": "#111111",
+          "width": 3
+        },
+        "shadow": {
+          "color": "#000000",
+          "opacity": 0.45,
+          "blur": 4,
+          "offsetX": 0,
+          "offsetY": 3
+        },
+        "background": {
+          "color": "#000000",
+          "opacity": 0,
+          "radius": 18,
+          "paddingX": 16,
+          "paddingY": 10
+        },
+        "alignment": "center",
+        "letterSpacing": 0,
+        "lineHeight": 1.05,
+        "textTransform": "none",
+        "position": {
+          "x": 0.55,
+          "y": 0.6420000000000001
+        },
+        "box": {
+          "width": 0.9,
+          "height": 0.12
+        },
+        "rotation": -20,
+        "scale": 1,
+        "scaleX": 1,
+        "scaleY": 1,
+        "maxLines": 2,
+        "animation": {
+          "id": "none",
+          "intensity": 1,
+          "durationMs": 220
+        }
+      }
+    ]
+  }
+}

@@ -231,10 +231,10 @@ internal class TimelineVideoExporter(private val context: Context) {
       .setRemoveAudio(true)
       .build()
     val sequences = mutableListOf<EditedMediaItemSequence>()
-    sequences += buildNativeVideoSequence(plan)
+    if (plan.clips.isNotEmpty()) sequences += buildNativeVideoSequence(plan)
     sequences += EditedMediaItemSequence.withVideoFrom(listOf(baseVideo))
     sequences += buildOriginalAudioSequences(plan, task)
-    plan.audioClips.mapNotNull { buildInsertedAudioSequence(it, plan.durationMs) }.forEach(sequences::add)
+    plan.audioClips.mapNotNull { buildInsertedAudioSequence(it) }.forEach(sequences::add)
     return Composition.Builder(sequences)
       .setVideoCompositorSettings(TimelineVideoCompositorSettings(plan))
       .setEffects(Effects(emptyList(), listOf(OverlayEffect(listOf(task.overlay)))))
@@ -288,9 +288,8 @@ internal class TimelineVideoExporter(private val context: Context) {
       builder.build()
     }
 
-  private fun buildInsertedAudioSequence(clip: RenderAudioClip, timelineDurationMs: Long): EditedMediaItemSequence? {
-    val availableDurationMs = (timelineDurationMs - clip.startMs).coerceAtLeast(0)
-    val sourceEndMs = min(clip.sourceEndMs, clip.sourceStartMs + availableDurationMs)
+  private fun buildInsertedAudioSequence(clip: RenderAudioClip): EditedMediaItemSequence? {
+    val sourceEndMs = clip.sourceEndMs
     if (clip.muted || clip.volume <= 0f || sourceEndMs <= clip.sourceStartMs || !hasAudioTrack(clip.uri)) return null
     val builder = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
     if (clip.startMs > 0) builder.addGap(clip.startMs * 1_000L)
@@ -534,7 +533,7 @@ internal class TimelineVideoCompositorSettings(
   override fun getOutputSize(inputSizes: List<Size>) = Size(plan.width, plan.height)
 
   override fun getOverlaySettings(inputId: Int, presentationTimeUs: Long): OverlaySettings {
-    if (inputId != VIDEO_SEQUENCE_INDEX) return StaticOverlaySettings.Builder().build()
+    if (plan.clips.isEmpty() || inputId != VIDEO_SEQUENCE_INDEX) return StaticOverlaySettings.Builder().build()
     val timeMs = (presentationTimeUs / 1_000L).coerceIn(0L, plan.durationMs)
     val clip = plan.clips.firstOrNull { timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs }
       ?: return StaticOverlaySettings.Builder().setAlphaScale(0f).build()

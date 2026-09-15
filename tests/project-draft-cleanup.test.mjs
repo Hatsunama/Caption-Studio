@@ -87,6 +87,7 @@ function harness(options = {}) {
     '@/lib/audio-timeline': {},
     '@/lib/audio-waveform': {},
     '@/lib/video-timeline': {},
+    '@/lib/project-timeline': {},
     '@/lib/project-presentation': { humanVideoName: (name) => name },
     '@/services/database': {
       async getProject() { return stored; },

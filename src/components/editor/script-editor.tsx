@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 
 import {
+  decodeCaptionDraft,
+  sameCaptionDraft,
   mergeCaptionScriptBlock,
   splitCaptionScriptBlock,
   updateCaptionScriptText,
@@ -22,6 +24,7 @@ import {
   clearEditorDraftJournal,
   readEditorDraftJournal,
   writeEditorDraftJournal,
+  type EditorDraftJournalRecovery,
 } from '@/services/editor-draft-journal';
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionBlock, WordToken } from '@/types/project';
@@ -89,6 +92,8 @@ export function ScriptEditor(props: {
   const [closing, setClosing] = useState(false);
   const [journalReady, setJournalReady] = useState(false);
   const [journalError, setJournalError] = useState<string>();
+  const [journalRecovery, setJournalRecovery] = useState<EditorDraftJournalRecovery>();
+  const journalProtected = !!journalRecovery?.failures.length;
   const wasVisibleRef = useRef(false);
   const draftVersionRef = useRef(0);
   const captionLayoutsRef = useRef<Record<string, { y: number; height: number; index: number }>>({});
@@ -201,10 +206,18 @@ export function ScriptEditor(props: {
     return index < 0 ? 0 : index;
   }, [sourceCaptions, props.initialCaptionId]);
 
+  // Only opening/closing owns recovery's lifetime. A style or project revision
+  // update while storage is loading must not cancel that read or reset the draft.
+  const openingStateRef = useRef({ sourceCaptions, initialIndex, onDraftChange, baseRevision: props.baseRevision });
+  useEffect(() => {
+    openingStateRef.current = { sourceCaptions, initialIndex, onDraftChange, baseRevision: props.baseRevision };
+  }, [sourceCaptions, initialIndex, onDraftChange, props.baseRevision]);
+
   useEffect(() => {
     const opening = props.visible && !wasVisibleRef.current;
     wasVisibleRef.current = props.visible;
     if (!opening) return;
+    const { sourceCaptions, initialIndex, onDraftChange } = openingStateRef.current;
     setDraftCaptions(sourceCaptions);
     draftVersionRef.current = 0;
     setInputHeights({});
@@ -218,58 +231,75 @@ export function ScriptEditor(props: {
     setKeyboardOpen(Keyboard.isVisible());
     setJournalReady(false);
     setJournalError(undefined);
+    setJournalRecovery(undefined);
     selectionRef.current = {};
     splitCounterRef.current = 0;
     let active = true;
-    void readEditorDraftJournal(props.projectId, 'caption-script').then((journal) => {
+    void readEditorDraftJournal(projectId, 'caption-script').then((journal) => {
       if (!active) return;
+      setJournalRecovery(journal?.recovery);
+      const preserveRecovery = !!journal?.recovery?.failures.length;
       const recovered = decodeCaptionDraft(journal?.payload);
       if (!recovered) {
+        if (journal) {
+          setJournalError('The recovery draft could not be decoded. It is preserved; automatic recovery saving is paused.');
+          return;
+        }
         setJournalReady(true);
         return;
       }
-      const conflict = journal?.baseRevision !== props.baseRevision;
+      const conflict = journal?.baseRevision !== openingStateRef.current.baseRevision;
       Alert.alert(
         conflict ? 'Recovery draft needs review' : 'Restore unsaved caption edits?',
-        conflict
+        [journal?.recovery?.warning, conflict
           ? 'The project changed after this recovery draft was created. Review it carefully before saving.'
-          : 'Caption Studio recovered edits that were not saved before the app closed.',
+          : 'Caption Studio recovered edits that were not saved before the app closed.'].filter(Boolean).join('\n\n'),
         [
           {
-            text: 'Discard recovery',
-            style: 'destructive',
+            text: preserveRecovery ? 'Keep current captions' : 'Discard recovery',
+            style: preserveRecovery ? 'cancel' : 'destructive',
             onPress: () => {
-              void clearEditorDraftJournal(props.projectId, 'caption-script');
-              setJournalReady(true);
+              if (!active) return;
+              if (preserveRecovery) { setJournalReady(true); return; }
+              void clearEditorDraftJournal(projectId, 'caption-script')
+                .then(() => { if (active) setJournalReady(true); })
+                .catch(() => { if (active) setJournalError('Recovery data could not be cleared. It is preserved; try opening the editor again.'); });
             },
           },
-          { text: 'Restore', onPress: () => { draftVersionRef.current += 1; setDraftCaptions(recovered); setJournalReady(true); } },
+          { text: 'Restore', onPress: () => {
+            if (!active) return;
+            draftVersionRef.current += 1;
+            setDraftCaptions(recovered);
+            setJournalReady(true);
+          } },
         ],
       );
-    }).catch(() => {
+    }).catch((caught) => {
       if (active) {
-        setJournalError('Caption recovery storage could not be read. Save your changes before leaving this editor.');
-        setJournalReady(true);
+        setJournalError(caught instanceof Error ? caught.message : 'Caption recovery storage could not be read. Existing recovery data is preserved.');
+        // A failed read must never authorize overwriting an unread journal.
+        setJournalReady(false);
       }
     });
     return () => {
       active = false;
     };
-  }, [initialIndex, onDraftChange, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
+  }, [projectId, props.visible]);
 
   useEffect(() => {
     if (!props.visible || closing || !journalReady || sameCaptionDraft(draftCaptions, sourceCaptions)) return;
+    if (journalProtected) return;
     let active = true;
     const timer = setTimeout(() => {
       void writeEditorDraftJournal(props.projectId, 'caption-script', props.baseRevision, draftCaptions)
         .then(() => { if (active) setJournalError(undefined); })
-        .catch(() => { if (active) setJournalError('Caption recovery could not be saved. Keep this editor open until you save.'); });
+        .catch((caught) => { if (active) setJournalError(caught instanceof Error ? caught.message : 'Caption recovery could not be saved. Keep this editor open until you save.'); });
     }, 600);
     return () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [closing, draftCaptions, journalReady, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
+  }, [closing, draftCaptions, journalProtected, journalReady, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
 
   useEffect(() => {
     if (!props.visible) return;
@@ -424,12 +454,16 @@ export function ScriptEditor(props: {
     const savingVersion = draftVersionRef.current;
     const savingDraft = draftCaptions;
     try {
-      if (!await props.onSave(savingDraft)) return;
+      if (!await props.onSave(savingDraft)) {
+        setSaveError('Caption edits were not saved. Review the draft and try again.');
+        return;
+      }
       if (draftVersionRef.current !== savingVersion) {
         setSaveError('Captions changed while saving. Review the latest text, then tap Done again.');
         return;
       }
-      await clearEditorDraftJournal(props.projectId, 'caption-script');
+      // Saving current edits does not authorize deleting an unread older draft.
+      if (journalReady && !journalProtected) await clearEditorDraftJournal(props.projectId, 'caption-script');
       props.onCancel();
     } catch (caught) {
       setSaveError(caught instanceof Error ? caught.message : 'Caption changes were not saved. Try again.');
@@ -444,7 +478,7 @@ export function ScriptEditor(props: {
       setClosing(true);
       setSaveError(undefined);
       try {
-        await clearEditorDraftJournal(projectId, 'caption-script');
+        if (journalReady && !journalProtected) await clearEditorDraftJournal(projectId, 'caption-script');
         onCancel();
       } catch (caught) {
         setJournalError(caught instanceof Error ? caught.message : 'Caption recovery could not be cleared. Your edits are still open.');
@@ -456,11 +490,13 @@ export function ScriptEditor(props: {
       void close();
       return;
     }
-    Alert.alert('Discard unsaved caption edits?', 'The recovery copy is also removed when you discard.', [
+    Alert.alert('Discard unsaved caption edits?', journalReady && !journalProtected
+      ? 'The recovery copy is also removed when you discard.'
+      : 'Current edits will be discarded. The unread recovery copy will be preserved.', [
       { text: 'Keep editing', style: 'cancel' },
       { text: 'Discard', style: 'destructive', onPress: () => { void close(); } },
     ]);
-  }, [closing, draftCaptions, onCancel, projectId, saving, sourceCaptions]);
+  }, [closing, draftCaptions, journalProtected, journalReady, onCancel, projectId, saving, sourceCaptions]);
 
   useEffect(() => {
     if (!props.visible) {
@@ -573,6 +609,7 @@ export function ScriptEditor(props: {
               </Text> : null}
               {boundaryMessage ? <Text style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{boundaryMessage}</Text> : null}
               {journalError ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{journalError}</Text> : null}
+              {journalRecovery?.warning ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{journalRecovery.warning}</Text> : null}
               {saveError ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{saveError}</Text> : null}
             </View>
           )}
@@ -679,22 +716,4 @@ function nextSplitCaptionId(
     candidate = `${parentId}-split-${counter.current++}`;
   } while (captions.some((caption) => caption.id === candidate));
   return candidate;
-}
-
-function decodeCaptionDraft(value: unknown): CaptionBlock[] | null {
-  if (!Array.isArray(value) || value.length > 20_000) return null;
-  const valid = value.every((entry) => {
-    if (!entry || typeof entry !== 'object') return false;
-    const caption = entry as Partial<CaptionBlock>;
-    return typeof caption.id === 'string'
-      && typeof caption.text === 'string'
-      && Number.isFinite(caption.startMs)
-      && Number.isFinite(caption.endMs)
-      && (caption.endMs ?? 0) > (caption.startMs ?? 0);
-  });
-  return valid ? value as CaptionBlock[] : null;
-}
-
-function sameCaptionDraft(left: CaptionBlock[], right: CaptionBlock[]) {
-  return JSON.stringify(left) === JSON.stringify(right);
 }

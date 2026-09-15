@@ -171,7 +171,6 @@ internal fun parseTimelineRenderPlan(value: Map<String, Any>): TimelineRenderPla
     layers = value.list("layers").map(::parseLayer),
     audioClips = value.list("audioClips").map(::parseAudioClip),
   ).also { plan ->
-    require(plan.clips.isNotEmpty()) { "The render plan does not contain video clips" }
     require(plan.clips.zipWithNext().all { (first, second) -> first.timelineEndMs <= second.timelineStartMs }) {
       "Video clips must be ordered and non-overlapping"
     }
@@ -181,6 +180,9 @@ internal fun parseTimelineRenderPlan(value: Map<String, Any>): TimelineRenderPla
     }
     require(plan.audioClips.all { it.startMs >= 0 && it.startMs < plan.durationMs }) {
       "An audio clip starts outside the render duration"
+    }
+    require(plan.audioClips.all { it.sourceEndMs - it.sourceStartMs <= plan.durationMs - it.startMs }) {
+      "An audio clip extends beyond the render duration"
     }
   }
 }

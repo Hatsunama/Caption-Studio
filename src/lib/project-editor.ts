@@ -1,4 +1,6 @@
+import { projectTimelineDuration } from '@/lib/project-timeline';
 import { mergeStyle } from '@/lib/style-resolver';
+import { decodeCaptionDraft, reconcileCaptionScriptDraft, sameCaptionContent } from '@/lib/caption-script';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { applyCaptionTextChanges, type CaptionTextChanges } from '@/lib/caption-text-edits';
 import { applyTimelineSpliceToAudioClips } from '@/lib/audio-timeline';
@@ -22,6 +24,8 @@ import {
   sourceTimeAt,
   timelineTimeAt,
   totalClipDuration,
+  translationSpliceMapping,
+  type TranslationTimeMapping,
 } from '@/lib/video-timeline';
 import {
   DEFAULT_CAPTION_STYLE,
@@ -32,7 +36,7 @@ import {
   type VideoClip,
   type VideoTransformPatch,
 } from '@/types/project';
-import { editTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
+import { editCanvasTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
 
 export function setCaptionTexts(project: CaptionProject, changes: CaptionTextChanges) {
   const changed = applyCaptionTextChanges(project.captions, changes);
@@ -87,20 +91,7 @@ export function setCaptionTiming(
   const entries = buildClipTimeline(project.clips);
   const selected = project.captions.find((caption) => caption.id === captionId);
   if (!selected || selected.timelineVisible === false) return project;
-  const durationMs = totalClipDuration(project.clips);
-  if (durationMs < 80) return project;
-  const minDuration = 80;
-  let safeStartMs = selected.startMs;
-  let safeEndMs = selected.endMs;
-  if (edge === 'start') {
-    safeStartMs = clamp(startMs, 0, selected.endMs - minDuration);
-  } else if (edge === 'end') {
-    safeEndMs = clamp(endMs, selected.startMs + minDuration, durationMs);
-  } else {
-    const captionDurationMs = Math.min(durationMs, Math.max(minDuration, selected.endMs - selected.startMs));
-    safeStartMs = clamp(startMs, 0, durationMs - captionDurationMs);
-    safeEndMs = safeStartMs + captionDurationMs;
-  }
+  const { startMs: safeStartMs, endMs: safeEndMs } = editCanvasTimelineRange(selected, edge, startMs, endMs);
   if (safeStartMs === selected.startMs && safeEndMs === selected.endMs) return project;
   const captions = project.captions
     .map((caption) => caption.id === captionId
@@ -139,21 +130,36 @@ function withTimelineCaptionTiming(
 }
 
 export function replaceVisibleCaptionScript(project: CaptionProject, captions: CaptionProject['captions']) {
+  if (!decodeCaptionDraft(captions)) throw new Error('Caption edits were not saved. The draft contains invalid caption data.');
+  captions = reconcileCaptionScriptDraft(project, captions);
   const visible = project.captions.filter((caption) => caption.timelineVisible !== false);
   const hidden = project.captions.filter((caption) => caption.timelineVisible === false);
   const hiddenIds = new Set(hidden.map((caption) => caption.id));
+  const currentById = new Map(visible.map((caption) => [caption.id, caption]));
   const ids = new Set<string>();
   for (const caption of captions) {
+    const current = currentById.get(caption.id);
+    // Schema-valid short legacy timings are grandfathered only when unchanged.
+    const unchangedTiming = current?.startMs === caption.startMs && current?.endMs === caption.endMs;
     if (
       !caption.id
       || ids.has(caption.id)
       || hiddenIds.has(caption.id)
       || !caption.text.trim()
-      || caption.endMs - caption.startMs < 80
-    ) return project;
+      || !Number.isFinite(caption.startMs)
+      || !Number.isFinite(caption.endMs)
+      || caption.startMs < 0
+      || caption.endMs < caption.startMs
+      || (!unchangedTiming && caption.endMs - caption.startMs < 80)
+    ) throw new Error('Caption edits were not saved. Each caption needs unique identity, text, and valid timing; new or retimed captions must last at least 0.08 seconds.');
     ids.add(caption.id);
   }
-  if (captions.length === visible.length && captions.every((caption, index) => caption === visible[index])) return project;
+  // JSON recovery, sorting and geometry reconciliation create new objects. A
+  // semantic no-op must retain the project identity that gates history and I/O.
+  if (captions.length === visible.length && captions.every((caption) => {
+    const current = currentById.get(caption.id);
+    return current !== undefined && sameCaptionContent(caption, current);
+  })) return project;
   return updateProject(project, {
     captions: [...captions, ...hidden].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs),
   });
@@ -167,19 +173,13 @@ export function setLayerTiming(
   endMs: number,
 ) {
   const selected = project.layers.find((layer) => layer.id === layerId && layer.kind !== 'captions');
-  if (!selected || selected.kind === 'captions') return project;
-  const range = editTimelineRange(
-    { startMs: selected.startMs, endMs: selected.endMs },
-    edge,
-    startMs,
-    endMs,
-    totalClipDuration(project.clips),
-  );
+  if (!selected || selected.kind === 'captions' || selected.timelineVisible === false) return project;
+  const range = editCanvasTimelineRange(selected, edge, startMs, endMs);
   if (range.startMs === selected.startMs && range.endMs === selected.endMs) return project;
   const entries = buildClipTimeline(project.clips);
   return updateProject(project, {
     layers: project.layers.map((layer) => layer.id === layerId && layer.kind !== 'captions'
-      ? attachLayerToTimeline({ ...layer, ...range, timelineVisible: true }, entries, true)
+      ? attachLayerToTimeline({ ...layer, ...range }, entries, true)
       : layer),
   });
 }
@@ -193,15 +193,17 @@ export function setImageLayer(project: CaptionProject, layerId: string, patch: P
 }
 
 export function createTextLayer(project: CaptionProject, id: string, currentMs: number, durationMs: number) {
-  const startMs = clamp(currentMs, 0, Math.max(0, durationMs - 500));
+  const startMs = Number.isFinite(currentMs) ? Math.max(0, currentMs) : 0;
+  const defaultEndMs = Number.isFinite(durationMs) && startMs < durationMs
+    ? Math.min(durationMs, startMs + 3_000) : startMs + 3_000;
+  const range = editCanvasTimelineRange({ startMs, endMs: defaultEndMs }, 'end', startMs, defaultEndMs);
   const layer = attachLayerToTimeline<TextVisualLayer>({
     id,
     kind: 'text',
     name: 'New Text',
     visible: true,
     text: 'New text',
-    startMs,
-    endMs: Math.min(durationMs, startMs + 3_000),
+    ...range,
     style: mergeStyle(DEFAULT_CAPTION_STYLE, {
       position: { x: 0.5, y: 0.48 },
       box: { width: 0.72, height: 0.18 },
@@ -222,15 +224,17 @@ export function addImageLayer(project: CaptionProject, options: {
   currentMs: number;
   durationMs: number;
 }) {
-  const startMs = clamp(options.currentMs, 0, Math.max(0, options.durationMs - 500));
+  const startMs = Number.isFinite(options.currentMs) ? Math.max(0, options.currentMs) : 0;
+  const defaultEndMs = Number.isFinite(options.durationMs) && startMs < options.durationMs
+    ? Math.min(options.durationMs, startMs + 3_000) : startMs + 3_000;
+  const range = editCanvasTimelineRange({ startMs, endMs: defaultEndMs }, 'end', startMs, defaultEndMs);
   const layer = attachLayerToTimeline<ImageVisualLayer>({
     id: options.id,
     kind: 'image',
     name: options.name.slice(0, 18) || 'Sticker',
     visible: true,
     uri: options.uri,
-    startMs,
-    endMs: Math.min(options.durationMs, startMs + 3_000),
+    ...range,
     position: { x: 0.5, y: 0.5 },
     box: { width: 0.34, height: 0.24 },
     rotation: 0,
@@ -265,6 +269,7 @@ export function splitVisualLayer(
   if (
     !layer
     || layer.kind === 'captions'
+    || layer.timelineVisible === false
     || leftId === rightId
     || project.layers.some((candidate) => candidate.id === leftId || candidate.id === rightId)
   ) return null;
@@ -357,22 +362,49 @@ export function reorderVideoClip(project: CaptionProject, clipId: string, toInde
     };
   });
   const rebuilt = rebuildAfterLayoutEdit(project, clips, project.captions, { atMs: 0, removeMs: 0, insertMs: 0 });
-  const synchronizedCaptionTracks = synchronizeCaptionTracks(project, captions);
   const next = {
     ...rebuilt,
     captions,
     captionTracks: remapTranslationTrackTimings(
-      synchronizedCaptionTracks,
+      project.captionTracks,
       project.captions,
-      captions,
+      translationReorderMapping(project.clips, clips),
     ),
   };
   const entry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId);
   return { project: next, seekMs: entry?.startMs ?? 0 };
 }
 
+function translationReorderMapping(before: VideoClip[], after: VideoClip[]): TranslationTimeMapping {
+  const oldEntries = buildClipTimeline(before);
+  const nextById = new Map(buildClipTimeline(after).map((entry) => [entry.clip.id, entry]));
+  return {
+    operation: 'reorder',
+    durationMs: totalClipDuration(after),
+    mapRange: (range, beforeCaption) => {
+      // One cue stores one interval. Choose its owner by media overlap, excluding
+      // gaps; the primary anchor breaks ties, then prior timeline order does.
+      let owner: (typeof oldEntries)[number] | undefined;
+      let maximumOverlap = 0;
+      for (const entry of oldEntries) {
+        const overlap = Math.min(range.endMs, entry.endMs) - Math.max(range.startMs, entry.startMs);
+        if (overlap > 0 && (overlap > maximumOverlap
+          || (overlap === maximumOverlap && entry.clip.id === beforeCaption.sourceAnchor?.clipId))) {
+          owner = entry;
+          maximumOverlap = overlap;
+        }
+      }
+      // Gap-only/out-of-media intervals have no owner: retain absolute timing.
+      // The track remapper clamps to timeline bounds and hides only empty ranges.
+      if (!owner) return range;
+      const next = nextById.get(owner.clip.id);
+      if (!next) throw new Error('Translation reorder mapping lost a clip.');
+      const delta = next.startMs - owner.startMs;
+      return { startMs: range.startMs + delta, endMs: range.endMs + delta };
+    },
+  };
+}
 export function deleteVideoClip(project: CaptionProject, clipId: string) {
-  if (project.clips.length <= 1) return null;
   const entry = buildClipTimeline(project.clips).find((candidate) => candidate.clip.id === clipId);
   if (!entry) return null;
   const anchoredCaptions = anchorCaptionsToClips(project.captions, project.clips, project.transcription.words)
@@ -383,7 +415,7 @@ export function deleteVideoClip(project: CaptionProject, clipId: string) {
     removeMs: entry.afterGapEndMs - entry.gapStartMs,
     insertMs: 0,
   });
-  const duration = totalClipDuration(clips);
+  const duration = projectTimelineDuration(next);
   return { project: next, seekMs: Math.min(entry.gapStartMs, Math.max(0, duration - 1)) };
 }
 
@@ -458,7 +490,7 @@ export function trimVideoClip(project: CaptionProject, clipId: string, edge: 'st
         insertMs: 0,
       }
       : { atMs: entry.startMs, removeMs: 0, insertMs: 0 };
-  const next = rebuildAfterLayoutEdit(project, clips, project.captions, splice);
+  const next = rebuildAfterLayoutEdit(project, clips, project.captions, splice, project.layers, 'trim');
   const nextEntry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId)!;
   return {
     project: next,
@@ -585,6 +617,7 @@ function rebuildAfterLayoutEdit(
   sourceCaptions: CaptionProject['captions'],
   splice: { atMs: number; removeMs: number; insertMs: number },
   sourceLayers: CaptionProject['layers'] = project.layers,
+  translationOperation: 'trim' | 'splice' = 'splice',
 ) {
   clips = normalizeVideoTransitionBoundaries(clips);
   const sourceWords = Object.fromEntries(
@@ -608,12 +641,13 @@ function rebuildAfterLayoutEdit(
     words,
   );
   const captions = [...remapped, ...unanchored].sort((left, right) => left.startMs - right.startMs);
-  const layers = remapVisualLayers(anchorVisualLayers(sourceLayers, project.clips), clips, splice);
+  const layers = remapVisualLayers(anchorVisualLayers(sourceLayers, project.clips), clips);
   return updateProject(project, {
     clips,
     transcription: { ...project.transcription, words },
     captions,
-    captionTracks: remapTranslationTrackTimings(project.captionTracks, project.captions, captions),
+    captionTracks: remapTranslationTrackTimings(project.captionTracks, project.captions,
+      translationSpliceMapping(splice, totalClipDuration(clips), translationOperation)),
     layers,
     audioClips: applyTimelineSpliceToAudioClips(project.audioClips, splice),
   });
@@ -662,7 +696,8 @@ function spliceTimedRange<T extends { startMs: number; endMs: number }>(
 
 function anchorVisualLayers(layers: CaptionProject['layers'], clips: VideoClip[]) {
   const entries = buildClipTimeline(clips);
-  return layers.map((layer) => layer.kind === 'captions' || layer.sourceAnchors?.length
+  return layers.map((layer) => layer.kind === 'captions' || layer.timingMode === 'timeline' || layer.sourceAnchors?.length
+    || layer.timelineVisible === false
     ? layer
     : attachLayerToTimeline(layer, entries));
 }
@@ -672,7 +707,20 @@ function attachLayerToTimeline<T extends TextVisualLayer | ImageVisualLayer>(
   entries: ReturnType<typeof buildClipTimeline>,
   replaceExisting = false,
 ): T {
+  // Ownership is sticky: footage moving underneath a canvas layer must not
+  // silently acquire it, including after save/reopen or a visual-layer split.
+  if (layer.timingMode === 'timeline') return { ...layer, sourceAnchors: undefined };
   if (layer.sourceAnchors?.length && !replaceExisting) return layer;
+  // Every part of the interval must be covered, including internal gaps.
+  let coveredUntilMs = layer.startMs;
+  for (const entry of entries) {
+    if (entry.endMs <= coveredUntilMs) continue;
+    if (entry.startMs > coveredUntilMs || coveredUntilMs >= layer.endMs) break;
+    coveredUntilMs = entry.endMs;
+  }
+  if (coveredUntilMs < layer.endMs) {
+    return { ...layer, timingMode: 'timeline', sourceAnchors: undefined };
+  }
   const sourceAnchors = entries
     .filter((entry) => layer.startMs < entry.endMs && layer.endMs > entry.startMs)
     .map((entry) => ({
@@ -682,8 +730,9 @@ function attachLayerToTimeline<T extends TextVisualLayer | ImageVisualLayer>(
     }));
   return {
     ...layer,
+    timingMode: 'source',
     sourceAnchors: sourceAnchors.length > 0 ? sourceAnchors : undefined,
-    timelineVisible: true,
+    timelineVisible: layer.timelineVisible ?? true,
   };
 }
 
@@ -712,13 +761,15 @@ function reanchorVisualLayersAfterSplit(
 function remapVisualLayers(
   layers: CaptionProject['layers'],
   clips: VideoClip[],
-  splice: { atMs: number; removeMs: number; insertMs: number },
 ) {
   const entryByClipId = new Map(buildClipTimeline(clips).map((entry) => [entry.clip.id, entry]));
   return layers.map((layer) => {
-    if (layer.kind === 'captions') return layer;
-    if (!layer.sourceAnchors?.length) return spliceTimedRange(layer, splice);
-    const visibleRanges = layer.sourceAnchors.flatMap((anchor) => {
+    if (layer.kind === 'captions' || layer.timingMode === 'timeline') return layer;
+    // Empty anchors are also the tombstone of a deleted owner. Never splice
+    // those hidden layers away or attach them to unrelated replacement footage.
+    if (!layer.sourceAnchors?.length) return layer;
+    const survivingAnchors = layer.sourceAnchors.filter((anchor) => entryByClipId.has(anchor.clipId));
+    const visibleRanges = survivingAnchors.flatMap((anchor) => {
       const entry = entryByClipId.get(anchor.clipId);
       if (!entry) return [];
       const sourceStartMs = Math.max(anchor.sourceStartMs, entry.clip.sourceStartMs);
@@ -729,9 +780,10 @@ function remapVisualLayers(
         endMs: timelineTimeAt(entry, sourceEndMs),
       }];
     });
-    if (visibleRanges.length === 0) return { ...layer, timelineVisible: false };
+    if (visibleRanges.length === 0) return { ...layer, sourceAnchors: survivingAnchors, timelineVisible: false };
     return {
       ...layer,
+      sourceAnchors: survivingAnchors,
       startMs: Math.min(...visibleRanges.map((range) => range.startMs)),
       endMs: Math.max(...visibleRanges.map((range) => range.endMs)),
       timelineVisible: true,

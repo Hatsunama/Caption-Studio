@@ -7,6 +7,191 @@ import ts from 'typescript';
 
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { resolveEditorRuntimePolicy } from '../src/lib/editor-runtime-policy.ts';
+import { captionTransform } from '../src/lib/caption-transform.ts';
+import { resolveCaptionStyle } from '../src/lib/style-resolver.ts';
+import { resolveCaptionPairs } from '../src/lib/caption-tracks.ts';
+import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
+import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
+import { adjustTimelineTiming } from '../src/lib/timeline-gesture.ts';
+
+test('timeline non-active cue selection preserves fixed-playhead content, selection handles and project state', async () => {
+  const h = mount();
+  const before = h.project;
+  const timeline = () => h.all((node) => node.type === 'LayerTimeline')[0].props;
+  const primary = () => h.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === 'captions')[0].props;
+  for (const index of [1, 2, 2, 0, 1]) {
+    timeline().onSelectCaption(before.captions[index]); h.render();
+    assert.equal(h.transport.currentMs, 600);
+    assert.equal(primary().caption.id, 'cue-0');
+    assert.equal(primary().selectionCaption.id, 'cue-' + index);
+    assert.equal(primary().interactive, true);
+    assert.equal(primary().editingPreview, false);
+    assert.equal(h.project, before);
+  }
+  const pair = resolveCaptionPairs(before, 'fr')[1];
+  for (let i = 0; i < 3; i++) {
+    timeline().onSelectTranslationCaption('fr', pair); h.render();
+    const overlay = h.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === 'fr')[0].props;
+    assert.equal(overlay.caption.id, 'fr:cue-0');
+    assert.equal(overlay.interactive, true);
+    assert.equal(primary().caption.id, 'cue-0');
+    assert.equal(primary().interactive, false);
+    assert.equal(h.transport.currentMs, 600);
+    assert.equal(h.project, before);
+  }
+  h.transport.seek(2700); h.render();
+  assert.equal(primary().caption, undefined);
+  const gap = h.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === 'fr')[0].props;
+  assert.equal(gap.caption, undefined);
+  assert.equal(gap.selectionCaption.id, 'fr:cue-1');
+  assert.equal(gap.interactive, true);
+  await h.flush();
+  assert.equal(h.calls.writes.length, 0);
+});
+
+test('legacy short cue script save rejects invalid timing atomically and commits a separate edit with undo/redo', async () => {
+  const original = fixture();
+  original.captions[0] = { ...original.captions[0], startMs: 0, endMs: 40 };
+  const h = mount(original);
+  h.actions.beginEditCaption(); h.render();
+  const script = () => h.all((node) => node.type === 'ScriptEditor')[0].props;
+  const invalid = structuredClone(original.captions);
+  invalid[1].endMs = invalid[1].startMs + 40;
+  await assert.rejects(script().onSave(invalid), /not saved/);
+  await h.flush();
+  assert.equal(h.actions.scriptEditorOpen, true);
+  assert.equal(h.project, original);
+  assert.equal(h.calls.writes.length, 0);
+  const draft = structuredClone(original.captions);
+  draft[1].text = 'Saved despite a 40 ms neighbor';
+  assert.equal(await script().onSave(draft), true);
+  await h.flush();
+  const edited = h.project;
+  assert.equal(h.disk, edited);
+  assert.equal(edited.captions[0].endMs, 40);
+  assert.equal(edited.captions[1].text, draft[1].text);
+  assert.deepEqual(edited.layers, original.layers);
+  assert.deepEqual(edited.clips, original.clips);
+  assert.deepEqual(edited.audioClips, original.audioClips);
+  h.actions.undo(); await h.flush();
+  assert.equal(h.project, original);
+  h.actions.redo(); await h.flush();
+  assert.equal(h.project, edited);
+  const reopened = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(h.disk)));
+  assert.throws(() => buildTimelineRenderPlan(reopened), /translation or review/);
+  const exported = buildTimelineRenderPlan(reopened, new Map(), true).captions.find((cue) => cue.id === draft[1].id);
+  assert.equal(exported.text, draft[1].text);
+  h.unmount();
+});
+
+for (const legacyDuration of [0, 1, 40, 79]) test(`no-op script save after transform retains history, redo and disk for ${legacyDuration} ms legacy cues`, async () => {
+  const original = fixture();
+  original.captions[0].endMs = legacyDuration;
+  original.captions[0].styleOverride = { scale: 2, position: { x: 0.2 }, italic: true };
+  const staleDraft = JSON.parse(JSON.stringify(original.captions));
+  const h = mount(original);
+  const transform = { position: { x: 0.35, y: 0.25 }, rotation: 25, scale: 1.4 };
+  h.actions.beginHistoryInteraction();
+  h.actions.updateSharedCaptionTransform(transform);
+  h.actions.finishHistoryInteraction(); await h.flush();
+  const transformed = h.project;
+  // Create a redo entry above the transform, then return to transformed state.
+  const editedDraft = structuredClone(transformed.captions);
+  editedDraft[1].text = 'Redo must survive';
+  await h.actions.commitCaptionScript(editedDraft); await h.flush();
+  const edited = h.project;
+  h.actions.undo(); await h.flush();
+  assert.equal(h.project, transformed);
+  const writes = h.calls.writes.length;
+  // Reverse cue and object-property order and add omitted decoder defaults.
+  const draft = staleDraft.reverse().map((cue) => Object.fromEntries(Object.entries({ ...cue, timelineVisible: true }).reverse()));
+  assert.equal(await h.actions.commitCaptionScript(draft), true); await h.flush();
+  assert.equal(h.project, transformed);
+  assert.equal(h.disk, transformed);
+  assert.equal(h.calls.writes.length, writes);
+  assert.equal(h.project.captions[0].endMs, legacyDuration);
+  h.actions.redo(); await h.flush();
+  assert.equal(h.project, edited, 'no-op must not clear redo');
+  h.actions.undo(); await h.flush();
+  assert.equal(h.project, transformed);
+  h.actions.undo(); await h.flush();
+  assert.equal(h.project, original, 'no-op must not add a history entry');
+  h.unmount();
+});
+
+for (const kind of ['caption', 'translation']) for (const edge of ['move', 'start', 'end']) {
+  for (const action of ['increment', 'decrement']) test(`${kind} ${edge} ${action} accessibility command persists once with real workspace undo/redo`, async () => {
+    const h = mount(), before = h.project;
+    const timeline = h.all((node) => node.type === 'LayerTimeline')[0].props;
+    const cue = kind === 'caption' ? before.captions[1] : resolveCaptionPairs(before, 'fr')[1];
+    const item = kind === 'caption' ? { kind, captionId: 'cue-1' } : { kind, trackId: 'fr', sourceCaptionId: 'cue-1' };
+    adjustTimelineTiming({ startMs: cue.startMs, endMs: cue.endMs, durationMs: 6000, trackWidth: 300,
+      onPress: () => kind === 'caption' ? timeline.onSelectCaption(cue) : timeline.onSelectTranslationCaption('fr', cue),
+      onChangeStart: timeline.onTimingChangeStart,
+      onChange: (side, start, end) => timeline.onItemTimingChange(item, side, start, end),
+      onEnd: timeline.onTimingChangeEnd,
+    }, edge, action);
+    await h.flush();
+    const changed = h.project;
+    assert.notEqual(changed, before);
+    assert.equal(h.calls.writes.length, 1);
+    assert.equal(h.disk, changed);
+    assert.equal(h.transport.currentMs, 600);
+    h.actions.undo(); await h.flush(); assert.equal(h.project, before);
+    h.actions.redo(); await h.flush(); assert.equal(h.project, changed);
+    h.unmount();
+  });
+}
+
+test('workspace sends every overlapping active primary and translated cue to preview in export order', () => {
+  const project = fixture();
+  project.captions[1].startMs = 500;
+  project.captionTracks.translations[0].cues[1].startMs = 500;
+  const h = mount(project);
+  const plan = buildTimelineRenderPlan(project);
+  const overlays = h.all((node) => node.type === 'CaptionOverlay' && node.props.captions);
+  const previewIds = overlays.flatMap((node) => node.props.captions.map((cue) => cue.id));
+  assert.deepEqual(previewIds, plan.captions.filter((cue) => cue.startMs <= 600 && cue.endMs > 600).map((cue) => cue.id));
+  assert.equal(previewIds.length, 4);
+});
+
+for (const trackId of ['captions', 'fr']) test(`${trackId} preview gesture is one durable undo/redo transaction and survives reopen/export`, async () => {
+  const h = mount();
+  const before = h.project;
+  const timeline = () => h.all((node) => node.type === 'LayerTimeline')[0].props;
+  if (trackId === 'captions') timeline().onSelectCaption(before.captions[1]);
+  else timeline().onSelectTranslationCaption(trackId, resolveCaptionPairs(before, trackId)[1]);
+  h.render();
+  const props = h.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === trackId)[0].props;
+  const transform = { position: { x: 0.35, y: 0.25 }, box: { width: 0.6, height: 0.1 },
+    rotation: 25, scale: 1.4, scaleX: 0.8, scaleY: 1.1 };
+  props.onInteractionStart(); props.onTransform(transform); props.onTransformEnd();
+  await h.flush();
+  const edited = h.project;
+  const geometries = (p) => trackId === 'captions'
+    ? p.captions.map((cue) => captionTransform(resolveCaptionStyle(p.projectStyle, cue)))
+    : resolveCaptionPairs(p, trackId).map((pair) => captionTransform(pair.style));
+  assert.deepEqual(plain(geometries(edited)), [transform, transform, transform]);
+  assert.equal(h.disk, edited);
+  assert.equal(h.transport.currentMs, 600);
+  h.actions.undo(); await h.flush();
+  assert.equal(h.project, before);
+  assert.equal(h.disk, before);
+  assert.equal(timeline().selectedLayerId, trackId);
+  assert.equal(timeline().selectedCaptionId, 'cue-1');
+  h.actions.redo(); await h.flush();
+  assert.equal(h.project, edited);
+  assert.equal(h.disk, edited);
+  assert.equal(timeline().selectedLayerId, trackId);
+  const reopened = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(h.disk)));
+  assert.deepEqual(plain(geometries(reopened)), [transform, transform, transform]);
+  const plan = buildTimelineRenderPlan(reopened);
+  const output = plan.captions.filter((cue) => trackId === 'captions' ? !cue.id.startsWith('fr:') : cue.id.startsWith('fr:'));
+  assert.ok(output.length >= 2);
+  for (const cue of output) assert.deepEqual(plain(captionTransform(cue.style)), transform);
+  const reopenedWorkspace = mount(reopened);
+  assert.equal(reopenedWorkspace.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === 'captions')[0].props.caption.id, 'cue-0');
+});
 
 const requireLocal = createRequire(import.meta.url);
 const source = readFileSync(process.env.CAPTION_EDITOR_SOURCE

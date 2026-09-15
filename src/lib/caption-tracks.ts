@@ -1,7 +1,9 @@
-import { mergePatch, mergeStyle } from '@/lib/style-resolver';
+import { editCanvasTimelineRange } from '@/lib/timeline-item-timing';
+import { mergePatch, mergeStyle, removePatchedKeys } from '@/lib/caption-style';
+import { captionTransform, hasCaptionTransform, withoutCaptionTransform } from '@/lib/caption-transform';
 import { layerExtent } from '@/lib/layer-geometry';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
-import { totalClipDuration } from '@/lib/video-timeline';
+import { type TranslationTimeMapping } from '@/lib/video-timeline';
 import {
   canonicalCaptionLanguageTag,
   captionLanguageFamily,
@@ -142,6 +144,7 @@ export function createTranslationCaptionTrack(project: CaptionProject, options: 
     throw new Error('Caption translation origin and provider are inconsistent.');
   }
   const track: TranslationCaptionTrack = {
+    layoutAnchor: captionTransform(project.projectStyle),
     id: options.id,
     kind: 'translation',
     sourceTrackId: 'captions',
@@ -252,9 +255,20 @@ export function setTranslationTrackStyle(
   patch: CaptionStylePatch,
   updatedAt = project.updatedAt,
 ) {
+  if (hasCaptionTransform(patch)) {
+    const track = translationTrack(project, trackId);
+    const base = translationTransformReference(project, trackId)?.style
+      ?? mergeStyle(mergeStyle(project.projectStyle, DEFAULT_TRANSLATION_TRACK_STYLE), track.styleOverride);
+    patch = { ...patch, ...captionTransform(mergeStyle(base, patch)) };
+  }
   return mapTranslationTrack(project, trackId, (track) => ({
     ...track,
+    ...(hasCaptionTransform(patch) && !track.layoutAnchor ? { layoutAnchor: captionTransform(project.projectStyle) } : {}),
     styleOverride: mergePatch(track.styleOverride, patch),
+    cues: track.cues.map((cue) => ({ ...cue,
+      styleOverride: removePatchedKeys(cue.styleOverride, patch,
+        mergeStyle(mergeStyle(project.projectStyle, DEFAULT_TRANSLATION_TRACK_STYLE), track.styleOverride).font),
+    })),
   }), updatedAt);
 }
 
@@ -265,6 +279,13 @@ export function setTranslationCueStyle(
   patch: CaptionStylePatch,
   updatedAt = project.updatedAt,
 ) {
+  const pair = resolveCaptionPairs(project, trackId).find((candidate) => candidate.source.id === sourceCaptionId);
+  if (!pair) throw new Error(`Translation for caption ${sourceCaptionId} does not exist.`);
+  if (hasCaptionTransform(patch)) {
+    project = setTranslationTrackStyle(project, trackId, captionTransform(mergeStyle(pair.style, patch)), updatedAt);
+    patch = withoutCaptionTransform(patch) ?? {};
+    if (!Object.keys(patch).length) return project;
+  }
   return mapTranslationTrack(project, trackId, (track) => {
     if (!track.cues.some((cue) => cue.sourceCaptionId === sourceCaptionId)) {
       throw new Error(`Translation for caption ${sourceCaptionId} does not exist.`);
@@ -287,7 +308,6 @@ export function setTranslationCueTiming(
   endMs: number,
   updatedAt = project.updatedAt,
 ) {
-  const timelineEndMs = Math.max(80, totalClipDuration(project.clips));
   return mapTranslationTrack(project, trackId, (track) => ({
     ...track,
     cues: track.cues.map((cue) => {
@@ -295,26 +315,8 @@ export function setTranslationCueTiming(
       const source = project.captions.find((caption) => caption.id === sourceCaptionId);
       const previousStart = cue.startMs ?? source?.startMs ?? 0;
       const previousEnd = cue.endMs ?? source?.endMs ?? previousStart + 80;
-      const finiteStart = Number.isFinite(previousStart) ? previousStart : 0;
-      const finiteEnd = Number.isFinite(previousEnd) ? previousEnd : finiteStart + 80;
-      // Normalize stale bounds before editing either edge, while retaining the
-      // original duration for moves whenever it fits on the timeline.
-      const currentStart = Math.max(0, Math.min(finiteStart, timelineEndMs - 80));
-      const currentEnd = Math.min(timelineEndMs, Math.max(finiteEnd, currentStart + 80));
-      const currentDuration = Math.min(timelineEndMs, Math.max(80, finiteEnd - finiteStart));
-      const requestedStart = Number.isFinite(startMs) ? startMs : currentStart;
-      const requestedEnd = Number.isFinite(endMs) ? endMs : currentEnd;
-      const safeStart = edge === 'start'
-        ? Math.max(0, Math.min(requestedStart, currentEnd - 80))
-        : edge === 'move'
-          ? Math.max(0, Math.min(requestedStart, timelineEndMs - currentDuration))
-          : currentStart;
-      const safeEnd = edge === 'start'
-        ? currentEnd
-        : edge === 'move'
-          ? safeStart + currentDuration
-          : Math.min(timelineEndMs, Math.max(requestedEnd, currentStart + 80));
-      return { ...cue, startMs: safeStart, endMs: safeEnd, timelineVisible: true };
+      const range = editCanvasTimelineRange({ startMs: previousStart, endMs: previousEnd }, edge, startMs, endMs);
+      return { ...cue, ...range, timelineVisible: true };
     }),
   }), updatedAt);
 }
@@ -461,7 +463,7 @@ export function resolveCaptionPairs(project: CaptionProject, trackId: string): C
   const cues = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue]));
   return project.captions.map((source) => {
     const translation = cues.get(source.id) ?? createCue(track.id, source, '');
-    const primaryStyle = mergeStyle(project.projectStyle, source.styleOverride);
+    const primaryStyle = mergeStyle(mergeStyle(project.projectStyle, source.styleOverride), track.layoutAnchor);
     const translationStyle = mergeStyle(
       mergeStyle(mergeStyle(primaryStyle, DEFAULT_TRANSLATION_TRACK_STYLE), track.styleOverride),
       translation.styleOverride,
@@ -489,6 +491,32 @@ export function resolveCaptionPairs(project: CaptionProject, trackId: string): C
       style,
     };
   });
+}
+
+/** Explicit first-transform migration. Preserve the addressed cue's old visual
+ * geometry; without one, choose earliest visible cue, then earliest remaining
+ * cue (time and ID tie-breaks). A shared transform cannot preserve divergent
+ * legacy cue geometries simultaneously. Reading a project never migrates it. */
+export function migrateLegacyTranslationTransforms(project: CaptionProject, sourceCaptionId?: string): CaptionProject {
+  if (project.captionTracks.translations.every((track) => track.layoutAnchor)) return project;
+  const translations = project.captionTracks.translations.map((track) => {
+    if (track.layoutAnchor) return track;
+    const reference = translationTransformReference(project, track.id, sourceCaptionId);
+    const anchor = captionTransform(mergeStyle(project.projectStyle, reference?.source.styleOverride));
+    const geometry = captionTransform(reference?.style
+      ?? mergeStyle(mergeStyle(project.projectStyle, DEFAULT_TRANSLATION_TRACK_STYLE), track.styleOverride));
+    return { ...track, layoutAnchor: anchor, styleOverride: mergePatch(track.styleOverride, geometry),
+      cues: track.cues.map((cue) => ({ ...cue, styleOverride: withoutCaptionTransform(cue.styleOverride) })) };
+  });
+  return { ...project, captionTracks: { ...project.captionTracks, translations } };
+}
+
+function translationTransformReference(project: CaptionProject, trackId: string, sourceCaptionId?: string) {
+  const pairs = resolveCaptionPairs(project, trackId);
+  return pairs.find((pair) => pair.source.id === sourceCaptionId) ?? pairs.sort((a, b) =>
+    Number(b.timelineVisible) - Number(a.timelineVisible)
+    || a.startMs - b.startMs || a.endMs - b.endMs
+    || (a.translation.id < b.translation.id ? -1 : a.translation.id > b.translation.id ? 1 : 0))[0];
 }
 
 export function synchronizeCaptionTracks(
@@ -519,23 +547,38 @@ export function synchronizeCaptionTracks(
 export function remapTranslationTrackTimings(
   captionTracks: CaptionTrackCollection | undefined,
   beforeCaptions: readonly CaptionBlock[],
-  afterCaptions: readonly CaptionBlock[],
+  mapping: TranslationTimeMapping,
 ) {
   const tracks = captionTracks ?? emptyCaptionTrackCollection();
   const beforeById = new Map(beforeCaptions.map((caption) => [caption.id, caption]));
-  const afterById = new Map(afterCaptions.map((caption) => [caption.id, caption]));
+  if (!Number.isFinite(mapping.durationMs) || mapping.durationMs < 0) {
+    throw new Error('Translation timing mapping has an invalid timeline duration.');
+  }
   return {
     ...tracks,
     translations: tracks.translations.map((track) => ({
       ...track,
       cues: track.cues.map((cue) => {
         const before = beforeById.get(cue.sourceCaptionId);
-        const after = afterById.get(cue.sourceCaptionId);
-        if (!before || !after) return cue;
+        if (!before) throw new Error(`Translation cue ${cue.id} has no primary caption.`);
+        const range = { startMs: cue.startMs ?? before.startMs, endMs: cue.endMs ?? before.endMs };
+        if (!Number.isFinite(range.startMs) || !Number.isFinite(range.endMs)
+          || range.startMs < 0 || range.endMs < range.startMs) {
+          throw new Error(`Translation cue ${cue.id} has invalid timing.`);
+        }
+        const mapped = mapping.mapRange(range, before);
+        if (!Number.isFinite(mapped.startMs) || !Number.isFinite(mapped.endMs)
+          || mapped.endMs < mapped.startMs) {
+          throw new Error(`Translation ${mapping.operation} mapping produced invalid timing.`);
+        }
+        const startMs = clamp(mapped.startMs, 0, mapping.durationMs);
+        const endMs = clamp(mapped.endMs, startMs, mapping.durationMs);
         return {
           ...cue,
-          startMs: (cue.startMs ?? before.startMs) + after.startMs - before.startMs,
-          endMs: (cue.endMs ?? before.endMs) + after.endMs - before.endMs,
+          startMs,
+          endMs,
+          timelineVisible: (cue.timelineVisible ?? before.timelineVisible !== false)
+            && mapped.timelineVisible !== false && endMs > startMs,
         };
       }),
     })),

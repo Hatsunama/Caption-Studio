@@ -96,7 +96,7 @@ class TimelineRenderPlanTest {
   }
 
   @Test
-  fun rejectsUnsupportedVersionInvalidDimensionsAndMissingVideo() {
+  fun rejectsUnsupportedVersionAndInvalidDimensions() {
     assertInvalid("Unsupported render plan version") {
       validPlan().apply { this["version"] = 2 }
     }
@@ -109,9 +109,7 @@ class TimelineRenderPlanTest {
     assertInvalid("dimensions must be even") {
       validPlan().apply { this["height"] = 1_919 }
     }
-    assertInvalid("does not contain video clips") {
-      validPlan().apply { this["clips"] = emptyList<Map<String, Any>>() }
-    }
+
   }
 
   @Test
@@ -315,6 +313,29 @@ class TimelineRenderPlanTest {
     "fadeOutMs" to 0,
     "transition" to mapOf<String, Any>("type" to "none", "durationMs" to 0),
   )
+
+  @Test
+  fun acceptsFullAudioTailAndCanvasWithoutVideo() {
+    val value = validPlan().apply {
+      this["durationMs"] = 20_000
+      this["clips"] = listOf(videoClip("remaining", 0, 10_000))
+      this["audioClips"] = listOf(audioClip("tail", 15_000, 200, 5_200))
+    }
+    val tail = parseTimelineRenderPlan(value)
+    assertEquals(20_000L, tail.durationMs)
+    assertEquals(5_200L, tail.audioClips.single().sourceEndMs)
+    value["clips"] = emptyList<Map<String, Any>>()
+    assertTrue(parseTimelineRenderPlan(value).clips.isEmpty())
+    value["audioClips"] = emptyList<Map<String, Any>>()
+    assertTrue(parseTimelineRenderPlan(value).audioClips.isEmpty())
+  }
+
+  @Test
+  fun rejectsAudioTailTruncation() {
+    assertInvalid("audio clip extends beyond") {
+      validPlan().apply { this["audioClips"] = listOf(audioClip("tail", 3_000, 0, 2_000)) }
+    }
+  }
 
   private fun caption(
     id: String,

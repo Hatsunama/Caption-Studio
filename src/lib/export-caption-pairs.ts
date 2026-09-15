@@ -1,5 +1,5 @@
+import { projectTimelineDuration } from '@/lib/project-timeline';
 import { assertVisibleTranslationTracksCompatible, resolveCaptionPairs } from '@/lib/caption-tracks';
-import { totalClipDuration } from '@/lib/video-timeline';
 import type { CaptionProject } from '@/types/project';
 
 /** Validate only captions that the requested output actually contains. */
@@ -22,7 +22,7 @@ export function exportTranslationSummary(project: CaptionProject) {
 }
 
 function eligibleExportCaptionPairs(project: CaptionProject) {
-  const duration = totalClipDuration(project.clips ?? []);
+  const duration = projectTimelineDuration(project);
   return (project.captionTracks?.translations ?? []).flatMap((track) => {
     if (!track.visible) return [];
     const pairs = resolveCaptionPairs(project, track.id).filter((pair) => (

@@ -1,3 +1,4 @@
+import { projectTimelineDuration } from '@/lib/project-timeline';
 import { useCallback, useEffect, useState } from 'react';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -11,7 +12,6 @@ import {
 } from 'react-native';
 
 import { MediaLoadingOverlay } from '@/components/media-loading-overlay';
-import { totalClipDuration } from '@/lib/video-timeline';
 import type { MediaImportProgress } from '@/services/media-import';
 import { shareProjectRecoveryRecord } from '@/services/project-recovery';
 import {
@@ -281,7 +281,7 @@ function ProjectCard(props: { project: CaptionProject; onOpen: () => void; onDel
       <View style={{ flex: 1, justifyContent: 'center', gap: 5 }}>
         <Text numberOfLines={1} style={{ color: palette.text, fontSize: 16, fontWeight: '700', paddingRight: 36 }}>{props.project.name}</Text>
         <Text style={{ color: palette.muted, fontSize: 13 }}>
-          {props.project.lifecycle.status === 'draft' ? 'DRAFT · ' : ''}{props.project.clips.length} clip{props.project.clips.length === 1 ? '' : 's'} · {props.project.captions.length} subtitles · {formatDuration(totalClipDuration(props.project.clips))}
+          {props.project.lifecycle.status === 'draft' ? 'DRAFT · ' : ''}{props.project.clips.length} clip{props.project.clips.length === 1 ? '' : 's'} · {props.project.captions.length} subtitles · {formatDuration(projectTimelineDuration(props.project))}
         </Text>
       </View>
       <Pressable

@@ -1,4 +1,5 @@
-import { buildClipTimeline, totalClipDuration } from '@/lib/video-timeline';
+import { projectTimelineDuration } from '@/lib/project-timeline';
+import { buildClipTimeline } from '@/lib/video-timeline';
 import type { CaptionProject } from '@/types/project';
 
 export const TIMELINE_AUDIO_RENDER_PLAN_VERSION = 1 as const;
@@ -23,7 +24,7 @@ export type TimelineAudioRenderPlan = {
 };
 
 export function buildTimelineAudioRenderPlan(project: CaptionProject): TimelineAudioRenderPlan {
-  const durationMs = totalClipDuration(project.clips);
+  const durationMs = projectTimelineDuration(project);
   const videoSourceById = new Map(project.sources.map((source) => [source.id, source]));
   const audioSourceById = new Map(project.audioSources.map((source) => [source.id, source]));
   const videoClips = buildClipTimeline(project.clips).flatMap((entry) => {

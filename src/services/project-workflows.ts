@@ -1,3 +1,4 @@
+import { projectTimelineDuration } from '@/lib/project-timeline';
 import { createCaptionProject, createVideoClip } from '@/lib/project-factory';
 import { addAudioSourceToProject } from '@/lib/audio-timeline';
 import { AUDIO_WAVEFORM_VERSION } from '@/lib/audio-waveform';
@@ -9,7 +10,6 @@ import {
   type LinkedMediaPermissionLedger,
   type ProjectOwnedAssetLedger,
 } from '@/lib/media-lifecycle';
-import { totalClipDuration } from '@/lib/video-timeline';
 import { humanVideoName } from '@/lib/project-presentation';
 import {
   deleteProjectRecord,
@@ -173,7 +173,7 @@ export async function appendAudioToProject(
     source,
     `audio-clip-${nonce}`,
     currentMs,
-    totalClipDuration(project.clips),
+    projectTimelineDuration(project),
   );
   if (!result) {
     await runBestEffortCleanup('unused audio import', [deleteProjectOwnedFiles(project.id, [source.uri])]);
@@ -231,7 +231,7 @@ export async function appendProjectVideoAudioToProject(
     source,
     `audio-clip-${nonce}`,
     currentMs,
-    totalClipDuration(project.clips),
+    projectTimelineDuration(project),
   );
   if (!result) {
     await runBestEffortCleanup('unused extracted audio', [deleteProjectOwnedFiles(project.id, [source.uri])]);

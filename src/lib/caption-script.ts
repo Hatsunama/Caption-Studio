@@ -8,7 +8,65 @@ import {
   captionTextPrefixLength,
   safeCaptionTextOffset,
 } from '@/lib/caption-text-breaks';
-import type { CaptionBlock, WordToken } from '@/types/project';
+import { hasCaptionTransform, withoutCaptionTransform } from '@/lib/caption-transform';
+import { decodeCaption } from '@/lib/project-schema';
+import type { CaptionBlock, CaptionProject, WordToken } from '@/types/project';
+
+/** Recovery accepts exactly the persisted cue contract, including zero-length
+ * legacy cues and temporarily empty text. Save applies editing rules separately. */
+export function decodeCaptionDraft(value: unknown): CaptionBlock[] | null {
+  if (!Array.isArray(value) || value.length > 100_000) return null;
+  try {
+    const ids = new Set<string>();
+    value.forEach((entry, index) => {
+      const caption = decodeCaption(entry, index);
+      if (ids.has(caption.id)) throw new Error('Duplicate caption identity');
+      ids.add(caption.id);
+    });
+    return value as CaptionBlock[];
+  } catch {
+    return null;
+  }
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((value, index) => sameValue(value, right[index]));
+  }
+  const a = left as Record<string, unknown>, b = right as Record<string, unknown>;
+  const keys = Object.keys(a).filter((key) => a[key] !== undefined);
+  return keys.length === Object.keys(b).filter((key) => b[key] !== undefined).length
+    && keys.every((key) => sameValue(a[key], b[key]));
+}
+
+export function sameCaptionContent(left: CaptionBlock, right: CaptionBlock, includeAppearance = true) {
+  const content = ({ styleOverride, ...caption }: CaptionBlock) => ({
+    ...caption, timelineVisible: caption.timelineVisible !== false,
+    ...(includeAppearance ? { styleOverride: styleOverride && Object.keys(styleOverride).length ? styleOverride : undefined } : {}),
+  });
+  return left === right || sameValue(content(left), content(right));
+}
+
+export function sameCaptionDraft(left: CaptionBlock[], right: CaptionBlock[]) {
+  return left.length === right.length && left.every((caption, index) => sameCaptionContent(caption, right[index], false));
+}
+
+/** Before migration, splits inherit their parent's effective legacy appearance.
+ * After migration, the current track owns all geometry, including recovered or
+ * newly split drafts. Cue identity only reconciles current text appearance. */
+export function reconcileCaptionScriptDraft(project: Pick<CaptionProject, 'captions' | 'captionGeometryMode'>, draft: CaptionBlock[]): CaptionBlock[] {
+  const current = new Map(project.captions.map((caption) => [caption.id, caption]));
+  return draft.map((caption) => {
+    const existing = current.get(caption.id);
+    const appearance = existing ? existing.styleOverride : caption.styleOverride;
+    const styleOverride = project.captionGeometryMode === 'track' && appearance && hasCaptionTransform(appearance)
+      ? withoutCaptionTransform(appearance) : appearance;
+    return styleOverride === caption.styleOverride ? caption : { ...caption, styleOverride };
+  });
+}
 
 const MINIMUM_CAPTION_MS = 80;
 

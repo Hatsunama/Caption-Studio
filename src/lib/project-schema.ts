@@ -1,5 +1,6 @@
 import { ANIMATION_PRESETS } from '@/lib/animation-presets';
 import { positiveLayerScale } from '@/lib/layer-geometry';
+import { captionTransform } from '@/lib/caption-transform';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
 import { emptyCaptionTrackCollection, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { sameCaptionLanguageFamily } from '@/lib/caption-languages';
@@ -87,7 +88,7 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
   const transcription = decodeTranscription(candidate.transcription, updatedAt);
   const captions = decodeArray(candidate.captions, 'project captions', 100_000, decodeCaption);
   uniqueIds(captions, 'project captions');
-  const captionTracks = decodeCaptionTracks(candidate.captionTracks, captions, transcription.language);
+  const captionTracks = decodeCaptionTracks(candidate.captionTracks, captions, transcription.language, projectStyle);
   const clipIds = new Set(clips.map((clip) => clip.id));
   captions.forEach((caption) => {
     if (caption.timingMode === 'timeline' && caption.sourceAnchor) {
@@ -114,6 +115,9 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
     transcription,
     captions,
     captionTracks,
+    ...(candidate.captionGeometryMode === undefined ? {} : {
+      captionGeometryMode: enumValue(candidate.captionGeometryMode, ['legacy-cue', 'track'] as const, 'caption geometry mode'),
+    }),
     projectStyle,
     layers,
     clips,
@@ -300,7 +304,7 @@ function decodeWord(value: unknown, index: number): WordToken {
   };
 }
 
-function decodeCaption(value: unknown, index: number): CaptionBlock {
+export function decodeCaption(value: unknown, index: number): CaptionBlock {
   const caption = record(value, `caption ${index + 1}`);
   const startMs = finiteNumber(caption.startMs, `caption ${index + 1} start`, 0, Number.MAX_SAFE_INTEGER);
   const endMs = finiteNumber(caption.endMs, `caption ${index + 1} end`, startMs, Number.MAX_SAFE_INTEGER);
@@ -335,12 +339,13 @@ function decodeCaptionSourceAnchor(value: unknown, index: number) {
   };
 }
 
-function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLanguage: string): CaptionTrackCollection {
+function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLanguage: string, projectStyle: CaptionStyle): CaptionTrackCollection {
   if (value === undefined) return emptyCaptionTrackCollection();
   const collection = record(value, 'caption track collection');
   if (collection.schemaVersion !== 1) throw new Error('Caption tracks use an unsupported version');
   if (collection.primaryTrackId !== 'captions') throw new Error('Caption tracks reference an invalid primary track');
   const primaryCaptionIds = new Set(captions.map((caption) => caption.id));
+  const primaryById = new Map(captions.map((caption) => [caption.id, caption]));
   const translations = decodeArray(
     collection.translations,
     'translation caption tracks',
@@ -425,7 +430,9 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
           status,
           reviewed,
           startMs: optionalFiniteNumber(cue.startMs, `translation cue ${cueIndex + 1} start`, 0, Number.MAX_SAFE_INTEGER),
-          endMs: optionalFiniteNumber(cue.endMs, `translation cue ${cueIndex + 1} end`, 1, Number.MAX_SAFE_INTEGER),
+          // Zero-length cues are valid legacy state on either track. A deliberate
+          // timing edit applies the minimum duration at the mutation boundary.
+          endMs: optionalFiniteNumber(cue.endMs, `translation cue ${cueIndex + 1} end`, 0, Number.MAX_SAFE_INTEGER),
           timelineVisible: cue.timelineVisible === undefined ? undefined : booleanValue(cue.timelineVisible, `translation cue ${cueIndex + 1} timeline visibility`),
           styleOverride: decodeCaptionStylePatch(cue.styleOverride, `translation cue ${cueIndex + 1} style override`),
         };
@@ -438,6 +445,10 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
         }
         if (sourceCaptionIds.has(cue.sourceCaptionId)) {
           throw new Error(`Translation track ${trackIndex + 1} has duplicate source-caption links`);
+        }
+        const source = primaryById.get(cue.sourceCaptionId)!;
+        if ((cue.endMs ?? source.endMs) < (cue.startMs ?? source.startMs)) {
+          throw new Error(`Translation cue ${cue.id} has inverted timing`);
         }
         sourceCaptionIds.add(cue.sourceCaptionId);
       });
@@ -457,6 +468,8 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
           promptVersion,
         },
         stackGap: optionalFiniteNumber(track.stackGap, `translation track ${trackIndex + 1} stack gap`, 0.008, 0.18) ?? 0.028,
+        ...(track.layoutAnchor === undefined ? {} : { layoutAnchor:
+          captionTransform(decodeCaptionStyle(track.layoutAnchor, projectStyle, `translation track ${trackIndex + 1} layout anchor`)) }),
         styleOverride: decodeCaptionStylePatch(track.styleOverride, `translation track ${trackIndex + 1} style override`),
         cues,
       };
@@ -514,6 +527,7 @@ function decodeTextLayer(layer: Record<string, unknown>, index: number, projectS
     endMs: finiteNumber(layer.endMs, `text layer ${index + 1} end`, startMs, Number.MAX_SAFE_INTEGER),
     style: decodeCaptionStyle(layer.style, projectStyle, `text layer ${index + 1} style`),
     sourceAnchors: decodeSourceAnchors(layer.sourceAnchors, `text layer ${index + 1}`),
+    timingMode: optionalEnum(layer.timingMode, ['source', 'timeline'] as const, `text layer ${index + 1} timing mode`),
     timelineVisible: layer.timelineVisible === undefined ? true : booleanValue(layer.timelineVisible, `text layer ${index + 1} timeline visibility`),
   };
 }
@@ -538,6 +552,7 @@ function decodeImageLayer(layer: Record<string, unknown>, index: number): ImageV
     rotation: finiteNumber(layer.rotation, `image layer ${index + 1} rotation`, -360_000, 360_000),
     opacity: finiteNumber(layer.opacity, `image layer ${index + 1} opacity`, 0, 1),
     sourceAnchors: decodeSourceAnchors(layer.sourceAnchors, `image layer ${index + 1}`),
+    timingMode: optionalEnum(layer.timingMode, ['source', 'timeline'] as const, `image layer ${index + 1} timing mode`),
     timelineVisible: layer.timelineVisible === undefined ? true : booleanValue(layer.timelineVisible, `image layer ${index + 1} timeline visibility`),
   };
 }

@@ -55,7 +55,7 @@ test('inserted audio is persistent, trimmable, movable, and independently mutabl
   assert.equal(deleteAudioClip(muted, 'audio-clip').audioClips.length, 0);
 });
 
-test('text and image timing stays bounded and splits into independently editable timeline items', () => {
+test('image timing extends canvas and splits into independently editable timeline items', () => {
   const visual = {
     clips: [{ id: 'video', sourceId: 'source', sourceStartMs: 0, sourceEndMs: 10_000, availableSourceStartMs: 0, availableSourceEndMs: 10_000, playbackRate: 1, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0, gapBeforeMs: 0, gapAfterMs: 0, transitionAfter: { type: 'none', durationMs: 0 } }],
     layers: [
@@ -65,7 +65,9 @@ test('text and image timing stays bounded and splits into independently editable
     updatedAt: 'before',
   };
   const moved = setLayerTiming(visual, 'image', 'move', 9_000, 12_000);
-  assert.deepEqual([moved.layers[1].startMs, moved.layers[1].endMs], [7_000, 10_000]);
+  assert.deepEqual([moved.layers[1].startMs, moved.layers[1].endMs], [9_000, 12_000]);
+  assert.equal(moved.layers[1].timingMode, 'timeline');
+  assert.equal(moved.layers[1].sourceAnchors, undefined);
   const split = splitVisualLayer(visual, 'image', 3_500, 'image-left', 'image-right');
   assert.ok(split);
   assert.deepEqual(split.project.layers.slice(1).map((layer) => [layer.id, layer.startMs, layer.endMs, layer.uri]), [
@@ -148,7 +150,7 @@ test('timeline export is native, local, multi-track, and version-aligned', () =>
   assert.match(transitionTimeline, /outgoingSourceTimeMs/);
   assert.match(transitionTimeline, /incomingSourceTimeMs/);
   assert.match(transitionTimeline, /transitionAudioGain/);
-  assert.match(exporter, /availableDurationMs/);
+  assert.match(exporter, /val sourceEndMs = clip.sourceEndMs/);
   assert.match(exportService, /buildTimelineRenderPlan/);
   assert.doesNotMatch(exportService, /clips\.length !== 1|playbackRate !== 1/);
   assert.match(renderPlan, /resolveCaptionStyle/);
@@ -209,8 +211,9 @@ test('selected caption trim grips stay distinct even on tiny blocks', () => {
   assert.match(timeline, /<TimingGrip side="start" \{\.\.\.props\} \/>/);
   assert.match(timeline, /<TimingGrip side="end" \{\.\.\.props\} \/>/);
   const grip = timeline.slice(timeline.indexOf('function TimingGrip'));
-  assert.match(grip, /\[props\.side === 'start' \? 'left' : 'right'\]: -10/);
-  assert.match(grip, /width: 20/);
+  assert.match(grip, /\[props\.side === 'start' \? 'left' : 'right'\]: 0/);
+  assert.match(grip, /width: TIMELINE_GRIP_WIDTH/);
+  assert.match(timeline, /timelineBlockControls\(width, props\.selected\)/);
   assert.doesNotMatch(grip, /left: 4, right: 4/);
 });
 
@@ -1400,16 +1403,18 @@ test('every timed content body captures movement while only the selected item ex
   const block = timeline.slice(timeline.indexOf('function TimedBlock'), timeline.indexOf('function LinkedCaptionBlock'));
   assert.match(block, /<TimelineMoveGrip/);
   assert.doesNotMatch(block, /movable\?: boolean/);
-  assert.match(block, /\{props\.selected \? \(/);
+  assert.match(block, /\{props\.selected && !props\.hideControls \? \(/);
+  assert.match(timeline, /testID="caption-timing-dock"/);
   assert.match(block, /<TimingGrip side="start"/);
   assert.match(block, /<TimingGrip side="end"/);
   assert.match(block, /zIndex: props\.selected \? 6 : 1/);
-  const moveGrip = timeline.slice(timeline.indexOf('function TimelineMoveGrip'), timeline.indexOf('function TimingGrip'));
+  const moveGrip = timeline.slice(timeline.indexOf('function useTimelineTimingResponder'), timeline.indexOf('function TimingGrip'));
   assert.match(moveGrip, /onPanResponderTerminationRequest: \(\) => false/);
   assert.match(moveGrip, /onShouldBlockNativeResponder: \(\) => true/);
   const timingGrip = timeline.slice(timeline.indexOf('function TimingGrip'), timeline.indexOf('function TinyButton'));
   assert.doesNotMatch(timingGrip, /clamp\(/);
-  assert.match(timingGrip, /left: 8, right: 8/);
+  assert.match(timingGrip, /useTimelineTimingResponder\(props, props\.side\)/);
+  assert.doesNotMatch(timingGrip, /hitSlop/);
 });
 
 test('the add-video button stays in the timeline header instead of covering clip gestures', () => {
