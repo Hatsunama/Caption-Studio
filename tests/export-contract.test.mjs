@@ -329,7 +329,7 @@ test('partial AI results persist successes and failures without dropping existin
   assert.equal(failedAgain.captionTracks.translations[0].cues[1].status, 'failed');
 });
 
-test('disabled caption rendering and off-timeline incomplete translations do not block video', () => {
+test('disabled captions do not block video; canvas-tail translations require export consent', () => {
   const project = createEnglishChineseCaptionTrack(exportProject({ captions: [
     { id: 'c1', text: 'Hello', startMs: 0, endMs: 1000, wordIds: [] },
   ] }));
@@ -338,9 +338,12 @@ test('disabled caption rendering and off-timeline incomplete translations do not
   const outside = structuredClone(project);
   outside.captionTracks.translations[0].cues[0].startMs = 5000;
   outside.captionTracks.translations[0].cues[0].endMs = 6000;
-  assert.equal(buildTimelineRenderPlan(outside).captions.length, 1);
-  assert.doesNotThrow(() => serializeSrt(outside));
-  assert.doesNotThrow(() => serializeAss(outside));
+  assert.throws(() => buildTimelineRenderPlan(outside), /need translation or review/);
+  const allowed = buildTimelineRenderPlan(outside, undefined, true);
+  assert.ok(allowed.durationMs >= 6000);
+  assert.equal(allowed.captions.length, 1);
+  assert.doesNotThrow(() => serializeSrt(outside, true));
+  assert.doesNotThrow(() => serializeAss(outside, true));
 });
 
 test('independent translated captions export even when their primary caption is hidden', () => {
