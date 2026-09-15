@@ -12,6 +12,18 @@ export function projectTimelineDuration(project: CaptionProject): number {
   for (const layer of project.layers ?? []) {
     if (layer.kind !== 'captions' && layer.timelineVisible !== false) duration = Math.max(duration, layer.endMs);
   }
+  const captionById = new Map((project.captions ?? []).map((caption) => [caption.id, caption]));
+  for (const caption of project.captions ?? []) {
+    if (caption.timelineVisible !== false) duration = Math.max(duration, caption.endMs);
+  }
+  for (const track of project.captionTracks?.translations ?? []) {
+    for (const cue of track.cues) {
+      const source = captionById.get(cue.sourceCaptionId);
+      if (source && source.timelineVisible !== false && cue.timelineVisible !== false) {
+        duration = Math.max(duration, cue.endMs ?? source.endMs);
+      }
+    }
+  }
   return Math.ceil(duration);
 }
 
