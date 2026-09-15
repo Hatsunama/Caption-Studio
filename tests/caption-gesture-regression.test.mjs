@@ -7,7 +7,7 @@ import ts from 'typescript';
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 import { captionPreviewState } from '../src/lib/caption-preview.ts';
 import { timelineBlockControls, timelineControlRail, timelineVisibleTrackBounds, TIMELINE_GRIP_WIDTH } from '../src/lib/timeline-gesture.ts';
-import { indexTimelineCues, timelineCuePage, MAX_TIMELINE_PAGE_CUES } from '../src/lib/timeline-layout.ts';
+import { countTimelineCues, indexTimelineCues, queryTimelineCues, timelineCuePage, MAX_TIMELINE_PAGE_CUES, MAX_TIMELINE_BODY_CUES, MAX_TIMELINE_DENSITY_BINS } from '../src/lib/timeline-layout.ts';
 import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { createTranslationCaptionTrack, resolveCaptionPairs } from '../src/lib/caption-tracks.ts';
@@ -110,7 +110,7 @@ function harness() {
   };
 }
 const timelineSuffix = '\nexports.TimingGrip = TimingGrip; exports.TimelineMoveGrip = TimelineMoveGrip; exports.TimedBlock = TimedBlock;';
-const allTimelineSuffix = timelineSuffix + '\nexports.TimelineRow = TimelineRow; exports.TimelineRuler = TimelineRuler; exports.TinyButton = TinyButton; exports.ZoomButton = ZoomButton;';
+const allTimelineSuffix = timelineSuffix + '\nexports.TimelineRow = TimelineRow; exports.TimelineRuler = TimelineRuler; exports.TinyButton = TinyButton; exports.ZoomButton = ZoomButton; exports.TimelineDensityBin = TimelineDensityBin;';
 function renderedHostCount(node) {
   if (Array.isArray(node)) return node.reduce((sum, child) => sum + renderedHostCount(child), 0);
   if (!node || typeof node !== 'object') return 0;
@@ -568,18 +568,18 @@ for (const count of [100, 1000, 5000]) for (const density of ['adjacent', 'coinc
       reads = 0;
       const page = timelineCuePage(index, duration, 300, bounds, cue.id);
       maxReads = Math.max(maxReads, reads);
-      maxAllocated = Math.max(maxAllocated, page.cues.length + page.markers.size + page.layout.laneById.size);
+      maxAllocated = Math.max(maxAllocated, page.cues.length + page.markers.size + page.layout.laneById.size + page.renderCues.length + page.density.length);
       assert.ok(page.cues.includes(cue), cue.id);
       assert.ok(page.cues.length <= 4);
-      assert.ok(page.height <= 180);
+      assert.ok(page.height <= MAX_TIMELINE_BODY_CUES * 32 + 52);
       const markers = [...page.markers.values()].map((marker) => ({ ...marker, height: 38 }));
       for (const marker of markers) {
         assert.ok(marker.left >= bounds.left && marker.left + marker.width <= bounds.right);
         for (const other of markers) if (other !== marker) assert.equal(intersects(marker, other), false);
       }
     }
-    assert.ok(maxReads <= Math.ceil(Math.log2(count)) + 6);
-    assert.ok(maxAllocated <= 12);
+    assert.ok(maxReads <= 2 * (MAX_TIMELINE_BODY_CUES + 1) * (Math.ceil(Math.log2(count)) + 1) + 500);
+    assert.ok(maxAllocated <= MAX_TIMELINE_BODY_CUES * 2 + MAX_TIMELINE_DENSITY_BINS + 12);
     assert.equal(index.byId.size, count, 'one reusable identity index, no cached pages');
     t.diagnostic(`n=${count}: max indexed reads=${maxReads}, page entries=${maxAllocated}, index references=${count * 2}`);
   });
@@ -642,7 +642,7 @@ for (const count of [100, 1000, 5000]) for (const kind of ['caption', 'translati
           }
           const mounted = blocks();
           maxBlocks = Math.max(maxBlocks, mounted.length);
-          assert.ok(mounted.length <= 8, 'both tracks together mount at most eight cue blocks');
+          assert.ok(mounted.length <= 2 * (MAX_TIMELINE_BODY_CUES + MAX_TIMELINE_PAGE_CUES), 'both tracks have a fixed body/card allocation ceiling');
           let responders = rails.length;
           for (const block of mounted) {
             const child = harness(), ui = child.load('components/editor/layer-timeline.tsx', timelineSuffix);
@@ -652,10 +652,12 @@ for (const count of [100, 1000, 5000]) for (const kind of ['caption', 'translati
               g.render(gi.TimelineMoveGrip, grip.props);
               responders++;
             }
-            const marker = child.all((node) => node.type === 'Pressable')[0];
-            assert.ok(marker.props.style.width >= 44 && marker.props.style.height >= 36);
-            assert.ok(block.props.marker.left >= block.props.visibleTrackBounds.left);
-            assert.ok(block.props.marker.left + block.props.marker.width <= block.props.visibleTrackBounds.right);
+            if (block.props.marker) {
+              const marker = child.all((node) => node.type === 'Pressable')[0];
+              assert.ok(marker.props.style.width >= 44 && marker.props.style.height >= 36);
+              assert.ok(block.props.marker.left >= block.props.visibleTrackBounds.left);
+              assert.ok(block.props.marker.left + block.props.marker.width <= block.props.visibleTrackBounds.right);
+            }
           }
           maxNativeNodes = Math.max(maxNativeNodes, renderedHostCount(h.result));
           maxResponders = Math.max(maxResponders, responders);
@@ -676,11 +678,165 @@ for (const count of [100, 1000, 5000]) for (const kind of ['caption', 'translati
         }
       }
     }
-    assert.ok(maxNativeNodes < 180);
-    assert.ok(maxResponders <= 11);
+    assert.ok(maxNativeNodes < 1000);
+    assert.ok(maxResponders <= MAX_TIMELINE_BODY_CUES * 2 + 3);
+    if (count === 5000) {
+      assert.ok(maxBlocks <= 8, 'retain the original 5000-cue mount budget');
+      assert.ok(maxNativeNodes < 180);
+      assert.ok(maxResponders <= 11);
+    }
     assert.equal(sourceReads, 0, 'scroll, zoom, selection and reveal never rescan either source array');
     assert.deepEqual(seeks, [], 'navigation and reveal never move the playhead');
     t.diagnostic(`n=${count} ${density}: max cue blocks=${maxBlocks}, rendered host nodes=${maxNativeNodes}, timing responders=${maxResponders}, source rescans=${sourceReads}`);
+  });
+}
+
+test('interval index finds long earlier cues and matches an inclusive intersection oracle', () => {
+  const cues = [{ id: 'long', startMs: 0, endMs: 100000 },
+    ...Array.from({ length: 5000 }, (_, i) => ({ id: `short-${i}`, startMs: i * 100, endMs: i * 100 + (i % 11) * 30 }))];
+  const index = indexTimelineCues(cues);
+  assert.ok(queryTimelineCues(index, 50000, 70000).cues.some((cue) => cue.id === 'long'));
+  for (let i = 0; i < 100; i++) {
+    const start = i * 4999, end = start + (i % 7) * 371;
+    const expected = index.ordered.filter((cue) => cue.startMs <= end && cue.endMs >= start);
+    assert.deepEqual(queryTimelineCues(index, start, end).cues, expected);
+    assert.equal(countTimelineCues(index, start, end), expected.length);
+  }
+  assert.deepEqual(queryTimelineCues(index, 900000, 910000).cues, []);
+  assert.deepEqual(queryTimelineCues(indexTimelineCues([]), 0, 1).cues, []);
+});
+
+test('sparse scroll queries prune 5000 intervals; dense pages bound reads and allocations', () => {
+  const sparse = indexTimelineCues([{ id: 'long', startMs: 0, endMs: 1000000 },
+    ...Array.from({ length: 5000 }, (_, i) => ({ id: String(i), startMs: i * 100, endMs: i * 100 + 10 }))]);
+  for (const start of [50000, 250000, 499950]) {
+    const found = queryTimelineCues(sparse, start, start + 50);
+    assert.ok(found.cues.some((cue) => cue.id === 'long'));
+    assert.ok(found.probes < 100, `${found.probes} visited nodes`);
+  }
+  const dense = indexTimelineCues(Array.from({ length: 5000 }, (_, i) => ({ id: String(i), startMs: 0, endMs: 100000 })));
+  let reads = 0;
+  for (const key of ['ordered', 'ends', 'maxEnd']) dense[key] = new Proxy(dense[key], {
+    get(target, property) { if (/^\d+$/.test(String(property))) reads++; return target[property]; },
+  });
+  const page = timelineCuePage(dense, 100000, 1000, { left: 500, right: 700 }, '4000');
+  assert.ok(reads < 1000, `dense query read ${reads} indexed entries`);
+  assert.equal(page.bodies.length, 1);
+  assert.equal(page.bodies[0].id, '4000');
+  assert.ok(page.renderCues.length <= 5);
+  assert.ok(page.density.length <= MAX_TIMELINE_DENSITY_BINS);
+  assert.ok(page.density.every((bin) => bin.count === 5000));
+});
+
+for (const kind of ['caption', 'translation']) {
+  test(`${kind}: dense aggregate selects a real interval and exposes navigation without seeking`, () => {
+    const h = harness(), ui = h.load('components/editor/layer-timeline.tsx', allTimelineSuffix);
+    const captions = Array.from({ length: 5000 }, (_, i) => ({ id: `cue-${i}`, text: `Cue ${i}`, startMs: 0, endMs: 100000, wordIds: [] }));
+    const pairs = captions.map((source) => ({ source, translation: { id: 'fr:' + source.id, text: source.text },
+      startMs: 10000, endMs: 90000, timelineVisible: true }));
+    const seeks = [];
+    const props = { projectId: 'aggregate', currentMs: 60000, durationMs: 100000, clips: [], sources: [],
+      captions, layers: [{ id: 'captions', kind: 'captions', name: 'Captions' }], audioClips: [], audioSources: [],
+      translationTracks: [{ id: 'fr', name: 'French', visible: true, pairs }], onSeek(ms) { seeks.push(ms); },
+      onSelectCaption(cue) { props.selectedCaptionId = cue.id; props.selectedLayerId = 'captions'; },
+      onSelectTranslationCaption(id, pair) { props.selectedCaptionId = pair.source.id; props.selectedLayerId = id; },
+    };
+    h.render(ui.LayerTimeline, props);
+    const row = h.all((node) => node.type?.name === 'TimelineRow' && node.props.label.includes(kind === 'caption' ? 'CAPTIONS' : 'FRENCH'))[0];
+    const bins = h.all((node) => node.type?.name === 'TimelineDensityBin', row);
+    assert.ok(bins.length > 0 && bins.length <= MAX_TIMELINE_DENSITY_BINS);
+    const binUI = harness(); binUI.render(ui.TimelineDensityBin, bins[0].props);
+    assert.match(binUI.result.props.accessibilityLabel, /5000 cues intersect.*cue number to browse/);
+    binUI.result.props.onPress(); h.render();
+    const selected = h.all((node) => node.type?.name === 'TimedBlock' && node.props.selected)[0];
+    assert.equal(selected.props.hideBody, false);
+    assert.equal(selected.props.startMs, kind === 'caption' ? 0 : 10000);
+    assert.equal(selected.props.endMs, kind === 'caption' ? 100000 : 90000);
+    const first = props.selectedCaptionId;
+    h.all((node) => node.props.accessibilityLabel === 'Next cue')[0].props.onPress(); h.render();
+    assert.notEqual(props.selectedCaptionId, first);
+    assert.deepEqual(seeks, []);
+  });
+
+  for (const scenario of ['five sequential', 'four overlapping plus earlier', 'long 0-100']) {
+    test(`${kind}: ${scenario} bodies survive selected D and selection card paging`, () => {
+      const intervals = scenario === 'five sequential'
+        ? [['A', 50000, 54000], ['B', 54000, 58000], ['C', 58000, 62000], ['D', 62000, 66000], ['E', 66000, 70000]]
+        : scenario === 'four overlapping plus earlier'
+          ? [['earlier', 0, 65000], ...['A', 'B', 'C', 'D'].map((id) => [id, 51000, 69000])]
+          : [['long', 0, 100000], ['A', 10000, 11000], ['B', 20000, 21000], ['C', 30000, 31000], ['D', 55000, 65000]];
+      const captions = intervals.map(([id, startMs, endMs]) => ({ id, startMs, endMs, text: id, wordIds: [] }));
+      const pairs = captions.map((source) => ({ source, translation: { id: 'fr:' + source.id, text: 'French ' + source.id },
+        startMs: source.startMs, endMs: source.endMs, timelineVisible: true }));
+      const h = harness(), { LayerTimeline } = h.load('components/editor/layer-timeline.tsx');
+      const props = { projectId: 'intervals', currentMs: 0, durationMs: 100000, clips: [], sources: [],
+        captions, layers: [{ id: 'captions', kind: 'captions', name: 'Captions' }], audioClips: [], audioSources: [],
+        translationTracks: [{ id: 'fr', name: 'French', visible: true, pairs }],
+        selectedLayerId: kind === 'caption' ? 'captions' : 'fr', selectedCaptionId: 'D' };
+      h.render(LayerTimeline, props);
+      // At the default 16px/s, a 320px viewport spans exactly 20 seconds.
+      h.result.props.onLayout({ nativeEvent: { layout: { width: 320 } } }); h.render();
+      const scroll = () => h.all((node) => node.type === 'ScrollView' && node.props.horizontal)[0].props;
+      scroll().onScroll({ nativeEvent: { contentOffset: { x: 960 } } }); h.render();
+      const expected = captions.filter((cue) => cue.endMs >= 50000 && cue.startMs <= 70000);
+      for (const selectedId of ['D', 'A', 'D']) {
+        props.selectedCaptionId = selectedId; h.render();
+        scroll().onScroll({ nativeEvent: { contentOffset: { x: 960 } } }); h.render();
+        const rows = h.all((node) => node.type?.name === 'TimelineRow');
+        for (const row of rows.filter((node) => node.props.label.includes('CAPTIONS') || node.props.label.includes('FRENCH'))) {
+          const blocks = h.all((node) => node.type?.name === 'TimedBlock', row);
+          const bodies = blocks.filter((node) => !node.props.hideBody);
+          assert.deepEqual(bodies.map((node) => node.props.label.replace('French ', '')).sort(), expected.map((cue) => cue.id).sort());
+          assert.ok(blocks.filter((node) => node.props.marker).length <= 4);
+          const targets = bodies.flatMap((node) => blockTargets(node.props));
+          for (const body of targets) {
+            assert.ok(body.top >= 44 && body.top + body.height <= row.props.height - 8);
+            for (const other of targets) if (other !== body) assert.ok(
+              body.left + body.width <= other.left + 1e-8 || other.left + other.width <= body.left + 1e-8
+              || body.top + body.height <= other.top || other.top + other.height <= body.top,
+              'time bodies must not overlap neighboring lane targets');
+          }
+        }
+      }
+    });
+  }
+
+  for (const finish of ['release', 'terminate']) test(`${kind}: ${finish} of timing gesture preserves selected viewport until scrub or clear`, () => {
+    const h = harness(), { LayerTimeline } = h.load('components/editor/layer-timeline.tsx');
+    const cue = { id: 'D', text: 'D', startMs: 55000, endMs: 65000, wordIds: [] };
+    const pair = { source: cue, translation: { id: 'fr:D', text: 'French D' }, startMs: cue.startMs, endMs: cue.endMs, timelineVisible: true };
+    const seeks = [];
+    const props = { projectId: 'ownership', currentMs: 1000, durationMs: 100000, clips: [], sources: [],
+      captions: [cue], layers: [{ id: 'captions', kind: 'captions', name: 'Captions' }], audioClips: [], audioSources: [],
+      translationTracks: [{ id: 'fr', name: 'French', visible: true, pairs: [pair] }],
+      selectedLayerId: kind === 'caption' ? 'captions' : 'fr', selectedCaptionId: 'D',
+      onSelectCaption() {}, onSelectTranslationCaption() {}, onTimingChangeStart() {}, onTimingChangeEnd() {}, onScrubStart() {},
+      onItemTimingChange(_item, _edge, startMs, endMs) {
+        if (kind === 'caption') props.captions = [{ ...cue, startMs, endMs }];
+        else props.translationTracks = [{ ...props.translationTracks[0], pairs: [{ ...pair, startMs, endMs }] }];
+      }, onSeek(ms) { seeks.push(ms); },
+    };
+    h.render(LayerTimeline, props);
+    const before = h.scrolls.filter((entry) => entry.horizontal).at(-1).x;
+    assert.ok(Math.abs(before - 880) < 1e-8);
+    const target = dockTargets(h).find((entry) => entry.edge === 'move');
+    target.handlers.onPanResponderGrant();
+    target.handlers.onPanResponderMove({}, { dx: 12, dy: 0 }); h.render();
+    const count = h.scrolls.filter((entry) => entry.horizontal).length;
+    target.handlers[finish === 'release' ? 'onPanResponderRelease' : 'onPanResponderTerminate'](); h.render();
+    assert.equal(h.scrolls.filter((entry) => entry.horizontal).length, count);
+    props.currentMs = 2000; h.render();
+    assert.equal(h.scrolls.filter((entry) => entry.horizontal).at(-1).x, before);
+    assert.deepEqual(seeks, []);
+    const scroll = h.all((node) => node.type === 'ScrollView' && node.props.horizontal)[0].props;
+    scroll.onScrollBeginDrag(); scroll.onScroll({ nativeEvent: { contentOffset: { x: 400 } } });
+    scroll.onMomentumScrollEnd(); h.render();
+    assert.ok(seeks.length > 0);
+    props.currentMs = 3000; h.render();
+    assert.equal(h.scrolls.filter((entry) => entry.horizontal).at(-1).x, 48);
+    h.all((node) => node.props.accessibilityLabel === 'Reveal selected cue')[0].props.onPress(); h.render();
+    props.selectedCaptionId = undefined; props.selectedLayerId = undefined; h.render();
+    assert.equal(h.scrolls.filter((entry) => entry.horizontal).at(-1).x, 48);
   });
 }
 
