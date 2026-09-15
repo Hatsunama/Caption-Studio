@@ -1,7 +1,6 @@
 import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { usePreventRemove, type NavigationAction } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -419,7 +418,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const workspaceMountedRef = useRef(true);
   const [exitApproved, setExitApproved] = useState(false);
   const exitPromptOpenRef = useRef(false);
-  const pendingExitActionRef = useRef<NavigationAction | undefined>(undefined);
+  const pendingExitActionRef = useRef<Parameters<typeof navigation.dispatch>[0] | undefined>(undefined);
   // The script editor is a full preview transport surface, including while its
   // keyboard is open. Admit companion audio and transition media with video.
   const blockingUi = Boolean(
@@ -544,7 +543,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     if (!runtimePolicy.mediaAdmitted) pauseTransport();
   }, [isPlaying, pauseTransport, runtimePolicy.mediaAdmitted]);
 
-  usePreventRemove(!exitApproved, ({ data }) => {
+  useEffect(() => navigation.addListener('beforeRemove', (event) => {
+    if (exitApproved) return;
+    event.preventDefault();
+    const { data } = event;
     const backStep = resolveEditorBackStep({
       interactionLocked: Boolean(finishingSession || transcriptionCancelling || mediaProgress || extractAudioBusy || (exporting && exportKind !== 'video')),
       captionGenerationActive: Boolean(progress && !transcriptionCancelling),
@@ -613,7 +615,35 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         { text: 'Save draft', onPress: () => { void finishExit('save'); } },
       ],
     );
-  });
+  }), [
+    cancelCaptionGeneration,
+    dualCaptionEditorOpen,
+    dualLanguagePickerOpen,
+    editingLayerId,
+    editorSession,
+    exitApproved,
+    exportKind,
+    exporting,
+    extractAudioBusy,
+    extractAudioOpen,
+    finishingSession,
+    fontBrowserOpen,
+    initialProject,
+    mediaProgress,
+    navigation,
+    pauseTransport,
+    pendingChange,
+    progress,
+    scriptEditorOpen,
+    scriptExit,
+    selectedAudioClipId,
+    selectedCaptionId,
+    selectedClipId,
+    selectedLayerId,
+    selectedTranslationTrackId,
+    transcriptionCancelling,
+    transitionTimingOpen,
+  ]);
 
   useEffect(() => {
     if (!exitApproved) return;

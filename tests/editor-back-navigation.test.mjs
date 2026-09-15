@@ -16,7 +16,7 @@ const source = readFileSync(process.env.CAPTION_EDITOR_SOURCE
   ?? new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('editor.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 function ownsRemoval(node) {
-  if (ts.isIdentifier(node) && node.text === 'usePreventRemove') return true;
+  if (ts.isStringLiteral(node) && node.text === 'beforeRemove') return true;
   return ts.forEachChild(node, ownsRemoval) === true;
 }
 const owners = ast.statements.filter((node) => ts.isFunctionDeclaration(node)
@@ -135,11 +135,6 @@ function mount(t, initialProject = fixture()) {
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
     if (name === 'react-native') return native;
-    if (name === '@react-navigation/native') return {
-      usePreventRemove(prevent, callback) {
-        react.useEffect(() => prevent ? subscribe('preventRemove', callback) : undefined, [prevent, callback]);
-      },
-    };
     if (name === 'expo-router') return { useNavigation: () => navigation };
     if (name === 'expo-video') return { VideoView: 'VideoView' };
     if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ bottom: 0 }) };
@@ -192,10 +187,10 @@ function mount(t, initialProject = fixture()) {
     } while (dirty);
   }
   function routeBack() {
-    const event = { data: { action: { type: 'GO_BACK' } } };
-    const guards = [...(listeners.get('preventRemove') ?? [])];
-    if (guards.length) guards.forEach((callback) => callback(event));
-    else navigation.dispatch(event.data.action);
+    let prevented = false;
+    const event = { data: { action: { type: 'GO_BACK' } }, preventDefault: () => { prevented = true; } };
+    for (const callback of listeners.get('beforeRemove') ?? []) callback(event);
+    if (!prevented) navigation.dispatch(event.data.action);
     render();
   }
   function androidBack() {

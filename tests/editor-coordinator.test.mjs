@@ -167,15 +167,6 @@ function mount(initialProject = fixture()) {
     require(name) {
       if (name === 'react') return react;
       if (name === 'react-native') return native;
-      if (name === '@react-navigation/native') return {
-        usePreventRemove(prevent, callback) {
-          react.useEffect(() => {
-            if (!prevent) return;
-            listeners.set('preventRemove', callback);
-            return () => listeners.delete('preventRemove');
-          }, [prevent, callback]);
-        },
-      };
       throw new Error('Unexpected exit dependency: ' + name);
     },
     requestAnimationFrame(callback) { frames.set(++frameId, callback); return frameId; },
@@ -189,15 +180,6 @@ function mount(initialProject = fixture()) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return native;
-      if (name === '@react-navigation/native') return {
-        usePreventRemove(prevent, callback) {
-          react.useEffect(() => {
-            if (!prevent) return;
-            listeners.set('preventRemove', callback);
-            return () => listeners.delete('preventRemove');
-          }, [prevent, callback]);
-        },
-      };
       if (name === 'expo-router') return { useNavigation: () => navigation };
       if (name === 'expo-video') return { VideoView: 'VideoView' };
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ bottom: 0 }) };
@@ -251,7 +233,7 @@ function mount(initialProject = fixture()) {
       anchor.props.onLayout(layout(146, 320));
       let prompt;
       for (let step = 0; step < 8 && !prompt; step += 1) {
-        listeners.get('preventRemove')({ data: { action: { type: 'GO_BACK' } } });
+        listeners.get('beforeRemove')({ data: { action: { type: 'GO_BACK' } }, preventDefault() {} });
         render();
         const pending = [...frames.values()];
         frames.clear();
