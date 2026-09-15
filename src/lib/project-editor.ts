@@ -36,7 +36,7 @@ import {
   type VideoClip,
   type VideoTransformPatch,
 } from '@/types/project';
-import { editTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
+import { editCanvasTimelineRange, editTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
 
 export function setCaptionTexts(project: CaptionProject, changes: CaptionTextChanges) {
   const changed = applyCaptionTextChanges(project.captions, changes);
@@ -91,8 +91,7 @@ export function setCaptionTiming(
   const entries = buildClipTimeline(project.clips);
   const selected = project.captions.find((caption) => caption.id === captionId);
   if (!selected || selected.timelineVisible === false) return project;
-  const durationMs = projectTimelineDuration(project);
-  const { startMs: safeStartMs, endMs: safeEndMs } = editTimelineRange(selected, edge, startMs, endMs, durationMs);
+  const { startMs: safeStartMs, endMs: safeEndMs } = editCanvasTimelineRange(selected, edge, startMs, endMs);
   if (safeStartMs === selected.startMs && safeEndMs === selected.endMs) return project;
   const captions = project.captions
     .map((caption) => caption.id === captionId
@@ -175,7 +174,7 @@ export function setLayerTiming(
 ) {
   const selected = project.layers.find((layer) => layer.id === layerId && layer.kind !== 'captions');
   if (!selected || selected.kind === 'captions') return project;
-  const range = editTimelineRange(
+  const range = selected.kind === 'text' ? editCanvasTimelineRange(selected, edge, startMs, endMs) : editTimelineRange(
     { startMs: selected.startMs, endMs: selected.endMs },
     edge,
     startMs,
@@ -200,15 +199,17 @@ export function setImageLayer(project: CaptionProject, layerId: string, patch: P
 }
 
 export function createTextLayer(project: CaptionProject, id: string, currentMs: number, durationMs: number) {
-  const startMs = clamp(currentMs, 0, Math.max(0, durationMs - 500));
+  const startMs = Number.isFinite(currentMs) ? Math.max(0, currentMs) : 0;
+  const defaultEndMs = Number.isFinite(durationMs) && startMs < durationMs
+    ? Math.min(durationMs, startMs + 3_000) : startMs + 3_000;
+  const range = editCanvasTimelineRange({ startMs, endMs: defaultEndMs }, 'end', startMs, defaultEndMs);
   const layer = attachLayerToTimeline<TextVisualLayer>({
     id,
     kind: 'text',
     name: 'New Text',
     visible: true,
     text: 'New text',
-    startMs,
-    endMs: Math.min(durationMs, startMs + 3_000),
+    ...range,
     style: mergeStyle(DEFAULT_CAPTION_STYLE, {
       position: { x: 0.5, y: 0.48 },
       box: { width: 0.72, height: 0.18 },

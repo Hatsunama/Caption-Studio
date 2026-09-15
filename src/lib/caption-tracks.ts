@@ -1,4 +1,4 @@
-import { projectTimelineDuration } from '@/lib/project-timeline';
+import { editCanvasTimelineRange } from '@/lib/timeline-item-timing';
 import { mergePatch, mergeStyle, removePatchedKeys } from '@/lib/caption-style';
 import { captionTransform, hasCaptionTransform, withoutCaptionTransform } from '@/lib/caption-transform';
 import { layerExtent } from '@/lib/layer-geometry';
@@ -308,7 +308,6 @@ export function setTranslationCueTiming(
   endMs: number,
   updatedAt = project.updatedAt,
 ) {
-  const timelineEndMs = Math.max(80, projectTimelineDuration(project));
   return mapTranslationTrack(project, trackId, (track) => ({
     ...track,
     cues: track.cues.map((cue) => {
@@ -316,26 +315,8 @@ export function setTranslationCueTiming(
       const source = project.captions.find((caption) => caption.id === sourceCaptionId);
       const previousStart = cue.startMs ?? source?.startMs ?? 0;
       const previousEnd = cue.endMs ?? source?.endMs ?? previousStart + 80;
-      const finiteStart = Number.isFinite(previousStart) ? previousStart : 0;
-      const finiteEnd = Number.isFinite(previousEnd) ? previousEnd : finiteStart + 80;
-      // Normalize stale bounds before editing either edge, while retaining the
-      // original duration for moves whenever it fits on the timeline.
-      const currentStart = Math.max(0, Math.min(finiteStart, timelineEndMs - 80));
-      const currentEnd = Math.min(timelineEndMs, Math.max(finiteEnd, currentStart + 80));
-      const currentDuration = Math.min(timelineEndMs, Math.max(80, finiteEnd - finiteStart));
-      const requestedStart = Number.isFinite(startMs) ? startMs : currentStart;
-      const requestedEnd = Number.isFinite(endMs) ? endMs : currentEnd;
-      const safeStart = edge === 'start'
-        ? Math.max(0, Math.min(requestedStart, currentEnd - 80))
-        : edge === 'move'
-          ? Math.max(0, Math.min(requestedStart, timelineEndMs - currentDuration))
-          : currentStart;
-      const safeEnd = edge === 'start'
-        ? currentEnd
-        : edge === 'move'
-          ? safeStart + currentDuration
-          : Math.min(timelineEndMs, Math.max(requestedEnd, currentStart + 80));
-      return { ...cue, startMs: safeStart, endMs: safeEnd, timelineVisible: true };
+      const range = editCanvasTimelineRange({ startMs: previousStart, endMs: previousEnd }, edge, startMs, endMs);
+      return { ...cue, ...range, timelineVisible: true };
     }),
   }), updatedAt);
 }

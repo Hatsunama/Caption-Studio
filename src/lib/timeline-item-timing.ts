@@ -7,6 +7,33 @@ export type TimelineRange = Readonly<{
   endMs: number;
 }>;
 
+/** Explicit caption/text edits own their extent; footage is not an upper bound. */
+export function editCanvasTimelineRange(
+  current: TimelineRange,
+  edge: TimelineTimingEdge,
+  requestedStartMs: number,
+  requestedEndMs: number,
+): TimelineRange {
+  const minimumMs = MINIMUM_TIMELINE_ITEM_MS;
+  const finiteStart = Number.isFinite(current.startMs) ? current.startMs : 0;
+  const finiteEnd = Number.isFinite(current.endMs) ? current.endMs : finiteStart + minimumMs;
+  const currentStart = Math.max(0, finiteStart);
+  const currentEnd = Math.max(currentStart + minimumMs, finiteEnd);
+  const requestedStart = Number.isFinite(requestedStartMs) ? requestedStartMs : currentStart;
+  const requestedEnd = Number.isFinite(requestedEndMs) ? requestedEndMs : currentEnd;
+  const startMs = edge === 'start'
+    ? clamp(requestedStart, 0, currentEnd - minimumMs)
+    : edge === 'move' ? Math.max(0, requestedStart) : currentStart;
+  const endMs = edge === 'start' ? currentEnd
+    : edge === 'move' ? startMs + Math.max(minimumMs, finiteEnd - finiteStart)
+      : Math.max(requestedEnd, currentStart + minimumMs);
+  // Reject overflow/precision loss rather than persisting an unusable interval.
+  if (!Number.isFinite(endMs) || endMs > Number.MAX_SAFE_INTEGER || endMs - startMs < minimumMs) {
+    throw new Error('Timeline timing exceeds the supported range.');
+  }
+  return { startMs, endMs };
+}
+
 export function editTimelineRange(
   current: TimelineRange,
   edge: TimelineTimingEdge,
