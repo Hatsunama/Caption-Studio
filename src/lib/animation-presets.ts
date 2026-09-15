@@ -10,7 +10,7 @@ export type AnimationPreset = {
   durationMs: number;
   accent: string;
   group: 'classic' | 'entry' | 'loop' | 'word' | 'emoji';
-  timing: 'phrase' | 'word';
+  timing: 'phrase' | 'word' | 'cue';
   colorBehavior: 'unchanged' | 'active-word';
 };
 
@@ -38,7 +38,7 @@ function word(
   group: 'word' | 'emoji' = 'word',
   colorBehavior: AnimationPreset['colorBehavior'] = 'unchanged',
 ): AnimationPreset {
-  return { id, name, icon, description, intensity, durationMs, accent, group, timing: 'word', colorBehavior };
+  return { id, name, icon, description, intensity, durationMs, accent, group, timing: group === 'emoji' ? 'cue' : 'word', colorBehavior };
 }
 
 export const ANIMATION_PRESETS: AnimationPreset[] = [

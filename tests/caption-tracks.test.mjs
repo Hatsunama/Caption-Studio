@@ -16,6 +16,7 @@ import {
   setTranslationTrackStyle,
   setTranslationTrackProvider,
   setTranslationTrackVisibility,
+  stackedTranslationLayout,
   synchronizeCaptionTracks,
   synchronizeCaptionTracksAfterTranscription,
   updatePairedCaptionText,
@@ -26,6 +27,83 @@ import { deleteCaptionBlock, setCaptionTexts, splitVideoClip } from '../src/lib/
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { decodeVersionTwoProject } from '../src/lib/project-schema.ts';
 import { setClipPlaybackRate } from '../src/lib/video-timeline.ts';
+
+const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-10, `${actual} != ${expected}`);
+
+test('automatic stacking uses uniform and independent axis scales while preserving canonical boxes', () => {
+  const style = projectFixture().projectStyle;
+  const primary = { ...style, position: { x: 0.95, y: 0.3 }, box: { width: 0.4, height: 0.1 }, scale: 2, scaleX: 0.5, scaleY: 1.5 };
+  const translation = { ...style, box: { width: 0.4, height: 0.1 }, scale: 1.5, scaleX: 1.2, scaleY: 0.8 };
+  const before = structuredClone({ primary, translation });
+  const layout = stackedTranslationLayout(primary, translation);
+  near(layout.position.y - 0.06, 0.45 + DEFAULT_TRANSLATION_STACK_GAP);
+  near(layout.position.x, 0.64);
+  assert.deepEqual(layout.box, translation.box);
+  assert.deepEqual({ primary, translation }, before);
+  near(stackedTranslationLayout({ ...primary, position: { x: 0, y: 0.3 } }, translation).position.x, 0.36);
+});
+
+test('automatic stacking reduces an infeasible gap without shrinking a feasible translation', () => {
+  const style = projectFixture().projectStyle;
+  const primary = { ...style, position: { x: 0.5, y: 0.7 }, box: { width: 0.5, height: 0.2 } };
+  const translation = { ...style, box: { width: 0.7, height: 0.18 } };
+  const layout = stackedTranslationLayout(primary, translation);
+  near(layout.position.y, 0.91);
+  assert.ok(layout.position.y - translation.box.height / 2 >= 0.8);
+  near(layout.position.y + translation.box.height / 2, 1);
+  assert.deepEqual(layout.box, translation.box);
+});
+
+test('insufficient stacking space prioritizes canvas bounds and centers oversized dimensions deterministically', () => {
+  const style = projectFixture().projectStyle;
+  const primary = { ...style, position: { x: 0.9, y: 0.95 }, box: { width: 0.5, height: 0.2 }, scale: 2 };
+  const translation = { ...style, box: { width: 0.7, height: 0.2 }, scale: 1, scaleX: 1, scaleY: 2 };
+  const layout = stackedTranslationLayout(primary, translation);
+  near(layout.position.x, 0.65);
+  near(layout.position.y, 0.8);
+  assert.deepEqual(layout.box, translation.box);
+  const oversized = { ...translation, scale: 4 };
+  const centered = stackedTranslationLayout(primary, oversized);
+  assert.deepEqual(centered.position, { x: 0.5, y: 0.5 });
+  assert.deepEqual(centered.box, oversized.box);
+  assert.deepEqual(stackedTranslationLayout(primary, oversized), centered);
+});
+
+test('resolved default translation drops the primary imported font and stays below scaled primary geometry when feasible', () => {
+  const project = projectFixture();
+  project.projectStyle = { ...project.projectStyle,
+    font: { id: 'custom', family: 'Custom', source: 'imported', uri: 'file:///custom.otf', postScriptName: 'Custom' },
+    position: { x: 0.5, y: 0.4 }, box: { width: 0.4, height: 0.1 }, scale: 1.5, scaleX: 0.5, scaleY: 1.2 };
+  const bilingual = createEnglishChineseCaptionTrack(project);
+  const pair = resolveCaptionPairs(bilingual, CHINESE_SIMPLIFIED_TRACK_ID)[0];
+  assert.deepEqual(pair.style.font, { id: 'system-sans', family: 'sans-serif', source: 'system' });
+  assert.deepEqual(pair.style.box, { width: 0.9, height: 0.12 });
+  const halfHeight = 0.12 / 2;
+  near(pair.style.position.y - halfHeight, 0.49 + DEFAULT_TRANSLATION_STACK_GAP);
+  assert.equal(pair.style.scale, 1);
+  assert.equal(pair.style.scaleX, 1);
+  assert.equal(pair.style.scaleY, 1);
+  assert.ok(pair.style.position.y + halfHeight <= 1);
+});
+
+test('explicit track and cue positions survive resolution and stack-gap edits', () => {
+  for (const scope of ['track', 'cue']) {
+    let project = createEnglishChineseCaptionTrack(projectFixture());
+    const patch = { position: { x: 0.01, y: 0.99 }, box: { width: 0.8, height: 0.3 }, scale: 2, scaleX: 1.2, scaleY: 1.4 };
+    project = scope === 'track'
+      ? setTranslationTrackStyle(project, CHINESE_SIMPLIFIED_TRACK_ID, patch)
+      : setTranslationCueStyle(project, CHINESE_SIMPLIFIED_TRACK_ID, 'c1', patch);
+    const adjusted = setTranslationStackGap(project, CHINESE_SIMPLIFIED_TRACK_ID, 0.15);
+    for (const value of [project, adjusted]) {
+      const style = resolveCaptionPairs(value, CHINESE_SIMPLIFIED_TRACK_ID)[0].style;
+      assert.deepEqual(style.position, patch.position);
+      assert.deepEqual(style.box, patch.box);
+      assert.equal(style.scale, patch.scale);
+      assert.equal(style.scaleX, patch.scaleX);
+      assert.equal(style.scaleY, patch.scaleY);
+    }
+  }
+});
 
 test('new projects expose a backward-compatible versioned caption-track collection', () => {
   const project = projectFixture();
@@ -78,7 +156,8 @@ test('translation cues own independent persisted timing while retaining stable s
     projectStyle: { ...bilingual.projectStyle, position: { x: 0.32, y: 0.44 } },
   };
   const movedPair = resolveCaptionPairs(moved, track.id)[0];
-  assert.equal(movedPair.style.position.x, 0.32);
+  assert.equal(movedPair.style.position.x, 0.45);
+  near(movedPair.style.position.x - movedPair.style.box.width / 2, 0);
   assert.ok(movedPair.style.position.y > 0.44);
   assert.ok(
     movedPair.style.position.y - movedPair.style.box.height / 2

@@ -77,11 +77,44 @@ function safe(value: string) {
 }
 
 export function readEditorDraftJournal(projectId: string, kind: EditorDraftKind) {
-  return journalOperations(journalUri(projectId, kind) ?? projectId, () => readEditorDraftJournalUnqueued(projectId, kind));
+  return journalOperations(safe(projectId), () => readEditorDraftJournalUnqueued(projectId, kind));
 }
 export function writeEditorDraftJournal(projectId: string, kind: EditorDraftKind, baseRevision: string, payload: unknown) {
-  return journalOperations(journalUri(projectId, kind) ?? projectId, () => writeEditorDraftJournalUnqueued(projectId, kind, baseRevision, payload));
+  return journalOperations(safe(projectId), () => writeEditorDraftJournalUnqueued(projectId, kind, baseRevision, payload));
 }
 export function clearEditorDraftJournal(projectId: string, kind: EditorDraftKind) {
-  return journalOperations(journalUri(projectId, kind) ?? projectId, () => clearEditorDraftJournalUnqueued(projectId, kind));
+  return journalOperations(safe(projectId), () => clearEditorDraftJournalUnqueued(projectId, kind));
+}
+
+// Share the project queue with every journal kind so pending writes finish before
+// lifecycle cleanup enumerates files, including staging files left by failed writes.
+export function clearProjectEditorDraftJournals(projectId: string) {
+  return journalOperations(safe(projectId), async () => {
+    const directory = journalDirectoryUri();
+    if (!directory) return;
+    const info = await FileSystem.getInfoAsync(directory);
+    if (!info.exists || !info.isDirectory) return;
+    const prefix = `${safe(projectId)}-`;
+    const entries = await FileSystem.readDirectoryAsync(directory);
+    const results = await Promise.allSettled(entries
+      .filter((name) => name.startsWith(prefix)
+        && /^(caption-script|dual-captions-[a-zA-Z0-9_-]*)\.json(\.writing)?$/.test(name.slice(prefix.length)))
+      .map(async (name) => {
+        const uri = `${directory}${name}`;
+        const entry = await FileSystem.getInfoAsync(uri);
+        if (!entry.exists || entry.isDirectory) return;
+        const raw = await FileSystem.readAsStringAsync(uri);
+        let record: unknown;
+        try {
+          record = JSON.parse(raw);
+        } catch {
+          // Interrupted writes may leave invalid JSON; the filename still scopes cleanup.
+        }
+        // Legacy sanitized filenames can overlap another project's namespace.
+        if (record && typeof record === 'object' && 'projectId' in record && record.projectId !== projectId) return;
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+      }));
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+  });
 }

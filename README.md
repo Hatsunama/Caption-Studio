@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.41) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.52) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.41/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.52/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.41 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.52 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -73,63 +73,7 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.41** (`v1.4.41`, Android version code 53).
-
-Version 1.4.41 gives every timeline object a semantic bottom-menu target. Video and audio open their own controls; original and translated captions open Captions; text and images open Stickers. A repeated selection leaves the currently correct menu mounted, preserving its current state and scroll. Caption controls now live under Captions, with caption animation visibly separated from the rest; text animation remains under Stickers.
-
-Version 1.4.39 repairs the transcription identity failure reported on Seeker without discarding project media, captions, or edits. Mixed-clip transcription words are now explicitly timeline-owned, synthetic source caches are restored only when the mapping is lossless, project snapshots are validated before database writes, and an existing project containing the affected duplicate derived cache is recovered at the database boundary. Local translation retries now accept only one exact, ordered JSON result for every requested cue; malformed, duplicated, reordered, or cross-cue output cannot enter checkpoints. Translation ownership keys are collision-free even when track or cue identifiers contain delimiters.
-
-Version 1.4.38 names the captions toolbar **Stickers**, keeps the active tool panel mounted when timeline objects are selected, and restores horizontal tool-menu scroll. Animations require a timeline caption or text layer unless scope is All (`Choose Text From The Timeline First`). Local translation now fail-closes on cue bleed and incomplete batch replies: exact IDs, one result per cue, no source fallback, source-relative correspondence instead of a 500-character cap, token-budget batching against the native 3600-token limit, and atomic checkpoints only after every cue in a batch validates.
-
-Version 1.4.37 restores direct two-finger twist rotation for text and subtitle overlays. Multi-touch transforms now retain responder ownership when the second finger lands, while blank-preview taps remain isolated to deselection. Transition timing is presented on its own row before the horizontally scrolling transition presets so it is immediately accessible.
-
-Version 1.4.36 keeps transition playback inside a truthful four-player 48 MiB buffer budget, loads composite-transition media only inside a bounded lead window, and releases it after the window. Contiguous cuts from the same source retain one active decoder and audio clock instead of pausing and seeking at every split. The fake RGB-bar transition is retired in preview and native export; existing projects migrate it to a cinematic dip. New audio is not exposed until extraction, validation, waveform decoding, and durable save finish. Tapping empty preview or timeline space clears every selected item before normal timeline seeking or scrubbing. The SDK 57 native package set is aligned to Expo's current verified patch revisions, including its explicit worklets runtime. It also includes the enlarged layer controls and topology-preserving subtitle reorder behavior from 1.4.32.
-
-Version 1.4.29 prevents transition preview decoders from appearing as animated black panels. Composite previews stay transparent until both auxiliary players have rendered their first sought frame, disable ExoPlayer's black shutter, and reset the render gate whenever the transition sources change. Native export geometry remains unchanged because it decodes exact bitmap frames before composition. Background removal and person motion paths have been retired across the editor, preview, export planner, native compositor, privacy controls, and Android dependencies. Existing projects remain readable; legacy background metadata is retained only for safe media cleanup and is always loaded inactive.
-
-Version 1.4.28 makes every caption-quality choice immediately enter a visible generation state before composed timeline audio is prepared. Fast, Balanced, and Accurate all use the same operation contract, and any preparation, model-download, or transcription failure now opens a plain-English failure dialog at the point of action instead of appearing only in an editor message below the fold.
-
-Version 1.4.27 makes a video split a topology-only operation. Splitting a clip no longer divides, duplicates, retimes, rewrites, or regenerates primary or translated subtitles. Captions wholly on one side keep source ownership under the corresponding new clip ID; a caption crossing the new cut keeps its exact identity, text, timing, style, and translation while becoming explicitly timeline-owned. Timing ownership is persisted independently from automatic/manual text ownership, so later clip edits cannot silently reattach or split subtitles that a user intentionally moved or combined across clips. The project screen heading is now **Captions Locally**. Video topology and layout operations now respect the independent `timeline` ownership of added audio: splitting or reordering video preserves audio exactly, and duration-changing ripple edits can shift later audio without inferring a video owner, trimming source content, or deleting an audio block.
-
-Version 1.4.25 keeps prepared video sources resident in a bounded two-player set, so selecting, seeking, pausing, and revisiting timeline clips do not destroy the standby decoder or return the editor to a loading screen. Caption generation now transcribes one native audible-timeline composition instead of aborting on the first original container that does not expose an embedded audio track; attached audio clips, muted state, trims, playback rate, gaps, and clip ownership remain aligned with the project timeline. Native bridge failures are translated into actionable English, cancellation stops both extraction and timeline preparation, and temporary audio is removed without changing projects, drafts, videos, app data, or signing identity.
-
-Version 1.4.19 keeps strict multi-cue JSON and ID validation while giving a failed single-cue retry its own deterministic plain-text provider contract. The only requested cue supplies the identity; malformed JSON, Markdown wrappers, runtime tokens, source echoes, and wrong-script output still fail closed. This makes the existing untuned production model's common bare-translation response usable without weakening batch cardinality or moving provider policy into UI/project state. Translation checkpoints are invalidated for the changed retry profile. The production LiteRT-LM URL, bytes, and SHA-256 remain unchanged while the Natural multilingual v2 candidate completes its strict model and two-phone gates.
-
-Version 1.4.18 preserves integrity-bound caption and translation model downloads across Android foreground interruptions, reserves storage only for remaining resumable bytes, and provides a real Retry action that continues the exact interrupted translation request. The controller owns recoverable operation state, the modal owns user-facing actions, transfer and storage policy remain in services, and release identity remains outside presentation code.
-
-Version 1.4.15 keeps hold-drag reorder filmstrip tiles on-screen: reorder mode shrinks the scrollable track to filmstrip width (not the full duration timeline), scrolls the active tile into view when the gesture starts, and auto-scrolls as the drop index nears the edges, then restores playhead-synced proportional scrolling on commit/cancel.
-
-Version 1.4.14 keeps positional CLIP # labels and adds a tiny first-frame thumbnail beside each CLIP # so clips stay identifiable after reorder. Hold-then-drag reorder now switches the video track into equal-sized filmstrip tiles (not duration-proportional bars) for the gesture, then restores the normal timeline on commit/cancel. Extracting audio always shows a local busy overlay from source choice through remux/encode. Timeline audio clips render cached amplitude waveforms. Opening the Audio tool no longer clears a selected video clip, so that clip’s embedded volume/mute/fade controls stay available alongside add/extract and separate audio-clip editors.
-
-Version 1.4.13 repairs clip-to-clip preview handoff with a dual primed player (no black frames or audio gaps when crossing screen-recording ↔ camera clips), replaces the vertical REORDER strip with hold-then-drag filmstrip reordering that cannot leave the timeline blank or unscrollable, and remaps source-anchored captions plus related timeline audio when a video clip moves.
-
-Version 1.4.12 fixes ripping/extracting audio from another on-device video so the resulting timeline clip plays real sound instead of silent or broken audio. Lossless AAC remux now skips duplicate codec-config samples (which previously produced unplayable m4a for expo-audio), uses the track duration after remux instead of the last sample timestamp, and falls back to on-device AAC re-encode when the source codec cannot remux into a playable MPEG-4.
-
-Version 1.4.11 improves timeline editing: either trim edge can extend a packed (gapless) clip back out to unused source media while auto-sliding following clips. Shortening still inserts removable black gaps; extending past a gap grows the timeline instead of stopping at the gap boundary.
-
-Version 1.4.10 makes translation quality a choice, not an export lock. The dual editor shows missing, review and skipped counts. Refresh unfinished, Refresh all, individual Refresh, and checkbox-based Refresh selected are available. Skip second line is reversible and preserves saved text. MP4, SRT and ASS exports warn about missing or unreviewed lines and offer **Export anyway**, keeping available text and omitting blank or skipped second-language lines. Original captions and projects are not deleted or rewritten by export.
-
-Editing one language never silently refreshes another. A reminder offers Keep current text, Review lines, or Refresh these lines. Opening an existing dual editor no longer restarts translation automatically. A second-language field may remain blank while primary-text edits are saved. Reviewed text can become stale and still save/reload correctly.
-
-Translation uses batches of at most four cues with surrounding context. Unusable outputs receive one individual retry within the same native model session, without a second model load. Completed repairs are checkpointed before cancellation; missing responses cannot masquerade as valid "OK" results. Short acknowledgements, invariant numbers/URLs and full Unicode writing systems are handled without accepting arbitrary English echoes. The prompt requests natural colloquial subtitles matching the speaker's register, without inventing slang or dialect. The model weights, CPU backend, thread limit and sampling settings have not changed; smaller batches can add prompt overhead, so a speed or translation-quality improvement is not guaranteed without phone evaluation. See [audit scope and remaining device checks](docs/audit-1.4.10.md).
-
-Version 1.4.9 checkpoints completed translation batches in private, backup-excluded phone storage. If the app closes, return and tap Refresh: unchanged completed batches are restored, and only unfinished work needs inference. The interrupted batch may restart. Checkpoints expire after 30 days and are capped at 512 entries / 32 MiB. Changed source text, surrounding context, language, prompt or model invalidates reuse. Quality-repair passes deliberately bypass cached output so rejected translations can improve. The model, context, sampler, token limits, and CPU thread limit are unchanged. Fully cached requests skip model initialization, and progress no longer carries model-verification completion into translation progress.
-
-Version 1.4.8 preserves individual subtitle identities through AI translation. Unusable results are marked FAILED - RETRY, successful translations and existing text are saved, and incomplete runs show a summary. Open Edit both languages and tap Refresh to repair an incomplete track. Export errors appear in a dialog; disabled and off-timeline captions no longer block MP4 export. Independent translations remain in subtitle-file output, and draft recovery operations are serialized.
-
-The installer requires release 1.4.41 or newer and refuses older APKs while the release is building. Both download routes use Hatsunama/Caption-Studio. See [audit coverage](docs/audit-1.4.8.md).
-
-Version 1.4.7 replaces the translation model's false transient-memory rejection with hardware-based capability checks. Eligible 64-bit devices with at least 4 GiB physical RAM now attempt the memory-mapped model load even when Android temporarily reports memory pressure. If the runtime genuinely cannot allocate enough memory, the app keeps captions unchanged and tells the user to close other apps, keep Caption Studio open, and retry.
-
-Version 1.4.6 fixes second-language creation for existing projects with long caption identifiers. Cue creation and project loading share an identifier contract that accounts for the language-track prefix, without renaming source captions or discarding saved translations.
-
-The data-preserving update installs as **Caption Studio** with package `com.hatsunama.captionstudio.fixed`. It does not replace, uninstall, clear, or migrate `com.hatsunama.captionstudio`, so projects and drafts in the existing app remain untouched. The two packages have separate private storage.
-
-Use the recommended Windows PowerShell installer above to exercise integrated fixes while preserving an older production-signed installation.
-
-The installer accepts exactly one authorized Android device, requires the current release version, verifies GitHub's APK SHA-256 digest, updates only the data-preserving package with `adb install -r`, verifies the installed version, launches it, and removes its temporary download. It never issues `adb uninstall` or `pm clear`, so existing projects remain in place during an update. If Android rejects the update because the signing certificate differs, the installer stops without uninstalling either app.
-
-The release must also contain the 1.4.5 language-picker repair. ADB output is captured with Windows PowerShell 5.1-compatible handling: normal stderr transfer progress is not treated as installation failure; the native exit code and install success response are checked. Cleanup runs on success or failure and removes only this run's APK, empty temporary download directory, and downloaded installer script. Cleanup failures are reported, not presented as successful deletion. It does not clean phone storage or unrelated files on C:.
+Current Android build: **1.4.52** (`v1.4.52`, Android version code 64).
 
 ## What the current Android build includes
 
@@ -156,7 +100,9 @@ The release must also contain the 1.4.5 language-picker repair. ADB output is ca
 - TikTok-style script boundaries: press Enter between words to split one subtitle at its spoken-word timing, or Backspace at the beginning to merge with the block above
 - Always-visible left and right timing grips: drag either edge directly, even before selecting the subtitle, while the block body remains available for timeline scrolling
 - Clear **Undo** and **Redo** controls directly below the video for timeline, transform, style, layer, and video-edit changes
-- TikTok-style caption manipulation: drag to move, pinch to resize text, twist to rotate, resize from four large edge bars, or use the corner resize/rotate control
+- Font-metric-driven caption and screen-text fitting across every bundled or imported font, with hard line breaks preserved and no artificial minimum type-size floor
+- One transform contract for captions, translated cues, screen text, and images: drag to move, pinch to resize, twist to rotate, stretch either axis from four large edge bars, or scale uniformly from the corner; only the selected cue changes
+- One native text presenter for editing preview and video export, with bounded layout caching and animation-aware ink bounds so decorated or animated glyphs do not clip
 - Project default → caption override → word override style inheritance
 - An explicit **This subtitle / All subtitles** styling decision
 - One searchable font browser with 68 deliberately varied bundled fonts plus System Sans, favorites, recents, 11 optional two-color treatments, and unlimited `.ttf`/`.otf` imports
@@ -170,7 +116,7 @@ The release must also contain the 1.4.5 language-picker repair. ADB output is ca
 - A dedicated audio timeline: import audio from the phone or extract the audio track from a selected video, then body-drag, trim or restore either source edge, split at the playhead, duplicate, mute, fade, and adjust each audio clip independently
 - 30 real-footage transition effects plus Clean cut, with adjustable timing across dips, dissolves, directional wipes, slides, pushes, zooms, folds, irises, splits, color washes, shutter, spin, flash, and glitch
 - Continuous playback across same-source splits and different video files, with an explicit decoder handoff that prevents fast clips from bleeding into the following clip
-- An explicit Save draft / Discard / Keep editing decision whenever the user backs out of the editor
+- Ordered Android Back navigation that closes the current editor or picker, clears selection, restores the measured timeline root, and only then offers Save draft / Discard / Keep editing
 - Confirmed project deletion from a trash control on every project card; linked source videos are never deleted
 - Local SQLite project snapshots
 

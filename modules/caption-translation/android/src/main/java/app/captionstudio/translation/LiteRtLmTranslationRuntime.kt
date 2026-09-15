@@ -84,11 +84,15 @@ internal class LiteRtLmTranslationRuntime(
   private val closed = AtomicBoolean(false)
 
   @Throws(Exception::class)
-  override fun translate(prompt: String): String {
+  override fun translate(prompt: String): String = translate(prompt, 1_536)
+
+  @Throws(Exception::class)
+  override fun translate(prompt: String, maxOutputTokens: Int): String {
     check(!closed.get()) { "The translation runtime is closed" }
     if (cancelled.get()) throw CancellationException("Caption translation was cancelled")
 
-    val conversation = engine.createConversation(conversationConfig)
+    require(maxOutputTokens in 1..1_536)
+    val conversation = engine.createConversation(conversationConfig.copy(maxOutputToken = maxOutputTokens))
     lifecycleLock.withLock {
       if (closed.get() || cancelled.get()) {
         val cleanupFailure = closeConversation(conversation)

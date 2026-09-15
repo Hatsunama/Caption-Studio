@@ -1,4 +1,5 @@
 import { resolveCaptionStyle } from '@/lib/style-resolver';
+import { resolveLayerGeometry } from '@/lib/layer-geometry';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import { exportCaptionPairs } from '@/lib/export-caption-pairs';
 import {
@@ -96,10 +97,13 @@ function assDialogue(
   const x = Math.round(style.position.x * width);
   const y = Math.round(style.position.y * height);
   const alignment = style.alignment === 'left' ? 4 : style.alignment === 'right' ? 6 : 5;
+  const geometry = resolveLayerGeometry(style);
   const tags = [
     assPaintTags(style, scale),
     `\\fsp${decimal(style.letterSpacing * scale)}`,
     `\\frz${decimal(style.rotation)}`,
+    `\\fscx${decimal(geometry.scale * geometry.scaleX * 100)}`,
+    `\\fscy${decimal(geometry.scale * geometry.scaleY * 100)}`,
     `\\an${alignment}`,
     `\\pos(${x},${y})`,
     '\\q0',

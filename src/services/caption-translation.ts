@@ -13,10 +13,10 @@ import {
 } from '@/lib/caption-languages';
 import {
   captionTextHead,
-  captionTextLength,
   captionTextTail,
 } from '@/lib/caption-text-breaks';
 import { createTranslationBatches } from '@/lib/translation-batching';
+import { validateTranslationUnits } from '@/lib/translation-input';
 import {
   acceptTranslationBoundary,
 } from '@/lib/translation-invariants';
@@ -35,7 +35,7 @@ const NATURAL_TRANSLATION_MODEL = {
   downloadBytes: 1_597_931_520,
   sha256: 'faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9',
   revision: '19edb84c69a0212f29a6ef17ba0d6f278b6a1614',
-  promptVersion: 4,
+  promptVersion: 5,
   downloadUrl: 'https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/19edb84c69a0212f29a6ef17ba0d6f278b6a1614/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
 } as const;
 
@@ -60,6 +60,7 @@ export type NaturalCaptionTranslation = {
   captions: ReadonlyMap<string, string>;
   needsReview: ReadonlySet<string>;
   provider: NaturalCaptionTranslationProvider;
+  failureReasons?: ReadonlyMap<string, string>;
 };
 
 export type NaturalCaptionTranslationOperation = {
@@ -74,6 +75,7 @@ export type NaturalCaptionTranslationSession = {
   operations: ReadonlyMap<string, ReadonlyMap<string, string>>;
   needsReviewByOperation: ReadonlyMap<string, ReadonlySet<string>>;
   provider: NaturalCaptionTranslationProvider;
+  failureReasonsByOperation?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 };
 
 export type DownloadedNaturalTranslationModel = {
@@ -153,6 +155,7 @@ export async function translateNaturalCaptionBatch(options: {
   return {
     captions,
     needsReview: session.needsReviewByOperation.get(operationId) ?? new Set<string>(),
+    failureReasons: session.failureReasonsByOperation?.get(operationId),
     provider: session.provider,
   };
 }
@@ -172,14 +175,13 @@ export async function translateNaturalCaptionOperations(options: {
   const operationIds = new Set<string>();
   let nextCaptionKey = 1;
   const prepared = options.operations.map((operation) => {
-    const id = operation.id.trim();
+    const id = operation.id;
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/.test(id) || operationIds.has(id)) {
       throw new Error('Natural translation operation identifiers must be valid and unique.');
     }
     operationIds.add(id);
     const sourceLanguage = normalizeNaturalCaptionLanguage(operation.sourceLanguage);
     const targetLanguage = normalizeNaturalCaptionLanguage(operation.targetLanguage);
-    if (sourceLanguage === targetLanguage) throw new Error('Choose a different language for the second subtitle track.');
     const originalCaptions = validateTranslationUnits(operation.captions, limits.maxCharactersPerCaption);
     const originalContext = operation.allCaptions?.length
       ? validateTranslationUnits(
@@ -224,7 +226,7 @@ export async function translateNaturalCaptionOperations(options: {
         throw new Error('A subtitle cannot belong to more than one operation in the same translation session.');
       }
       allCaptionIds.add(caption.id);
-      totalCharacters += captionTextLength(caption.text);
+      totalCharacters += Array.from(caption.text).length;
     }
   }
   if (
@@ -292,19 +294,27 @@ export async function translateNaturalCaptionOperations(options: {
       const translatedById = repaired.translatedById;
       const translatedOperations = new Map<string, ReadonlyMap<string, string>>();
       const needsReviewByOperation = new Map<string, ReadonlySet<string>>();
+      const failureReasonsByOperation = new Map<string, ReadonlyMap<string, string>>();
+      const nativeFailures = new Map(result.captions.map((caption) => [caption.id, caption.failureReason]));
       for (const operation of prepared) {
         const needsReview = new Set<string>();
+        const failureReasons = new Map<string, string>();
         translatedOperations.set(operation.id, new Map(operation.captions.map((caption) => {
           const text = translatedById.get(caption.id) ?? '';
           const originalId = operation.originalIdByKey.get(caption.id)!;
-          if (!text || repaired.needsReview.has(caption.id)) needsReview.add(originalId);
+          if (!text || repaired.needsReview.has(caption.id)) {
+            needsReview.add(originalId);
+            failureReasons.set(originalId, nativeFailures.get(caption.id) ?? 'output-needs-review');
+          }
           return [originalId, text];
         })));
         needsReviewByOperation.set(operation.id, needsReview);
+        failureReasonsByOperation.set(operation.id, failureReasons);
       }
       return {
         operations: translatedOperations,
         needsReviewByOperation,
+        failureReasonsByOperation,
         provider: {
           id: 'litertlm',
           modelId: result.modelId,
@@ -410,21 +420,6 @@ async function verifyTranslationModel(file: File) {
   return true;
 }
 
-function validateTranslationUnits(units: NaturalTranslationUnit[], maxCharactersPerCaption: number) {
-  if (units.length === 0) throw new Error('Choose at least one subtitle to translate.');
-  const ids = new Set<string>();
-  return units.map((unit) => {
-    const id = unit.id.trim();
-    const text = unit.text.normalize('NFC').trim();
-    if (!id || captionTextLength(id) > 256) throw new Error('A subtitle has an invalid internal identity.');
-    if (ids.has(id)) throw new Error(`Subtitle ${id} was included more than once.`);
-    if (!text) throw new Error(`Subtitle ${id} has no text to translate.`);
-    if (captionTextLength(text) > maxCharactersPerCaption) throw new Error(`Subtitle ${id} is too long. Split it before translating.`);
-    ids.add(id);
-    return { id, text };
-  });
-}
-
 function requireNaturalCaptionTranslationLimits(
   limits: NaturalCaptionTranslationLimits,
 ) {
@@ -490,7 +485,8 @@ function reviewTranslatedCaptions(
   const needsReview = new Set(rejected);
   for (const operation of prepared) {
     for (const caption of operation.captions) {
-      if (isLikelyUntranslatedCaption(caption.text, translatedById.get(caption.id) ?? '', operation.targetLanguage)) {
+      if (operation.sourceLanguage !== operation.targetLanguage
+        && isLikelyUntranslatedCaption(caption.text, translatedById.get(caption.id) ?? '', operation.targetLanguage)) {
         needsReview.add(caption.id);
       }
     }

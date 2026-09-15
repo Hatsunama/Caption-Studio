@@ -1,0 +1,53 @@
+plugins { id 'org.jetbrains.kotlin.jvm' version '2.3.0' }
+
+repositories { google(); mavenCentral() }
+
+def repositoryRoot = file('../..')
+def sdk = System.getenv('ANDROID_HOME') ?: System.getenv('ANDROID_SDK_ROOT') ?: "${System.getProperty('user.home')}/AppData/Local/Android/Sdk"
+configurations { androidTestAars }
+dependencies {
+  implementation files("${sdk}/platforms/android-36/android.jar")
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation('org.robolectric:robolectric:4.16.1') {
+    exclude group: 'androidx.test', module: 'monitor'
+    exclude group: 'androidx.test.espresso', module: 'espresso-idling-resource'
+  }
+  androidTestAars 'androidx.test:monitor:1.8.0@aar'
+  androidTestAars 'androidx.test.espresso:espresso-idling-resource:3.7.0@aar'
+}
+kotlin { jvmToolchain(17) }
+sourceSets {
+  main.kotlin {
+    srcDir "${repositoryRoot}/modules/caption-media/android/src/main/java"
+    include '**/TimelineTextPainter.kt', '**/TextPresentation.kt', '**/TimelineRenderPlan.kt',
+      '**/CaptionTextBreaks.kt', '**/CaptionEmojiAnimation.kt', '**/EmojiReactionCatalog.kt', '**/TimelineTransitionSpec.kt'
+  }
+  test.kotlin {
+    srcDir "${repositoryRoot}/modules/caption-media/android/src/test/java"
+    include '**/TextPresentationTest.kt', '**/TimelineTextPainterAnimationTest.kt', '**/TimelineRenderPlanTest.kt'
+  }
+  test.resources.srcDir "${repositoryRoot}/modules/caption-media/android/src/test/resources"
+}
+tasks.register('extractTestAars') {
+  inputs.files configurations.androidTestAars
+  outputs.dir layout.buildDirectory.dir('test-aars')
+  doLast {
+    configurations.androidTestAars.each { artifact ->
+      copy {
+        from zipTree(artifact)
+        include 'classes.jar'
+        into layout.buildDirectory.dir('test-aars')
+        rename 'classes.jar', artifact.name.replace('.aar', '.jar')
+      }
+    }
+  }
+}
+test {
+  dependsOn 'extractTestAars'
+  classpath += files(fileTree(layout.buildDirectory.dir('test-aars')) { include '*.jar' })
+  workingDir repositoryRoot
+  maxHeapSize = '1536m'
+  systemProperty 'captionStudio.fontDir', file("${repositoryRoot}/assets/fonts").absolutePath
+  systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+  testLogging { events 'passed', 'failed'; exceptionFormat 'full' }
+}

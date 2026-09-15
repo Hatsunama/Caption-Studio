@@ -9,6 +9,7 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import java.io.File
+import java.util.LinkedHashMap
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -265,237 +266,105 @@ internal fun playbackTimedCaptionWords(caption: RenderCaption): List<RenderWord>
 }
 
 internal class TimelineTextPainter(private val context: Context) : AutoCloseable {
-  private val emojiReactions = EmojiReactionCatalog(context)
+  private val emojiReactions by lazy { EmojiReactionCatalog(context) }
   private val typefaces = mutableMapOf<String, Typeface>()
-
-  fun prepare(styles: Iterable<RenderTextStyle>) {
-    styles.filter { it.fontUri != null }.forEach(::typeface)
+  private data class LayoutKey(val text: String, val words: List<RenderWord>, val style: RenderTextStyle, val height: Float, val authored: Boolean)
+  private val presentations = object : LinkedHashMap<LayoutKey, TextPresentation>(TEXT_PRESENTATION_CACHE_SIZE, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<LayoutKey, TextPresentation>?) = size > TEXT_PRESENTATION_CACHE_SIZE
   }
+
+  fun prepare(styles: Iterable<RenderTextStyle>) { styles.filter { it.fontUri != null }.forEach(::typeface) }
 
   fun drawCaption(canvas: Canvas, caption: RenderCaption, timeMs: Long, outputWidth: Int, outputHeight: Int) {
     if (timeMs !in caption.startMs until caption.endMs) return
-    val tokens = playbackTimedCaptionWords(caption)
-    drawText(canvas, caption.text, tokens, caption.style, caption.startMs, caption.endMs, timeMs, outputWidth, outputHeight)
+    drawText(canvas, caption, playbackTimedCaptionWords(caption), timeMs, outputWidth, outputHeight, false, false)
   }
 
   fun drawTextLayer(canvas: Canvas, layer: TextRenderLayer, timeMs: Long, outputWidth: Int, outputHeight: Int) {
     if (timeMs !in layer.startMs until layer.endMs) return
-    drawText(canvas, layer.text, emptyList(), layer.style, layer.startMs, layer.endMs, timeMs, outputWidth, outputHeight)
+    drawText(canvas, RenderCaption(layer.id, layer.text, layer.startMs, layer.endMs, layer.style, emptyList()),
+      emptyList(), timeMs, outputWidth, outputHeight, true, false)
   }
 
-  private fun drawText(
-    canvas: Canvas,
-    text: String,
-    timedWords: List<RenderWord>,
-    style: RenderTextStyle,
-    startMs: Long,
-    endMs: Long,
-    timeMs: Long,
-    outputWidth: Int,
-    outputHeight: Int,
-  ) {
-    val transformedText = transformText(text, style.textTransform)
-    val fitted = fitLayout(transformedText, timedWords, style, outputWidth, outputHeight)
-    val words = fitted.words
-    if (words.isEmpty()) return
-    val animation = captionAnimationState(
-      style.animationId,
-      captionAnimationClock(timeMs, startMs, endMs, style.animationDurationMs),
-      style.animationIntensity,
-    )
+  fun drawPreview(canvas: Canvas, caption: RenderCaption, timeMs: Long, outputWidth: Int, outputHeight: Int, authored: Boolean, editing: Boolean) {
+    drawText(canvas, caption, if (authored) emptyList() else playbackTimedCaptionWords(caption),
+      timeMs, outputWidth, outputHeight, authored, editing)
+  }
+
+  internal fun presentationFor(caption: RenderCaption, words: List<RenderWord>, outputWidth: Int, outputHeight: Int, authored: Boolean): TextPresentation {
+    val style = caption.style.copy(positionX = 0.5f, positionY = 0.5f, rotation = 0f, scale = 1f, scaleX = 1f, scaleY = 1f)
+    val normalizedWords = words.map { it.copy(style = it.style.copy(positionX = 0.5f, positionY = 0.5f, rotation = 0f, scale = 1f, scaleX = 1f, scaleY = 1f)) }
+    val height = style.boxHeight * DESIGN_WIDTH * outputHeight / outputWidth
+    val key = LayoutKey(caption.text, normalizedWords, style, height, authored)
+    presentations[key]?.let { return it }
+    val fitted = TextPresentation.fit(caption.text, normalizedWords, style, style.boxWidth * DESIGN_WIDTH, height, authored,
+      { paint(it, 1f, Paint.Style.FILL) },
+      { wordStyle, index ->
+        if (index < 0) emptyList() else (0..512).map { step ->
+          wordAnimationState(wordStyle.animationId, true, step * 2L, RenderWord("", 0L, 1024L, wordStyle), index, wordStyle.animationIntensity, 1f)
+        }
+      })
+    presentations[key] = fitted
+    return fitted
+  }
+
+  private fun drawText(canvas: Canvas, caption: RenderCaption, words: List<RenderWord>, timeMs: Long,
+    outputWidth: Int, outputHeight: Int, authored: Boolean, editing: Boolean) {
+    val style = caption.style
+    val fitted = presentationFor(caption, words, outputWidth, outputHeight, authored)
+    val animation = if (editing) TextAnimationState() else captionAnimationState(style.animationId,
+      captionAnimationClock(timeMs, caption.startMs, caption.endMs, style.animationDurationMs), style.animationIntensity)
     if (animation.alpha <= 0f) return
-    val centerX = style.positionX * outputWidth
-    val centerY = style.positionY * outputHeight
-    val scaleFactor = fitted.scaleFactor
-    val boxWidth = style.boxWidth * outputWidth
-    val boxHeight = style.boxHeight * outputHeight
-    val box = RectF(centerX - boxWidth / 2f, centerY - boxHeight / 2f, centerX + boxWidth / 2f, centerY + boxHeight / 2f)
-    val lineHeight = fitted.lineHeight
-    val contentHeight = words.maxOf { it.line } * lineHeight + lineHeight
-    val baseY = centerY - contentHeight / 2f + fitted.ascent
-
     canvas.save()
-    val animationScale = outputWidth / DESIGN_WIDTH
-    canvas.translate(animation.translateX * animationScale, animation.translateY * animationScale)
-    canvas.rotate(style.rotation + animation.rotation, centerX, centerY)
-    canvas.scale(animation.scaleX, animation.scaleY, centerX, centerY)
+    canvas.translate(style.positionX * outputWidth, style.positionY * outputHeight)
+    canvas.rotate(style.rotation)
+    canvas.scale(style.scale * style.scaleX * outputWidth / DESIGN_WIDTH, style.scale * style.scaleY * outputWidth / DESIGN_WIDTH)
+    canvas.scale(fitted.fit, fitted.fit)
+    canvas.translate(-fitted.bounds.centerX(), -fitted.bounds.centerY())
+    canvas.translate(animation.translateX, animation.translateY)
+    canvas.rotate(animation.rotation)
+    canvas.scale(animation.scaleX, animation.scaleY)
     if (style.backgroundOpacity > 0f) {
-      val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      val background = RectF(-fitted.layout.width / 2f - style.backgroundPaddingX, -fitted.layout.height / 2f - style.backgroundPaddingY,
+        fitted.layout.width / 2f + style.backgroundPaddingX, fitted.layout.height / 2f + style.backgroundPaddingY)
+      canvas.drawRoundRect(background, style.backgroundRadius, style.backgroundRadius, Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = colorWithOpacity(style.backgroundColor, style.backgroundOpacity * animation.alpha)
+      })
+    }
+    canvas.save()
+    canvas.translate(-fitted.layout.width / 2f, -fitted.layout.height / 2f)
+    val activeIndex = words.indexOfFirst { timeMs in it.startMs until it.endMs }
+    fitted.draw(canvas) { run, x, y, width, baselineCenter ->
+      val index = run.timedIndex
+      val timed = words.getOrNull(index)
+      val active = index >= 0 && index == activeIndex
+      val visible = editing || timed == null || when (style.animationId) {
+        "single-word" -> active
+        "typewriter" -> timed.startMs <= timeMs
+        else -> true
       }
-      val paddingX = style.backgroundPaddingX * scaleFactor
-      val paddingY = style.backgroundPaddingY * scaleFactor
-      val content = RectF(
-        max(box.left, words.minOf { it.x } - paddingX),
-        centerY - contentHeight / 2f - paddingY,
-        min(box.right, words.maxOf { it.x + it.width } + paddingX),
-        centerY + contentHeight / 2f + paddingY,
-      )
-      canvas.drawRoundRect(content, style.backgroundRadius * scaleFactor, style.backgroundRadius * scaleFactor, backgroundPaint)
-    }
-
-    val activeIndex = timedWords.indexOfFirst { timeMs in it.startMs until it.endMs }
-    val visibleTimedWords = when (style.animationId) {
-      "single-word" -> setOf(activeIndex)
-      "typewriter" -> timedWords.indices.filterTo(mutableSetOf()) { index -> timedWords[index].startMs <= timeMs }
-      else -> timedWords.indices.toSet()
-    }
-    currentLineWords = words
-    words.forEachIndexed { _, word ->
-      val timedIndex = word.timedIndex
-      if (timedIndex >= 0 && timedIndex !in visibleTimedWords) return@forEachIndexed
-      val wordStyle = word.style
-      val isActive = timedIndex == activeIndex
-      val isKaraokeActive = style.animationId == "karaoke" && activeIndex >= 0 && timedIndex in 0..activeIndex
-      val wordState = wordAnimationState(
-        wordStyle.animationId,
-        isActive,
-        timeMs,
-        timedWords.getOrNull(timedIndex),
-        timedIndex,
-        wordStyle.animationIntensity,
-        scaleFactor,
-      )
-      canvas.save()
-      val x = alignedX(word, box, style.alignment)
-      val y = baseY + word.line * lineHeight
-      canvas.translate(wordState.translateX, wordState.translateY)
-      canvas.rotate(wordState.rotation, x + word.width / 2f, y)
-      canvas.scale(wordState.scaleX, wordState.scaleY, x + word.width / 2f, y)
-      val alpha = animation.alpha * wordState.alpha
-      val fillColor = if ((isActive && style.animationId in ACTIVE_WORD_ANIMATIONS) || isKaraokeActive) wordStyle.activeWordColor else wordStyle.textColor
-      drawWord(
-        canvas,
-        word.text,
-        x,
-        y,
-        wordStyle,
-        scaleFactor,
-        fillColor,
-        alpha,
-        style.animationId == "glow-pulse",
-        animation.glow,
-      )
-      canvas.restore()
-      if (style.animationId.startsWith("emoji-") && isActive) {
-        drawEmojiReaction(
-          canvas = canvas,
-          id = style.animationId,
-          word = word.text,
-          captionText = text,
-          contextWords = timedWords.map(RenderWord::text),
-          activeIndex = timedIndex,
-          centerX = x + word.width / 2f,
-          baselineY = y,
-          timeMs = timeMs,
-          timing = timedWords[timedIndex],
-          scaleFactor = scaleFactor,
-        )
+      if (visible) {
+        val wordStyle = run.style
+        val state = if (editing) TextAnimationState() else wordAnimationState(wordStyle.animationId, active, timeMs, timed, index, wordStyle.animationIntensity, 1f)
+        val highlighted = !editing && ((active && style.animationId in ACTIVE_WORD_ANIMATIONS) ||
+          (style.animationId == "karaoke" && activeIndex >= 0 && index in 0..activeIndex))
+        canvas.save()
+        canvas.translate(state.translateX, state.translateY)
+        canvas.rotate(state.rotation, x + width / 2f, y + baselineCenter)
+        canvas.scale(state.scaleX, state.scaleY, x + width / 2f, y + baselineCenter)
+        drawWord(canvas, run.text, x, y, wordStyle, 1f, if (highlighted) wordStyle.activeWordColor else wordStyle.textColor,
+          animation.alpha * state.alpha, !editing && style.animationId == "glow-pulse", animation.glow)
+        canvas.restore()
       }
     }
-    currentLineWords = null
+    canvas.restore()
+    if (!editing && style.animationId.startsWith("emoji-")) {
+      captionCueProgress(timeMs, caption.startMs, caption.endMs)?.let { progress ->
+        drawEmojiReaction(canvas, style.animationId, captionCueEmojis(emojiReactions, caption.text), 0f, 0f, progress, 1f)
+      }
+    }
     canvas.restore()
   }
-
-  private fun fitLayout(
-    text: String,
-    timedWords: List<RenderWord>,
-    style: RenderTextStyle,
-    outputWidth: Int,
-    outputHeight: Int,
-  ): FittedLayout {
-    val baseScale = outputWidth / DESIGN_WIDTH
-    val boxHeight = style.boxHeight * outputHeight
-    val availableHeight = max(1f, boxHeight - style.backgroundPaddingY * baseScale * 2f)
-    var low = 0.001f
-    var high = 1f
-    var best = layoutWords(text, timedWords, style, baseScale * low, outputWidth)
-    var bestRatio = low
-    repeat(14) {
-      val ratio = (low + high) / 2f
-      val scale = baseScale * ratio
-      val candidate = layoutWords(text, timedWords, style, scale, outputWidth)
-      val lineHeight = layoutLineHeight(candidate.words, scale, style)
-      val fits = candidate.lineCount <= style.maxLines &&
-        candidate.lineCount * lineHeight <= availableHeight &&
-        candidate.widestWord <= style.boxWidth * outputWidth
-      if (fits) {
-        low = ratio
-        best = candidate
-        bestRatio = ratio
-      } else {
-        high = ratio
-      }
-    }
-    val scaleFactor = baseScale * bestRatio
-    return FittedLayout(
-      best.words,
-      scaleFactor,
-      layoutLineHeight(best.words, scaleFactor, style),
-      layoutAscent(best.words, scaleFactor, style),
-    )
-  }
-
-  private fun layoutLineHeight(words: List<PositionedWord>, scaleFactor: Float, fallback: RenderTextStyle) =
-    words.maxOfOrNull { it.style.fontSize * scaleFactor * it.style.lineHeight }
-      ?: fallback.fontSize * scaleFactor * fallback.lineHeight
-
-  private fun layoutAscent(words: List<PositionedWord>, scaleFactor: Float, fallback: RenderTextStyle) =
-    words.maxOfOrNull { -paint(it.style, scaleFactor, Paint.Style.FILL).fontMetrics.ascent }
-      ?: -paint(fallback, scaleFactor, Paint.Style.FILL).fontMetrics.ascent
-
-  private fun layoutWords(
-    text: String,
-    timedWords: List<RenderWord>,
-    style: RenderTextStyle,
-    scaleFactor: Float,
-    outputWidth: Int,
-  ): WordLayout {
-    val rawWords = if (timedWords.isEmpty()) CaptionTextBreaks.tokens(text) else timedWords.map(RenderWord::text)
-    if (rawWords.isEmpty()) return WordLayout(emptyList(), 0, 0f)
-    val maxWidth = style.boxWidth * outputWidth
-    val result = mutableListOf<PositionedWord>()
-    var line = 0
-    var x = style.positionX * outputWidth - maxWidth / 2f
-    val lineStart = x
-    var widestWord = 0f
-    rawWords.forEachIndexed { index, token ->
-      val timed = timedWords.getOrNull(index)
-      val tokenStyle = timed?.style ?: style
-      val wordText = transformText(token, tokenStyle.textTransform)
-      val measurePaint = paint(tokenStyle, scaleFactor, Paint.Style.FILL)
-      val width = measurePaint.measureText(wordText)
-      widestWord = max(widestWord, width)
-      val nextToken = rawWords.getOrNull(index + 1)
-      val space = if (CaptionTextBreaks.usesCompactSpacing(token) || nextToken?.let(CaptionTextBreaks::usesCompactSpacing) == true) {
-        0f
-      } else {
-        measurePaint.measureText(" ")
-      }
-      if (x > lineStart && x + width > lineStart + maxWidth) {
-        line += 1
-        x = lineStart
-      }
-      result += PositionedWord(wordText, x, width, line, timed?.let { index } ?: -1, tokenStyle)
-      x += width + space
-    }
-    return WordLayout(result, line + 1, widestWord)
-  }
-
-  private fun alignedX(word: PositionedWord, box: RectF, alignment: String): Float {
-    if (alignment == "left") return word.x
-    val lineWords = currentLineWords ?: return word.x
-    val onLine = lineWords.filter { it.line == word.line }
-    val left = onLine.minOfOrNull { it.x } ?: word.x
-    val right = onLine.maxOfOrNull { it.x + it.width } ?: (word.x + word.width)
-    val offset = when (alignment) {
-      "right" -> box.right - right
-      else -> box.centerX() - (left + right) / 2f
-    }
-    return word.x + offset
-  }
-
-  private var currentLineWords: List<PositionedWord>? = null
 
   private fun drawWord(
     canvas: Canvas,
@@ -680,54 +549,29 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
   private fun drawEmojiReaction(
     canvas: Canvas,
     id: String,
-    word: String,
-    captionText: String,
-    contextWords: List<String>,
-    activeIndex: Int,
+    emojis: List<String>,
     centerX: Float,
     baselineY: Float,
-    timeMs: Long,
-    timing: RenderWord,
+    progress: Float,
     scaleFactor: Float,
   ) {
-    val emojis = emojiReactions.resolve(word, captionText, contextWords, activeIndex)
     if (emojis.isEmpty()) return
-    val progress = ((timeMs - timing.startMs).toFloat() / max(1L, timing.endMs - timing.startMs)).coerceIn(0f, 1f)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 28f * scaleFactor; textAlign = Paint.Align.CENTER }
-    repeat(when (id) { "emoji-rain" -> 5; "emoji-orbit" -> 4; else -> 6 }) { index ->
-      val angle = index / 6f * 2f * PI.toFloat() + progress * if (id == "emoji-orbit") 5f else 1f
+    emojis.forEachIndexed { index, emoji ->
+      val angle = (index.toFloat() / emojis.size + if (id == "emoji-orbit") progress else 0f) * 2f * PI.toFloat()
       val radius = when (id) { "emoji-burst" -> progress * 90f * scaleFactor; "emoji-orbit" -> 55f * scaleFactor; else -> 80f * scaleFactor }
       val x = centerX + cos(angle) * radius
       val y = if (id == "emoji-rain") baselineY - (1f - progress) * 180f * scaleFactor + index * 26f * scaleFactor else baselineY + sin(angle) * radius
       paint.alpha = ((1f - progress * 0.65f) * 255).toInt().coerceIn(0, 255)
-      canvas.drawText(emojis[index % emojis.size], x, y, paint)
+      canvas.drawText(emoji, x, y, paint)
     }
   }
 
-  override fun close() {
-    typefaces.clear()
-  }
-
-  private data class FittedLayout(
-    val words: List<PositionedWord>,
-    val scaleFactor: Float,
-    val lineHeight: Float,
-    val ascent: Float,
-  )
-
-  private data class WordLayout(val words: List<PositionedWord>, val lineCount: Int, val widestWord: Float)
-
-  private data class PositionedWord(
-    val text: String,
-    val x: Float,
-    val width: Float,
-    val line: Int,
-    val timedIndex: Int,
-    val style: RenderTextStyle,
-  )
+  override fun close() { typefaces.clear(); presentations.clear() }
 
   private companion object {
     const val DESIGN_WIDTH = 360f
+    const val TEXT_PRESENTATION_CACHE_SIZE = 48
     val ACTIVE_WORD_ANIMATIONS = setOf("active-word", "karaoke", "word-flash")
   }
 }

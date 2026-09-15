@@ -13,7 +13,7 @@ export function ExtractAudioSourceSheet(props: {
   onClose: () => void;
 }) {
   return (
-    <Modal visible={props.visible} transparent animationType="fade" onRequestClose={props.busy ? undefined : props.onClose}>
+    <Modal visible={props.visible} transparent animationType="fade" onRequestClose={props.busy ? () => {} : props.onClose}>
       <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: chrome.overlay }}>
         <View style={{ maxHeight: '78%', gap: 14, padding: 18, paddingBottom: 28, borderTopLeftRadius: chrome.radius.xl, borderTopRightRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>

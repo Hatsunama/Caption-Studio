@@ -1,4 +1,5 @@
 import type { VideoTransition } from '@/lib/video-transitions';
+import type { LayerGeometryInput } from '@/lib/layer-geometry';
 
 export type { VideoTransition, VideoTransitionType } from '@/lib/video-transitions';
 
@@ -76,13 +77,9 @@ export type FontReference = {
   postScriptName?: string;
 };
 
-export type NormalizedTransform = {
-  position: { x: number; y: number };
-  box: { width: number; height: number };
-  rotation: number;
-};
+export type NormalizedTransform = LayerGeometryInput;
 
-export type CaptionStyle = {
+export type CaptionStyle = NormalizedTransform & {
   font: FontReference;
   fontSize: number;
   fontWeight: '400' | '500' | '600' | '700' | '800' | '900';
@@ -237,7 +234,7 @@ export type TextVisualLayer = {
   timelineVisible?: boolean;
 };
 
-export type ImageVisualLayer = {
+export type ImageVisualLayer = NormalizedTransform & {
   id: Identifier;
   kind: 'image';
   name: string;
@@ -416,6 +413,9 @@ export const DEFAULT_VIDEO_TRANSFORM: VideoTransform = {
 };
 
 export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
+  scale: 1,
+  scaleX: 1,
+  scaleY: 1,
   font: {
     id: 'inter-bold',
     family: 'sans-serif',

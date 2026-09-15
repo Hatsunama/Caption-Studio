@@ -25,6 +25,8 @@ function visit(node) {
   ts.forEachChild(node, visit);
 }
 visit(source);
+const createEditorSession = evaluate(source.statements.find((node) => ts.isFunctionDeclaration(node)
+  && node.name?.text === 'createEditorSession').getText(source), { Error });
 
 function evaluate(expression, context) {
   assert.ok(expression, 'The production callback or menu must exist');
@@ -51,7 +53,6 @@ function workspace(overrides = {}) {
   const state = { project: fixture(), tool: 'video', captionId: 'old', layerId: 'title', clipId: 'video', audioClipId: 'audio', translationTrackId: 'translation' };
   const calls = { undo: [], persisted: [], alerts: [], textStyles: [], pauses: 0 };
   const context = {
-    projectRef: { current: state.project },
     workspaceMountedRef: { current: true },
     activeToolRef: { current: state.tool },
     activeTool: 'captions',
@@ -67,10 +68,12 @@ function workspace(overrides = {}) {
     Error,
     transport: { pause: () => { calls.pauses += 1; } },
     Alert: { alert: (...args) => calls.alerts.push(args) },
-    setProject: (next) => { state.project = typeof next === 'function' ? next(state.project) : next; },
-    pushUndo: (before = context.projectRef.current) => calls.undo.push(before),
-    persistProjectInBackground: (next) => calls.persisted.push(next),
-    commitPersistedProject: async (next, commit) => { calls.persisted.push(next); commit(next); },
+    setProject: (next) => context.editorSession.update(next),
+    pushUndo: (before = context.editorSession.current()) => calls.undo.push(before),
+    persistProjectInBackground: () => calls.persisted.push(context.editorSession.current()),
+    commitEditorProject: (operation, alreadyPersists) => context.editorSession.commit(operation, alreadyPersists),
+    setScriptDraftCaptions: () => {},
+    setScriptKeyboardOpen: () => {},
     findAnimationPreset: () => ({ intensity: 0.8, durationMs: 300 }),
     updateTextLayerStyle: (...args) => calls.textStyles.push(args),
     ...overrides,
@@ -81,6 +84,8 @@ function workspace(overrides = {}) {
     setError: 'error', setProgress: 'progress', setTranscriptionCancelling: 'cancelling', setPendingChange: 'pendingChange',
     setScriptEditorOpen: 'scriptEditorOpen',
   })) context[setter] = (value) => { state[key] = value; };
+  context.editorSession = createEditorSession(state.project, (next) => { state.project = next; },
+    async (next) => { calls.persisted.push(next); return next; }, (before) => calls.undo.push(before));
   const callback = (name) => evaluate(callbacks.get(name), context);
   context.openEditorTool = callback('openEditorTool');
   context.selectEditorObject = callback('selectEditorObject');
@@ -111,6 +116,7 @@ for (const outcome of ['failure', 'cancellation', 'unmounted']) {
       if (outcome === 'failure') throw new Error('Generation failed');
       if (outcome === 'cancellation') throw new CaptionGenerationCancelledError();
       w.context.workspaceMountedRef.current = false;
+      w.context.editorSession.dispose();
       return fixture();
     } });
     const before = w.state.project;
@@ -144,10 +150,10 @@ function renderMenu(w, selectedCaption) {
     confirmDeleteCaption: () => {},
     setFontBrowserOpen: () => {},
     queueCaptionStyleChange: w.callback('queueCaptionStyleChange'),
-    beginHistoryInteraction: () => w.calls.undo.push(w.context.projectRef.current),
+    beginHistoryInteraction: () => w.calls.undo.push(w.context.editorSession.current()),
     updateSharedCaptionTransform: w.callback('updateSharedCaptionTransform'),
     queueMicrotask: (fn) => fn(),
-    finishHistoryInteraction: () => w.calls.persisted.push(w.context.projectRef.current),
+    finishHistoryInteraction: () => w.calls.persisted.push(w.context.editorSession.current()),
   }).children.filter(Boolean).map((child) => child.props);
 }
 

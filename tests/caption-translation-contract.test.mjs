@@ -47,7 +47,7 @@ test('LiteRT runtime is pinned, identity-gated, serialized, and deterministicall
   assert.match(runtime, /ENGINE_TOKEN_LIMIT = 4_096/);
   assert.match(runtime, /OUTPUT_TOKEN_LIMIT = 1_536/);
   assert.match(runtime, /Backend\.CPU\(/);
-  assert.match(runtime, /engine\.createConversation\(conversationConfig\)/);
+  assert.match(runtime, /engine\.createConversation\(conversationConfig\.copy\(maxOutputToken = maxOutputTokens\)\)/);
   assert.match(runtime, /currentConversation\.compareAndSet\(conversation, null\)/);
   assert.match(runtime, /currentConversation\.get\(\)\?\.cancelProcess\(\)/);
   assert.match(runtime, /conversation\.close\(\)/);
@@ -191,7 +191,7 @@ test('dual-subtitle language ownership stays canonical and advertises local gene
   assert.match(projectTranscription, /canonicalCaptionLanguageTag/);
   assert.match(dualEditor, /maxLength=\{500\}/);
   assert.match(dualEditor, /useSafeAreaInsets/);
-  assert.match(dualEditor, /adoptCommittedDualCaptionDrafts/);
+  assert.match(dualEditor, /store\.reconcile\(sourceDrafts\)/);
   assert.match(dualEditor, /props\.busy/);
   assert.match(dualEditor, /Keep Caption Studio open on this screen/);
   assert.match(dualEditor, /committedDualCaptionText/);
@@ -208,10 +208,12 @@ test('dual-subtitle refresh commits translated text instead of leaving a pending
     readFile(new URL('src/lib/caption-translation-commit.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/hooks/use-project-caption-translation.ts', repositoryRoot), 'utf8'),
   ]);
-  assert.match(dualEditor, /const displayDrafts = useMemo/);
-  assert.match(dualEditor, /adoptCommittedDualCaptionDrafts\(committedDrafts, sourceDrafts, drafts\)/);
+  // Per-cue adoption, typed-field preservation and refresh are exercised in
+  // dual-caption-editor-performance.test.mjs; no document-wide render draft map.
+  assert.match(dualEditor, /useSyncExternalStore\(subscribe, getSnapshot, getSnapshot\)/);
+  assert.match(dualEditor, /store\.reconcile\(sourceDrafts\)/);
   assert.match(dualEditor, /shouldRestoreDualCaptionJournal/);
-  assert.match(dualEditor, /if \(!props\.visible \|\| !journalReady \|\| props\.busy\) return/);
+  assert.match(dualEditor, /if \(!journalReady \|\| props\.busy \|\| saving \|\| closing\) return/);
   assert.match(dualEditor, /Keep current translation/);
   assert.doesNotMatch(dualEditor, /if \(pendingEmpty\) return/);
   assert.doesNotMatch(dualEditor, /props\.baseRevision, props\.pairs, props\.projectId, props\.visible, sourceDrafts/);
@@ -221,11 +223,13 @@ test('dual-subtitle refresh commits translated text instead of leaving a pending
   assert.match(editor, /setTranslationStackGap/);
   assert.match(editor, /key=\{selectedTranslationTrack\?\.id \?\? 'none'\}/);
   assert.doesNotMatch(editor, /cues\.map\(\(cue\) => `\$\{cue\.sourceCaptionId\}:\$\{cue\.text\}`\)/);
-  assert.match(editor, /projectRef\.current = next;\s*setProject\(next\);/);
+  assert.match(editor, /const setProject = editorSession\.update;/);
+  assert.match(editor, /await commitEditorProject\(\(current\)/);
   assert.match(editor, /Closer together/);
   assert.match(editor, /Farther apart/);
   assert.match(editor, /filter\(\(cue\) => !cue\.text\.trim\(\) && !cue\.translationSkipped\)/);
-  assert.match(editor, /position: _ignoredPosition/);
+  assert.doesNotMatch(editor, /position: _ignoredPosition/);
+  assert.match(editor, /setTranslationCueStyle\(current, track\.id, selectedCaptionId, patch/);
   assert.doesNotMatch(editor, /onSelectTranslationCaption[\s\S]{0,280}setDualCaptionEditorOpen\(true\)/);
   assert.match(workflow, /commitTranslationAttempt\(providerProject, track.id, captions, writes\)/);
   assert.match(commit, /second language is still empty/);
@@ -265,9 +269,9 @@ test('native translation boundary is exact-ID, empty-reject, and checkpoint-atom
   ]);
   assert.match(translator, /strict-boundary/);
   assert.match(translator, /emptyFallback/);
-  assert.match(translator, /batchFullyValid/);
+  assert.match(translator, /usable\(candidate, part, request\.targetLanguage\)/);
   assert.doesNotMatch(translator, /sourceFallback/);
-  assert.match(translator, /writeCheckpoint\(checkpoints, checkpointKey, checkpointResponse\(batchResult\)\)/);
+  assert.match(translator, /writeCheckpoint\(checkpoints, checkpointKey,\s*checkpointResponse\(List\.of\(new Caption\("fragment", candidate\.text\)\)\)\)/);
   assert.doesNotMatch(translator, /writeCheckpoint\(checkpoints, checkpointKey, modelResponse\)/);
   assert.match(quality, /isPlausibleCueTranslation/);
   assert.doesNotMatch(quality, /codePointCount\(0, text\.length\) > 500/);

@@ -1,4 +1,5 @@
 import { resolveCaptionStyle } from '@/lib/style-resolver';
+import { resolveLayerGeometry } from '@/lib/layer-geometry';
 import { exportCaptionPairs } from '@/lib/export-caption-pairs';
 import { buildClipTimeline, totalClipDuration } from '@/lib/video-timeline';
 import { effectiveVideoTransition } from '@/lib/video-transitions';
@@ -55,6 +56,9 @@ export type TimelineRenderPlan = {
       position: { x: number; y: number };
       box: { width: number; height: number };
       rotation: number;
+      scale: number;
+      scaleX: number;
+      scaleY: number;
       opacity: number;
     }
   )[];
@@ -168,6 +172,9 @@ export function buildTimelineRenderPlan(
       position: { ...layer.position },
       box: { ...layer.box },
       rotation: layer.rotation,
+      scale: resolveLayerGeometry(layer).scale,
+      scaleX: resolveLayerGeometry(layer).scaleX,
+      scaleY: resolveLayerGeometry(layer).scaleY,
       opacity: layer.opacity,
     });
   }
@@ -238,7 +245,7 @@ export function collectUnresolvedFontFamilies(plan: TimelineRenderPlan) {
   return [...families];
 }
 
-function serializeStyle(style: CaptionStyle, resolvedFontUris: ResolvedFontUris): RenderStyle {
+export function serializeStyle(style: CaptionStyle, resolvedFontUris: ResolvedFontUris): RenderStyle {
   const resolvedUri = style.font.uri
     ?? (style.font.source === 'built-in' ? resolvedFontUris.get(style.font.family) : undefined);
   return {
@@ -266,6 +273,9 @@ function serializeStyle(style: CaptionStyle, resolvedFontUris: ResolvedFontUris)
     position: { ...style.position },
     box: { ...style.box },
     rotation: style.rotation,
+    scale: resolveLayerGeometry(style).scale,
+    scaleX: resolveLayerGeometry(style).scaleX,
+    scaleY: resolveLayerGeometry(style).scaleY,
     maxLines: style.maxLines,
     animation: { ...style.animation },
   };

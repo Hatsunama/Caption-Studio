@@ -1,13 +1,13 @@
 import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { NavigationAction } from '@react-navigation/native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Modal,
   Pressable,
   ScrollView,
@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 
 import { AnimationBrowser } from '@/components/editor/animation-browser';
-import { PersistedHorizontalScroll } from '@/components/editor/persisted-horizontal-scroll';
+import { PersistedHorizontalScroll, PersistedHorizontalScrollScope } from '@/components/editor/persisted-horizontal-scroll';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
 import { DualLanguagePicker } from '@/components/editor/dual-language-picker';
@@ -38,6 +38,8 @@ import { useProjectAudioWaveforms } from '@/hooks/use-project-audio-waveforms';
 import { useProjectCaptionTranslation } from '@/hooks/use-project-caption-translation';
 import { useForegroundOperation } from '@/hooks/use-foreground-operation';
 import { useEditorRuntimePolicy } from '@/hooks/use-editor-runtime-policy';
+import { useScriptEditorExit } from '@/hooks/use-script-editor-exit';
+import { resolveEditorBackStep } from '@/lib/editor-back-navigation';
 import { deleteAudioClip, duplicateAudioClip, moveAudioClip, splitAudioClip, updateAudioClip } from '@/lib/audio-timeline';
 import { applyTimelineItemTiming, type TimelineItemReference, type TimelineTimingEdge } from '@/lib/timeline-item-editor';
 import { findAnimationPreset } from '@/lib/animation-presets';
@@ -131,7 +133,6 @@ import {
 } from '@/services/project-caption-translation';
 import {
   ProjectPersistenceError,
-  publishProjectAfterDurableSave,
 } from '@/services/project-persistence';
 import { VideoExportCancelledError } from '@/services/video-export-session';
 import { chrome } from '@/lib/ui-theme';
@@ -144,6 +145,7 @@ import {
   type CaptionAnimationId,
   type CaptionProject,
   type CaptionStylePatch,
+  type CaptionBlock,
   type ImageVisualLayer,
   type VideoClip,
   type VideoTransformPatch,
@@ -211,12 +213,138 @@ export default function EditorScreen() {
   return <EditorWorkspace key={initialProject.id} initialProject={initialProject} />;
 }
 
+type EditorPublication = {
+  before: CaptionProject;
+  project: CaptionProject;
+  revision: number;
+  generation: number;
+};
+
+type EditorProjectOperation = (before: CaptionProject) => CaptionProject | null | Promise<CaptionProject | null>;
+
+// One owner for synchronous edits, durable publications, and session completion.
+// Revisions are monotonic even when Undo restores an earlier object or timestamp.
+function createEditorSession(
+  initialProject: CaptionProject,
+  publish: (next: CaptionProject) => void,
+  write: (next: CaptionProject) => Promise<CaptionProject>,
+  remember: (before: CaptionProject) => void = () => undefined,
+) {
+  let current = initialProject;
+  let revision = 0;
+  let generation = 0;
+  let active = true;
+  let closing = false;
+  let tail: Promise<unknown> = Promise.resolve();
+  const editable = () => active && !closing;
+  const assertActive = (expected: number) => {
+    if (!active || generation !== expected) throw new Error('This editor session has closed.');
+  };
+  const enqueue = <T,>(operation: (expected: number) => Promise<T>) => {
+    const expected = generation;
+    const task = tail.then(() => { assertActive(expected); return operation(expected); });
+    // A failed action must not poison later saves or the exit transaction.
+    tail = task.catch(() => undefined);
+    return task;
+  };
+  const update = (change: CaptionProject | ((before: CaptionProject) => CaptionProject)) => {
+    if (!editable()) return;
+    const next = typeof change === 'function' ? change(current) : change;
+    if (next === current) return;
+    current = next;
+    revision += 1;
+    publish(next);
+  };
+  const checkpointLatest = async (expected: number) => {
+    // A gesture may advance while a checkpoint is awaiting storage. Drain to the
+    // latest revision before another workflow (which may write internally) runs.
+    for (;;) {
+      assertActive(expected);
+      const started = revision;
+      await write(current);
+      assertActive(expected);
+      if (started === revision) return current;
+    }
+  };
+  const commit = (operation: EditorProjectOperation, alreadyPersists = false) => {
+    if (!editable()) return Promise.reject(new Error('Finish leaving the editor before making more changes.'));
+    return enqueue(async (expected): Promise<EditorPublication | null> => {
+      const before = current;
+      const started = revision;
+      let next: CaptionProject | null;
+      try {
+        next = await operation(before);
+        assertActive(expected);
+        if (!next) return null;
+        if (revision === started && !alreadyPersists && next !== before) await write(next);
+      } catch (caught) {
+        // Import/generation workflows can checkpoint before rejecting. They and
+        // failed writes racing an edit must leave the latest session on disk.
+        if (active && generation === expected && (alreadyPersists || revision !== started)) {
+          await checkpointLatest(expected);
+        }
+        throw caught;
+      }
+      assertActive(expected);
+      if (revision !== started) {
+        await checkpointLatest(expected);
+        throw new Error('The project changed while this action was saving. Newer edits were kept. Try the action again.');
+      }
+      if (next !== before) {
+        remember(before);
+        current = next;
+        revision += 1;
+        publish(next);
+      }
+      return { before, project: next, revision, generation: expected };
+    });
+  };
+  return {
+    current: () => current,
+    setHistoryRecorder: (recorder: (before: CaptionProject) => void) => { remember = recorder; },
+    editable,
+    update,
+    commit,
+    isCurrent: (receipt: EditorPublication | null) => Boolean(receipt && active
+      && receipt.generation === generation && receipt.revision === revision),
+    checkpoint: () => editable() ? enqueue(checkpointLatest) : Promise.resolve(current),
+    finish: (operation: (latest: CaptionProject) => Promise<CaptionProject | null>) => {
+      if (!editable()) return Promise.reject(new Error('This editor session is already closing.'));
+      closing = true;
+      return enqueue(async (expected) => {
+        try {
+          // Accepted writes and imports drain first. New edits are frozen before
+          // Save/Discard can reconcile assets or remove the project record.
+          const saved = await operation(current);
+          assertActive(expected);
+          if (saved) {
+            current = saved;
+            revision += 1;
+            publish(saved);
+          }
+          active = false;
+        } catch (caught) {
+          closing = false;
+          throw caught;
+        }
+      });
+    },
+    activate: () => { active = true; },
+    dispose: () => { active = false; generation += 1; },
+  };
+}
+
 function EditorWorkspace({ initialProject }: { initialProject: CaptionProject }) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
-  const [project, setProject] = useState(initialProject);
-  const projectRef = useRef(project);
+  const [workspaceHeight, setWorkspaceHeight] = useState(height);
+  const [project, renderProject] = useState(initialProject);
+  const [editorSession] = useState(() => createEditorSession(
+    initialProject, renderProject, checkpointEditorProject,
+  ));
+  const setProject = editorSession.update;
+  const [finishingSession, setFinishingSession] = useState(false);
   const ownedAssetLedgerRef = useRef(createProjectOwnedAssetLedger(initialProject));
   const linkedPermissionLedgerRef = useRef(createLinkedMediaPermissionLedger(initialProject));
   const [selectedCaptionId, setSelectedCaptionId] = useState<string>();
@@ -233,6 +361,32 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [editingText, setEditingText] = useState<string>();
   const [editingLayerId, setEditingLayerId] = useState<string>();
   const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
+  const [scriptDraftCaptions, setScriptDraftCaptions] = useState<CaptionBlock[] | null>(null);
+  const [scriptKeyboardOpen, setScriptKeyboardOpen] = useState(false);
+  const [scriptEditingCaptionId, setScriptEditingCaptionId] = useState<string>();
+  const editorScrollRef = useRef<ScrollView>(null);
+  const scriptBackRequestRef = useRef<(() => void) | undefined>(undefined);
+  const dualCaptionBackRequestRef = useRef<(() => void) | undefined>(undefined);
+  const textLayerBackRequestRef = useRef<(() => void) | undefined>(undefined);
+  const languagePickerBackRequestRef = useRef<(() => void) | undefined>(undefined);
+  const registerScriptBackRequest = useCallback((request: (() => void) | undefined) => {
+    scriptBackRequestRef.current = request;
+  }, []);
+  const registerDualCaptionBackRequest = useCallback((request: (() => void) | undefined) => {
+    dualCaptionBackRequestRef.current = request;
+  }, []);
+  const registerTextLayerBackRequest = useCallback((request: (() => void) | undefined) => {
+    textLayerBackRequestRef.current = request;
+  }, []);
+  const registerLanguagePickerBackRequest = useCallback((request: (() => void) | undefined) => {
+    languagePickerBackRequestRef.current = request;
+  }, []);
+  const scriptExit = useScriptEditorExit(scriptEditorOpen, editorScrollRef, () => {
+    setScriptKeyboardOpen(false);
+    setScriptEditingCaptionId(undefined);
+    setScriptDraftCaptions(null);
+    setScriptEditorOpen(false);
+  });
   const [dualCaptionEditorOpen, setDualCaptionEditorOpen] = useState(false);
   const [dualLanguagePickerOpen, setDualLanguagePickerOpen] = useState(false);
   const [selectedTranslationTrackId, setSelectedTranslationTrackId] = useState<string>();
@@ -262,19 +416,24 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const interactionStartRef = useRef<CaptionProject | undefined>(undefined);
   const [historyAvailability, setHistoryAvailability] = useState({ undo: false, redo: false });
   const workspaceMountedRef = useRef(true);
-  const exitApprovedRef = useRef(false);
+  const [exitApproved, setExitApproved] = useState(false);
   const exitPromptOpenRef = useRef(false);
-  const pendingExitActionRef = useRef<NavigationAction | undefined>(undefined);
+  const pendingExitActionRef = useRef<Parameters<typeof navigation.dispatch>[0] | undefined>(undefined);
+  // The script editor is a full preview transport surface, including while its
+  // keyboard is open. Admit companion audio and transition media with video.
   const blockingUi = Boolean(
     fontBrowserOpen
     || pendingChange
     || editingLayerId
-    || scriptEditorOpen
     || dualCaptionEditorOpen
+    || dualLanguagePickerOpen
+    || transitionTimingOpen
     || progress
     || mediaProgress
     || exporting
-    || extractAudioOpen,
+    || extractAudioOpen
+    || extractAudioBusy
+    || finishingSession,
   );
   const runtimePolicy = useEditorRuntimePolicy(blockingUi);
 
@@ -318,39 +477,30 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     );
   };
 
-  const persistProject = async (next: CaptionProject) => {
-    try {
-      const persisted = await checkpointEditorProject(next);
-      setPersistenceError(undefined);
-      return persisted;
-    } catch (caught) {
-      const message = caught instanceof ProjectPersistenceError
-        ? caught.message
-        : 'Project changes were not saved. Check available storage and try again.';
-      setPersistenceError(message);
-      throw caught;
-    }
-  };
-
-  const persistProjectInBackground = (next: CaptionProject) => {
-    void persistProject(next).catch((caught) => {
-      setPersistenceError(caught instanceof Error ? caught.message : 'The project could not be saved.');
+  const persistProjectInBackground = () => {
+    void editorSession.checkpoint().then(() => {
+      if (workspaceMountedRef.current) setPersistenceError(undefined);
+    }).catch((caught) => {
+      if (workspaceMountedRef.current) setPersistenceError(caught instanceof Error ? caught.message : 'The project could not be saved.');
     });
   };
 
-  const commitPersistedProject = async (
-    next: CaptionProject,
-    publish: (persisted: CaptionProject) => void,
-  ) => {
+  const commitEditorProject = async (operation: EditorProjectOperation, alreadyPersists = false) => {
     try {
-      const persisted = await publishProjectAfterDurableSave(next, publish);
-      setPersistenceError(undefined);
-      return persisted;
+      const receipt = await editorSession.commit(async (before) => {
+        const next = await operation(before);
+        if (next) trackSessionMedia(next);
+        return next;
+      }, alreadyPersists);
+      if (workspaceMountedRef.current) setPersistenceError(undefined);
+      return receipt;
     } catch (caught) {
-      if (caught instanceof ProjectPersistenceError) {
-        setPersistenceError(caught.message);
-      } else {
-        setError(caught instanceof Error ? caught.message : 'The project view could not be updated after saving.');
+      if (workspaceMountedRef.current) {
+        if (caught instanceof ProjectPersistenceError) {
+          setPersistenceError(caught.message);
+        } else {
+          setError(caught instanceof Error ? caught.message : 'The project view could not be updated after saving.');
+        }
       }
       throw caught;
     }
@@ -361,9 +511,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   useTimelineAudioController(project, currentMs, isPlaying, runtimePolicy.mediaAdmitted, setError);
   useProjectAudioWaveforms(
     project,
-    runtimePolicy.mediaAdmitted && !isPlaying,
+    runtimePolicy.mediaAdmitted && !isPlaying && !scriptEditorOpen,
     ({ sourceId, sourceUri, waveformPeaks, waveformVersion }) => {
-      const current = projectRef.current;
+      if (!editorSession.editable()) return;
+      const current = editorSession.current();
       const source = current.audioSources.find((candidate) => candidate.id === sourceId && candidate.uri === sourceUri);
       if (!source || (source.waveformVersion === waveformVersion && source.waveformPeaks?.length === waveformPeaks.length)) {
         return;
@@ -376,45 +527,82 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             : candidate
         )),
       };
-      projectRef.current = next;
       setProject(next);
-      persistProjectInBackground(next);
+      persistProjectInBackground();
     },
     setError,
   );
   const pauseTransport = transport.pause;
+  const cancelCaptionGeneration = useCallback(async () => {
+    setTranscriptionCancelling(true);
+    const cancelled = await cancelProjectCaptionGeneration();
+    if (!cancelled) setTranscriptionCancelling(false);
+  }, []);
 
   useEffect(() => {
     if (!runtimePolicy.mediaAdmitted) pauseTransport();
-  }, [pauseTransport, runtimePolicy.mediaAdmitted]);
+  }, [isPlaying, pauseTransport, runtimePolicy.mediaAdmitted]);
 
   useEffect(() => navigation.addListener('beforeRemove', (event) => {
-    if (exitApprovedRef.current) return;
+    if (exitApproved) return;
     event.preventDefault();
+    const { data } = event;
+    const backStep = resolveEditorBackStep({
+      interactionLocked: Boolean(finishingSession || transcriptionCancelling || mediaProgress || extractAudioBusy || (exporting && exportKind !== 'video')),
+      captionGenerationActive: Boolean(progress && !transcriptionCancelling),
+      videoExportActive: Boolean(exporting && exportKind === 'video'),
+      textEditorOpen: Boolean(editingLayerId),
+      fontBrowserOpen,
+      styleScopeOpen: Boolean(pendingChange),
+      transitionTimingOpen,
+      audioSourceOpen: extractAudioOpen,
+      languagePickerOpen: dualLanguagePickerOpen,
+      dualCaptionEditorOpen,
+      scriptEditorOpen,
+      selectionActive: Boolean(
+        selectedCaptionId || selectedLayerId || selectedClipId || selectedAudioClipId || selectedTranslationTrackId
+      ),
+      timelineRooted: scriptExit.timelineRooted(),
+    });
+    if (backStep !== 'confirm-exit') {
+      pauseTransport();
+      if (backStep === 'cancel-caption-generation') void cancelCaptionGeneration();
+      else if (backStep === 'cancel-video-export') void cancelProjectVideoExport();
+      else if (backStep === 'close-text-editor') (textLayerBackRequestRef.current ?? (() => {
+        setEditingLayerId(undefined);
+        setEditingText(undefined);
+      }))();
+      else if (backStep === 'close-font-browser') setFontBrowserOpen(false);
+      else if (backStep === 'close-style-scope') setPendingChange(undefined);
+      else if (backStep === 'close-transition-timing') setTransitionTimingOpen(false);
+      else if (backStep === 'close-audio-source') setExtractAudioOpen(false);
+      else if (backStep === 'close-language-picker') (languagePickerBackRequestRef.current ?? (() => setDualLanguagePickerOpen(false)))();
+      else if (backStep === 'close-dual-caption-editor') {
+        (dualCaptionBackRequestRef.current ?? (() => setDualCaptionEditorOpen(false)))();
+      }
+      else if (backStep === 'close-script-editor') (scriptBackRequestRef.current ?? scriptExit.close)();
+      else if (backStep === 'clear-selection') clearEditorSelection();
+      else if (backStep === 'reveal-timeline') scriptExit.revealTimeline();
+      return;
+    }
     if (exitPromptOpenRef.current) return;
     exitPromptOpenRef.current = true;
-    pendingExitActionRef.current = event.data.action;
+    pendingExitActionRef.current = data.action;
     pauseTransport();
     const finishExit = async (decision: 'save' | 'discard') => {
       try {
-        if (decision === 'save') {
-          const saved = await saveEditorDraft(projectRef.current, {
-            owned: ownedAssetLedgerRef.current,
-            linked: linkedPermissionLedgerRef.current,
-          });
-          projectRef.current = saved;
-          setProject(saved);
-        } else {
-          await discardEditorSession(initialProject, projectRef.current, {
-            owned: ownedAssetLedgerRef.current,
-            linked: linkedPermissionLedgerRef.current,
-          });
-        }
-        exitApprovedRef.current = true;
-        const action = pendingExitActionRef.current;
-        if (action) navigation.dispatch(action);
+        setFinishingSession(true);
+        await editorSession.finish(async (latest) => {
+          const ledger = { owned: ownedAssetLedgerRef.current, linked: linkedPermissionLedgerRef.current };
+          if (decision === 'save') return saveEditorDraft(latest, ledger);
+          await discardEditorSession(initialProject, latest, ledger);
+          return null;
+        });
+        if (!workspaceMountedRef.current) return;
+        setExitApproved(true);
       } catch (caught) {
         exitPromptOpenRef.current = false;
+        if (workspaceMountedRef.current) setFinishingSession(false);
         Alert.alert('Could not leave the editor', caught instanceof Error ? caught.message : 'Your choice could not be completed.');
       }
     };
@@ -427,7 +615,41 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         { text: 'Save draft', onPress: () => { void finishExit('save'); } },
       ],
     );
-  }), [initialProject, navigation, pauseTransport]);
+  }), [
+    cancelCaptionGeneration,
+    dualCaptionEditorOpen,
+    dualLanguagePickerOpen,
+    editingLayerId,
+    editorSession,
+    exitApproved,
+    exportKind,
+    exporting,
+    extractAudioBusy,
+    extractAudioOpen,
+    finishingSession,
+    fontBrowserOpen,
+    initialProject,
+    mediaProgress,
+    navigation,
+    pauseTransport,
+    pendingChange,
+    progress,
+    scriptEditorOpen,
+    scriptExit,
+    selectedAudioClipId,
+    selectedCaptionId,
+    selectedClipId,
+    selectedLayerId,
+    selectedTranslationTrackId,
+    transcriptionCancelling,
+    transitionTimingOpen,
+  ]);
+
+  useEffect(() => {
+    if (!exitApproved) return;
+    const action = pendingExitActionRef.current;
+    if (action) navigation.dispatch(action);
+  }, [exitApproved, navigation]);
 
   const clipTimeline = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
   const timelineDurationMs = totalClipDuration(project.clips);
@@ -468,11 +690,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     () => selectedTranslationTrack ? resolveCaptionPairs(project, selectedTranslationTrack.id).filter((pair) => pair.timelineVisible) : [],
     [project, selectedTranslationTrack],
   );
+  const previewCaptions = scriptEditorOpen ? scriptDraftCaptions ?? timelineCaptions : timelineCaptions;
   const activeCaption = useMemo(
-    () => timelineCaptions.find((caption) => currentMs >= caption.startMs && currentMs < caption.endMs),
-    [currentMs, timelineCaptions],
+    () => previewCaptions.find((caption) => currentMs >= caption.startMs && currentMs < caption.endMs),
+    [currentMs, previewCaptions],
   );
-  const selectedCaption = timelineCaptions.find((caption) => caption.id === selectedCaptionId);
+  const selectedCaption = previewCaptions.find((caption) => caption.id === selectedCaptionId);
   const selectedClip = project.clips.find((clip) => clip.id === selectedClipId);
   const selectedClipIndex = project.clips.findIndex((clip) => clip.id === selectedClipId);
   const transitionBoundaryAvailable = canApplyVideoTransition(project.clips, selectedClipIndex);
@@ -491,18 +714,60 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     : selectedCaption
       ? resolveCaptionStyle(project.projectStyle, selectedCaption).animation.id
       : project.projectStyle.animation.id;
-  const displayCaption = isPlaying ? activeCaption : selectedCaption ?? activeCaption;
+  const scriptEditingCaption = scriptEditorOpen && scriptKeyboardOpen
+    ? previewCaptions.find((caption) => caption.id === scriptEditingCaptionId)
+    : undefined;
+  const displayCaption = scriptEditorOpen
+    ? scriptEditingCaption ?? (!isPlaying ? selectedCaption ?? activeCaption : activeCaption)
+    : activeCaption;
   const displayTranslationPairs = useMemo(
-    () => displayCaption
-      ? translationTimelineTracks.flatMap((track) => track.visible
-        ? track.pairs.filter((pair) => pair.source.id === displayCaption.id && pair.translation.text.trim())
-        : [])
-      : [],
-    [displayCaption, translationTimelineTracks],
+    () => translationTimelineTracks.flatMap((track) => track.visible
+      ? track.pairs.filter((pair) => pair.translation.text.trim()
+        && currentMs >= pair.startMs && currentMs < pair.endMs)
+      : []),
+    [currentMs, translationTimelineTracks],
   );
-  const previewHeight = Math.min(Math.max(280, height * 0.43), 500);
-  const canvasSize = fitRect(
-    Math.max(1, project.canvas.aspectWidth / project.canvas.aspectHeight),
+  // Script editing shares the actual resized root with the keyboard. The
+  // normal preview minimum would consume nearly all of a short Android window.
+  const previewHeight = scriptEditorOpen
+    ? scriptKeyboardOpen
+      // Reserve the 44px header and at least 100px of list (two 23px
+      // caption lines plus row insets), even in a short resized window.
+      ? Math.max(0, Math.min(180, workspaceHeight * 0.4, workspaceHeight - 145))
+      : Math.min(500, workspaceHeight * 0.4)
+    : Math.min(Math.max(280, height * 0.43), 500);
+  const scriptCropActive = scriptEditorOpen && scriptKeyboardOpen;
+  const cropCaptionStyle = displayCaption ? resolveCaptionStyle(project.projectStyle, displayCaption) : undefined;
+  const [lastCropPosition, setLastCropPosition] = useState(project.projectStyle.position);
+  // Hold the camera through timing gaps; draft selection and authored position
+  // changes retarget it without changing the original canvas or its overlays.
+  if (cropCaptionStyle && (cropCaptionStyle.position.x !== lastCropPosition.x
+    || cropCaptionStyle.position.y !== lastCropPosition.y)) {
+    setLastCropPosition(cropCaptionStyle.position);
+  }
+  const scriptCrop = captionPreviewCrop(
+    project.canvas.aspectWidth / project.canvas.aspectHeight,
+    width - 80, // 24px outer inset plus a separate 48px transport and 8px gap.
+    previewHeight - 8,
+    cropCaptionStyle?.position ?? lastCropPosition,
+  );
+  const [cropOffset] = useState(() => new Animated.ValueXY({ x: 0, y: 0 }));
+  useEffect(() => {
+    if (!scriptCropActive) {
+      cropOffset.setValue({ x: 0, y: 0 });
+      return;
+    }
+    const animation = Animated.timing(cropOffset, {
+      toValue: { x: scriptCrop.x, y: scriptCrop.y },
+      duration: 180,
+      useNativeDriver: true,
+      isInteraction: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [cropOffset, scriptCropActive, scriptCrop.x, scriptCrop.y]);
+  const canvasSize = scriptCropActive ? scriptCrop.canvas : fitRect(
+    project.canvas.aspectWidth / project.canvas.aspectHeight,
     width - 24,
     previewHeight - 8,
   );
@@ -514,12 +779,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const editableVideoTransform = editableVideoClip?.transform ?? project.videoTransform;
   useEffect(() => {
     workspaceMountedRef.current = true;
+    editorSession.activate();
     return () => {
       workspaceMountedRef.current = false;
+      editorSession.dispose();
       void cancelProjectCaptionGeneration();
       void cancelProjectVideoExport();
     };
-  }, []);
+  }, [editorSession]);
 
   const selectEditorObject = (selection: EditorSelection) => {
     const next = editorSelectionState(selection);
@@ -533,7 +800,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const selectEditorLayer = (layerId: string) => {
-    const selection = editorLayerSelection(projectRef.current, layerId, selectedCaptionId);
+    const selection = editorLayerSelection(editorSession.current(), layerId, selectedCaptionId);
     if (selection) selectEditorObject(selection);
   };
 
@@ -544,7 +811,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
-  const pushUndo = (snapshot = projectRef.current) => {
+  const pushUndo = (snapshot = editorSession.current()) => {
     const stack = undoStackRef.current;
     if (stack.at(-1) !== snapshot) stack.push(snapshot);
     trimHistoryStack(stack);
@@ -552,89 +819,71 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     refreshHistoryAvailability();
   };
 
+  useEffect(() => { editorSession.setHistoryRecorder(pushUndo); });
+
   const translationController = useProjectCaptionTranslation({
-    getCurrentProject: () => projectRef.current,
+    getCurrentProject: () => editorSession.current(),
     commitProject: async (baseline, next) => {
-      if (projectRef.current !== baseline) {
-        throw new Error('The project changed while both languages were synchronizing. Save again to avoid overwriting newer edits.');
-      }
-      pushUndo(baseline);
-      projectRef.current = next;
-      setProject(next);
-      try {
-        await commitPersistedProject(next, (persisted) => {
-          projectRef.current = persisted;
-          setProject(persisted);
-        });
-      } catch (caught) {
-        projectRef.current = baseline;
-        setProject(baseline);
-        if (undoStackRef.current.at(-1) === baseline) {
-          undoStackRef.current.pop();
-          refreshHistoryAvailability();
+      await commitEditorProject((current) => {
+        if (current !== baseline) {
+          throw new Error('The project changed while both languages were synchronizing. Save again to avoid overwriting newer edits.');
         }
-        throw caught;
-      }
+        return next;
+      });
     },
   });
   const translationProgress = translationController.progress;
   const translationCancelling = translationController.cancelling;
 
   const beginHistoryInteraction = () => {
-    interactionStartRef.current ??= projectRef.current;
+    interactionStartRef.current ??= editorSession.current();
   };
 
   const finishHistoryInteraction = () => {
     const snapshot = interactionStartRef.current;
     interactionStartRef.current = undefined;
-    if (snapshot && snapshot !== projectRef.current) pushUndo(snapshot);
-    persistProjectInBackground(projectRef.current);
+    if (snapshot && snapshot !== editorSession.current()) pushUndo(snapshot);
+    persistProjectInBackground();
   };
 
   const undo = () => {
     const previous = undoStackRef.current.pop();
     if (!previous) return;
-    redoStackRef.current.push(projectRef.current);
+    redoStackRef.current.push(editorSession.current());
     trimHistoryStack(redoStackRef.current);
     refreshHistoryAvailability();
     interactionStartRef.current = undefined;
-    projectRef.current = previous;
     transport.synchronizeProject(previous);
     setProject(previous);
     setSelectedCaptionId((id) => previous.captions.some((caption) => caption.id === id) ? id : undefined);
     setSelectedLayerId((id) => previous.layers.some((layer) => layer.id === id) ? id : undefined);
-    persistProjectInBackground(previous);
+    persistProjectInBackground();
   };
 
   const redo = () => {
     const next = redoStackRef.current.pop();
     if (!next) return;
-    undoStackRef.current.push(projectRef.current);
+    undoStackRef.current.push(editorSession.current());
     trimHistoryStack(undoStackRef.current);
     refreshHistoryAvailability();
     interactionStartRef.current = undefined;
-    projectRef.current = next;
     transport.synchronizeProject(next);
     setProject(next);
     setSelectedCaptionId((id) => next.captions.some((caption) => caption.id === id) ? id : undefined);
     setSelectedLayerId((id) => next.layers.some((layer) => layer.id === id) ? id : undefined);
-    persistProjectInBackground(next);
+    persistProjectInBackground();
   };
 
   const generateCaptions = async (modelId: TranscriptionModelId) => {
     setError(undefined);
     setTranscriptionCancelling(false);
     try {
-      const before = projectRef.current;
-      const next = await generateAndSaveProjectCaptions(
-        before,
-        modelId,
+      const receipt = await commitEditorProject((before) => generateAndSaveProjectCaptions(
+        before, modelId,
         (nextProgress) => { if (workspaceMountedRef.current) setProgress(nextProgress); },
-      );
-      if (!workspaceMountedRef.current) return;
-      pushUndo(before);
-      projectRef.current = next;
-      setProject(next);
+      ), true);
+      if (!receipt || !editorSession.isCurrent(receipt)) return;
+      const { before, project: next } = receipt;
       selectEditorObject({ kind: 'captions', captionId: next.captions[0]?.id });
       if (before.captionTracks.translations.length > 0 && next.captionTracks.translations.length === 0) {
         Alert.alert(
@@ -646,9 +895,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         const refreshIds = visibleTranslation?.cues
           .filter((cue) => cue.status === 'pending' || cue.status === 'stale' || cue.status === 'failed')
           .map((cue) => cue.sourceCaptionId) ?? [];
-        if (visibleTranslation && refreshIds.length > 0) {
-          requestTranslationRefresh(refreshIds, visibleTranslation);
-        }
+        if (visibleTranslation && refreshIds.length > 0) requestTranslationRefresh(refreshIds, visibleTranslation);
       }
     } catch (caught) {
       if (workspaceMountedRef.current && !(caught instanceof CaptionGenerationCancelledError)) {
@@ -662,12 +909,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         setProgress(undefined);
       }
     }
-  };
-
-  const cancelCaptionGeneration = async () => {
-    setTranscriptionCancelling(true);
-    const cancelled = await cancelProjectCaptionGeneration();
-    if (!cancelled) setTranscriptionCancelling(false);
   };
 
   const captionForeground = useForegroundOperation({
@@ -706,25 +947,17 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const chooseStyleScope = async (scope: StyleScope) => {
-    if (!pendingChange) return;
-    const before = projectRef.current;
-    const next = pendingChange.translationTrackId
-      ? scope === 'caption' && selectedCaptionId
-        ? setTranslationCueStyle(before, pendingChange.translationTrackId, selectedCaptionId, pendingChange.patch, new Date().toISOString())
-        : setTranslationTrackStyle(before, pendingChange.translationTrackId, pendingChange.patch, new Date().toISOString())
-      : applyStylePatch(before, selectedCaptionId, scope, pendingChange.patch);
+    const change = pendingChange;
+    if (!change) return;
     try {
-      await commitPersistedProject(next, (persisted) => {
-        pushUndo(before);
-        projectRef.current = persisted;
-        setProject(persisted);
-        setPendingChange(undefined);
-      });
+      const receipt = await commitEditorProject((before) => change.translationTrackId
+        ? scope === 'caption' && selectedCaptionId
+          ? setTranslationCueStyle(before, change.translationTrackId, selectedCaptionId, change.patch, new Date().toISOString())
+          : setTranslationTrackStyle(before, change.translationTrackId, change.patch, new Date().toISOString())
+        : applyStylePatch(before, selectedCaptionId, scope, change.patch));
+      if (editorSession.isCurrent(receipt)) setPendingChange(undefined);
     } catch (caught) {
-      Alert.alert(
-        'Style change not saved',
-        caught instanceof Error ? caught.message : 'The style change could not be saved. Try again.',
-      );
+      Alert.alert('Style change not saved', caught instanceof Error ? caught.message : 'The style change could not be saved. Try again.');
     }
   };
 
@@ -739,25 +972,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const queueCaptionStyleChange = (label: string, patch: CaptionStylePatch) => {
     if (translationTrackSelected && selectedTranslationTrack) {
-      const before = projectRef.current;
-      const next = setTranslationTrackStyle(before, selectedTranslationTrack.id, patch, new Date().toISOString());
-      projectRef.current = next;
-      setProject(next);
-      void commitPersistedProject(next, (persisted) => {
-        pushUndo(before);
-        projectRef.current = persisted;
-        setProject(persisted);
-      }).catch((caught) => {
-        projectRef.current = before;
-        setProject(before);
-        setError(caught instanceof Error ? caught.message : 'The second-language style could not be saved.');
-      });
+      const trackId = selectedTranslationTrack.id;
+      void commitEditorProject((before) => setTranslationTrackStyle(before, trackId, patch, new Date().toISOString()))
+        .catch((caught) => {
+          if (workspaceMountedRef.current) setError(caught instanceof Error ? caught.message : 'The second-language style could not be saved.');
+        });
       return;
     }
-    setPendingChange({
-      label,
-      patch,
-    });
+    setPendingChange({ label, patch });
   };
 
   const chooseAnimation = (id: CaptionAnimationId) => {
@@ -791,8 +1013,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           ? setTranslationCueStyle(current, selectedTranslationTrack.id, selectedCaptionId, patch, new Date().toISOString())
           : setTranslationTrackStyle(current, selectedTranslationTrack.id, patch, new Date().toISOString())
         : applyStylePatch(current, selectedCaptionId, scope, patch);
-      projectRef.current = next;
-      persistProjectInBackground(next);
+      persistProjectInBackground();
       return next;
     });
   };
@@ -800,45 +1021,34 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const beginEditCaption = () => {
     if (timelineCaptions.length === 0) return;
     transport.pause();
+    setScriptDraftCaptions(null);
+    setScriptKeyboardOpen(false);
     setScriptEditorOpen(true);
   };
 
   const commitTextLayerText = async () => {
     if (editingText == null || !editingLayerId) return;
-    const before = projectRef.current;
-    const next = setTextLayerText(before, editingLayerId, editingText);
     try {
-      await commitPersistedProject(next, (persisted) => {
-        pushUndo(before);
-        projectRef.current = persisted;
-        setProject(persisted);
-        setEditingLayerId(undefined);
-        setEditingText(undefined);
-      });
+      const receipt = await commitEditorProject((before) => setTextLayerText(before, editingLayerId, editingText));
+      if (!editorSession.isCurrent(receipt)) return;
+      setEditingLayerId(undefined);
+      setEditingText(undefined);
     } catch {
       return;
     }
   };
 
   const commitCaptionScript = async (captions: CaptionProject['captions']) => {
-    const before = projectRef.current;
-    const next = replaceVisibleCaptionScript(before, captions);
-    if (next !== before) {
-      const changedCaptionIds = changedPrimaryCaptionTextIds(before, next);
-      await commitPersistedProject(next, (persisted) => {
-        pushUndo(before);
-        projectRef.current = persisted;
-        setProject(persisted);
-        if (!persisted.captions.some((caption) => caption.id === selectedCaptionId && caption.timelineVisible !== false)) {
-          setSelectedCaptionId(captions[0]?.id);
-        }
-      });
-      const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
-      if (visibleTranslation && changedCaptionIds.length > 0) {
-        offerTranslationRefresh(changedCaptionIds, visibleTranslation);
-      }
+    const receipt = await commitEditorProject((before) => replaceVisibleCaptionScript(before, captions));
+    if (!receipt || !editorSession.isCurrent(receipt)) return false;
+    const { before, project: next } = receipt;
+    if (!next.captions.some((caption) => caption.id === selectedCaptionId && caption.timelineVisible !== false)) {
+      setSelectedCaptionId(captions[0]?.id);
     }
-    setScriptEditorOpen(false);
+    const changedCaptionIds = changedPrimaryCaptionTextIds(before, next);
+    const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
+    if (visibleTranslation && changedCaptionIds.length > 0) offerTranslationRefresh(changedCaptionIds, visibleTranslation);
+    return true;
   };
 
   const openDualCaptionEditor = () => {
@@ -847,13 +1057,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       return;
     }
     try {
-      projectPrimaryCaptionLanguage(projectRef.current);
+      projectPrimaryCaptionLanguage(editorSession.current());
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'This caption language is not ready for dual subtitles.');
       return;
     }
-    const existing = projectRef.current.captionTracks.translations.find((track) => track.visible)
-      ?? projectRef.current.captionTracks.translations[0];
+    const existing = editorSession.current().captionTracks.translations.find((track) => track.visible)
+      ?? editorSession.current().captionTracks.translations[0];
     if (existing) {
       transport.pause();
       setSelectedTranslationTrackId(existing.id);
@@ -873,26 +1083,24 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const enableDualCaptions = async (targetLanguage: CaptionLanguageTag) => {
-    const before = projectRef.current;
+    let prepared: ReturnType<typeof prepareOptionalDualCaptionTrack> | undefined;
     try {
-      const prepared = prepareOptionalDualCaptionTrack(before, targetLanguage);
-      await commitPersistedProject(prepared.project, (persisted) => {
-        pushUndo(before);
-        projectRef.current = persisted;
-        setProject(persisted);
-        setSelectedTranslationTrackId(prepared.trackId);
-        transport.pause();
-        setDualLanguagePickerOpen(false);
-        setDualCaptionEditorOpen(true);
+      const receipt = await commitEditorProject((before) => {
+        prepared = prepareOptionalDualCaptionTrack(before, targetLanguage);
+        return prepared.project;
       });
+      if (!prepared || !receipt || !editorSession.isCurrent(receipt)) return;
+      setSelectedTranslationTrackId(prepared.trackId);
+      transport.pause();
+      setDualLanguagePickerOpen(false);
+      setDualCaptionEditorOpen(true);
       if (!prepared.automatic) return;
-      const translationBaseline = projectRef.current;
-      const track = translationBaseline.captionTracks.translations.find((candidate) => candidate.id === prepared.trackId);
+      const translationBaseline = receipt.project;
+      const track = translationBaseline.captionTracks.translations.find((candidate) => candidate.id === prepared?.trackId);
       const pendingIds = (track?.cues ?? [])
         .filter((cue) => !cue.text.trim() && !cue.translationSkipped)
         .map((cue) => cue.sourceCaptionId);
-      if (pendingIds.length === 0) return;
-      void translationController.refresh(prepared.trackId, pendingIds, translationBaseline);
+      if (pendingIds.length > 0) void translationController.refresh(prepared.trackId, pendingIds, translationBaseline);
     } catch (caught) {
       throw new Error(caught instanceof Error ? caught.message : 'Dual subtitles could not be enabled.');
     }
@@ -906,7 +1114,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     if (!track) return;
     let sourceLanguage;
     try {
-      sourceLanguage = projectPrimaryCaptionLanguage(projectRef.current);
+      sourceLanguage = projectPrimaryCaptionLanguage(editorSession.current());
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Dual subtitles could not refresh.');
       return;
@@ -918,6 +1126,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       );
       return;
     }
+    const refresh = () => {
+      setSelectedTranslationTrackId(track.id);
+      setDualCaptionEditorOpen(true);
+      void translationController.refresh(track.id, sourceCaptionIds);
+    };
     const reviewed = track.cues.filter((cue) => sourceCaptionIds.includes(cue.sourceCaptionId) && cue.reviewed);
     if (reviewed.length > 0) {
       Alert.alert(
@@ -925,12 +1138,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         `${reviewed.length} selected subtitle${reviewed.length === 1 ? ' was' : 's were'} edited by a person. Refresh will replace the second-language text, and Undo can restore it.`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Replace + refresh', style: 'destructive', onPress: () => { void translationController.refresh(track.id, sourceCaptionIds); } },
+          { text: 'Replace + refresh', style: 'destructive', onPress: refresh },
         ],
       );
       return;
     }
-    void translationController.refresh(track.id, sourceCaptionIds);
+    refresh();
   };
 
   const saveDualCaptionEdits = async (edits: DualCaptionTextEdit[]) => {
@@ -976,69 +1189,52 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const setSelectedTranslationSkipped = async (sourceCaptionId: string, skipped: boolean) => {
-    if (!selectedTranslationTrack || translationController.busy) return;
-    const before = projectRef.current;
+    const trackId = selectedTranslationTrack?.id;
+    if (!trackId || translationController.busy) return;
     try {
-      const next = setTranslationCueSkipped(before, selectedTranslationTrack.id, sourceCaptionId, skipped, new Date().toISOString());
-      await commitPersistedProject(next, (persisted) => {
-        pushUndo(before);
-        projectRef.current = persisted;
-        setProject(persisted);
-      });
+      await commitEditorProject((before) => setTranslationCueSkipped(before, trackId, sourceCaptionId, skipped, new Date().toISOString()));
     } catch (caught) {
       Alert.alert('Subtitle choice not saved', caught instanceof Error ? caught.message : 'Try again. Saved text is unchanged.');
     }
   };
 
   const toggleSelectedTranslationTrack = async () => {
-    const track = selectedTranslationTrack;
-    if (!track) return;
-    const before = projectRef.current;
-    const updatedAt = new Date().toISOString();
-    let next = before;
-    if (!track.visible) {
-      for (const candidate of before.captionTracks.translations) {
-        if (candidate.visible) next = setTranslationTrackVisibility(next, candidate.id, false, updatedAt);
-      }
-    }
-    next = setTranslationTrackVisibility(next, track.id, !track.visible, updatedAt);
+    const trackId = selectedTranslationTrack?.id;
+    if (!trackId) return;
     try {
-      await commitPersistedProject(next, (persisted) => {
-        pushUndo(before);
-        projectRef.current = persisted;
-        setProject(persisted);
+      await commitEditorProject((before) => {
+        const track = before.captionTracks.translations.find((candidate) => candidate.id === trackId);
+        if (!track) return before;
+        const updatedAt = new Date().toISOString();
+        let next = before;
+        if (!track.visible) {
+          for (const candidate of before.captionTracks.translations) {
+            if (candidate.visible) next = setTranslationTrackVisibility(next, candidate.id, false, updatedAt);
+          }
+        }
+        return setTranslationTrackVisibility(next, track.id, !track.visible, updatedAt);
       });
     } catch (caught) {
-      Alert.alert(
-        'Second language visibility not saved',
-        caught instanceof Error ? caught.message : 'The second language visibility could not be saved. Try again.',
-      );
+      Alert.alert('Second language visibility not saved', caught instanceof Error ? caught.message : 'The second language visibility could not be saved. Try again.');
     }
   };
 
   const confirmRemoveSelectedTranslationTrack = () => {
     const track = selectedTranslationTrack;
     if (!track) return;
-    Alert.alert('Remove second language?', `${track.displayName} text will be removed from this project. The primary captions stay unchanged.`, [
+    Alert.alert('Remove second language?', track.displayName + ' text will be removed from this project. The primary captions stay unchanged.', [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Remove',
-        style: 'destructive',
+        text: 'Remove', style: 'destructive',
         onPress: () => {
-          const before = projectRef.current;
-          const next = removeTranslationCaptionTrack(before, track.id, new Date().toISOString());
-          void commitPersistedProject(next, (persisted) => {
-            pushUndo(before);
-            projectRef.current = persisted;
-            setProject(persisted);
-            setSelectedTranslationTrackId(undefined);
-            setDualCaptionEditorOpen(false);
-          }).catch((caught) => {
-            Alert.alert(
-              'Second language not removed',
-              caught instanceof Error ? caught.message : 'The second language could not be removed. Try again.',
-            );
-          });
+          void commitEditorProject((before) => removeTranslationCaptionTrack(before, track.id, new Date().toISOString()))
+            .then((receipt) => {
+              if (!editorSession.isCurrent(receipt)) return;
+              setSelectedTranslationTrackId(undefined);
+              setDualCaptionEditorOpen(false);
+            }).catch((caught) => {
+              Alert.alert('Second language not removed', caught instanceof Error ? caught.message : 'The second language could not be removed. Try again.');
+            });
         },
       },
     ]);
@@ -1052,8 +1248,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     if (persist) pushUndo();
     setProject((current) => {
       const next = setTextLayerStyle(current, layerId, patch);
-      projectRef.current = next;
-      if (persist) persistProjectInBackground(next);
+      if (persist) persistProjectInBackground();
       return next;
     });
   };
@@ -1061,52 +1256,44 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const updateSharedCaptionTransform = (patch: CaptionStylePatch) => {
     setProject((current) => {
       const next = applyStylePatch(current, selectedCaptionId, 'all', patch);
-      projectRef.current = next;
       return next;
     });
+  };
+
+  const updateSelectedCaptionTransform = (patch: CaptionStylePatch) => {
+    if (!selectedCaptionId) return;
+    setProject((current) => applyStylePatch(current, selectedCaptionId, 'caption', patch));
   };
 
   const updateTranslationTransform = (patch: CaptionStylePatch) => {
     const track = selectedTranslationTrack;
-    if (!track) return;
-    const { position: _ignoredPosition, ...sizePatch } = patch;
-    if (sizePatch.box === undefined && sizePatch.fontSize === undefined && sizePatch.rotation === undefined) return;
-    setProject((current) => {
-      const next = setTranslationTrackStyle(current, track.id, sizePatch, new Date().toISOString());
-      projectRef.current = next;
-      return next;
-    });
+    if (!track || !selectedCaptionId) return;
+    setProject((current) => setTranslationCueStyle(current, track.id, selectedCaptionId, patch, new Date().toISOString()));
   };
 
-  const commitTranslationTrackPatch = (next: CaptionProject, before: CaptionProject) => {
-    void commitPersistedProject(next, (persisted) => {
-      pushUndo(before);
-      projectRef.current = persisted;
-      setProject(persisted);
-    }).catch(() => undefined);
+  const commitTranslationTrackPatch = (operation: EditorProjectOperation) => {
+    void commitEditorProject(operation).catch(() => undefined);
   };
 
   const adjustTranslationGap = (delta: number) => {
-    const track = selectedTranslationTrack;
-    if (!track) return;
-    const before = projectRef.current;
-    commitTranslationTrackPatch(
-      setTranslationStackGap(before, track.id, (track.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) + delta),
-      before,
-    );
+    const trackId = selectedTranslationTrack?.id;
+    if (!trackId) return;
+    commitTranslationTrackPatch((before) => {
+      const track = before.captionTracks.translations.find((candidate) => candidate.id === trackId);
+      return track ? setTranslationStackGap(before, trackId, (track.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) + delta) : before;
+    });
   };
 
   const adjustTranslationFontSize = (delta: number) => {
-    const track = selectedTranslationTrack;
-    const currentSize = selectedTranslationPair?.style.fontSize ?? track?.styleOverride?.fontSize ?? 34;
-    if (!track) return;
-    const before = projectRef.current;
-    commitTranslationTrackPatch(
-      setTranslationTrackStyle(before, track.id, {
-        fontSize: Math.min(96, Math.max(14, currentSize + delta)),
-      }),
-      before,
-    );
+    const trackId = selectedTranslationTrack?.id;
+    if (!trackId) return;
+    commitTranslationTrackPatch((before) => {
+      const track = before.captionTracks.translations.find((candidate) => candidate.id === trackId);
+      if (!track) return before;
+      const pair = resolveCaptionPairs(before, trackId).find((candidate) => candidate.source.id === selectedCaptionId);
+      const currentSize = pair?.style.fontSize ?? track.styleOverride?.fontSize ?? 34;
+      return setTranslationTrackStyle(before, trackId, { fontSize: Math.min(96, Math.max(14, currentSize + delta)) });
+    });
   };
 
   const updateVideoTransform = (patch: VideoTransformPatch) => {
@@ -1114,7 +1301,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     if (!clipId) return;
     setProject((current) => {
       const next = setVideoClipTransform(current, clipId, patch);
-      projectRef.current = next;
       return next;
     });
   };
@@ -1122,7 +1308,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const updateTimelineItemTiming = (item: TimelineItemReference, edge: TimelineTimingEdge, startMs: number, endMs: number) => {
     setProject((current) => {
       const next = applyTimelineItemTiming(current, item, edge, startMs, endMs, timelineDurationMs);
-      projectRef.current = next;
       return next;
     });
   };
@@ -1130,7 +1315,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const updateImageLayer = (layerId: string, patch: Partial<ImageVisualLayer>) => {
     setProject((current) => {
       const next = setImageLayer(current, layerId, patch);
-      projectRef.current = next;
       return next;
     });
   };
@@ -1139,11 +1323,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     pushUndo();
     const id = uniqueId('text');
     const duration = Math.max(500, timelineDurationMs);
-    const result = createTextLayer(projectRef.current, id, currentMs, duration);
+    const result = createTextLayer(editorSession.current(), id, currentMs, duration);
     setProject((current) => {
-      const next = current === projectRef.current ? result.project : createTextLayer(current, id, currentMs, duration).project;
-      projectRef.current = next;
-      persistProjectInBackground(next);
+      const next = current === editorSession.current() ? result.project : createTextLayer(current, id, currentMs, duration).project;
+      persistProjectInBackground();
       return next;
     });
     selectEditorObject({ kind: 'text', id });
@@ -1153,39 +1336,27 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const addImageLayer = async () => {
     const id = uniqueId('image');
-    let stored;
     try {
-      stored = await pickAndStoreImage(projectRef.current.id, id);
+      const receipt = await commitEditorProject(async (before) => {
+        const stored = await pickAndStoreImage(before.id, id);
+        if (!stored) return null;
+        ownedAssetLedgerRef.current = trackProjectOwnedAssets(ownedAssetLedgerRef.current, [stored.uri]);
+        return addImageLayerToProject(before, {
+          id, name: stored.name, uri: stored.uri, currentMs,
+          durationMs: Math.max(500, totalClipDuration(before.clips)),
+        }).project;
+      });
+      if (editorSession.isCurrent(receipt)) selectEditorObject({ kind: 'image', id });
     } catch (caught) {
-      Alert.alert('Could not add image', caught instanceof Error ? caught.message : 'The selected image could not be saved.');
-      return;
+      if (workspaceMountedRef.current) Alert.alert('Could not add image', caught instanceof Error ? caught.message : 'The selected image could not be saved.');
     }
-    if (!stored) return;
-    ownedAssetLedgerRef.current = trackProjectOwnedAssets(ownedAssetLedgerRef.current, [stored.uri]);
-    pushUndo();
-    const duration = Math.max(500, timelineDurationMs);
-    const result = addImageLayerToProject(projectRef.current, {
-      id,
-      name: stored.name,
-      uri: stored.uri,
-      currentMs,
-      durationMs: duration,
-    });
-    setProject((current) => {
-      const next = current === projectRef.current ? result.project : addImageLayerToProject(current, { id, name: stored.name, uri: stored.uri, currentMs, durationMs: duration }).project;
-      projectRef.current = next;
-      persistProjectInBackground(next);
-      return next;
-    });
-    selectEditorObject({ kind: 'image', id });
   };
 
   const moveLayer = (layerId: string, direction: -1 | 1) => {
     pushUndo();
     setProject((current) => {
       const next = moveVisualLayer(current, layerId, direction);
-      projectRef.current = next;
-      persistProjectInBackground(next);
+      persistProjectInBackground();
       return next;
     });
   };
@@ -1195,8 +1366,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     pushUndo();
     setProject((current) => {
       const next = deleteVisualLayer(current, layerId);
-      projectRef.current = next;
-      persistProjectInBackground(next);
+      persistProjectInBackground();
       return next;
     });
     setSelectedLayerId('captions');
@@ -1205,7 +1375,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const splitSelectedVisualAtPlayhead = () => {
     if (!selectedLayer || selectedLayer.kind === 'captions') return;
     const result = splitVisualLayer(
-      projectRef.current,
+      editorSession.current(),
       selectedLayer.id,
       currentMs,
       uniqueId(selectedLayer.kind),
@@ -1217,60 +1387,52 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
     transport.pause();
     pushUndo();
-    projectRef.current = result.project;
     setProject(result.project);
-    persistProjectInBackground(result.project);
+    persistProjectInBackground();
     setSelectedLayerId(result.right.id);
   };
 
   const addVideosToTimeline = async () => {
     setError(undefined);
     try {
-      const before = projectRef.current;
-      const beforeDuration = totalClipDuration(before.clips);
-      const next = await appendVideosToProject(before, setMediaProgress);
-      if (!next) return;
-      trackSessionMedia(next);
-      pushUndo(before);
-      projectRef.current = next;
+      const receipt = await commitEditorProject((before) => appendVideosToProject(before, setMediaProgress), true);
+      if (!receipt || !editorSession.isCurrent(receipt)) return;
+      const { before, project: next } = receipt;
       transport.synchronizeProject(next);
-      setProject(next);
       const firstAdded = next.clips[before.clips.length];
       setSelectedClipId(firstAdded?.id);
       setSelectedCaptionId(undefined);
       openEditorTool('video');
-      if (firstAdded) seekTimeline(beforeDuration);
+      if (firstAdded) seekTimeline(totalClipDuration(before.clips));
     } catch (caught) {
-      Alert.alert('Could not add videos', caught instanceof Error ? caught.message : 'The selected videos could not be added.');
+      if (workspaceMountedRef.current) Alert.alert('Could not add videos', caught instanceof Error ? caught.message : 'The selected videos could not be added.');
     } finally {
-      setMediaProgress(undefined);
+      if (workspaceMountedRef.current) setMediaProgress(undefined);
     }
   };
 
   const updateSelectedClip = (patch: Partial<Pick<VideoClip, 'volume' | 'muted' | 'fadeInMs' | 'fadeOutMs'>>) => {
     if (!selectedClipId) return;
-    const before = projectRef.current;
+    const before = editorSession.current();
     pushUndo(before);
     const next = updateVideoClip(before, selectedClipId, patch);
-    projectRef.current = next;
     transport.synchronizeProject(next);
     setProject(next);
-    persistProjectInBackground(next);
+    persistProjectInBackground();
     const entry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === selectedClipId);
     if (entry) transport.seek(clamp(currentMs, entry.startMs, entry.endMs));
   };
 
   const updateSelectedClipRate = (rate: number) => {
     if (!selectedClipId) return;
-    const before = projectRef.current;
+    const before = editorSession.current();
     const oldEntry = buildClipTimeline(before.clips).find((entry) => entry.clip.id === selectedClipId);
     if (!oldEntry) return;
     pushUndo(before);
     const next = setClipPlaybackRate(before, selectedClipId, rate);
-    projectRef.current = next;
     transport.synchronizeProject(next);
     setProject(next);
-    persistProjectInBackground(next);
+    persistProjectInBackground();
     const entry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === selectedClipId);
     if (entry) {
       const relativeProgress = clamp((currentMs - oldEntry.startMs) / Math.max(1, oldEntry.endMs - oldEntry.startMs), 0, 1);
@@ -1282,63 +1444,58 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const splitClipAtPlayhead = () => {
     const entry = timelineEntryAt(clipTimeline, currentMs);
     if (!entry) return;
-    const result = splitVideoClip(projectRef.current, entry.clip.id, currentMs, uniqueId('clip'), uniqueId('clip'));
+    const result = splitVideoClip(editorSession.current(), entry.clip.id, currentMs, uniqueId('clip'), uniqueId('clip'));
     if (!result) return;
     pushUndo();
-    projectRef.current = result.project;
     transport.synchronizeProject(result.project);
     setProject(result.project);
-    persistProjectInBackground(result.project);
+    persistProjectInBackground();
     setSelectedClipId(result.rightClipId);
   };
 
   const deleteSelectedClip = () => {
-    if (!selectedClipId || projectRef.current.clips.length <= 1) return;
-    const result = deleteVideoClip(projectRef.current, selectedClipId);
+    if (!selectedClipId || editorSession.current().clips.length <= 1) return;
+    const result = deleteVideoClip(editorSession.current(), selectedClipId);
     if (!result) return;
     pushUndo();
     const next = result.project;
-    projectRef.current = next;
     transport.synchronizeProject(next);
     setProject(next);
     setSelectedClipId(next.clips[0]?.id);
-    persistProjectInBackground(next);
+    persistProjectInBackground();
     queueMicrotask(() => seekTimeline(result.seekMs));
   };
 
   const trimClipEdge = (clipId: string, edge: 'start' | 'end', targetSourceMs: number) => {
-    const current = projectRef.current;
+    const current = editorSession.current();
     const result = trimVideoClip(current, clipId, edge, targetSourceMs);
     if (!result) return;
     pushUndo();
     const next = result.project;
-    projectRef.current = next;
     transport.synchronizeProject(next);
     setProject(next);
-    persistProjectInBackground(next);
+    persistProjectInBackground();
     transport.pause();
     queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, totalClipDuration(next.clips) - 1))));
   };
 
   const setClipGap = (clipId: string, gapMs: number, edge: 'before' | 'after' = 'before') => {
-    const result = setVideoClipGap(projectRef.current, clipId, gapMs, edge);
+    const result = setVideoClipGap(editorSession.current(), clipId, gapMs, edge);
     if (!result) return;
     pushUndo();
-    projectRef.current = result.project;
     transport.synchronizeProject(result.project);
     setProject(result.project);
-    persistProjectInBackground(result.project);
+    persistProjectInBackground();
     transport.pause();
   };
 
   const setClipLeadingGap = (clipId: string, gapMs: number) => {
-    const result = setVideoClipLeadingGap(projectRef.current, clipId, gapMs);
+    const result = setVideoClipLeadingGap(editorSession.current(), clipId, gapMs);
     if (!result) return;
     pushUndo();
-    projectRef.current = result.project;
     transport.synchronizeProject(result.project);
     setProject(result.project);
-    persistProjectInBackground(result.project);
+    persistProjectInBackground();
     transport.pause();
   };
 
@@ -1351,83 +1508,70 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
     setExtractAudioBusy(true);
     try {
-      const before = projectRef.current;
-      const result = await appendAudioToProject(before, currentMs, origin);
-      if (!result) return;
-      trackSessionMedia(result.project);
-      pushUndo(before);
-      projectRef.current = result.project;
-      setProject(result.project);
-      setSelectedAudioClipId(result.clip.id);
-      setSelectedLayerId(undefined);
-      setSelectedClipId(undefined);
-      setSelectedCaptionId(undefined);
-      setSelectedTranslationTrackId(undefined);
-      openEditorTool('audio');
+      const receipt = await commitEditorProject(async (before) => {
+        const result = await appendAudioToProject(before, currentMs, origin);
+        return result?.project ?? null;
+      }, true);
+      if (!receipt || !editorSession.isCurrent(receipt)) return;
+      const added = receipt.project.audioClips.find((clip) => !receipt.before.audioClips.some((previous) => previous.id === clip.id));
+      if (added) selectEditorObject({ kind: 'audio', id: added.id });
     } catch (caught) {
-      Alert.alert('Could not add audio', caught instanceof Error ? caught.message : 'The selected media could not be added.');
+      if (workspaceMountedRef.current) Alert.alert('Could not add audio', caught instanceof Error ? caught.message : 'The selected media could not be added.');
     } finally {
-      setExtractAudioBusy(false);
+      if (workspaceMountedRef.current) setExtractAudioBusy(false);
     }
   };
 
   const addProjectVideoAudio = async (sourceId?: string) => {
     transport.pause();
     setError(undefined);
-    const markExtractBusy = () => setExtractAudioBusy(true);
+    const markExtractBusy = () => { if (workspaceMountedRef.current) setExtractAudioBusy(true); };
     if (sourceId) markExtractBusy();
     try {
-      const before = projectRef.current;
-      const result = sourceId
-        ? await appendProjectVideoAudioToProject(before, currentMs, sourceId)
-        : await appendAudioToProject(before, currentMs, 'video-audio', markExtractBusy);
-      if (!result) return;
-      trackSessionMedia(result.project);
-      pushUndo(before);
-      projectRef.current = result.project;
-      setProject(result.project);
-      setSelectedAudioClipId(result.clip.id);
-      setSelectedLayerId(undefined);
-      setSelectedClipId(undefined);
-      setSelectedCaptionId(undefined);
-      setSelectedTranslationTrackId(undefined);
-      openEditorTool('audio');
+      const receipt = await commitEditorProject(async (before) => {
+        const result = sourceId
+          ? await appendProjectVideoAudioToProject(before, currentMs, sourceId)
+          : await appendAudioToProject(before, currentMs, 'video-audio', markExtractBusy);
+        return result?.project ?? null;
+      }, true);
+      if (!receipt || !editorSession.isCurrent(receipt)) return;
+      const added = receipt.project.audioClips.find((clip) => !receipt.before.audioClips.some((previous) => previous.id === clip.id));
+      if (added) selectEditorObject({ kind: 'audio', id: added.id });
       setExtractAudioOpen(false);
     } catch (caught) {
-      Alert.alert('Could not extract audio', caught instanceof Error ? caught.message : 'The selected video could not be used.');
+      if (workspaceMountedRef.current) Alert.alert('Could not extract audio', caught instanceof Error ? caught.message : 'The selected video could not be used.');
     } finally {
-      setExtractAudioBusy(false);
+      if (workspaceMountedRef.current) setExtractAudioBusy(false);
     }
   };
 
   const commitAudioProject = (next: CaptionProject) => {
-    projectRef.current = next;
     setProject(next);
-    persistProjectInBackground(next);
+    persistProjectInBackground();
   };
 
   const updateSelectedAudio = (patch: Partial<Pick<AudioClip, 'volume' | 'muted' | 'fadeInMs' | 'fadeOutMs'>>) => {
     if (!selectedAudioClipId) return;
     pushUndo();
-    commitAudioProject(updateAudioClip(projectRef.current, selectedAudioClipId, patch));
+    commitAudioProject(updateAudioClip(editorSession.current(), selectedAudioClipId, patch));
   };
 
   const shiftSelectedAudio = (deltaMs: number) => {
     if (!selectedAudioClip) return;
     pushUndo();
-    commitAudioProject(moveAudioClip(projectRef.current, selectedAudioClip.id, selectedAudioClip.startMs + deltaMs, timelineDurationMs));
+    commitAudioProject(moveAudioClip(editorSession.current(), selectedAudioClip.id, selectedAudioClip.startMs + deltaMs, timelineDurationMs));
   };
 
   const removeSelectedAudio = () => {
     if (!selectedAudioClipId) return;
     pushUndo();
-    commitAudioProject(deleteAudioClip(projectRef.current, selectedAudioClipId));
+    commitAudioProject(deleteAudioClip(editorSession.current(), selectedAudioClipId));
     setSelectedAudioClipId(undefined);
   };
 
   const copySelectedAudio = () => {
     if (!selectedAudioClipId) return;
-    const result = duplicateAudioClip(projectRef.current, selectedAudioClipId, uniqueId('audio-clip'), timelineDurationMs);
+    const result = duplicateAudioClip(editorSession.current(), selectedAudioClipId, uniqueId('audio-clip'), timelineDurationMs);
     if (!result) return;
     pushUndo();
     commitAudioProject(result.project);
@@ -1437,7 +1581,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const splitSelectedAudioAtPlayhead = () => {
     if (!selectedAudioClipId) return;
     const result = splitAudioClip(
-      projectRef.current,
+      editorSession.current(),
       selectedAudioClipId,
       currentMs,
       uniqueId('audio-clip'),
@@ -1456,37 +1600,34 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const applyTransition = (type: VideoClip['transitionAfter']['type'], durationMs = 500) => {
     if (!selectedClipId) return;
     pushUndo();
-    const next = setVideoTransition(projectRef.current, selectedClipId, type, durationMs);
-    projectRef.current = next;
+    const next = setVideoTransition(editorSession.current(), selectedClipId, type, durationMs);
     setProject(next);
-    persistProjectInBackground(next);
+    persistProjectInBackground();
   };
 
   const reorderSelectedVideo = (direction: -1 | 1) => {
     if (!selectedClipId) return;
     pushUndo();
-    const next = moveVideoClip(projectRef.current, selectedClipId, direction);
-    projectRef.current = next;
+    const next = moveVideoClip(editorSession.current(), selectedClipId, direction);
     transport.synchronizeProject(next);
     setProject(next);
-    persistProjectInBackground(next);
+    persistProjectInBackground();
   };
 
   const reorderClipToIndex = (clipId: string, toIndex: number) => {
-    const result = reorderVideoClip(projectRef.current, clipId, toIndex);
+    const result = reorderVideoClip(editorSession.current(), clipId, toIndex);
     if (!result) return;
     pushUndo();
-    projectRef.current = result.project;
     transport.synchronizeProject(result.project);
     setProject(result.project);
-    persistProjectInBackground(result.project);
+    persistProjectInBackground();
     transport.pause();
     queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, totalClipDuration(result.project.clips) - 1))));
   };
 
   const exportVideo = async () => {
     if (exporting) return;
-    const snapshot = projectRef.current;
+    const snapshot = editorSession.current();
     transport.pause();
     setError(undefined);
     setExportKind('video');
@@ -1509,7 +1650,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const exportSubtitles = async (format: 'srt' | 'ass') => {
     if (exporting) return;
-    const snapshot = projectRef.current;
+    const snapshot = editorSession.current();
     transport.pause();
     setError(undefined);
     setExportKind('subtitle');
@@ -1545,15 +1686,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const deleteCaption = (captionId: string) => {
-    const current = projectRef.current;
+    const current = editorSession.current();
     const index = current.captions.findIndex((caption) => caption.id === captionId);
     if (index < 0) return;
     pushUndo();
     const next = deleteCaptionBlock(current, captionId);
-    projectRef.current = next;
     setProject(next);
     setSelectedCaptionId(next.captions[Math.min(index, next.captions.length - 1)]?.id);
-    persistProjectInBackground(next);
+    persistProjectInBackground();
   };
 
   const confirmDeleteCaption = (captionId: string) => {
@@ -1564,35 +1704,50 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const setCanvasPreset = (preset: CaptionProject['canvas']['preset']) => {
-    const before = projectRef.current;
-    const next = applyCanvasPreset(before, preset);
-    void commitPersistedProject(next, (persisted) => {
-      pushUndo(before);
-      projectRef.current = persisted;
-      setProject(persisted);
-    }).catch((caught) => {
-      Alert.alert(
-        'Canvas size not saved',
-        caught instanceof Error ? caught.message : 'The canvas size could not be saved. Try again.',
-      );
+    void commitEditorProject((before) => applyCanvasPreset(before, preset)).catch((caught) => {
+      if (workspaceMountedRef.current) Alert.alert('Canvas size not saved', caught instanceof Error ? caught.message : 'The canvas size could not be saved. Try again.');
     });
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: palette.background }}>
+    <PersistedHorizontalScrollScope id={project.id}>
+    <View
+      pointerEvents={finishingSession ? 'none' : 'auto'}
+      onLayout={(event) => setWorkspaceHeight(event.nativeEvent.layout.height)}
+      style={{ flex: 1, backgroundColor: palette.background }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Clear editor selection"
         onPress={(event) => {
           if (event.target === event.currentTarget) clearEditorSelection();
         }}
-        style={{ height: previewHeight, alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
+        style={{ height: previewHeight, flexShrink: 0, overflow: scriptEditorOpen ? 'hidden' : 'visible', alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
         <View
           style={{
-            width: canvasSize.width,
-            height: canvasSize.height,
+            width: scriptCropActive ? width - 24 : canvasWidth,
+            height: scriptCropActive ? scriptCrop.viewport.height : canvasHeight,
             overflow: 'hidden',
             borderRadius: 20,
+          }}>
+          <View
+            testID="script-preview-viewport"
+            style={{
+              width: scriptCropActive ? scriptCrop.viewport.width : canvasWidth,
+              height: scriptCropActive ? scriptCrop.viewport.height : canvasHeight,
+              overflow: 'hidden',
+              borderRadius: 20,
+            }}>
+          <Animated.View
+          testID="script-preview-canvas"
+          // Keep the native transform attached through exit. React owns canvas
+          // dimensions on the child; native animation owns only translation.
+          style={{ transform: cropOffset.getTranslateTransform() }}>
+          <View
+          testID="editor-preview-layout"
+          style={{
+            width: canvasWidth,
+            height: canvasHeight,
+            overflow: 'hidden',
             backgroundColor: project.canvas.backgroundColor,
           }}>
           <View
@@ -1665,6 +1820,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <View key={layer.id} pointerEvents="box-none" style={{ position: 'absolute', inset: 0 }}>
                   <CaptionOverlay
                     caption={displayCaption}
+                    preserveLineBreaks={scriptEditorOpen && !isPlaying}
+                    editingPreview={scriptEditorOpen && !isPlaying}
                     words={project.transcription.words}
                     projectStyle={project.projectStyle}
                     currentMs={currentMs}
@@ -1672,7 +1829,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     selectable={Boolean(displayCaption)}
                     onSelect={() => selectEditorObject({ kind: 'captions', captionId: displayCaption?.id })}
                     onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
-                    onTransform={updateSharedCaptionTransform}
+                    onTransform={updateSelectedCaptionTransform}
                     onTransformEnd={finishHistoryInteraction}
                     onDelete={selectedCaptionId ? () => confirmDeleteCaption(selectedCaptionId) : undefined}
                   />
@@ -1693,10 +1850,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                       selectable
                       onSelect={() => selectEditorObject({ kind: 'translation', id: pair.trackId, captionId: pair.source.id })}
                       onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
-                      onTransform={(patch) => {
-                        const { position: _ignoredPosition, ...sizePatch } = patch;
-                        updateTranslationTransform(sizePatch);
-                      }}
+                      onTransform={updateTranslationTransform}
                       onTransformEnd={finishHistoryInteraction}
                     />
                   ))}
@@ -1737,11 +1891,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               />
             );
           })}
+          </View>
+          </Animated.View>
+          </View>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={isPlaying ? 'Pause video' : 'Play video'}
+            disabled={!runtimePolicy.mediaAdmitted}
             onPress={() => {
-              if (isPlaying) {
+              if (isPlaying || !runtimePolicy.mediaAdmitted) {
                 transport.pause();
               } else {
                 clearEditorSelection();
@@ -1750,8 +1908,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             }}
             style={{
               position: 'absolute',
-              right: 12,
-              bottom: 12,
+              right: scriptCropActive ? 0 : 12,
+              bottom: scriptCropActive ? Math.max(0, (scriptCrop.viewport.height - 48) / 2) : 12,
               width: 48,
               height: 48,
               alignItems: 'center',
@@ -1764,8 +1922,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         </View>
       </Pressable>
 
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, display: scriptEditorOpen ? 'none' : 'flex' }}>
         <ScrollView
+          ref={editorScrollRef}
+          onLayout={scriptExit.onScrollLayout}
+          onScroll={scriptExit.onScroll}
+          onContentSizeChange={scriptExit.onContentSizeChange}
+          scrollEventThrottle={16}
           nestedScrollEnabled
           keyboardShouldPersistTaps="handled"
           style={{ flex: 1 }}
@@ -1816,6 +1979,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           )}
         </View>
 
+        <View onLayout={scriptExit.onTimelineLayout}>
         <LayerTimeline
           projectId={project.id}
           durationMs={timelineDurationMs}
@@ -1850,6 +2014,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onAddVideos={() => { void addVideosToTimeline(); }}
           onSelectAudioClip={(clipId) => selectEditorObject({ kind: 'audio', id: clipId })}
         />
+        </View>
         {selectedCaption || selectedTranslationPair || selectedAudioClip || selectedTextLayer || selectedImageLayer ? (
           <Text style={{ color: palette.muted, fontSize: 11 }}>Drag the selected block to move it. Drag either white edge to trim it.</Text>
         ) : null}
@@ -1993,11 +2158,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   label={`Distance ${Math.round((selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) * 100)}`}
                   color="#64E8FF"
                   onPress={() => {
-                    const before = projectRef.current;
-                    commitTranslationTrackPatch(
-                      setTranslationStackGap(before, selectedTranslationTrack.id, DEFAULT_TRANSLATION_STACK_GAP),
-                      before,
-                    );
+                    commitTranslationTrackPatch((before) =>
+                      setTranslationStackGap(before, selectedTranslationTrack.id, DEFAULT_TRANSLATION_STACK_GAP));
                   }}
                 />
                 <Action label="Farther apart" disabled={(selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) >= MAX_TRANSLATION_STACK_GAP} onPress={() => adjustTranslationGap(0.016)} />
@@ -2113,6 +2275,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         captions={timelineCaptions}
         words={project.transcription.words}
         initialCaptionId={selectedCaptionId ?? activeCaption?.id}
+        currentMs={currentMs}
+        isPlaying={isPlaying}
+        onSeekTimeline={seekTimeline}
+        onBackRequestChange={registerScriptBackRequest}
+        onDraftChange={setScriptDraftCaptions}
+        onKeyboardChange={setScriptKeyboardOpen}
+        onEditingCaptionChange={setScriptEditingCaptionId}
         onSelectCaption={(caption) => {
           transport.pause();
           setSelectedLayerId('captions');
@@ -2120,7 +2289,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           setSelectedClipId(undefined);
           openEditorTool('captions');
         }}
-        onCancel={() => setScriptEditorOpen(false)}
+        onCancel={scriptExit.close}
         onSave={commitCaptionScript}
       />
       <DualCaptionEditor
@@ -2143,6 +2312,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         retryErrorAvailable={translationController.retryAvailable}
         onDismissError={translationController.clearError}
         onRetryError={() => { void translationController.retry(); }}
+        onBackRequestChange={registerDualCaptionBackRequest}
         onClose={() => {
           if (!translationProgress && !translationCancelling) setDualCaptionEditorOpen(false);
         }}
@@ -2158,12 +2328,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         sourceLanguageTag={primaryCaptionLanguage}
         sourceLanguageLabel={captionLanguageLabel(primaryCaptionLanguage)}
         automaticModelLabel={NATURAL_TRANSLATION_MODEL_LABEL}
+        onBackRequestChange={registerLanguagePickerBackRequest}
         onClose={() => setDualLanguagePickerOpen(false)}
         onChoose={(choice) => enableDualCaptions(choice.tag)}
       />
       <EditTextLayerModal
         visible={Boolean(editingLayerId)}
+        originalValue={selectedTextLayer?.text ?? ''}
         value={editingText ?? ''}
+        onBackRequestChange={registerTextLayerBackRequest}
         onChange={setEditingText}
         onCancel={() => {
           setEditingLayerId(undefined);
@@ -2178,7 +2351,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       />
       <MediaLoadingOverlay progress={mediaProgress} />
       {exporting ? (
-        <Modal visible transparent animationType="fade">
+        <Modal visible transparent animationType="fade" onRequestClose={() => {
+          if (exportKind === 'video') void cancelProjectVideoExport();
+        }}>
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: 'rgba(0,0,0,0.78)' }}>
             <View style={{ width: '100%', maxWidth: 380, gap: 14, padding: 22, borderRadius: 20, backgroundColor: palette.surfaceRaised }}>
               <ActivityIndicator color={palette.accent} size="large" />
@@ -2214,6 +2389,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         </Modal>
       ) : null}
     </View>
+    </PersistedHorizontalScrollScope>
   );
 }
 
@@ -2278,7 +2454,7 @@ function HistoryButton(props: { label: string; disabled: boolean; onPress: () =>
 function ExtractAudioBusyOverlay(props: { visible: boolean }) {
   if (!props.visible) return null;
   return (
-    <Modal visible transparent animationType="fade">
+    <Modal visible transparent animationType="fade" onRequestClose={() => {}}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: chrome.overlay }}>
         <View style={{ width: '100%', maxWidth: 360, alignItems: 'center', gap: 14, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <ActivityIndicator size="large" color={chrome.accent} />
@@ -2312,7 +2488,7 @@ function ProgressOverlay(props: {
   if (!props.progress) return null;
   const percent = Math.round(props.progress.progress * 100);
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={props.onCancel}>
+    <Modal visible transparent animationType="fade" onRequestClose={() => { if (!props.cancelling) props.onCancel(); }}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 26, backgroundColor: 'rgba(0,0,0,0.82)' }}>
         <View style={{ width: '100%', maxWidth: 380, gap: 16, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <ActivityIndicator color={palette.accent} size="large" />
@@ -2345,13 +2521,30 @@ function ProgressOverlay(props: {
 
 function EditTextLayerModal(props: {
   visible: boolean;
+  originalValue: string;
   value: string;
+  onBackRequestChange: (request: (() => void) | undefined) => void;
   onChange: (value: string) => void;
   onCancel: () => void;
   onSave: () => void;
 }) {
+  const { onBackRequestChange, onCancel, originalValue, value, visible } = props;
+  const requestClose = useCallback(() => {
+    if (value === originalValue) {
+      onCancel();
+      return;
+    }
+    Alert.alert('Discard unsaved text edits?', 'The text layer will keep its previous wording.', [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: onCancel },
+    ]);
+  }, [onCancel, originalValue, value]);
+  useEffect(() => {
+    onBackRequestChange(visible ? requestClose : undefined);
+    return () => onBackRequestChange(undefined);
+  }, [onBackRequestChange, requestClose, visible]);
   return (
-    <Modal visible={props.visible} transparent animationType="fade" onRequestClose={props.onCancel}>
+    <Modal visible={props.visible} transparent animationType="fade" onRequestClose={requestClose}>
       <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.72)' }}>
         <View style={{ gap: 14, padding: 20, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <Text style={{ color: palette.text, fontSize: 20, fontWeight: '800' }}>Edit text layer</Text>
@@ -2363,7 +2556,7 @@ function EditTextLayerModal(props: {
             style={{ minHeight: 110, padding: 14, borderRadius: chrome.radius.md, color: palette.text, backgroundColor: chrome.surfaceRaised, textAlignVertical: 'top' }}
           />
           <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end' }}>
-            <Pressable onPress={props.onCancel} style={{ padding: 12 }}>
+            <Pressable onPress={requestClose} style={{ padding: 12 }}>
               <Text style={{ color: palette.muted }}>Cancel</Text>
             </Pressable>
             <Pressable onPress={props.onSave} style={{ paddingHorizontal: 18, paddingVertical: 12, borderRadius: chrome.radius.pill, backgroundColor: palette.accent }}>
@@ -2454,7 +2647,35 @@ function trimHistoryStack(stack: CaptionProject[]) {
   }
 }
 
+function captionPreviewCrop(
+  aspect: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  position: { x: number; y: number },
+) {
+  aspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+  const viewport = {
+    width: Math.max(0, Number.isFinite(viewportWidth) ? viewportWidth : 0),
+    height: Math.max(0, Number.isFinite(viewportHeight) ? viewportHeight : 0),
+  };
+  // Cover the crop window at full width rather than containing the complete
+  // canvas in the keyboard strip. Only the camera offset follows the caption.
+  const canvas = { width: Math.max(viewport.width, viewport.height * aspect), height: 0 };
+  canvas.height = canvas.width / aspect;
+  const x = Number.isFinite(position.x) ? position.x : 0.5;
+  const y = Number.isFinite(position.y) ? position.y : 0.5;
+  return {
+    canvas,
+    viewport,
+    x: -clamp(x * canvas.width - viewport.width / 2, 0, canvas.width - viewport.width),
+    y: -clamp(y * canvas.height - viewport.height / 2, 0, canvas.height - viewport.height),
+  };
+}
+
 function fitRect(aspect: number, maxWidth: number, maxHeight: number) {
+  aspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+  maxWidth = Math.max(0, maxWidth);
+  maxHeight = Math.max(0, maxHeight);
   let width = maxWidth;
   let height = width / aspect;
   if (height > maxHeight) {

@@ -5,7 +5,7 @@ import { chrome } from '@/lib/ui-theme';
 
 export function MediaLoadingOverlay({ progress }: { progress?: MediaImportProgress }) {
   return (
-    <Modal visible={Boolean(progress)} transparent animationType="fade">
+    <Modal visible={Boolean(progress)} transparent animationType="fade" onRequestClose={() => {}}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: chrome.overlay }}>
         <View style={{ width: '100%', maxWidth: 360, alignItems: 'center', gap: 14, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <ActivityIndicator size="large" color={chrome.accent} />

@@ -27,3 +27,13 @@ test('installer handles native stderr and restricts cleanup to its own temporary
   assert.match(installer, /Write-Warning "Temporary cleanup failed/);
   assert.doesNotMatch(installer, /-Recurse/);
 });
+
+test('installer retries interrupted APK downloads through an atomic partial file', () => {
+  assert.match(installer, /function Invoke-AssetDownload/);
+  assert.match(installer, /\$Attempts = 4/);
+  assert.match(installer, /\$Partial = "\$Destination\.partial"/);
+  assert.match(installer, /Invoke-WebRequest -UseBasicParsing -Uri \$Uri -OutFile \$Partial -ErrorAction Stop/);
+  assert.match(installer, /\[IO\.File\]::Move\(\$Partial, \$Destination\)/);
+  assert.match(installer, /APK download failed after \$Attempts attempts/);
+  assert.match(installer, /Invoke-AssetDownload -Uri \$Asset\.browser_download_url -Destination \$Apk/);
+});

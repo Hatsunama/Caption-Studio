@@ -27,13 +27,11 @@ test('the transition catalog contains unique effects routed to preview and nativ
     if (id !== 'none') assert.notEqual(videoTransitionPreviewKind(id), 'none');
   }
 
-  const supportedBlock = /supportedTypes = setOf\(([\s\S]*?)\n  \)/.exec(nativeTransitionSource)?.[1];
-  assert.ok(supportedBlock, 'native transition registry was not found');
-  const nativeIds = [...supportedBlock.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const nativePaths = [...nativeTransitionSource.matchAll(/"([^"]+)"\s+to\s+RenderingPath\.(NONE|COVER|COMPOSITE)/g)];
+  assert.ok(nativePaths.length, 'native transition rendering map was not found');
+  const nativeIds = nativePaths.map((match) => match[1]);
   assert.deepEqual(new Set(nativeIds), new Set(ids));
-  const coverBlock = /coverTypes = setOf\(([\s\S]*?)\n  \)/.exec(nativeTransitionSource)?.[1];
-  assert.ok(coverBlock, 'native cover transition registry was not found');
-  const nativeCoverIds = [...coverBlock.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const nativeCoverIds = nativePaths.filter((match) => match[2] === 'COVER').map((match) => match[1]);
   const expectedCoverIds = ids.filter((id) => id !== 'none' && !videoTransitionUsesCompositeMedia(id));
   assert.deepEqual(new Set(nativeCoverIds), new Set(expectedCoverIds));
 });

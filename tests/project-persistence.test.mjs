@@ -34,10 +34,10 @@ test('editor save and translation workflows cannot swallow persistence failures'
   const translationController = readFileSync(new URL('../src/hooks/use-project-caption-translation.ts', import.meta.url), 'utf8');
   const persistenceService = readFileSync(new URL('../src/services/project-persistence.ts', import.meta.url), 'utf8');
 
-  assert.match(editor, /publishProjectAfterDurableSave\(next, publish\)/);
-  assert.match(editor, /commitProject:\s*async[\s\S]*await commitPersistedProject\(next/);
-  assert.match(editor, /catch \(caught\)[\s\S]*setPersistenceError\(message\)[\s\S]*throw caught/);
-  assert.match(scriptEditor, /await props\.onSave\(draftCaptions\)[\s\S]*setSaveError/);
+  assert.match(editor, /await editorSession\.commit/);
+  assert.match(editor, /commitProject:\s*async[\s\S]*await commitEditorProject\(\(current\)/);
+  assert.match(editor, /catch \(caught\)[\s\S]*setPersistenceError\(caught\.message\)[\s\S]*throw caught/);
+  assert.match(scriptEditor, /await props\.onSave\(savingDraft\)[\s\S]*draftVersionRef\.current !== savingVersion[\s\S]*setSaveError/);
   assert.match(translationController, /await optionsRef\.current\.commitProject\(baseline, next\)/);
   assert.match(persistenceService, /throw new ProjectPersistenceError\(cause\)/);
   assert.match(persistenceService, /publishAfterDurableWrite/);

@@ -3,6 +3,7 @@ import type {
   CaptionProject,
   CaptionStyle,
   CaptionStylePatch,
+  FontReference,
   WordToken,
 } from '@/types/project';
 
@@ -17,7 +18,7 @@ export function mergeStyle(
   return {
     ...base,
     ...patch,
-    font: { ...base.font, ...patch.font },
+    font: mergeFont(base.font, patch.font),
     stroke: { ...base.stroke, ...patch.stroke },
     shadow: { ...base.shadow, ...patch.shadow },
     background: { ...base.background, ...patch.background },
@@ -47,19 +48,28 @@ export function applyStylePatch(
   const updatedAt = new Date().toISOString();
 
   if (scope === 'all') {
+    const captionFontsByWord = new Map<string, FontReference>();
+    if (patch.font) {
+      for (const caption of project.captions) {
+        const font = mergeFont(project.projectStyle.font, caption.styleOverride?.font);
+        for (const wordId of caption.wordIds) captionFontsByWord.set(wordId, font);
+      }
+    }
     return {
       ...project,
       updatedAt,
       projectStyle: mergeStyle(project.projectStyle, patch),
       captions: project.captions.map((caption) => ({
         ...caption,
-        styleOverride: removePatchedKeys(caption.styleOverride, patch),
+        styleOverride: removePatchedKeys(caption.styleOverride, patch, project.projectStyle.font),
       })),
       transcription: {
         ...project.transcription,
         words: project.transcription.words.map((word) => ({
           ...word,
-          styleOverride: removePatchedKeys(word.styleOverride, patch),
+          styleOverride: removePatchedKeys(
+            word.styleOverride, patch, captionFontsByWord.get(word.id) ?? project.projectStyle.font,
+          ),
         })),
       },
     };
@@ -84,6 +94,7 @@ export function applyStylePatch(
 function removePatchedKeys(
   override: CaptionStylePatch | undefined,
   patch: CaptionStylePatch,
+  inheritedFont: FontReference,
 ): CaptionStylePatch | undefined {
   if (!override) return undefined;
   const next = { ...override } as Record<string, unknown>;
@@ -91,6 +102,11 @@ function removePatchedKeys(
 
   for (const [key, patchValue] of Object.entries(patchRecord)) {
     const overrideValue = next[key];
+    // A global font replacement must also discard identity-bound override data.
+    if (key === 'font' && fontIdentityChanged(mergeFont(inheritedFont, override.font), patch.font)) {
+      delete next.font;
+      continue;
+    }
     if (isRecord(patchValue) && isRecord(overrideValue)) {
       const nested = { ...overrideValue };
       for (const nestedKey of Object.keys(patchValue)) delete nested[nestedKey];
@@ -112,15 +128,52 @@ export function mergePatch(
   base: CaptionStylePatch | undefined,
   patch: CaptionStylePatch,
 ): CaptionStylePatch {
-  return {
+  const merged: CaptionStylePatch = {
     ...base,
     ...patch,
-    font: { ...base?.font, ...patch.font },
-    stroke: { ...base?.stroke, ...patch.stroke },
-    shadow: { ...base?.shadow, ...patch.shadow },
-    background: { ...base?.background, ...patch.background },
-    position: { ...base?.position, ...patch.position },
-    box: { ...base?.box, ...patch.box },
-    animation: { ...base?.animation, ...patch.animation },
   };
+  assignNestedPatch(merged, 'font', base?.font, patch.font,
+    (left, right) => mergeFont(left as Partial<FontReference>, right as Partial<FontReference>));
+  assignNestedPatch(merged, 'stroke', base?.stroke, patch.stroke);
+  assignNestedPatch(merged, 'shadow', base?.shadow, patch.shadow);
+  assignNestedPatch(merged, 'background', base?.background, patch.background);
+  assignNestedPatch(merged, 'position', base?.position, patch.position);
+  assignNestedPatch(merged, 'box', base?.box, patch.box);
+  assignNestedPatch(merged, 'animation', base?.animation, patch.animation);
+  return merged;
+}
+
+function assignNestedPatch(
+  target: CaptionStylePatch,
+  key: 'font' | 'stroke' | 'shadow' | 'background' | 'position' | 'box' | 'animation',
+  base: object | undefined,
+  patch: object | undefined,
+  merge: (base: object | undefined, patch: object | undefined) => object =
+    (left = {}, right = {}) => ({ ...left, ...right }),
+) {
+  const record = target as Record<string, unknown>;
+  if (!base && !patch) {
+    delete record[key];
+    return;
+  }
+  const value = merge(base, patch);
+  if (Object.keys(value).length === 0) delete record[key];
+  else record[key] = value;
+}
+
+function fontIdentityChanged(base: Partial<FontReference> | undefined, patch: Partial<FontReference> | undefined) {
+  return (['id', 'family', 'source'] as const).some(
+    (key) => patch?.[key] !== undefined && patch[key] !== base?.[key],
+  );
+}
+
+function mergeFont(base: FontReference, patch: Partial<FontReference> | undefined): FontReference;
+function mergeFont(base: Partial<FontReference> | undefined, patch: Partial<FontReference> | undefined): Partial<FontReference>;
+function mergeFont(base: Partial<FontReference> | undefined, patch: Partial<FontReference> | undefined) {
+  const inherited = { ...base };
+  if (fontIdentityChanged(base, patch)) {
+    delete inherited.uri;
+    delete inherited.postScriptName;
+  }
+  return { ...inherited, ...patch };
 }

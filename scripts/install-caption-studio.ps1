@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $Repository = 'Hatsunama/Caption-Studio'
-$MinimumVersion = [Version]'1.4.41'
+$MinimumVersion = [Version]'1.4.52'
 $Package = 'com.hatsunama.captionstudio.fixed'
 $AssetName = 'caption-studio-android.apk'
 $TempDir = Join-Path $env:TEMP ("CaptionStudioInstaller-" + [Guid]::NewGuid().ToString('N'))
@@ -28,6 +28,44 @@ function Invoke-Adb {
         throw "ADB failed (exit $ExitCode). No uninstall or data clearing was attempted.`n$($Output -join [Environment]::NewLine)"
     }
     $Output
+}
+
+function Invoke-AssetDownload {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Destination
+    )
+
+    $Attempts = 4
+    $Partial = "$Destination.partial"
+    for ($Attempt = 1; $Attempt -le $Attempts; $Attempt++) {
+        try {
+            if (Test-Path -LiteralPath $Partial) {
+                Remove-Item -LiteralPath $Partial -Force -ErrorAction Stop
+            }
+            Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Partial -ErrorAction Stop
+            if (-not (Test-Path -LiteralPath $Partial)) {
+                throw 'The download completed without creating an APK file.'
+            }
+            [IO.File]::Move($Partial, $Destination)
+            return
+        }
+        catch {
+            try {
+                if (Test-Path -LiteralPath $Partial) {
+                    Remove-Item -LiteralPath $Partial -Force -ErrorAction Stop
+                }
+            }
+            catch {
+                Write-Warning "Could not remove interrupted download ${Partial}: $($_.Exception.Message)"
+            }
+            if ($Attempt -eq $Attempts) {
+                throw "APK download failed after $Attempts attempts: $($_.Exception.Message)"
+            }
+            Write-Warning "Download interrupted. Retrying attempt $($Attempt + 1) of $Attempts in $($Attempt * 3) seconds."
+            Start-Sleep -Seconds ($Attempt * 3)
+        }
+    }
 }
 
 try {
@@ -96,7 +134,7 @@ try {
     New-Item -ItemType Directory -Path $TempDir | Out-Null
     $OwnsTempDir = $true
     Write-Host "Device: $Serial. Downloading $($Release.tag_name)..."
-    Invoke-WebRequest -UseBasicParsing -Uri $Asset.browser_download_url -OutFile $Apk
+    Invoke-AssetDownload -Uri $Asset.browser_download_url -Destination $Apk
 
     $ActualHash = (Get-FileHash -LiteralPath $Apk -Algorithm SHA256).Hash
     if ($ActualHash -ne $ExpectedHash) {

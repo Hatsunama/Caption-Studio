@@ -97,6 +97,9 @@ internal data class RenderTextStyle(
   val animationId: String,
   val animationIntensity: Float,
   val animationDurationMs: Long,
+  val scale: Float = 1f,
+  val scaleX: Float = 1f,
+  val scaleY: Float = 1f,
 )
 
 internal sealed interface RenderLayer {
@@ -130,6 +133,9 @@ internal data class ImageRenderLayer(
   val boxHeight: Float,
   val rotation: Float,
   val opacity: Float,
+  val scale: Float = 1f,
+  val scaleX: Float = 1f,
+  val scaleY: Float = 1f,
 ) : RenderLayer
 
 internal data class RenderAudioClip(
@@ -227,7 +233,7 @@ private fun parseVideoTransform(value: Map<String, Any>): VideoTransform {
   )
 }
 
-private fun parseCaption(value: Map<String, Any>) = RenderCaption(
+internal fun parseCaption(value: Map<String, Any>) = RenderCaption(
   id = value.string("id"),
   text = value.string("text"),
   startMs = value.number("startMs").toLong(),
@@ -243,7 +249,7 @@ private fun parseCaption(value: Map<String, Any>) = RenderCaption(
   },
 )
 
-private fun parseTextStyle(value: Map<String, Any>): RenderTextStyle {
+internal fun parseTextStyle(value: Map<String, Any>): RenderTextStyle {
   val font = value.map("font")
   val fontUri = font.optionalNonBlankString("uri")
   val fontSource = font.stringOr("source", "system")
@@ -293,6 +299,9 @@ private fun parseTextStyle(value: Map<String, Any>): RenderTextStyle {
     animationId = animation.stringOr("id", "none"),
     animationIntensity = animation.numberOr("intensity", 0).toFloat().coerceIn(0f, 1f),
     animationDurationMs = animation.numberOr("durationMs", 1).toLong().coerceAtLeast(1),
+    scale = value.positiveScale("scale"),
+    scaleX = value.positiveScale("scaleX"),
+    scaleY = value.positiveScale("scaleY"),
   )
 }
 
@@ -320,6 +329,9 @@ private fun parseLayer(value: Map<String, Any>): RenderLayer {
       boxHeight = value.map("box").numberOr("height", 0.3).toFloat(),
       rotation = value.numberOr("rotation", 0).toFloat(),
       opacity = value.numberOr("opacity", 1).toFloat().coerceIn(0f, 1f),
+      scale = value.positiveScale("scale"),
+      scaleX = value.positiveScale("scaleX"),
+      scaleY = value.positiveScale("scaleY"),
     )
     else -> throw IllegalArgumentException("Unsupported render layer kind '$kind'")
   }
@@ -376,6 +388,10 @@ private fun Map<String, Any>.number(name: String): Number {
     ?: throw IllegalArgumentException("Render plan field '$name' must be a number")
   require(value.toDouble().isFinite()) { "Render plan field '$name' must be finite" }
   return value
+}
+
+internal fun Map<String, Any>.positiveScale(name: String): Float = numberOr(name, 1).toFloat().also {
+  require(it.isFinite() && it > 0f) { "Layer $name must be a positive finite float" }
 }
 private fun Map<String, Any>.numberOr(name: String, fallback: Number): Number = when (val value = this[name]) {
   null -> fallback

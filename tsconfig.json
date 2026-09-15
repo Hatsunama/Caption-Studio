@@ -8,6 +8,12 @@
       ],
       "@/assets/*": [
         "./assets/*"
+      ],
+      "caption-media": [
+        "./modules/caption-media/index.ts"
+      ],
+      "caption-translation": [
+        "./modules/caption-translation/index.ts"
       ]
     }
   },
