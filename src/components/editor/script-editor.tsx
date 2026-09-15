@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 
 import {
+  decodeCaptionDraft,
+  sameCaptionDraft,
   mergeCaptionScriptBlock,
   splitCaptionScriptBlock,
   updateCaptionScriptText,
@@ -233,6 +235,10 @@ export function ScriptEditor(props: {
       if (!active) return;
       const recovered = decodeCaptionDraft(journal?.payload);
       if (!recovered) {
+        if (journal) {
+          setJournalError('The recovery draft could not be decoded. It is preserved until you explicitly save or discard your edits.');
+          return;
+        }
         setJournalReady(true);
         return;
       }
@@ -263,7 +269,8 @@ export function ScriptEditor(props: {
     }).catch(() => {
       if (active) {
         setJournalError('Caption recovery storage could not be read. Save your changes before leaving this editor.');
-        setJournalReady(true);
+        // A failed read must never authorize overwriting an unread journal.
+        setJournalReady(false);
       }
     });
     return () => {
@@ -696,25 +703,4 @@ function nextSplitCaptionId(
     candidate = `${parentId}-split-${counter.current++}`;
   } while (captions.some((caption) => caption.id === candidate));
   return candidate;
-}
-
-function decodeCaptionDraft(value: unknown): CaptionBlock[] | null {
-  if (!Array.isArray(value) || value.length > 20_000) return null;
-  const valid = value.every((entry) => {
-    if (!entry || typeof entry !== 'object') return false;
-    const caption = entry as Partial<CaptionBlock>;
-    return typeof caption.id === 'string'
-      && typeof caption.text === 'string'
-      && Number.isFinite(caption.startMs)
-      && Number.isFinite(caption.endMs)
-      && (caption.endMs ?? 0) > (caption.startMs ?? 0);
-  });
-  return valid ? value as CaptionBlock[] : null;
-}
-
-function sameCaptionDraft(left: CaptionBlock[], right: CaptionBlock[]) {
-  // Script edits own text, timing and segmentation. Current appearance changes
-  // alone must not manufacture an unsaved script or a stale recovery journal.
-  const script = (captions: CaptionBlock[]) => captions.map(({ styleOverride: _appearance, ...caption }) => caption);
-  return JSON.stringify(script(left)) === JSON.stringify(script(right));
 }

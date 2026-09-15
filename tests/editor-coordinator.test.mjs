@@ -12,6 +12,7 @@ import { resolveCaptionStyle } from '../src/lib/style-resolver.ts';
 import { resolveCaptionPairs } from '../src/lib/caption-tracks.ts';
 import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
 import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
+import { adjustTimelineTiming } from '../src/lib/timeline-gesture.ts';
 
 test('timeline non-active cue selection preserves fixed-playhead content, selection handles and project state', async () => {
   const h = mount();
@@ -82,6 +83,65 @@ test('legacy short cue script save rejects invalid timing atomically and commits
   assert.equal(exported.text, draft[1].text);
   h.unmount();
 });
+
+for (const legacyDuration of [0, 1, 40, 79]) test(`no-op script save after transform retains history, redo and disk for ${legacyDuration} ms legacy cues`, async () => {
+  const original = fixture();
+  original.captions[0].endMs = legacyDuration;
+  original.captions[0].styleOverride = { scale: 2, position: { x: 0.2 }, italic: true };
+  const staleDraft = JSON.parse(JSON.stringify(original.captions));
+  const h = mount(original);
+  const transform = { position: { x: 0.35, y: 0.25 }, rotation: 25, scale: 1.4 };
+  h.actions.beginHistoryInteraction();
+  h.actions.updateSharedCaptionTransform(transform);
+  h.actions.finishHistoryInteraction(); await h.flush();
+  const transformed = h.project;
+  // Create a redo entry above the transform, then return to transformed state.
+  const editedDraft = structuredClone(transformed.captions);
+  editedDraft[1].text = 'Redo must survive';
+  await h.actions.commitCaptionScript(editedDraft); await h.flush();
+  const edited = h.project;
+  h.actions.undo(); await h.flush();
+  assert.equal(h.project, transformed);
+  const writes = h.calls.writes.length;
+  // Reverse cue and object-property order and add omitted decoder defaults.
+  const draft = staleDraft.reverse().map((cue) => Object.fromEntries(Object.entries({ ...cue, timelineVisible: true }).reverse()));
+  assert.equal(await h.actions.commitCaptionScript(draft), true); await h.flush();
+  assert.equal(h.project, transformed);
+  assert.equal(h.disk, transformed);
+  assert.equal(h.calls.writes.length, writes);
+  assert.equal(h.project.captions[0].endMs, legacyDuration);
+  h.actions.redo(); await h.flush();
+  assert.equal(h.project, edited, 'no-op must not clear redo');
+  h.actions.undo(); await h.flush();
+  assert.equal(h.project, transformed);
+  h.actions.undo(); await h.flush();
+  assert.equal(h.project, original, 'no-op must not add a history entry');
+  h.unmount();
+});
+
+for (const kind of ['caption', 'translation']) for (const edge of ['move', 'start', 'end']) {
+  for (const action of ['increment', 'decrement']) test(`${kind} ${edge} ${action} accessibility command persists once with real workspace undo/redo`, async () => {
+    const h = mount(), before = h.project;
+    const timeline = h.all((node) => node.type === 'LayerTimeline')[0].props;
+    const cue = kind === 'caption' ? before.captions[1] : resolveCaptionPairs(before, 'fr')[1];
+    const item = kind === 'caption' ? { kind, captionId: 'cue-1' } : { kind, trackId: 'fr', sourceCaptionId: 'cue-1' };
+    adjustTimelineTiming({ startMs: cue.startMs, endMs: cue.endMs, durationMs: 6000, trackWidth: 300,
+      onPress: () => kind === 'caption' ? timeline.onSelectCaption(cue) : timeline.onSelectTranslationCaption('fr', cue),
+      onChangeStart: timeline.onTimingChangeStart,
+      onChange: (side, start, end) => timeline.onItemTimingChange(item, side, start, end),
+      onEnd: timeline.onTimingChangeEnd,
+    }, edge, action);
+    await h.flush();
+    const changed = h.project;
+    assert.notEqual(changed, before);
+    assert.equal(h.calls.writes.length, 1);
+    assert.equal(h.disk, changed);
+    assert.equal(h.transport.currentMs, 600);
+    h.actions.undo(); await h.flush(); assert.equal(h.project, before);
+    h.actions.redo(); await h.flush(); assert.equal(h.project, changed);
+    h.unmount();
+  });
+}
 
 test('workspace sends every overlapping active primary and translated cue to preview in export order', () => {
   const project = fixture();

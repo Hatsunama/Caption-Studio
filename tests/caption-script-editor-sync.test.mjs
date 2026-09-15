@@ -73,7 +73,7 @@ function mount(overrides = {}, platform = 'android') {
   const slots = [];
   const timers = new Map();
   const keyboardListeners = new Map();
-  let cursor = 0, dirty = false, effects = [], tree, now = 0, timerId = 0, recover;
+  let cursor = 0, dirty = false, effects = [], tree, now = 0, timerId = 0, recover, recoveryError;
   const calls = { seeks: [], selects: [], indices: [], offsets: [], drafts: [], keyboards: [], editing: [], focuses: [], alerts: [], saves: [], nativeLayouts: 0, focusCaptures: 0 };
   const sameDeps = (left, right) => left && right && left.length === right.length
     && left.every((value, index) => Object.is(value, right[index]));
@@ -119,7 +119,7 @@ function mount(overrides = {}, platform = 'android') {
       if (name === '@/lib/caption-script') return scriptMutations;
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, pill: 20 } } };
       if (name === '@/services/editor-draft-journal') return {
-        readEditorDraftJournal: () => ({ then: (callback) => { recover = callback; return { catch: () => {} }; } }),
+        readEditorDraftJournal: () => ({ then: (callback) => { recover = callback; return { catch: (callback) => { recoveryError = callback; } }; } }),
         clearEditorDraftJournal: async () => { calls.journalClears = (calls.journalClears ?? 0) + 1; },
         writeEditorDraftJournal: async (...args) => { (calls.journals ??= []).push(plain(args)); },
       };
@@ -211,6 +211,7 @@ function mount(overrides = {}, platform = 'android') {
     input: (index) => find('TextInput', row(index)).props,
     action: (index, label) => act(() => walk(row(index), (node) => node.props?.label === label).props.onPress()),
     recover: (payload) => act(() => recover({ payload, baseRevision: 'revision' })),
+    failRecovery: () => act(() => recoveryError(new Error('Read failed'))),
     restore: () => act(() => calls.alerts.at(-1)[2].find(({ text }) => text === 'Restore').onPress()),
     button: (label) => walk(tree, (node) => node.props?.accessibilityLabel === label).props,
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
@@ -695,9 +696,9 @@ for (const rejection of ['throw', 'false']) test(`rejected script save (${reject
   h.unmount();
 });
 
-test('script component commits a separate edit alongside a schema-valid 40 ms legacy cue before clearing recovery', async () => {
+for (const legacyDuration of [0, 1, 40, 79]) test(`script component restores and saves a journal containing a ${legacyDuration} ms legacy cue without losing edits`, async () => {
   let project = migrationProject(), closes = 0;
-  project.captions[0].endMs = 40;
+  project.captions[0].endMs = legacyDuration;
   project = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(project)));
   const save = workspaceValue('commitCaptionScript', {
     commitEditorProject: async (mutation) => {
@@ -711,13 +712,67 @@ test('script component commits a separate edit alongside a schema-valid 40 ms le
   const h = mount({ captions: project.captions, onSave: save, onCancel: () => {
     assert.equal(project.captions[1].text, 'Durable separate edit'); closes++;
   } });
+  const recovery = structuredClone(project.captions);
+  recovery[1].text = 'Recovered journal text';
+  h.recover(recovery);
+  assert.equal(h.calls.alerts.at(-1)[0], 'Restore unsaved caption edits?');
+  // Even an edit dispatched while the prompt is pending cannot overwrite it.
+  h.act(() => h.input(1).onChangeText('Before recovery decision')); h.advance(1000);
+  assert.equal(h.calls.journals, undefined);
+  assert.equal(h.calls.journalClears, undefined);
+  h.restore();
+  assert.equal(h.input(1).value, 'Recovered journal text');
   h.edit(1); h.act(() => h.input(1).onChangeText('Durable separate edit')); h.advance(1000);
+  assert.equal(h.calls.journals.at(-1)[3][0].endMs, legacyDuration);
+  assert.equal(h.calls.journals.at(-1)[3][1].text, 'Durable separate edit');
   h.act(() => h.button('Save all caption edits').onPress());
   await settleSave();
   assert.equal(closes, 1);
   assert.equal(h.calls.journalClears, 1);
-  assert.equal(project.captions[0].endMs, 40);
+  assert.equal(project.captions[0].endMs, legacyDuration);
   h.unmount();
+});
+
+test('an undecodable recovery journal stays protected from the next debounced edit', () => {
+  const h = mount();
+  h.recover([{ ...cues[0], wordIds: 'invalid' }]);
+  h.act(() => h.input(1).onChangeText('Do not replace unread recovery'));
+  h.advance(2000);
+  assert.equal(h.calls.journals, undefined);
+  assert.equal(h.calls.journalClears, undefined);
+  h.unmount();
+});
+
+test('a failed recovery read cannot authorize overwriting the unread journal', () => {
+  const h = mount();
+  h.failRecovery();
+  h.act(() => h.input(1).onChangeText('Preserve unread recovery'));
+  h.advance(2000);
+  assert.equal(h.calls.journals, undefined);
+  assert.equal(h.calls.journalClears, undefined);
+  h.unmount();
+});
+
+test('zero-duration recovery survives editing another cue and a second journal restore', () => {
+  const project = migrationProject();
+  project.captions[0].endMs = project.captions[0].startMs;
+  const original = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(project)));
+  const recovery = structuredClone(original.captions);
+  recovery[1].text = 'Previously unsaved words';
+  const h = mount({ captions: original.captions });
+  h.recover(recovery); h.restore();
+  h.act(() => h.input(0).onChangeText('Next edit in zero cue')); h.advance(1000);
+  const payload = h.calls.journals.at(-1)[3];
+  assert.equal(payload[0].endMs, payload[0].startMs);
+  assert.equal(payload[0].text, 'Next edit in zero cue');
+  assert.equal(payload[1].text, 'Previously unsaved words');
+  h.unmount();
+  const reopened = mount({ captions: original.captions });
+  reopened.recover(payload);
+  assert.equal(reopened.calls.alerts.at(-1)[0], 'Restore unsaved caption edits?');
+  reopened.restore();
+  assert.deepEqual(plain(reopened.list().data), payload);
+  reopened.unmount();
 });
 
 for (const recovered of [false, true]) test(`script component split -> transform -> ${recovered ? 'delayed recovery -> ' : ''}save -> reopen uses current geometry`, async () => {

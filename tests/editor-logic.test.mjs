@@ -1401,7 +1401,8 @@ test('every timed content body captures movement while only the selected item ex
   const block = timeline.slice(timeline.indexOf('function TimedBlock'), timeline.indexOf('function LinkedCaptionBlock'));
   assert.match(block, /<TimelineMoveGrip/);
   assert.doesNotMatch(block, /movable\?: boolean/);
-  assert.match(block, /\{props\.selected \? \(/);
+  assert.match(block, /\{props\.selected && !props\.hideControls \? \(/);
+  assert.match(timeline, /testID="caption-timing-dock"/);
   assert.match(block, /<TimingGrip side="start"/);
   assert.match(block, /<TimingGrip side="end"/);
   assert.match(block, /zIndex: props\.selected \? 6 : 1/);

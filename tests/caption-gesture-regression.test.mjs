@@ -7,7 +7,7 @@ import ts from 'typescript';
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 import { captionPreviewState } from '../src/lib/caption-preview.ts';
 import { timelineBlockControls, timelineControlRail, timelineVisibleTrackBounds, TIMELINE_GRIP_WIDTH } from '../src/lib/timeline-gesture.ts';
-import { packTimelineMarkers } from '../src/lib/timeline-layout.ts';
+import { indexTimelineCues, timelineCuePage, MAX_TIMELINE_PAGE_CUES } from '../src/lib/timeline-layout.ts';
 import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { createTranslationCaptionTrack, resolveCaptionPairs } from '../src/lib/caption-tracks.ts';
@@ -21,7 +21,7 @@ const compiledModules = new Map();
 // Execute the production hook, timeline responders and overlay JSX. Only React
 // scheduling, native views and the OS event source are adapted for Node.
 function harness() {
-  const slots = [], frames = new Map(), timers = new Map();
+  const slots = [], frames = new Map(), timers = new Map(), scrolls = [];
   let cursor = 0, effects = [], dirty = false, result, component, props, nextId = 0;
   const depsEqual = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
   function memo(factory, deps) {
@@ -47,7 +47,7 @@ function harness() {
       });
     },
   };
-  const native = { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView',
+  const native = { View: 'View', Text: 'Text', TextInput: 'TextInput', Pressable: 'Pressable', ScrollView: 'ScrollView',
     PanResponder: { create: (handlers) => ({ panHandlers: handlers }) } };
   const jsx = (type, props) => ({ type, props: props ?? {} });
   const modules = new Map();
@@ -88,7 +88,11 @@ function harness() {
     let passes = 0;
     do {
       assert.ok(++passes < 20); cursor = 0; effects = []; dirty = false;
-      result = component(props); effects.forEach((fn) => fn());
+      result = component(props);
+      for (const node of all((node) => node.type === 'ScrollView' && node.props.ref)) {
+        node.props.ref.current = { scrollTo(request) { scrolls.push({ horizontal: Boolean(node.props.horizontal), ...request }); } };
+      }
+      effects.forEach((fn) => fn());
     } while (dirty);
     return result;
   }
@@ -100,12 +104,23 @@ function harness() {
     }
     return out;
   }
-  return { load, render, all, get result() { return result; },
+  return { load, render, all, scrolls, get result() { return result; },
     frame() { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach((fn) => fn()); render(); },
     timers() { const callbacks = [...timers.values()]; timers.clear(); callbacks.forEach((fn) => fn()); },
   };
 }
 const timelineSuffix = '\nexports.TimingGrip = TimingGrip; exports.TimelineMoveGrip = TimelineMoveGrip; exports.TimedBlock = TimedBlock;';
+const allTimelineSuffix = timelineSuffix + '\nexports.TimelineRow = TimelineRow; exports.TimelineRuler = TimelineRuler; exports.TinyButton = TinyButton; exports.ZoomButton = ZoomButton;';
+function renderedHostCount(node) {
+  if (Array.isArray(node)) return node.reduce((sum, child) => sum + renderedHostCount(child), 0);
+  if (!node || typeof node !== 'object') return 0;
+  if (typeof node.type === 'function') {
+    const h = harness(), ui = h.load('components/editor/layer-timeline.tsx', allTimelineSuffix);
+    assert.ok(ui[node.type.name], 'count every production component: ' + node.type.name);
+    return renderedHostCount(h.render(ui[node.type.name], node.props));
+  }
+  return (typeof node.type === 'string' && node.type !== 'Fragment' ? 1 : 0) + renderedHostCount(node.props?.children);
+}
 const event = (x, y) => ({ nativeEvent: { touches: [{ identifier: 1, pageX: x, pageY: y }] } });
 
 // Resolve the actual TimedBlock/Grip JSX bounds before dispatching native touch
@@ -143,6 +158,21 @@ const contains = (r, x, y) => x >= r.left && x < r.left + r.width && y >= r.top 
 const intersects = (a, b) => a.left < b.left + b.width && b.left < a.left + a.width
   && a.top < b.top + b.height && b.top < a.top + a.height;
 
+function dockTargets(h) {
+  const dock = h.all((node) => node.props?.testID === 'caption-timing-dock')[0];
+  const rail = h.all((node) => node.props?.testID === 'caption-docked-controls')[0];
+  if (!dock || !rail) return [];
+  const top = h.result.props.style.height - dock.props.style.height + 44;
+  return rail.props.children.map((node) => {
+    const child = harness(), ui = child.load('components/editor/layer-timeline.tsx', timelineSuffix);
+    child.render(ui[node.type.name], node.props);
+    const s = child.result.props.style, width = rail.props.style.width;
+    return { edge: node.props.side ?? 'move', rail: true, top, height: rail.props.style.height,
+      left: s.left ?? width - (s.right ?? 0) - s.width,
+      width: s.width ?? width - (s.left ?? 0) - (s.right ?? 0), handlers: child.result.props };
+  });
+}
+
 for (const kind of ['caption', 'translation']) for (const selectedId of ['a', 'b', 'overlap']) {
   for (const edge of ['move', 'start', 'end']) test(`${kind} tiny ${selectedId} ${edge}: adjacent and overlapping bodies own their touches`, () => {
     let project = createCaptionProject({ id: 'hit-test', name: 'Hit testing', sources: [{ id: 'video',
@@ -170,7 +200,7 @@ for (const kind of ['caption', 'translation']) for (const selectedId of ['a', 'b
     });
     const blocks = h.all((node) => node.type?.name === 'TimedBlock' && node.props.label.startsWith(kind + '-'));
     assert.equal(blocks.length, 3);
-    const targets = blocks.flatMap((block) => blockTargets(block.props));
+    const targets = [...blocks.flatMap((block) => blockTargets(block.props)), ...dockTargets(h)];
     const bodies = targets.filter((target) => !target.rail);
     const rails = targets.filter((target) => target.rail);
     assert.equal(rails.length, 3);
@@ -396,7 +426,7 @@ for (const kind of ['caption', 'translation']) for (const selectedId of ['zero',
     const markers = blocks().map((block) => {
       const markerHarness = harness(), ui = markerHarness.load('components/editor/layer-timeline.tsx', timelineSuffix);
       markerHarness.render(ui.TimedBlock, block.props);
-      const node = markerHarness.all((entry) => entry.type === 'Pressable' && entry.props.accessibilityLabel?.startsWith('Select short cue:'))[0];
+      const node = markerHarness.all((entry) => entry.type === 'Pressable' && entry.props.accessibilityLabel?.includes('Select cue'))[0];
       return { label: block.props.label, ...node.props.style, onPress: node.props.onPress };
     });
     assert.equal(markers.length, 4);
@@ -413,8 +443,7 @@ for (const kind of ['caption', 'translation']) for (const selectedId of ['zero',
     assert.deepEqual(calls.selects, [selectedId]);
     assert.deepEqual(calls.seeks, []);
     assert.deepEqual(project, before);
-    const selected = blocks().find((block) => block.props.selected);
-    const rails = blockTargets(selected.props).filter((target) => target.rail);
+    const rails = dockTargets(h);
     assert.equal(rails.length, 3);
     for (const rail of rails) {
       assert.ok(rail.width >= 32);
@@ -447,18 +476,23 @@ for (const kind of ['caption', 'translation']) for (const selectedId of ['zero',
   });
 }
 
-test('tiny marker lanes pack independently at both track edges and across zoom levels', () => {
+test('bounded marker pages expose every cue independently at both track edges and across zoom levels', () => {
   for (const trackWidth of [278, 300, 960, 144000]) {
     const duration = 600000;
     const cues = [['zero-start', 0, 0], ['start', 0, 80], ['adjacent', 80, 160],
       ['overlap', 40, 120], ['end', duration - 80, duration], ['zero-end', duration, duration]]
       .map(([id, startMs, endMs]) => ({ id, startMs, endMs }));
-    const packed = packTimelineMarkers(cues, duration, trackWidth);
-    const markers = [...packed.byId.values()].map((entry) => ({ ...entry, top: entry.lane * 44, height: 38 }));
-    assert.equal(markers.length, cues.length);
-    for (const marker of markers) {
-      assert.ok(marker.left >= 0 && marker.left + marker.width <= trackWidth);
-      for (const other of markers) if (marker !== other) assert.equal(intersects(marker, other), false);
+    const index = indexTimelineCues(cues);
+    for (const cue of cues) {
+      const packed = timelineCuePage(index, duration, trackWidth, { left: 0, right: trackWidth }, cue.id);
+      const markers = [...packed.markers.values()].map((entry) => ({ ...entry, height: 38 }));
+      assert.ok(markers.length <= MAX_TIMELINE_PAGE_CUES);
+      assert.ok(packed.cues.includes(cue));
+      assert.ok(packed.height <= 180);
+      for (const marker of markers) {
+        assert.ok(marker.left >= 0 && marker.left + marker.width <= trackWidth);
+        for (const other of markers) if (marker !== other) assert.equal(intersects(marker, other), false);
+      }
     }
   }
 });
@@ -485,16 +519,14 @@ for (const kind of ['caption', 'translation']) test(`${kind} selected long-cue r
       for (const offset of [0, 1, 33, 119, trackWidth / 2, trackWidth / 2 + 7, trackWidth - 33, trackWidth]) {
         const scroll = h.all((node) => node.type === 'ScrollView' && node.props.horizontal)[0];
         scroll.props.onScroll({ nativeEvent: { contentOffset: { x: offset } } }); h.render();
-        const b = block();
-        const targets = blockTargets(b.props), rails = targets.filter((entry) => entry.rail);
-        const originOnScreen = viewportWidth / 2 - offset;
+        const rails = dockTargets(h);
+        const originOnScreen = 0;
         assert.equal(rails.length, 3);
         for (const rail of rails) {
           assert.ok(rail.left + originOnScreen >= 0, 'left stays visible');
           assert.ok(rail.left + rail.width + originOnScreen <= viewportWidth, 'right stays visible');
-          assert.ok(rail.left >= 0 && rail.left + rail.width <= trackWidth);
+          assert.ok(rail.top >= 0 && rail.top + rail.height <= h.result.props.style.height);
           assert.ok(rail.width >= 32, 'each operation remains reachable');
-          for (const body of targets.filter((entry) => !entry.rail)) assert.equal(intersects(rail, body), false);
         }
       }
     }
@@ -516,3 +548,173 @@ test('control placement accounts for the actual label/padding origin and current
     }
   }
 });
+
+for (const count of [100, 1000, 5000]) for (const density of ['adjacent', 'coincident']) {
+  test(`${count} ${density} tiny/zero cues: indexed pages bound allocations and expose every identity`, (t) => {
+    const duration = 600000;
+    const cues = Array.from({ length: count }, (_, i) => {
+      const startMs = density === 'coincident' ? 300000 : Math.floor(i / (count - 1) * (duration - 80));
+      return { id: `cue-${i}`, startMs, endMs: startMs + (i % 2 ? 80 : 0) };
+    });
+    const index = indexTimelineCues(cues);
+    let reads = 0, maxReads = 0, maxAllocated = 0;
+    index.ordered = new Proxy(index.ordered, { get(target, key, receiver) {
+      if (typeof key === 'string' && /^\d+$/.test(key)) reads++;
+      return Reflect.get(target, key, receiver);
+    } });
+    for (const cue of cues) {
+      const x = cue.startMs / duration * 300;
+      const bounds = { left: Math.max(0, x - 120), right: Math.min(300, x + 120) };
+      reads = 0;
+      const page = timelineCuePage(index, duration, 300, bounds, cue.id);
+      maxReads = Math.max(maxReads, reads);
+      maxAllocated = Math.max(maxAllocated, page.cues.length + page.markers.size + page.layout.laneById.size);
+      assert.ok(page.cues.includes(cue), cue.id);
+      assert.ok(page.cues.length <= 4);
+      assert.ok(page.height <= 180);
+      const markers = [...page.markers.values()].map((marker) => ({ ...marker, height: 38 }));
+      for (const marker of markers) {
+        assert.ok(marker.left >= bounds.left && marker.left + marker.width <= bounds.right);
+        for (const other of markers) if (other !== marker) assert.equal(intersects(marker, other), false);
+      }
+    }
+    assert.ok(maxReads <= Math.ceil(Math.log2(count)) + 6);
+    assert.ok(maxAllocated <= 12);
+    assert.equal(index.byId.size, count, 'one reusable identity index, no cached pages');
+    t.diagnostic(`n=${count}: max indexed reads=${maxReads}, page entries=${maxAllocated}, index references=${count * 2}`);
+  });
+}
+
+for (const count of [100, 1000, 5000]) for (const kind of ['caption', 'translation']) for (const density of ['adjacent', 'coincident']) {
+  test(`${kind} ${count} ${density} cues: bounded mounted controls at minimum zoom, start/middle/end viewport and selected reveal`, (t) => {
+    const h = harness(), { LayerTimeline } = h.load('components/editor/layer-timeline.tsx');
+    const duration = 600000;
+    const captions = Array.from({ length: count }, (_, i) => {
+      const startMs = density === 'coincident' ? 300000 : Math.floor(i / (count - 1) * (duration - 80));
+      return { id: `cue-${i}`, text: `Caption ${i}`, wordIds: [], startMs, endMs: startMs + (i % 2 ? 80 : 0) };
+    });
+    const pairs = captions.map((source) => ({ source, translation: { id: 'fr:' + source.id, text: 'French ' + source.text, status: 'reviewed' },
+      startMs: source.startMs, endMs: source.endMs, timelineVisible: true }));
+    const orderedCaptions = indexTimelineCues(captions).ordered;
+    let sourceReads = 0;
+    const watched = (items) => new Proxy(items, { get(target, key, receiver) {
+      if (typeof key === 'string' && /^\d+$/.test(key)) sourceReads++;
+      return Reflect.get(target, key, receiver);
+    } });
+    const seeks = [];
+    const props = { projectId: 'dense', currentMs: 0, durationMs: duration, clips: [], sources: [],
+      captions: watched(captions), layers: [{ id: 'captions', kind: 'captions', name: 'Captions' }], audioClips: [], audioSources: [],
+      translationTracks: [{ id: 'fr', name: 'French', visible: true, pairs: watched(pairs) }],
+      selectedLayerId: kind === 'caption' ? 'captions' : 'fr', selectedCaptionId: captions[0].id,
+      onSelectCaption(cue) { props.selectedLayerId = 'captions'; props.selectedCaptionId = cue.id; },
+      onSelectTranslationCaption(id, pair) { props.selectedLayerId = id; props.selectedCaptionId = pair.source.id; },
+      onSeek(ms) { seeks.push(ms); }, onScrubStart() {}, onTimingChangeStart() {}, onTimingChangeEnd() {}, onItemTimingChange() {},
+    };
+    h.render(LayerTimeline, props);
+    assert.ok(sourceReads >= count * 2, 'both indexes are built once from the input');
+    sourceReads = 0;
+    for (let step = 0; step < 12; step++) {
+      h.all((node) => node.type?.name === 'ZoomButton' && node.props.label !== '+')[0].props.onPress(); h.render();
+    }
+    let maxBlocks = 0, maxNativeNodes = 0, maxResponders = 0;
+    const blocks = () => h.all((node) => node.type?.name === 'TimedBlock');
+    const button = (label) => h.all((node) => node.props?.accessibilityLabel === label)[0].props;
+    const input = () => h.all((node) => node.type === 'TextInput')[0].props;
+    for (const viewport of [240, 360, 768]) {
+      h.result.props.onLayout({ nativeEvent: { layout: { width: viewport } } }); h.render();
+      const trackWidth = blocks()[0].props.trackWidth;
+      for (const ordinal of [0, Math.floor(count / 2), count - 1]) {
+        input().onChangeText(String(ordinal + 1)); h.render(); button('Go to cue number').onPress(); h.render();
+        assert.equal(props.selectedCaptionId, orderedCaptions[ordinal].id);
+        assert.ok(blocks().some((node) => node.props.selected), 'number jump reveals selected marker');
+        const vertical = h.scrolls.filter((request) => !request.horizontal).at(-1);
+        assert.ok(vertical && vertical.y >= 0, 'selected row is revealed vertically');
+        for (const offset of [0, trackWidth / 2, trackWidth]) {
+          const scroll = h.all((node) => node.type === 'ScrollView' && node.props.horizontal)[0].props;
+          scroll.onScroll({ nativeEvent: { contentOffset: { x: offset } } }); h.render();
+          assert.ok(h.result.props.style.height <= 330);
+          const rails = dockTargets(h);
+          assert.equal(rails.length, 3);
+          for (const rail of rails) {
+            assert.ok(rail.top >= 0 && rail.top + rail.height <= h.result.props.style.height);
+            assert.ok(rail.left >= 0 && rail.left + rail.width <= viewport && rail.width >= 32);
+            for (const other of rails) if (rail !== other) assert.equal(intersects(rail, other), false);
+          }
+          const mounted = blocks();
+          maxBlocks = Math.max(maxBlocks, mounted.length);
+          assert.ok(mounted.length <= 8, 'both tracks together mount at most eight cue blocks');
+          let responders = rails.length;
+          for (const block of mounted) {
+            const child = harness(), ui = child.load('components/editor/layer-timeline.tsx', timelineSuffix);
+            child.render(ui.TimedBlock, block.props);
+            for (const grip of child.all((node) => node.type?.name === 'TimelineMoveGrip')) {
+              const g = harness(), gi = g.load('components/editor/layer-timeline.tsx', timelineSuffix);
+              g.render(gi.TimelineMoveGrip, grip.props);
+              responders++;
+            }
+            const marker = child.all((node) => node.type === 'Pressable')[0];
+            assert.ok(marker.props.style.width >= 44 && marker.props.style.height >= 36);
+            assert.ok(block.props.marker.left >= block.props.visibleTrackBounds.left);
+            assert.ok(block.props.marker.left + block.props.marker.width <= block.props.visibleTrackBounds.right);
+          }
+          maxNativeNodes = Math.max(maxNativeNodes, renderedHostCount(h.result));
+          maxResponders = Math.max(maxResponders, responders);
+          button('Reveal selected cue').onPress(); h.render();
+          const selectedBlock = blocks().find((node) => node.props.selected);
+          assert.ok(selectedBlock);
+          const rows = h.all((node) => node.type?.name === 'TimelineRow');
+          const selectedRow = rows.findIndex((node) => node.props.selected);
+          assert.ok(selectedRow >= 0);
+          const dock = h.all((node) => node.props?.testID === 'caption-timing-dock')[0];
+          const viewportHeight = h.result.props.style.height - dock.props.style.height - 36 - 28;
+          const rowStart = rows.slice(0, selectedRow).reduce((sum, node) => sum + node.props.height, 0);
+          const contentHeight = rows.reduce((sum, node) => sum + node.props.height, 0) + 2;
+          const scrollY = Math.min(h.scrolls.filter((request) => !request.horizontal).at(-1).y, Math.max(0, contentHeight - viewportHeight));
+          const markerTop = 36 + 28 + 1 + rowStart - scrollY + 4 + selectedBlock.props.marker.top;
+          assert.ok(markerTop >= 64 && markerTop + 38 <= h.result.props.style.height - dock.props.style.height,
+            'revealed marker is entirely inside the actual capped vertical viewport');
+        }
+      }
+    }
+    assert.ok(maxNativeNodes < 180);
+    assert.ok(maxResponders <= 11);
+    assert.equal(sourceReads, 0, 'scroll, zoom, selection and reveal never rescan either source array');
+    assert.deepEqual(seeks, [], 'navigation and reveal never move the playhead');
+    t.diagnostic(`n=${count} ${density}: max cue blocks=${maxBlocks}, rendered host nodes=${maxNativeNodes}, timing responders=${maxResponders}, source rescans=${sourceReads}`);
+  });
+}
+
+for (const kind of ['caption', 'translation']) for (const edge of ['move', 'start', 'end']) {
+  for (const action of ['increment', 'decrement']) test(`${kind} ${edge} accessibility ${action} runs one domain transaction`, () => {
+    let project = createCaptionProject({ id: 'accessible', name: 'Accessible', sources: [{ id: 'video',
+      uri: 'file:///test.mp4', storageMode: 'copied', displayName: 'Video', durationMs: 5000,
+      width: 1080, height: 1920, rotation: 0, frameRate: 30 }] });
+    project.captions = [{ id: 'selected', text: 'Selected caption', startMs: 1000, endMs: 2000, wordIds: [] },
+      { id: 'neighbor', text: 'Neighbor', startMs: 2100, endMs: 3000, wordIds: [] }];
+    project = createTranslationCaptionTrack(project, { id: 'fr', languageTag: 'fr', displayName: 'French',
+      translations: { selected: 'French', neighbor: 'Neighbor in French' } });
+    const before = project, calls = [], h = harness(), ui = h.load('components/editor/layer-timeline.tsx', timelineSuffix);
+    const item = kind === 'caption' ? { kind, captionId: 'selected' } : { kind, trackId: 'fr', sourceCaptionId: 'selected' };
+    h.render(edge === 'move' ? ui.TimelineMoveGrip : ui.TimingGrip, {
+      side: edge, label: 'Selected caption', selected: true, startMs: 1000, endMs: 2000, durationMs: 5000, trackWidth: 300,
+      onPress() { calls.push('select'); }, onChangeStart() { calls.push('history-start'); },
+      onChange(side, start, end) { calls.push('domain'); project = applyTimelineItemTiming(project, item, side, start, end, 5000); },
+      onEnd() { calls.push('commit'); },
+    });
+    const control = h.result.props;
+    assert.equal(control.accessibilityRole, 'adjustable');
+    assert.equal(control.accessibilityState.selected, true);
+    assert.match(control.accessibilityLabel, /Selected.*Start 1\.000 seconds, end 2\.000 seconds/);
+    assert.deepEqual(plain(control.accessibilityActions), [{ name: 'increment' }, { name: 'decrement' }]);
+    control.onAccessibilityAction({ nativeEvent: { actionName: action } });
+    assert.deepEqual(calls, ['select', 'history-start', 'domain', 'commit']);
+    const after = kind === 'caption' ? project.captions[0] : resolveCaptionPairs(project, 'fr')[0];
+    const delta = action === 'increment' ? 100 : -100;
+    assert.equal(after.startMs, 1000 + (edge === 'end' ? 0 : delta));
+    assert.equal(after.endMs, 2000 + (edge === 'start' ? 0 : delta));
+    assert.equal(project.captions[1], before.captions[1]);
+    if (kind === 'translation') assert.equal(project.captions, before.captions);
+    control.onAccessibilityAction({ nativeEvent: { actionName: 'unsupported' } });
+    assert.equal(calls.length, 4);
+  });
+}

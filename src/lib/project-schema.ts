@@ -304,7 +304,7 @@ function decodeWord(value: unknown, index: number): WordToken {
   };
 }
 
-function decodeCaption(value: unknown, index: number): CaptionBlock {
+export function decodeCaption(value: unknown, index: number): CaptionBlock {
   const caption = record(value, `caption ${index + 1}`);
   const startMs = finiteNumber(caption.startMs, `caption ${index + 1} start`, 0, Number.MAX_SAFE_INTEGER);
   const endMs = finiteNumber(caption.endMs, `caption ${index + 1} end`, startMs, Number.MAX_SAFE_INTEGER);

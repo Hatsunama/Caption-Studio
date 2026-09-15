@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PanResponder, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 
 import { chrome } from '@/lib/ui-theme';
-import { packTimelineLanes, packTimelineMarkers, TIMELINE_MARKER_HEIGHT } from '@/lib/timeline-layout';
+import { indexTimelineCues, packTimelineLanes, timelineCuePage, TIMELINE_MARKER_HEIGHT } from '@/lib/timeline-layout';
 import { previewVideoClipLeadingGap, previewVideoClipReorder, previewVideoClipTrim } from '@/lib/project-editor';
 import {
   clampTimelineScale,
@@ -21,7 +21,7 @@ import {
 import { buildClipTimeline, remapCaptionsToTimeline } from '@/lib/video-timeline';
 import { audioClipEnd } from '@/lib/audio-timeline';
 import { audioWaveformWindow } from '@/lib/audio-waveform';
-import { createTimelineTimingGesture, timelineBlockControls, timelineControlRail, timelineVisibleTrackBounds, type TimelineTrackBounds, TIMELINE_GRIP_WIDTH, TIMELINE_CONTROL_HEIGHT } from '@/lib/timeline-gesture';
+import { adjustTimelineTiming, TIMELINE_ACCESSIBILITY_ACTIONS, timelineTimingLabel, createTimelineTimingGesture, timelineBlockControls, timelineControlRail, timelineVisibleTrackBounds, type TimelineTrackBounds, TIMELINE_GRIP_WIDTH, TIMELINE_CONTROL_HEIGHT } from '@/lib/timeline-gesture';
 import { ensureClipFrameThumbnail } from '@/services/project-media';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import type { TimelineItemReference, TimelineTimingEdge } from '@/lib/timeline-item-editor';
@@ -70,6 +70,8 @@ export function LayerTimeline(props: {
   onSelectAudioClip: (clipId: string) => void;
 }) {
   const horizontalRef = useRef<ScrollView>(null);
+  const verticalRef = useRef<ScrollView>(null);
+  const [cueNumber, setCueNumber] = useState('');
   const [viewportWidth, setViewportWidth] = useState(360);
   const [clipPreview, setClipPreview] = useState<VideoClip[]>();
   const [reorderDrag, setReorderDrag] = useState<{ clipId: string; toIndex: number }>();
@@ -116,25 +118,28 @@ export function LayerTimeline(props: {
   const [visibleCenterX, setVisibleCenterX] = useState(0);
   const lastScrubMsRef = useRef(-1);
   const pinch = useRef({ distance: 0, scale: effectiveScale });
-  const captionLayout = useMemo(() => packTimelineLanes(displayCaptions), [displayCaptions]);
-  const captionMarkers = useMemo(() => packTimelineMarkers(displayCaptions, duration, trackWidth), [displayCaptions, duration, trackWidth]);
-  const captionControlTop = captionLayout.laneCount * LANE_HEIGHT + captionMarkers.laneCount * TIMELINE_MARKER_HEIGHT + 3;
-  const captionRowHeight = captionControlTop + 7
-    + (props.selectedLayerId === 'captions' && props.selectedCaptionId ? TIMELINE_CONTROL_HEIGHT : 0);
-  const translationLayouts = useMemo(() => new Map(displayTranslationTracks.map((track) => [track.id,
-    packTimelineLanes(track.pairs.filter((pair) => pair.timelineVisible).map((pair) => ({
-      id: pair.translation.id, startMs: pair.startMs, endMs: pair.endMs,
+  const captionIndex = useMemo(() => indexTimelineCues(displayCaptions), [displayCaptions]);
+  const translationIndexes = useMemo(() => new Map(displayTranslationTracks.map((track) => [track.id,
+    indexTimelineCues(track.pairs.filter((pair) => pair.timelineVisible).map((pair) => ({
+      id: pair.source.id, startMs: pair.startMs, endMs: pair.endMs, pair,
     }))),
   ])), [displayTranslationTracks]);
-  const translationMarkers = useMemo(() => new Map(displayTranslationTracks.map((track) => [track.id,
-    packTimelineMarkers(track.pairs.filter((pair) => pair.timelineVisible).map((pair) => ({
-      id: pair.translation.id, startMs: pair.startMs, endMs: pair.endMs,
-    })), duration, trackWidth),
-  ])), [displayTranslationTracks, duration, trackWidth]);
-  const translationControlTop = (id: string) => (translationLayouts.get(id)?.laneCount ?? 1) * LANE_HEIGHT
-    + (translationMarkers.get(id)?.laneCount ?? 0) * TIMELINE_MARKER_HEIGHT + 3;
-  const translationRowHeight = (id: string) => translationControlTop(id) + 7
-    + (props.selectedLayerId === id && props.selectedCaptionId ? TIMELINE_CONTROL_HEIGHT : 0);
+  const leadingPadding = Math.max(0, viewportWidth / 2 - LABEL_WIDTH);
+  const visibleTrackBounds = useMemo(() => timelineVisibleTrackBounds(viewportScrollX, viewportWidth, trackWidth, leadingPadding + LABEL_WIDTH),
+    [viewportScrollX, viewportWidth, trackWidth, leadingPadding]);
+  const captionPage = useMemo(() => timelineCuePage(captionIndex, duration, trackWidth, visibleTrackBounds,
+    props.selectedLayerId === 'captions' ? props.selectedCaptionId : undefined),
+  [captionIndex, duration, trackWidth, visibleTrackBounds, props.selectedLayerId, props.selectedCaptionId]);
+  const translationPages = useMemo(() => new Map([...translationIndexes].map(([id, index]) => [id,
+    timelineCuePage(index, duration, trackWidth, visibleTrackBounds, props.selectedLayerId === id ? props.selectedCaptionId : undefined),
+  ])), [translationIndexes, duration, trackWidth, visibleTrackBounds, props.selectedLayerId, props.selectedCaptionId]);
+  const captionLayout = captionPage.layout;
+  const captionRowHeight = captionPage.height;
+  const translationRowHeight = (id: string) => translationPages.get(id)!.height;
+  const activeIndex = props.selectedLayerId === 'captions' ? captionIndex : translationIndexes.get(props.selectedLayerId ?? '');
+  const selectedOrdinal = activeIndex?.byId.get(props.selectedCaptionId ?? '');
+  const selectedCue = selectedOrdinal === undefined ? undefined : activeIndex?.ordered[selectedOrdinal];
+  const footerHeight = selectedCue ? 44 + TIMELINE_CONTROL_HEIGHT : 0;
   const audioLayout = useMemo(() => packTimelineLanes(props.audioClips.map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [props.audioClips]);
   const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10
     + (props.selectedAudioClipId ? TIMELINE_CONTROL_HEIGHT : 0);
@@ -146,11 +151,6 @@ export function LayerTimeline(props: {
     0,
   ) + props.translationTracks.reduce((sum, track) => sum + translationRowHeight(track.id), 0);
 
-  const leadingPadding = Math.max(0, viewportWidth / 2 - LABEL_WIDTH);
-  const visibleTrackBounds = timelineVisibleTrackBounds(viewportScrollX, viewportWidth, trackWidth, leadingPadding + LABEL_WIDTH);
-  const markerPlacement = (marker: { left: number; width: number; lane: number } | undefined, bodyLanes: number) => marker
-    ? { left: marker.left, width: marker.width, top: bodyLanes * LANE_HEIGHT + marker.lane * TIMELINE_MARKER_HEIGHT + 3 }
-    : undefined;
   const trailingPadding = viewportWidth / 2;
   const scrollContentWidth = leadingPadding + LABEL_WIDTH + trackWidth + trailingPadding;
   const visibleRange = useMemo(() => {
@@ -162,6 +162,35 @@ export function LayerTimeline(props: {
   }, [duration, trackWidth, viewportWidth, visibleCenterX]);
   const isVisible = (startMs: number, endMs: number) =>
     reorderMode || (endMs >= visibleRange.startMs && startMs <= visibleRange.endMs);
+
+  // Selection navigation owns only scroll position, never the transport. Row
+  // heights are bounded, so the entire selected marker row fits above the dock.
+  const selectedRowTop = (() => {
+    let top = videoRowHeight + audioRowHeight;
+    for (const layer of props.layers) {
+      if (layer.id === props.selectedLayerId) return top;
+      top += layer.kind === 'captions' ? captionRowHeight : visualRowHeight(layer.id);
+      if (layer.kind === 'captions') for (const track of displayTranslationTracks) {
+        if (track.id === props.selectedLayerId) return top;
+        top += translationRowHeight(track.id);
+      }
+    }
+    return 0;
+  })();
+  const revealCue = useCallback((startMs: number) => {
+    scrubbingRef.current = false;
+    const x = timelineScrollOffset(startMs, duration, trackWidth);
+    scrollXRef.current = x;
+    setViewportScrollX(x);
+    setVisibleCenterX(x);
+    horizontalRef.current?.scrollTo({ x, animated: false });
+    verticalRef.current?.scrollTo({ y: selectedRowTop, animated: false });
+  }, [duration, selectedRowTop, trackWidth]);
+  const lastRevealRef = useRef<{ id: string; trackWidth: number; viewportWidth: number } | undefined>(undefined);
+  const hasSelectedCue = selectedCue !== undefined;
+  useEffect(() => {
+    if (hasSelectedCue) verticalRef.current?.scrollTo({ y: selectedRowTop, animated: false });
+  }, [hasSelectedCue, selectedRowTop]);
 
   useEffect(() => () => {
     if (zoomTimer.current) clearTimeout(zoomTimer.current);
@@ -183,6 +212,16 @@ export function LayerTimeline(props: {
     setVisibleCenterX(x);
     horizontalRef.current?.scrollTo({ x, animated: false });
   }, [duration, gestureLock, props.currentMs, trackWidth, viewportWidth]);
+
+  useEffect(() => {
+    if (!selectedCue) { lastRevealRef.current = undefined; return; }
+    const id = `${props.selectedLayerId}:${props.selectedCaptionId}`;
+    const last = lastRevealRef.current;
+    if (last?.id === id && last.trackWidth === trackWidth && last.viewportWidth === viewportWidth) return;
+    lastRevealRef.current = { id, trackWidth, viewportWidth };
+    if (last?.id !== id) setCueNumber('');
+    revealCue(selectedCue.startMs);
+  }, [props.selectedLayerId, props.selectedCaptionId, selectedCue, trackWidth, viewportWidth, revealCue]);
 
   useEffect(() => {
     if (!reorderDrag) return;
@@ -246,6 +285,34 @@ export function LayerTimeline(props: {
     props.onTimingChangeEnd();
   };
 
+  const selectOrdinal = (ordinal: number) => {
+    const cue = activeIndex?.ordered[ordinal];
+    if (!cue) return;
+    selectTimelineItem(() => {
+      if ('pair' in cue) props.onSelectTranslationCaption(props.selectedLayerId!, cue.pair);
+      else props.onSelectCaption(cue);
+    });
+    setCueNumber('');
+    revealCue(cue.startMs);
+  };
+  const jumpToCueNumber = () => {
+    if (/^\d+$/.test(cueNumber)) selectOrdinal(Number(cueNumber) - 1);
+  };
+  const selectedControlProps = selectedCue ? {
+    label: 'pair' in selectedCue ? selectedCue.pair.translation.text : selectedCue.text,
+    startMs: selectedCue.startMs, endMs: selectedCue.endMs, durationMs: duration,
+    trackWidth, lane: 0, controlTop: 0, color: '#334155', selected: true,
+    onPress: () => selectTimelineItem(() => {
+      if ('pair' in selectedCue) props.onSelectTranslationCaption(props.selectedLayerId!, selectedCue.pair);
+      else props.onSelectCaption(selectedCue);
+    }),
+    onChangeStart: beginBlockGesture,
+    onChange: (edge: TimelineTimingEdge, startMs: number, endMs: number) => props.onItemTimingChange(
+      'pair' in selectedCue ? { kind: 'translation', trackId: props.selectedLayerId!, sourceCaptionId: selectedCue.id }
+        : { kind: 'caption', captionId: selectedCue.id }, edge, startMs, endMs),
+    onEnd: endBlockGesture,
+  } : undefined;
+
   const updateZoom = (next: number) => {
     const clamped = clampTimelineScale(next, minimumScale);
     setPixelsPerSecond(clamped);
@@ -268,7 +335,7 @@ export function LayerTimeline(props: {
         if (!first || !second || pinch.current.distance <= 0) return;
         updateZoom(pinch.current.scale * touchDistance(first, second) / pinch.current.distance);
       }}
-      style={{ height: Math.min(330, totalRowsHeight + RULER_HEIGHT + 38), overflow: 'hidden', borderRadius: 22, backgroundColor: '#1C1C1E' }}>
+      style={{ height: Math.min(330, totalRowsHeight + RULER_HEIGHT + 38 + footerHeight), overflow: 'hidden', borderRadius: 22, backgroundColor: '#1C1C1E' }}>
       <View style={{ height: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: '#1D242C' }}>
         <ZoomButton label="−" onPress={() => updateZoom(effectiveScale / 1.5)} />
         <Text style={{ minWidth: 118, color: '#D7DDE5', textAlign: 'center', fontSize: 11, fontWeight: '800' }}>TIMELINE {zoomPercent}%</Text>
@@ -276,6 +343,7 @@ export function LayerTimeline(props: {
       </View>
       <ScrollView
         ref={horizontalRef}
+        style={{ flex: 1 }}
         horizontal
         nestedScrollEnabled
         scrollEnabled={!gestureLock}
@@ -309,7 +377,7 @@ export function LayerTimeline(props: {
         onMomentumScrollEnd={finishScrub}>
         <View style={{ width: LABEL_WIDTH + trackWidth, height: '100%', marginLeft: leadingPadding }}>
           <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
-          <ScrollView style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}>
+          <ScrollView ref={verticalRef} style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}>
             <TimelineRow label="VIDEO" labelColor={chrome.accent} selected={Boolean(props.selectedClipId)} trackWidth={trackWidth} height={videoRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: chrome.muted, fontSize: 8 }}>{props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}</Text>}>
               {reorderDrag ? (
                 <VideoReorderBanner
@@ -463,8 +531,8 @@ export function LayerTimeline(props: {
                       {!isCaptions ? <TinyButton label="×" danger onPress={() => props.onDeleteLayer(layer.id)} /> : null}
                     </View>
                   </View>}>
-                  {isCaptions ? displayCaptions.map((caption, index) => ({ caption, index })).filter(({ caption }) => isVisible(caption.startMs, caption.endMs)).map(({ caption, index }) => (
-                    <TimedBlock key={caption.id} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} lane={captionLayout.laneById.get(caption.id) ?? 0} controlTop={captionControlTop} marker={markerPlacement(captionMarkers.byId.get(caption.id), captionLayout.laneCount)} visibleTrackBounds={visibleTrackBounds} color={NEON_CAPTION_COLORS[index % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
+                  {isCaptions ? captionPage.cues.map((caption, index) => (
+                    <TimedBlock key={caption.id} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} lane={captionLayout.laneById.get(caption.id) ?? 0} controlTop={0} hideControls marker={captionPage.markers.get(caption.id)} ordinal={captionPage.first + index + 1} visibleTrackBounds={visibleTrackBounds} color={NEON_CAPTION_COLORS[(captionPage.first + index) % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )) : (
                     <TimedBlock label={layer.kind === 'text' ? layer.text : 'IMAGE'} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} controlTop={LANE_HEIGHT + 3} visibleTrackBounds={visibleTrackBounds} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )}
@@ -483,7 +551,7 @@ export function LayerTimeline(props: {
                     trackWidth={trackWidth}
                     height={translationRowHeight(track.id)}
                     controls={<Text style={{ color: track.visible ? '#19D98B' : '#7B8591', fontSize: 7, fontWeight: '900' }}>{track.visible ? 'VISIBLE · INDEPENDENT' : 'HIDDEN · INDEPENDENT'}</Text>}>
-                    {track.pairs.filter((pair) => pair.timelineVisible && isVisible(pair.startMs, pair.endMs)).map((pair, pairIndex) => (
+                    {translationPages.get(track.id)!.cues.map(({ pair }, pairIndex) => (
                       <TimedBlock
                         key={pair.translation.id}
                         label={pair.translation.text || 'Translation pending'}
@@ -491,9 +559,11 @@ export function LayerTimeline(props: {
                         endMs={pair.endMs}
                         durationMs={duration}
                         trackWidth={trackWidth}
-                        lane={translationLayouts.get(track.id)?.laneById.get(pair.translation.id) ?? 0}
-                        controlTop={translationControlTop(track.id)}
-                        marker={markerPlacement(translationMarkers.get(track.id)?.byId.get(pair.translation.id), translationLayouts.get(track.id)?.laneCount ?? 1)}
+                        lane={translationPages.get(track.id)!.layout.laneById.get(pair.source.id) ?? 0}
+                        controlTop={0}
+                        hideControls
+                        ordinal={translationPages.get(track.id)!.first + pairIndex + 1}
+                        marker={translationPages.get(track.id)!.markers.get(pair.source.id)}
                         visibleTrackBounds={visibleTrackBounds}
                         color={pair.translation.status === 'stale' || pair.translation.status === 'pending' || pair.translation.status === 'failed'
                           ? '#A66220'
@@ -513,7 +583,23 @@ export function LayerTimeline(props: {
           </ScrollView>
         </View>
       </ScrollView>
-      <View pointerEvents="none" style={{ position: 'absolute', left: '50%', top: 36, bottom: 0, width: 2, marginLeft: -1, backgroundColor: '#FF5267' }}>
+      {selectedControlProps && activeIndex && selectedOrdinal !== undefined ? (
+        <View testID="caption-timing-dock" style={{ height: footerHeight, flexShrink: 0, backgroundColor: '#252C34' }}>
+          <View style={{ height: 44, flexDirection: 'row', alignItems: 'center' }}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Previous cue" disabled={selectedOrdinal === 0} onPress={() => selectOrdinal(selectedOrdinal - 1)} style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: chrome.text }}>Prev</Text></Pressable>
+            <TextInput accessibilityLabel={`Jump to cue number, selected ${selectedOrdinal + 1} of ${activeIndex.ordered.length}`} keyboardType="number-pad" returnKeyType="go" value={cueNumber} placeholder={`${selectedOrdinal + 1}/${activeIndex.ordered.length}`} placeholderTextColor={chrome.text} onChangeText={setCueNumber} onSubmitEditing={jumpToCueNumber} style={{ flex: 1, minWidth: 44, height: 44, color: chrome.text, textAlign: 'center', padding: 0 }} />
+            <Pressable accessibilityRole="button" accessibilityLabel="Go to cue number" onPress={jumpToCueNumber} style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: chrome.text }}>Go</Text></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Next cue" disabled={selectedOrdinal === activeIndex.ordered.length - 1} onPress={() => selectOrdinal(selectedOrdinal + 1)} style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: chrome.text }}>Next</Text></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Reveal selected cue" onPress={() => revealCue(selectedCue!.startMs)} style={{ width: 60, height: 44, justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: chrome.text }}>Reveal</Text></Pressable>
+          </View>
+          <View testID="caption-docked-controls" style={{ width: viewportWidth, height: TIMELINE_CONTROL_HEIGHT, position: 'relative' }}>
+            <TimelineMoveGrip {...selectedControlProps} controlRail />
+            <TimingGrip {...selectedControlProps} side="start" />
+            <TimingGrip {...selectedControlProps} side="end" />
+          </View>
+        </View>
+      ) : null}
+      <View pointerEvents="none" style={{ position: 'absolute', left: '50%', top: 36, bottom: footerHeight, width: 2, marginLeft: -1, backgroundColor: '#FF5267' }}>
         <View style={{ position: 'absolute', left: -7, top: 0, width: 0, height: 0, borderLeftWidth: 8, borderRightWidth: 8, borderTopWidth: 11, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: '#FF5267' }} />
       </View>
       <Pressable accessibilityRole="button" accessibilityLabel="Add videos to the end of the timeline" onPress={props.onAddVideos} style={{ position: 'absolute', right: 8, top: 2, width: 34, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: '#64D2FF' }}>
@@ -883,6 +969,8 @@ function TimedBlock(props: {
   lane: number;
   controlTop: number;
   marker?: { left: number; width: number; top: number };
+  ordinal?: number;
+  hideControls?: boolean;
   visibleTrackBounds?: TimelineTrackBounds;
   color: string;
   selected: boolean;
@@ -924,15 +1012,15 @@ function TimedBlock(props: {
       <TimelineMoveGrip {...props} />
     </View>
       {props.marker ? (
-        <Pressable accessibilityRole="button" accessibilityLabel={`Select short cue: ${props.label}`}
+        <Pressable accessibilityRole="button" accessibilityLabel={timelineTimingLabel(props.label, props.startMs, props.endMs, props.selected, `Select cue ${props.ordinal ?? ''}`)} accessibilityState={{ selected: props.selected }}
           onPress={props.onPress}
           style={{ position: 'absolute', ...props.marker, height: TIMELINE_MARKER_HEIGHT - 6,
             borderRadius: 6, borderWidth: 1, borderColor: props.selected ? '#FFFFFF' : props.color,
             backgroundColor: '#334155', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 }}>
-          <Text pointerEvents="none" numberOfLines={2} style={{ color: '#FFFFFF', fontSize: 9 }}>{props.label}</Text>
+          <Text pointerEvents="none" numberOfLines={2} style={{ color: '#FFFFFF', fontSize: 9 }}>{props.ordinal ? `${props.ordinal}. ` : ''}{props.label}</Text>
         </Pressable>
       ) : null}
-      {props.selected ? (
+      {props.selected && !props.hideControls ? (
         <View accessibilityLabel={`Timing controls for ${props.label}`} style={{ position: 'absolute', left: rail.left,
           top: props.controlTop, width: rail.width,
           height: TIMELINE_CONTROL_HEIGHT - 6, borderRadius: 6, backgroundColor: '#334155' }}>
@@ -1017,7 +1105,10 @@ function TimelineMoveGrip(props: Parameters<typeof TimedBlock>[0] & { controlRai
       {...responder.panHandlers}
       accessible
       accessibilityRole="adjustable"
-      accessibilityLabel={`${props.label}. Tap to select. Drag to move this timeline item without changing adjacent items.`}
+      accessibilityLabel={timelineTimingLabel(props.label, props.startMs, props.endMs, props.selected, 'Move')}
+      accessibilityState={{ selected: props.selected }}
+      accessibilityActions={TIMELINE_ACCESSIBILITY_ACTIONS}
+      onAccessibilityAction={(event) => adjustTimelineTiming(props, 'move', event.nativeEvent.actionName)}
       style={{ position: 'absolute', left: props.controlRail ? TIMELINE_GRIP_WIDTH : 0, right: props.controlRail ? TIMELINE_GRIP_WIDTH : 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}
     >{props.controlRail ? <Text pointerEvents="none" style={{ color: '#FFFFFF', fontSize: 10 }}>Move</Text> : null}</View>
   );
@@ -1025,7 +1116,7 @@ function TimelineMoveGrip(props: Parameters<typeof TimedBlock>[0] & { controlRai
 
 function TimingGrip(props: Parameters<typeof TimedBlock>[0] & { side: 'start' | 'end' }) {
   const responder = useTimelineTimingResponder(props, props.side);
-  return <View {...responder.panHandlers} accessible accessibilityRole="adjustable" accessibilityLabel={`${props.side === 'start' ? 'Start' : 'End'} timeline boundary. Drag to trim this item.`} style={{ position: 'absolute', [props.side === 'start' ? 'left' : 'right']: 0, top: 0, bottom: 0, width: TIMELINE_GRIP_WIDTH, zIndex: 10, borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}><Text pointerEvents="none" style={{ color: '#151A20', fontSize: 9 }}>{props.side === 'start' ? 'Start' : 'End'}</Text></View>;
+  return <View {...responder.panHandlers} accessible accessibilityRole="adjustable" accessibilityLabel={timelineTimingLabel(props.label, props.startMs, props.endMs, props.selected, props.side === 'start' ? 'Start boundary' : 'End boundary')} accessibilityState={{ selected: props.selected }} accessibilityActions={TIMELINE_ACCESSIBILITY_ACTIONS} onAccessibilityAction={(event) => adjustTimelineTiming(props, props.side, event.nativeEvent.actionName)} style={{ position: 'absolute', [props.side === 'start' ? 'left' : 'right']: 0, top: 0, bottom: 0, width: TIMELINE_GRIP_WIDTH, zIndex: 10, borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}><Text pointerEvents="none" style={{ color: '#151A20', fontSize: 9 }}>{props.side === 'start' ? 'Start' : 'End'}</Text></View>;
 }
 
 function TinyButton(props: { label: string; danger?: boolean; disabled?: boolean; onPress: () => void }) {

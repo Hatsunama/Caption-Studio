@@ -36,6 +36,27 @@ type TimingGestureOwner = {
   onEnd: () => void;
 };
 
+export const TIMELINE_ACCESSIBILITY_STEP_MS = 100;
+export const TIMELINE_ACCESSIBILITY_ACTIONS = [{ name: 'increment' as const }, { name: 'decrement' as const }];
+
+/** Assistive commands enter the same selection/history/domain/save boundary as
+ * deliberate touch gestures. No UI-only range mutation or synthetic drag. */
+export function adjustTimelineTiming(owner: TimingGestureOwner, edge: TimelineTimingEdge, action: string) {
+  if (action !== 'increment' && action !== 'decrement') return;
+  const delta = action === 'increment' ? TIMELINE_ACCESSIBILITY_STEP_MS : -TIMELINE_ACCESSIBILITY_STEP_MS;
+  owner.onPress();
+  owner.onChangeStart();
+  try {
+    owner.onChange(edge, owner.startMs + (edge === 'end' ? 0 : delta), owner.endMs + (edge === 'start' ? 0 : delta));
+  } finally {
+    owner.onEnd();
+  }
+}
+
+export function timelineTimingLabel(label: string, startMs: number, endMs: number, selected: boolean, operation: string) {
+  return `${label}. ${selected ? 'Selected' : 'Not selected'}. Start ${(startMs / 1000).toFixed(3)} seconds, end ${(endMs / 1000).toFixed(3)} seconds. ${operation}`;
+}
+
 /** A touch owns selection immediately, and timing only after deliberate drag. */
 export function createTimelineTimingGesture() {
   let owner: TimingGestureOwner | undefined;

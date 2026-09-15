@@ -1,5 +1,5 @@
 import { mergeStyle } from '@/lib/style-resolver';
-import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
+import { decodeCaptionDraft, reconcileCaptionScriptDraft, sameCaptionContent } from '@/lib/caption-script';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { applyCaptionTextChanges, type CaptionTextChanges } from '@/lib/caption-text-edits';
 import { applyTimelineSpliceToAudioClips } from '@/lib/audio-timeline';
@@ -128,6 +128,7 @@ function withTimelineCaptionTiming(
 }
 
 export function replaceVisibleCaptionScript(project: CaptionProject, captions: CaptionProject['captions']) {
+  if (!decodeCaptionDraft(captions)) throw new Error('Caption edits were not saved. The draft contains invalid caption data.');
   captions = reconcileCaptionScriptDraft(project, captions);
   const visible = project.captions.filter((caption) => caption.timelineVisible !== false);
   const hidden = project.captions.filter((caption) => caption.timelineVisible === false);
@@ -151,7 +152,12 @@ export function replaceVisibleCaptionScript(project: CaptionProject, captions: C
     ) throw new Error('Caption edits were not saved. Each caption needs unique identity, text, and valid timing; new or retimed captions must last at least 0.08 seconds.');
     ids.add(caption.id);
   }
-  if (captions.length === visible.length && captions.every((caption, index) => caption === visible[index])) return project;
+  // JSON recovery, sorting and geometry reconciliation create new objects. A
+  // semantic no-op must retain the project identity that gates history and I/O.
+  if (captions.length === visible.length && captions.every((caption) => {
+    const current = currentById.get(caption.id);
+    return current !== undefined && sameCaptionContent(caption, current);
+  })) return project;
   return updateProject(project, {
     captions: [...captions, ...hidden].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs),
   });
