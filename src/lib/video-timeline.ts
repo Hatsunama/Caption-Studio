@@ -7,6 +7,40 @@ import { isProjectIdentifier } from '@/lib/project-identifiers';
 
 export const MINIMUM_CLIP_TIMELINE_MS = 120;
 
+/** Supplied by the timeline mutation, never inferred from caption geometry. */
+export type TranslationTimeMapping = {
+  operation: 'trim' | 'splice' | 'reorder' | 'speed';
+  durationMs: number;
+  mapRange: (range: { startMs: number; endMs: number }) => {
+    startMs: number;
+    endMs: number;
+    timelineVisible?: boolean;
+  };
+};
+
+export function translationSpliceMapping(
+  splice: { atMs: number; removeMs: number; insertMs: number },
+  durationMs: number,
+  operation: 'trim' | 'splice' = 'splice',
+): TranslationTimeMapping {
+  const { atMs, removeMs, insertMs } = splice;
+  const cutEndMs = atMs + removeMs;
+  const mapTime = (timeMs: number) => timeMs < atMs
+    ? timeMs
+    : Math.max(atMs, timeMs - removeMs) + insertMs;
+  return {
+    operation,
+    durationMs,
+    mapRange: ({ startMs, endMs }) => ({
+      startMs: mapTime(startMs),
+      // An interval ending at an insertion stays on its left side.
+      endMs: endMs <= atMs && startMs < endMs ? endMs : mapTime(endMs),
+      ...(removeMs > 0 && startMs >= atMs && endMs <= cutEndMs
+        ? { timelineVisible: false } : {}),
+    }),
+  };
+}
+
 export type ClipTimelineEntry = {
   clip: VideoClip;
   gapStartMs: number;
@@ -331,7 +365,12 @@ export function rippleTimedContent(project: CaptionProject, cutStartMs: number, 
     updatedAt: new Date().toISOString(),
     transcription: { ...project.transcription, words },
     captions,
-    captionTracks: synchronizeCaptionTracks(project, captions),
+    captionTracks: synchronizeCaptionTracks({
+      ...project,
+      captionTracks: remapTranslationTrackTimings(project.captionTracks, project.captions,
+        translationSpliceMapping({ atMs: cutStartMs, removeMs: Math.max(0, cutEndMs - cutStartMs), insertMs: 0 },
+          Math.max(0, totalClipDuration(project.clips) - Math.max(0, cutEndMs - cutStartMs)))),
+    }, captions),
     layers,
     audioClips,
   };
@@ -361,14 +400,17 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
     project.audioClips.map((clip) => clip.startMs >= entry.endMs ? { ...clip, startMs: clip.startMs + delta } : clip),
     totalClipDuration(project.clips.map((clip) => clip.id === clipId ? replacement : clip)),
   );
-  const synchronizedCaptionTracks = synchronizeCaptionTracks(project, captions);
   return {
     ...project,
     updatedAt: new Date().toISOString(),
     clips: project.clips.map((clip) => clip.id === clipId ? replacement : clip),
     transcription: { ...project.transcription, words },
     captions,
-    captionTracks: remapTranslationTrackTimings(synchronizedCaptionTracks, project.captions, captions),
+    captionTracks: remapTranslationTrackTimings(project.captionTracks, project.captions, {
+      operation: 'speed',
+      durationMs: totalClipDuration(project.clips.map((clip) => clip.id === clipId ? replacement : clip)),
+      mapRange: ({ startMs, endMs }) => ({ startMs: mapTime(startMs), endMs: mapTime(endMs) }),
+    }),
     layers,
     audioClips,
   };

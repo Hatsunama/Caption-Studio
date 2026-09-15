@@ -2,7 +2,7 @@ import { mergePatch, mergeStyle, removePatchedKeys } from '@/lib/caption-style';
 import { captionTransform, hasCaptionTransform, withoutCaptionTransform } from '@/lib/caption-transform';
 import { layerExtent } from '@/lib/layer-geometry';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
-import { totalClipDuration } from '@/lib/video-timeline';
+import { totalClipDuration, type TranslationTimeMapping } from '@/lib/video-timeline';
 import {
   canonicalCaptionLanguageTag,
   captionLanguageFamily,
@@ -565,23 +565,38 @@ export function synchronizeCaptionTracks(
 export function remapTranslationTrackTimings(
   captionTracks: CaptionTrackCollection | undefined,
   beforeCaptions: readonly CaptionBlock[],
-  afterCaptions: readonly CaptionBlock[],
+  mapping: TranslationTimeMapping,
 ) {
   const tracks = captionTracks ?? emptyCaptionTrackCollection();
   const beforeById = new Map(beforeCaptions.map((caption) => [caption.id, caption]));
-  const afterById = new Map(afterCaptions.map((caption) => [caption.id, caption]));
+  if (!Number.isFinite(mapping.durationMs) || mapping.durationMs < 0) {
+    throw new Error('Translation timing mapping has an invalid timeline duration.');
+  }
   return {
     ...tracks,
     translations: tracks.translations.map((track) => ({
       ...track,
       cues: track.cues.map((cue) => {
         const before = beforeById.get(cue.sourceCaptionId);
-        const after = afterById.get(cue.sourceCaptionId);
-        if (!before || !after) return cue;
+        if (!before) throw new Error(`Translation cue ${cue.id} has no primary caption.`);
+        const range = { startMs: cue.startMs ?? before.startMs, endMs: cue.endMs ?? before.endMs };
+        if (!Number.isFinite(range.startMs) || !Number.isFinite(range.endMs)
+          || range.startMs < 0 || range.endMs < range.startMs) {
+          throw new Error(`Translation cue ${cue.id} has invalid timing.`);
+        }
+        const mapped = mapping.mapRange(range);
+        if (!Number.isFinite(mapped.startMs) || !Number.isFinite(mapped.endMs)
+          || mapped.endMs < mapped.startMs) {
+          throw new Error(`Translation ${mapping.operation} mapping produced invalid timing.`);
+        }
+        const startMs = clamp(mapped.startMs, 0, mapping.durationMs);
+        const endMs = clamp(mapped.endMs, startMs, mapping.durationMs);
         return {
           ...cue,
-          startMs: (cue.startMs ?? before.startMs) + after.startMs - before.startMs,
-          endMs: (cue.endMs ?? before.endMs) + after.endMs - before.endMs,
+          startMs,
+          endMs,
+          timelineVisible: (cue.timelineVisible ?? before.timelineVisible !== false)
+            && mapped.timelineVisible !== false && endMs > startMs,
         };
       }),
     })),

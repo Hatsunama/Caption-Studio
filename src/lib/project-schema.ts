@@ -345,6 +345,7 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
   if (collection.schemaVersion !== 1) throw new Error('Caption tracks use an unsupported version');
   if (collection.primaryTrackId !== 'captions') throw new Error('Caption tracks reference an invalid primary track');
   const primaryCaptionIds = new Set(captions.map((caption) => caption.id));
+  const primaryById = new Map(captions.map((caption) => [caption.id, caption]));
   const translations = decodeArray(
     collection.translations,
     'translation caption tracks',
@@ -444,6 +445,10 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
         }
         if (sourceCaptionIds.has(cue.sourceCaptionId)) {
           throw new Error(`Translation track ${trackIndex + 1} has duplicate source-caption links`);
+        }
+        const source = primaryById.get(cue.sourceCaptionId)!;
+        if ((cue.endMs ?? source.endMs) < (cue.startMs ?? source.startMs)) {
+          throw new Error(`Translation cue ${cue.id} has inverted timing`);
         }
         sourceCaptionIds.add(cue.sourceCaptionId);
       });

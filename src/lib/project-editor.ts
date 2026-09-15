@@ -23,6 +23,8 @@ import {
   sourceTimeAt,
   timelineTimeAt,
   totalClipDuration,
+  translationSpliceMapping,
+  type TranslationTimeMapping,
 } from '@/lib/video-timeline';
 import {
   DEFAULT_CAPTION_STYLE,
@@ -361,18 +363,44 @@ export function reorderVideoClip(project: CaptionProject, clipId: string, toInde
     };
   });
   const rebuilt = rebuildAfterLayoutEdit(project, clips, project.captions, { atMs: 0, removeMs: 0, insertMs: 0 });
-  const synchronizedCaptionTracks = synchronizeCaptionTracks(project, captions);
   const next = {
     ...rebuilt,
     captions,
     captionTracks: remapTranslationTrackTimings(
-      synchronizedCaptionTracks,
+      project.captionTracks,
       project.captions,
-      captions,
+      translationReorderMapping(project.clips, clips),
     ),
   };
   const entry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId);
   return { project: next, seekMs: entry?.startMs ?? 0 };
+}
+
+function translationReorderMapping(before: VideoClip[], after: VideoClip[]): TranslationTimeMapping {
+  const oldEntries = buildClipTimeline(before);
+  const nextById = new Map(buildClipTimeline(after).map((entry) => [entry.clip.id, entry]));
+  return {
+    operation: 'reorder',
+    durationMs: totalClipDuration(after),
+    mapRange: (range) => {
+      // A cue owns its own interval, including gaps, independently of its primary.
+      // The schema stores one interval: spanning pieces use their mapped envelope.
+      const pieces = oldEntries.flatMap((entry) => {
+        const startMs = Math.max(range.startMs, entry.gapStartMs);
+        const endMs = Math.min(range.endMs, entry.afterGapEndMs);
+        if (endMs <= startMs) return [];
+        const next = nextById.get(entry.clip.id);
+        if (!next) throw new Error('Translation reorder mapping lost a clip.');
+        const delta = next.gapStartMs - entry.gapStartMs;
+        return [{ startMs: startMs + delta, endMs: endMs + delta }];
+      });
+      if (pieces.length === 0) return { ...range, timelineVisible: false };
+      return {
+        startMs: Math.min(...pieces.map((piece) => piece.startMs)),
+        endMs: Math.max(...pieces.map((piece) => piece.endMs)),
+      };
+    },
+  };
 }
 
 export function deleteVideoClip(project: CaptionProject, clipId: string) {
@@ -462,7 +490,7 @@ export function trimVideoClip(project: CaptionProject, clipId: string, edge: 'st
         insertMs: 0,
       }
       : { atMs: entry.startMs, removeMs: 0, insertMs: 0 };
-  const next = rebuildAfterLayoutEdit(project, clips, project.captions, splice);
+  const next = rebuildAfterLayoutEdit(project, clips, project.captions, splice, project.layers, 'trim');
   const nextEntry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId)!;
   return {
     project: next,
@@ -589,6 +617,7 @@ function rebuildAfterLayoutEdit(
   sourceCaptions: CaptionProject['captions'],
   splice: { atMs: number; removeMs: number; insertMs: number },
   sourceLayers: CaptionProject['layers'] = project.layers,
+  translationOperation: 'trim' | 'splice' = 'splice',
 ) {
   clips = normalizeVideoTransitionBoundaries(clips);
   const sourceWords = Object.fromEntries(
@@ -617,7 +646,8 @@ function rebuildAfterLayoutEdit(
     clips,
     transcription: { ...project.transcription, words },
     captions,
-    captionTracks: remapTranslationTrackTimings(project.captionTracks, project.captions, captions),
+    captionTracks: remapTranslationTrackTimings(project.captionTracks, project.captions,
+      translationSpliceMapping(splice, totalClipDuration(clips), translationOperation)),
     layers,
     audioClips: applyTimelineSpliceToAudioClips(project.audioClips, splice),
   });
