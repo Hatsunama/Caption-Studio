@@ -584,7 +584,7 @@ export function remapTranslationTrackTimings(
           || range.startMs < 0 || range.endMs < range.startMs) {
           throw new Error(`Translation cue ${cue.id} has invalid timing.`);
         }
-        const mapped = mapping.mapRange(range);
+        const mapped = mapping.mapRange(range, before);
         if (!Number.isFinite(mapped.startMs) || !Number.isFinite(mapped.endMs)
           || mapped.endMs < mapped.startMs) {
           throw new Error(`Translation ${mapping.operation} mapping produced invalid timing.`);

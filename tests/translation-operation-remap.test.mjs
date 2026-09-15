@@ -130,8 +130,8 @@ test('reorder follows the translation interval even when it is outside its prima
   assert.deepEqual(bounds(reorderVideoClip(fixture(), 'b', 0).project), [7_300, 7_700]);
   assert.deepEqual(bounds(reorderVideoClip(fixture(4_500, 5_000), 'b', 0).project), [500, 1_000]);
   const spanning = reorderVideoClip(fixture(3_500, 4_500), 'b', 0).project;
-  assert.deepEqual(bounds(spanning), [0, 8_000]);
-  assert.deepEqual(bounds(reload(spanning)), [0, 8_000]);
+  assert.deepEqual(bounds(spanning), [7_500, 8_000]);
+  assert.deepEqual(bounds(reload(spanning)), [7_500, 8_000]);
 });
 
 test('split preserves timing and subsequent edits use the resulting clip intervals', () => {
@@ -139,7 +139,70 @@ test('split preserves timing and subsequent edits use the resulting clip interva
   const split = splitVideoClip(project, 'a', 2_000, 'left', 'right').project;
   assert.deepEqual(bounds(split), [1_500, 2_500]);
   assert.deepEqual(bounds(setClipPlaybackRate(reload(split), 'right', 2)), [1_500, 2_250]);
-  assert.deepEqual(bounds(reorderVideoClip(split, 'right', 0).project), [0, 4_000]);
+  assert.deepEqual(bounds(reorderVideoClip(split, 'right', 0).project), [0, 500]);
+});
+
+test('reorder chooses maximum overlap, with primary anchor then prior order breaking ties', () => {
+  for (const [start, end, anchor, expected] of [
+    [3_500, 4_500, 'a', [7_500, 8_000]],
+    [3_500, 4_500, 'b', [0, 500]],
+    [3_500, 4_500, undefined, [7_500, 8_000]],
+    [3_000, 4_500, 'b', [7_000, 8_000]],
+    [3_500, 5_000, 'a', [0, 1_000]],
+    [4_500, 5_000, 'a', [500, 1_000]],
+  ]) {
+    const original = fixture(start, end);
+    original.captions[0].sourceAnchor = anchor
+      ? { ...original.captions[0].sourceAnchor, clipId: anchor } : undefined;
+    const next = reorderVideoClip(original, 'b', 0).project;
+    assert.deepEqual(bounds(next), expected);
+    assert.ok(cue(next).endMs - cue(next).startMs <= end - start);
+    assert.equal(cue(next).timelineVisible, true);
+    assert.deepEqual(metadata(cue(next)), metadata(cue(original)));
+  }
+});
+
+test('gap-only and zero-overlap ranges keep absolute timing and hide only when empty', () => {
+  for (const [start, end, expected, visible] of [
+    [4_200, 4_800, [4_200, 4_800], true],
+    [4_000, 5_000, [4_000, 5_000], true],
+    [4_500, 4_500, [4_500, 4_500], false],
+    [9_500, 10_000, [9_000, 9_000], false],
+    [3_500, 4_900, [7_500, 8_900], true],
+    [4_100, 5_500, [0, 500], true],
+  ]) {
+    const project = fixture(start, end);
+    project.clips[0].gapAfterMs = 1_000;
+    project.captions[1].startMs += 1_000;
+    project.captions[1].endMs += 1_000;
+    const next = reorderVideoClip(project, 'b', 0).project;
+    assert.deepEqual(bounds(next), expected);
+    assert.equal(cue(next).timelineVisible, visible);
+    assert.deepEqual(bounds(reload(next)), expected);
+  }
+});
+
+test('spanning and split/reorder intervals never widen, including repeated reorders', () => {
+  for (const splitFirst of [false, true]) {
+    for (const [start, end] of [[0, 0], [0, 8_000], [1_500, 2_500], [3_500, 4_500], [2_500, 6_500]]) {
+      let project = fixture(start, end);
+      if (splitFirst) project = splitVideoClip(project, 'a', 2_000, 'left', 'right').project;
+      for (const [clipId, index] of splitFirst
+        ? [['right', 0], ['b', 0], ['left', 0], ['right', 1]]
+        : [['b', 0], ['a', 0], ['b', 0]]) {
+        const width = cue(project).endMs - cue(project).startMs;
+        project = reload(reorderVideoClip(project, clipId, index).project);
+        const item = cue(project);
+        assert.ok(item.endMs - item.startMs <= width);
+        assert.ok(item.startMs >= 0 && item.endMs <= 8_000);
+        assert.ok(item.endMs >= item.startMs);
+      }
+    }
+  }
+  // With room on both sides, the whole interval shifts without losing duration.
+  const original = fixture(3_500, 4_500);
+  original.clips.push({ ...original.clips[0], id: 'c' });
+  assert.deepEqual(bounds(reorderVideoClip(original, 'b', 0).project), [7_500, 8_500]);
 });
 
 test('gap insertion/removal uses independent interval edges with left boundary affinity', () => {
@@ -155,11 +218,15 @@ test('preview, export and SRT consume the same persisted independent interval', 
     trimVideoClip(fixture(), 'a', 'end', 2_000).project,
     setClipPlaybackRate(fixture(), 'a', 2),
     reorderVideoClip(fixture(), 'b', 0).project,
+    reorderVideoClip(fixture(3_500, 4_500), 'b', 0).project,
+    reorderVideoClip(fixture(4_500, 5_000), 'b', 0).project,
+    reorderVideoClip(splitVideoClip(fixture(1_500, 2_500), 'a', 2_000, 'left', 'right').project, 'right', 0).project,
   ]) {
     const saved = reload(project);
     const trackId = saved.captionTracks.translations[0].id;
     const preview = resolveCaptionPairs(saved, trackId).find((pair) => pair.source.id === 'c1');
     const exported = exportCaptionPairs(saved).find((pair) => pair.source.id === 'c1');
+    assert.deepEqual([preview.startMs, preview.endMs], bounds(saved));
     assert.deepEqual([exported.startMs, exported.endMs], [preview.startMs, preview.endMs]);
     const time = (ms) => `00:00:${String(Math.floor(ms / 1_000)).padStart(2, '0')},${String(ms % 1_000).padStart(3, '0')}`;
     assert.ok(serializeSrt(saved).includes(`${time(preview.startMs)} --> ${time(preview.endMs)}\nIndependent first`));

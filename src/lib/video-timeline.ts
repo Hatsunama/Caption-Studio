@@ -11,7 +11,7 @@ export const MINIMUM_CLIP_TIMELINE_MS = 120;
 export type TranslationTimeMapping = {
   operation: 'trim' | 'splice' | 'reorder' | 'speed';
   durationMs: number;
-  mapRange: (range: { startMs: number; endMs: number }) => {
+  mapRange: (range: { startMs: number; endMs: number }, beforeCaption: CaptionBlock) => {
     startMs: number;
     endMs: number;
     timelineVisible?: boolean;

@@ -382,27 +382,29 @@ function translationReorderMapping(before: VideoClip[], after: VideoClip[]): Tra
   return {
     operation: 'reorder',
     durationMs: totalClipDuration(after),
-    mapRange: (range) => {
-      // A cue owns its own interval, including gaps, independently of its primary.
-      // The schema stores one interval: spanning pieces use their mapped envelope.
-      const pieces = oldEntries.flatMap((entry) => {
-        const startMs = Math.max(range.startMs, entry.gapStartMs);
-        const endMs = Math.min(range.endMs, entry.afterGapEndMs);
-        if (endMs <= startMs) return [];
-        const next = nextById.get(entry.clip.id);
-        if (!next) throw new Error('Translation reorder mapping lost a clip.');
-        const delta = next.gapStartMs - entry.gapStartMs;
-        return [{ startMs: startMs + delta, endMs: endMs + delta }];
-      });
-      if (pieces.length === 0) return { ...range, timelineVisible: false };
-      return {
-        startMs: Math.min(...pieces.map((piece) => piece.startMs)),
-        endMs: Math.max(...pieces.map((piece) => piece.endMs)),
-      };
+    mapRange: (range, beforeCaption) => {
+      // One cue stores one interval. Choose its owner by media overlap, excluding
+      // gaps; the primary anchor breaks ties, then prior timeline order does.
+      let owner: (typeof oldEntries)[number] | undefined;
+      let maximumOverlap = 0;
+      for (const entry of oldEntries) {
+        const overlap = Math.min(range.endMs, entry.endMs) - Math.max(range.startMs, entry.startMs);
+        if (overlap > 0 && (overlap > maximumOverlap
+          || (overlap === maximumOverlap && entry.clip.id === beforeCaption.sourceAnchor?.clipId))) {
+          owner = entry;
+          maximumOverlap = overlap;
+        }
+      }
+      // Gap-only/out-of-media intervals have no owner: retain absolute timing.
+      // The track remapper clamps to timeline bounds and hides only empty ranges.
+      if (!owner) return range;
+      const next = nextById.get(owner.clip.id);
+      if (!next) throw new Error('Translation reorder mapping lost a clip.');
+      const delta = next.startMs - owner.startMs;
+      return { startMs: range.startMs + delta, endMs: range.endMs + delta };
     },
   };
 }
-
 export function deleteVideoClip(project: CaptionProject, clipId: string) {
   if (project.clips.length <= 1) return null;
   const entry = buildClipTimeline(project.clips).find((candidate) => candidate.clip.id === clipId);
