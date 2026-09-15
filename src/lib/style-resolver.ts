@@ -1,3 +1,4 @@
+import { captionTransform, hasCaptionTransform, withoutCaptionTransform } from '@/lib/caption-transform';
 import type {
   CaptionBlock,
   CaptionProject,
@@ -47,6 +48,25 @@ export function applyStylePatch(
 ): CaptionProject {
   const updatedAt = new Date().toISOString();
 
+  if (scope === 'caption' && !project.captions.some((caption) => caption.id === captionId)) return project;
+  if (hasCaptionTransform(patch)) {
+    const selected = project.captions.find((caption) => caption.id === captionId);
+    const geometry = captionTransform(mergeStyle(resolveCaptionStyle(project.projectStyle, selected), patch));
+    project = {
+      ...project,
+      updatedAt,
+      projectStyle: mergeStyle(project.projectStyle, geometry),
+      captions: project.captions.map((caption) => ({ ...caption, styleOverride: withoutCaptionTransform(caption.styleOverride) })),
+      transcription: { ...project.transcription, words: project.transcription.words.map((word) => ({
+        ...word, styleOverride: withoutCaptionTransform(word.styleOverride),
+      })) },
+      captionTracks: { ...project.captionTracks, translations: project.captionTracks.translations.map((track) =>
+        track.layoutAnchor ? track : { ...track, layoutAnchor: captionTransform(project.projectStyle) }) },
+    };
+    patch = withoutCaptionTransform(patch) ?? {};
+    if (!Object.keys(patch).length) return project;
+  }
+
   if (scope === 'all') {
     const captionFontsByWord = new Map<string, FontReference>();
     if (patch.font) {
@@ -91,7 +111,7 @@ export function applyStylePatch(
   };
 }
 
-function removePatchedKeys(
+export function removePatchedKeys(
   override: CaptionStylePatch | undefined,
   patch: CaptionStylePatch,
   inheritedFont: FontReference,

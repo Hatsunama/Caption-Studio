@@ -156,13 +156,8 @@ test('translation cues own independent persisted timing while retaining stable s
     projectStyle: { ...bilingual.projectStyle, position: { x: 0.32, y: 0.44 } },
   };
   const movedPair = resolveCaptionPairs(moved, track.id)[0];
-  assert.equal(movedPair.style.position.x, 0.45);
-  near(movedPair.style.position.x - movedPair.style.box.width / 2, 0);
-  assert.ok(movedPair.style.position.y > 0.44);
-  assert.ok(
-    movedPair.style.position.y - movedPair.style.box.height / 2
-    >= 0.44 + moved.projectStyle.box.height / 2 - 0.001,
-  );
+  assert.deepEqual(movedPair.style.position, pair.style.position);
+  assert.deepEqual(movedPair.style.box, pair.style.box);
 });
 
 test('moving one translated cue changes neither its neighbor nor the primary language', () => {

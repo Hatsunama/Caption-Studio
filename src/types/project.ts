@@ -183,6 +183,8 @@ export type TranslationCaptionCue = {
 };
 
 export type TranslationCaptionTrack = {
+  /** Primary geometry captured for this track's automatic stacking layout. */
+  layoutAnchor?: NormalizedTransform;
   id: Identifier;
   kind: 'translation';
   sourceTrackId: 'captions';

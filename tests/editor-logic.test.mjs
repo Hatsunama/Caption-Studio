@@ -209,8 +209,9 @@ test('selected caption trim grips stay distinct even on tiny blocks', () => {
   assert.match(timeline, /<TimingGrip side="start" \{\.\.\.props\} \/>/);
   assert.match(timeline, /<TimingGrip side="end" \{\.\.\.props\} \/>/);
   const grip = timeline.slice(timeline.indexOf('function TimingGrip'));
-  assert.match(grip, /\[props\.side === 'start' \? 'left' : 'right'\]: -10/);
-  assert.match(grip, /width: 20/);
+  assert.match(grip, /\[props\.side === 'start' \? 'left' : 'right'\]: 0/);
+  assert.match(grip, /width: TIMELINE_GRIP_WIDTH/);
+  assert.match(timeline, /timelineBlockControls\(width, props\.selected\)/);
   assert.doesNotMatch(grip, /left: 4, right: 4/);
 });
 
@@ -1404,12 +1405,13 @@ test('every timed content body captures movement while only the selected item ex
   assert.match(block, /<TimingGrip side="start"/);
   assert.match(block, /<TimingGrip side="end"/);
   assert.match(block, /zIndex: props\.selected \? 6 : 1/);
-  const moveGrip = timeline.slice(timeline.indexOf('function TimelineMoveGrip'), timeline.indexOf('function TimingGrip'));
+  const moveGrip = timeline.slice(timeline.indexOf('function useTimelineTimingResponder'), timeline.indexOf('function TimingGrip'));
   assert.match(moveGrip, /onPanResponderTerminationRequest: \(\) => false/);
   assert.match(moveGrip, /onShouldBlockNativeResponder: \(\) => true/);
   const timingGrip = timeline.slice(timeline.indexOf('function TimingGrip'), timeline.indexOf('function TinyButton'));
   assert.doesNotMatch(timingGrip, /clamp\(/);
-  assert.match(timingGrip, /left: 8, right: 8/);
+  assert.match(timingGrip, /useTimelineTimingResponder\(props, props\.side\)/);
+  assert.doesNotMatch(timingGrip, /hitSlop/);
 });
 
 test('the add-video button stays in the timeline header instead of covering clip gestures', () => {

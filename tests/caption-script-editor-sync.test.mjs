@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as scriptMutations from '../src/lib/caption-script.ts';
 import { resolveCaptionStyle } from '../src/lib/style-resolver.ts';
+import { captionPreviewState } from '../src/lib/caption-preview.ts';
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 
 // Execute the complete component with deterministic hooks, native layout events,
@@ -45,8 +46,14 @@ function evaluate(expression, context = {}) {
 }
 function workspaceValue(name, context) {
   const declaration = workspace.body.statements.filter(ts.isVariableStatement)
-    .flatMap((node) => [...node.declarationList.declarations]).find((node) => node.name.getText(editorAst) === name);
-  return evaluate(declaration.initializer.getText(editorAst), { scriptEditorOpen: true, scriptKeyboardOpen: false, scriptEditingCaption: undefined, scriptCropActive: false, ...context });
+    .flatMap((node) => [...node.declarationList.declarations]).find((node) => node.name.getText(editorAst) === name
+      || (ts.isObjectBindingPattern(node.name) && node.name.elements.some((element) => element.name.getText(editorAst) === name)));
+  const value = evaluate(declaration.initializer.getText(editorAst), { scriptEditorOpen: true, scriptKeyboardOpen: false,
+    scriptEditingCaption: undefined, scriptCropActive: false, currentMs: 0, selectedCaptionId: undefined,
+    useMemo: (fn) => fn(), captionPreviewState, ...context });
+  if (!ts.isObjectBindingPattern(declaration.name)) return value;
+  const element = declaration.name.elements.find((entry) => entry.name.getText(editorAst) === name);
+  return value[(element.propertyName ?? element.name).getText(editorAst)];
 }
 function jsxProp(node, name, context) {
   const attribute = node.openingElement.attributes.properties.find((prop) => prop.name?.text === name);

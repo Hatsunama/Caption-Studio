@@ -1,5 +1,6 @@
 import { ANIMATION_PRESETS } from '@/lib/animation-presets';
 import { positiveLayerScale } from '@/lib/layer-geometry';
+import { captionTransform } from '@/lib/caption-transform';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
 import { emptyCaptionTrackCollection, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { sameCaptionLanguageFamily } from '@/lib/caption-languages';
@@ -87,7 +88,7 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
   const transcription = decodeTranscription(candidate.transcription, updatedAt);
   const captions = decodeArray(candidate.captions, 'project captions', 100_000, decodeCaption);
   uniqueIds(captions, 'project captions');
-  const captionTracks = decodeCaptionTracks(candidate.captionTracks, captions, transcription.language);
+  const captionTracks = decodeCaptionTracks(candidate.captionTracks, captions, transcription.language, projectStyle);
   const clipIds = new Set(clips.map((clip) => clip.id));
   captions.forEach((caption) => {
     if (caption.timingMode === 'timeline' && caption.sourceAnchor) {
@@ -335,7 +336,7 @@ function decodeCaptionSourceAnchor(value: unknown, index: number) {
   };
 }
 
-function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLanguage: string): CaptionTrackCollection {
+function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLanguage: string, projectStyle: CaptionStyle): CaptionTrackCollection {
   if (value === undefined) return emptyCaptionTrackCollection();
   const collection = record(value, 'caption track collection');
   if (collection.schemaVersion !== 1) throw new Error('Caption tracks use an unsupported version');
@@ -457,6 +458,8 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
           promptVersion,
         },
         stackGap: optionalFiniteNumber(track.stackGap, `translation track ${trackIndex + 1} stack gap`, 0.008, 0.18) ?? 0.028,
+        layoutAnchor: captionTransform(track.layoutAnchor === undefined ? projectStyle
+          : decodeCaptionStyle(track.layoutAnchor, projectStyle, `translation track ${trackIndex + 1} layout anchor`)),
         styleOverride: decodeCaptionStylePatch(track.styleOverride, `translation track ${trackIndex + 1} style override`),
         cues,
       };

@@ -1,4 +1,5 @@
-import { mergePatch, mergeStyle } from '@/lib/style-resolver';
+import { mergePatch, mergeStyle, removePatchedKeys } from '@/lib/style-resolver';
+import { captionTransform, hasCaptionTransform, withoutCaptionTransform } from '@/lib/caption-transform';
 import { layerExtent } from '@/lib/layer-geometry';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
 import { totalClipDuration } from '@/lib/video-timeline';
@@ -142,6 +143,7 @@ export function createTranslationCaptionTrack(project: CaptionProject, options: 
     throw new Error('Caption translation origin and provider are inconsistent.');
   }
   const track: TranslationCaptionTrack = {
+    layoutAnchor: captionTransform(project.projectStyle),
     id: options.id,
     kind: 'translation',
     sourceTrackId: 'captions',
@@ -252,9 +254,19 @@ export function setTranslationTrackStyle(
   patch: CaptionStylePatch,
   updatedAt = project.updatedAt,
 ) {
+  if (hasCaptionTransform(patch)) {
+    const track = translationTrack(project, trackId);
+    const base = resolveCaptionPairs(project, trackId)[0]?.style
+      ?? mergeStyle(mergeStyle(project.projectStyle, DEFAULT_TRANSLATION_TRACK_STYLE), track.styleOverride);
+    patch = { ...patch, ...captionTransform(mergeStyle(base, patch)) };
+  }
   return mapTranslationTrack(project, trackId, (track) => ({
     ...track,
     styleOverride: mergePatch(track.styleOverride, patch),
+    cues: track.cues.map((cue) => ({ ...cue,
+      styleOverride: removePatchedKeys(cue.styleOverride, patch,
+        mergeStyle(mergeStyle(project.projectStyle, DEFAULT_TRANSLATION_TRACK_STYLE), track.styleOverride).font),
+    })),
   }), updatedAt);
 }
 
@@ -265,6 +277,13 @@ export function setTranslationCueStyle(
   patch: CaptionStylePatch,
   updatedAt = project.updatedAt,
 ) {
+  const pair = resolveCaptionPairs(project, trackId).find((candidate) => candidate.source.id === sourceCaptionId);
+  if (!pair) throw new Error(`Translation for caption ${sourceCaptionId} does not exist.`);
+  if (hasCaptionTransform(patch)) {
+    project = setTranslationTrackStyle(project, trackId, captionTransform(mergeStyle(pair.style, patch)), updatedAt);
+    patch = withoutCaptionTransform(patch) ?? {};
+    if (!Object.keys(patch).length) return project;
+  }
   return mapTranslationTrack(project, trackId, (track) => {
     if (!track.cues.some((cue) => cue.sourceCaptionId === sourceCaptionId)) {
       throw new Error(`Translation for caption ${sourceCaptionId} does not exist.`);
@@ -461,7 +480,8 @@ export function resolveCaptionPairs(project: CaptionProject, trackId: string): C
   const cues = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue]));
   return project.captions.map((source) => {
     const translation = cues.get(source.id) ?? createCue(track.id, source, '');
-    const primaryStyle = mergeStyle(project.projectStyle, source.styleOverride);
+    const primaryStyle = mergeStyle(mergeStyle(project.projectStyle, source.styleOverride),
+      track.layoutAnchor ?? captionTransform(project.projectStyle));
     const translationStyle = mergeStyle(
       mergeStyle(mergeStyle(primaryStyle, DEFAULT_TRANSLATION_TRACK_STYLE), track.styleOverride),
       translation.styleOverride,

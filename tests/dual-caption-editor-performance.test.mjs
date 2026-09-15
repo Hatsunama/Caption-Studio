@@ -396,7 +396,7 @@ test('dual editor save preserves stacked preview overlays with independent timin
   visit(ast);
   const attribute = (node, name) => node.attributes.properties.find((prop) => prop.name?.getText(ast) === name)?.initializer?.expression;
   const primary = overlays.find((node) => attribute(node, 'caption')?.getText(ast) === 'displayCaption');
-  const secondary = overlays.find((node) => attribute(node, 'projectStyle')?.getText(ast) === 'pair.style');
+  const secondary = overlays.find((node) => attribute(node, 'interactionId')?.getText(ast) === 'track.id');
   assert.ok(primary); assert.ok(secondary);
   function evaluate(expression, context) {
     const sandbox = { ...context, result: undefined };
@@ -415,8 +415,9 @@ test('dual editor save preserves stacked preview overlays with independent timin
     return [
       { caption: evaluate(attribute(primary, 'caption'), { displayCaption }),
         style: resolveCaptionStyle(evaluate(attribute(primary, 'projectStyle'), { project }), displayCaption) },
-      ...translations.map((pair) => ({ caption: evaluate(attribute(secondary, 'caption'), { pair }),
-        style: evaluate(attribute(secondary, 'projectStyle'), { pair }) })),
+      ...translations.map((pair) => ({ caption: evaluate(attribute(secondary, 'caption'), {
+        captions: evaluate(declarations.get('captions'), { active: [pair] }),
+      }), style: evaluate(attribute(secondary, 'projectStyle'), { active: [pair], selected: undefined }) })),
     ];
   }
   const before = preview(); assert.equal(before.length, 2);
