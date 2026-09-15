@@ -24,6 +24,7 @@ import {
   clearEditorDraftJournal,
   readEditorDraftJournal,
   writeEditorDraftJournal,
+  type EditorDraftJournalRecovery,
 } from '@/services/editor-draft-journal';
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionBlock, WordToken } from '@/types/project';
@@ -91,6 +92,8 @@ export function ScriptEditor(props: {
   const [closing, setClosing] = useState(false);
   const [journalReady, setJournalReady] = useState(false);
   const [journalError, setJournalError] = useState<string>();
+  const [journalRecovery, setJournalRecovery] = useState<EditorDraftJournalRecovery>();
+  const journalProtected = !!journalRecovery?.failures.length;
   const wasVisibleRef = useRef(false);
   const draftVersionRef = useRef(0);
   const captionLayoutsRef = useRef<Record<string, { y: number; height: number; index: number }>>({});
@@ -228,11 +231,14 @@ export function ScriptEditor(props: {
     setKeyboardOpen(Keyboard.isVisible());
     setJournalReady(false);
     setJournalError(undefined);
+    setJournalRecovery(undefined);
     selectionRef.current = {};
     splitCounterRef.current = 0;
     let active = true;
     void readEditorDraftJournal(projectId, 'caption-script').then((journal) => {
       if (!active) return;
+      setJournalRecovery(journal?.recovery);
+      const preserveRecovery = !!journal?.recovery?.failures.length;
       const recovered = decodeCaptionDraft(journal?.payload);
       if (!recovered) {
         if (journal) {
@@ -245,15 +251,16 @@ export function ScriptEditor(props: {
       const conflict = journal?.baseRevision !== openingStateRef.current.baseRevision;
       Alert.alert(
         conflict ? 'Recovery draft needs review' : 'Restore unsaved caption edits?',
-        conflict
+        [journal?.recovery?.warning, conflict
           ? 'The project changed after this recovery draft was created. Review it carefully before saving.'
-          : 'Caption Studio recovered edits that were not saved before the app closed.',
+          : 'Caption Studio recovered edits that were not saved before the app closed.'].filter(Boolean).join('\n\n'),
         [
           {
-            text: 'Discard recovery',
-            style: 'destructive',
+            text: preserveRecovery ? 'Keep current captions' : 'Discard recovery',
+            style: preserveRecovery ? 'cancel' : 'destructive',
             onPress: () => {
               if (!active) return;
+              if (preserveRecovery) { setJournalReady(true); return; }
               void clearEditorDraftJournal(projectId, 'caption-script')
                 .then(() => { if (active) setJournalReady(true); })
                 .catch(() => { if (active) setJournalError('Recovery data could not be cleared. It is preserved; try opening the editor again.'); });
@@ -281,6 +288,7 @@ export function ScriptEditor(props: {
 
   useEffect(() => {
     if (!props.visible || closing || !journalReady || sameCaptionDraft(draftCaptions, sourceCaptions)) return;
+    if (journalProtected) return;
     let active = true;
     const timer = setTimeout(() => {
       void writeEditorDraftJournal(props.projectId, 'caption-script', props.baseRevision, draftCaptions)
@@ -291,7 +299,7 @@ export function ScriptEditor(props: {
       active = false;
       clearTimeout(timer);
     };
-  }, [closing, draftCaptions, journalReady, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
+  }, [closing, draftCaptions, journalProtected, journalReady, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
 
   useEffect(() => {
     if (!props.visible) return;
@@ -455,7 +463,7 @@ export function ScriptEditor(props: {
         return;
       }
       // Saving current edits does not authorize deleting an unread older draft.
-      if (journalReady) await clearEditorDraftJournal(props.projectId, 'caption-script');
+      if (journalReady && !journalProtected) await clearEditorDraftJournal(props.projectId, 'caption-script');
       props.onCancel();
     } catch (caught) {
       setSaveError(caught instanceof Error ? caught.message : 'Caption changes were not saved. Try again.');
@@ -470,7 +478,7 @@ export function ScriptEditor(props: {
       setClosing(true);
       setSaveError(undefined);
       try {
-        if (journalReady) await clearEditorDraftJournal(projectId, 'caption-script');
+        if (journalReady && !journalProtected) await clearEditorDraftJournal(projectId, 'caption-script');
         onCancel();
       } catch (caught) {
         setJournalError(caught instanceof Error ? caught.message : 'Caption recovery could not be cleared. Your edits are still open.');
@@ -482,13 +490,13 @@ export function ScriptEditor(props: {
       void close();
       return;
     }
-    Alert.alert('Discard unsaved caption edits?', journalReady
+    Alert.alert('Discard unsaved caption edits?', journalReady && !journalProtected
       ? 'The recovery copy is also removed when you discard.'
       : 'Current edits will be discarded. The unread recovery copy will be preserved.', [
       { text: 'Keep editing', style: 'cancel' },
       { text: 'Discard', style: 'destructive', onPress: () => { void close(); } },
     ]);
-  }, [closing, draftCaptions, journalReady, onCancel, projectId, saving, sourceCaptions]);
+  }, [closing, draftCaptions, journalProtected, journalReady, onCancel, projectId, saving, sourceCaptions]);
 
   useEffect(() => {
     if (!props.visible) {
@@ -601,6 +609,7 @@ export function ScriptEditor(props: {
               </Text> : null}
               {boundaryMessage ? <Text style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{boundaryMessage}</Text> : null}
               {journalError ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{journalError}</Text> : null}
+              {journalRecovery?.warning ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{journalRecovery.warning}</Text> : null}
               {saveError ? <Text accessibilityRole="alert" selectable style={{ color: '#FF8FA2', fontSize: 12, fontWeight: '700' }}>{saveError}</Text> : null}
             </View>
           )}

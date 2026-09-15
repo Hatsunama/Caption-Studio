@@ -16,7 +16,7 @@ const editorSources = {
   dual: compile('../src/components/editor/dual-caption-editor.tsx') + '\nexports.Session = DualCaptionEditorSession;',
 };
 const uri = 'file:///test-documents/editor-drafts/project-caption-script.json';
-const envelope = (payload) => JSON.stringify({ schemaVersion: 1, projectId: 'project', kind: 'caption-script',
+const envelope = (payload, kind = 'caption-script') => JSON.stringify({ schemaVersion: 1, projectId: 'project', kind,
   baseRevision: 'base', savedAt: '2026-09-15T00:00:00.000Z', payload });
 
 // Only synthetic in-memory files: never access private device recovery data.
@@ -31,6 +31,7 @@ function harness(options = {}) {
     },
     async readAsStringAsync(path) {
       events.push(['read', path]);
+      if (options.failRead === path) throw new Error('storage read failed');
       if (!files.has(path)) throw new Error('missing file');
       return files.get(path);
     },
@@ -119,6 +120,67 @@ test('only missing is null; corrupt, incompatible and unavailable are errors', a
   await assert.rejects(harness({ unavailable: true }).read(), { code: 'unavailable' });
 });
 
+for (const problem of ['corrupt', 'oversized', 'unavailable']) {
+  test(`${problem} primary recovers previous with provenance and cannot replace either file`, async () => {
+    const h = harness(problem === 'unavailable' ? { failRead: uri } : {});
+    const raw = problem === 'oversized' ? envelope('\u4e2d'.repeat(1_500_000)) : '{broken';
+    h.files.set(uri, raw);
+    h.files.set(`${uri}.previous`, envelope('backup typing'));
+    const before = [...h.files];
+    const recovered = await h.read();
+    assert.equal(recovered.payload, 'backup typing');
+    assert.equal(recovered.recovery.source, 'previous');
+    assert.equal(recovered.recovery.failures[0].source, 'primary');
+    assert.equal(recovered.recovery.failures[0].code, problem);
+    assert.match(recovered.recovery.warning, /\.previous backup/);
+    assert.match(recovered.recovery.warning, /preserved/);
+    await assert.rejects(h.write('new typing'), { code: problem });
+    assert.deepEqual([...h.files], before);
+    assert.equal(h.events.some(([event]) => ['write', 'move', 'delete'].includes(event)), false);
+    if (problem === 'oversized') assert.equal(h.events.some(([event, path]) => event === 'read' && path === uri), false);
+  });
+}
+
+test('malformed copies report both structured reasons and preserve both files', async () => {
+  const h = harness();
+  h.files.set(uri, '{broken primary');
+  h.files.set(`${uri}.previous`, '{broken previous');
+  const before = [...h.files];
+  for (const operation of [h.read, () => h.write('new')]) {
+    await assert.rejects(operation(), (error) => {
+      assert.equal(error.code, 'corrupt');
+      assert.deepEqual(Array.from(error.reasons, ({ source, code }) => [source, code]), [['primary', 'corrupt'], ['previous', 'corrupt']]);
+      assert.match(error.message, /Neither recovery copy/);
+      return true;
+    });
+  }
+  assert.deepEqual([...h.files], before);
+});
+
+test('a valid primary does not authorize deleting an unreadable previous copy', async () => {
+  const h = harness();
+  h.files.set(uri, envelope('primary typing'));
+  h.files.set(`${uri}.previous`, '{broken');
+  const before = [...h.files];
+  const recovered = await h.read();
+  assert.equal(recovered.payload, 'primary typing');
+  assert.equal(recovered.recovery.source, 'primary');
+  assert.equal(recovered.recovery.failures[0].source, 'previous');
+  await assert.rejects(h.write('new'), { code: 'corrupt' });
+  assert.deepEqual([...h.files], before);
+});
+
+test('missing primary uses previous with an explicit interruption warning and permits safe retry', async () => {
+  const h = harness();
+  h.files.set(`${uri}.previous`, envelope('backup typing'));
+  const recovered = await h.read();
+  assert.equal(recovered.recovery.source, 'previous');
+  assert.equal(recovered.recovery.failures.length, 0);
+  assert.match(recovered.recovery.warning, /\.previous backup/);
+  await h.write('retry');
+  assert.equal((await h.read()).payload, 'retry');
+});
+
 test('replacement is old-or-new at each move boundary, including a fresh service', async () => {
   const options = {};
   const h = harness(options);
@@ -160,10 +222,11 @@ test('explicit clear removes fallback before primary so it cannot resurrect on r
 
 // Minimal deterministic hooks execute the real recovery effects and close paths.
 // Rendering remains synthetic; no native runtime or device is needed.
-async function mountRejectedEditor(kind, error) {
-  const slots = [], effects = [], timers = [];
+async function mountEditor(kind, options = {}) {
+  const slots = [], effects = [], alerts = [], timers = new Map();
+  let nextTimer = 0;
   let cursor = 0, changed = true, closeRequest;
-  const calls = { writes: 0, clears: 0, closes: 0 };
+  const calls = { writes: 0, clears: 0, closes: 0, saves: 0 };
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
   const memo = (fn, deps) => {
     const index = cursor++;
@@ -173,8 +236,10 @@ async function mountRejectedEditor(kind, error) {
   const effect = (fn, deps) => {
     const index = cursor++;
     if (!slots[index] || !same(slots[index].deps, deps)) {
-      slots[index] = { deps };
-      effects.push(fn);
+      effects.push(() => {
+        slots[index]?.cleanup?.();
+        slots[index] = { deps, cleanup: fn() };
+      });
     }
   };
   const react = {
@@ -195,41 +260,76 @@ async function mountRejectedEditor(kind, error) {
   const jsx = (type, props) => ({ type, props });
   const exports = {};
   runInNewContext(editorSources[kind], { exports, Error,
-    setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout: () => {},
+    setTimeout: (fn) => { timers.set(++nextTimer, fn); return nextTimer; }, clearTimeout: (id) => timers.delete(id),
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return {
         ...Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'Modal', 'FlatList', 'KeyboardAvoidingView'].map((v) => [v, v])),
         Keyboard: { isVisible: () => false, addListener: () => ({ remove() {} }) },
-        Platform: { OS: 'android' }, Alert: { alert() {} },
+        Platform: { OS: 'android' }, Alert: { alert: (...args) => alerts.push(args) },
       };
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) };
       if (name === '@/lib/ui-theme') return { chrome: { radius: {} } };
       if (name === '@/lib/caption-script') return scriptHelpers;
       if (name === '@/lib/dual-caption-drafts') return dualHelpers;
       if (name === '@/services/editor-draft-journal') return {
-        readEditorDraftJournal: async () => { throw error; },
-        writeEditorDraftJournal: async () => { calls.writes++; },
-        clearEditorDraftJournal: async () => { calls.clears++; },
+        readEditorDraftJournal: async (...args) => {
+          if (options.error) throw options.error;
+          return options.service ? options.service.readEditorDraftJournal(...args) : options.journal;
+        },
+        writeEditorDraftJournal: async (...args) => { calls.writes++; await options.service?.writeEditorDraftJournal(...args); },
+        clearEditorDraftJournal: async (...args) => { calls.clears++; await options.service?.clearEditorDraftJournal(...args); },
       };
       throw new Error(`Unexpected dependency: ${name}`);
     },
   });
-  const props = { visible: true, projectId: 'project', baseRevision: 'base', captions: [], words: [], pairs: [],
+  const props = { visible: true, projectId: 'project', baseRevision: 'base', captions: options.captions ?? [], words: [], pairs: options.pairs ?? [],
     trackId: 'zh', currentMs: 0, onDraftChange() {}, onKeyboardChange() {}, onEditingCaptionChange() {},
     onSelectCaption() {}, onSeekTimeline() {}, onBackRequestChange: (fn) => { closeRequest = fn; },
-    onCancel: () => { calls.closes++; }, onClose: () => { calls.closes++; } };
+    onCancel: () => { calls.closes++; }, onClose: () => { calls.closes++; },
+    onSave: async () => { calls.saves++; return true; } };
   let tree;
-  for (let pass = 0; pass < 8; pass++) {
-    if (changed) {
-      changed = false; cursor = 0;
-      tree = (kind === 'script' ? exports.ScriptEditor : exports.Session)(props);
-      while (effects.length) effects.shift()();
+  async function settle() {
+    for (let pass = 0; pass < 8; pass++) {
+      if (changed) {
+        changed = false; cursor = 0;
+        tree = (kind === 'script' ? exports.ScriptEditor : exports.Session)(props);
+        while (effects.length) effects.shift()();
+      }
+      await new Promise(setImmediate);
     }
-    await new Promise(setImmediate);
   }
-  return { calls, tree, timers, close: async () => { closeRequest(); await new Promise(setImmediate); } };
+  function find(predicate, node = tree) {
+    if (!node || typeof node !== 'object') return undefined;
+    if (Array.isArray(node)) return node.map((child) => find(predicate, child ?? null)).find(Boolean);
+    return predicate(node) ? node : find(predicate, node.props?.children ?? null);
+  }
+  const list = () => find((node) => node.type === 'FlatList').props;
+  const row = () => list().renderItem({ item: list().data[0], index: 0 });
+  await settle();
+  return { calls, alerts, timers, get tree() { return tree; },
+    draft: () => kind === 'script' ? list().data : row().props.store.snapshot(),
+    async edit(value) {
+      if (kind === 'script') find((node) => node.type === 'TextInput', row()).props.onChangeText(value);
+      else row().props.store.setDraft('cue', 'primaryText', value);
+      changed = true; await settle();
+    },
+    async choose(label) {
+      const choice = alerts.at(-1)?.[2].find((entry) => entry.text === label);
+      assert.ok(choice, `missing alert choice: ${label}`);
+      choice.onPress?.(); await settle();
+    },
+    async save() {
+      const button = find((node) => node.props?.accessibilityLabel === (kind === 'script' ? 'Save all caption edits' : 'Save dual subtitle edits'));
+      assert.equal(!!button.props.disabled, false);
+      button.props.onPress(); await settle();
+    },
+    async drainTimers() {
+      for (const [id, fn] of [...timers]) { timers.delete(id); fn(); }
+      await settle();
+    },
+    close: async () => { closeRequest(); await settle(); } };
 }
 
 for (const kind of ['script', 'dual']) {
@@ -237,11 +337,77 @@ for (const kind of ['script', 'dual']) {
     test(`${kind} UI exposes ${code}, pauses autosave and closes without deleting recovery`, async () => {
       const h = harness();
       const error = new h.journal.EditorDraftJournalError(code, `Recovery reason: ${code}`);
-      const editor = await mountRejectedEditor(kind, error);
+      const editor = await mountEditor(kind, { error });
       assert.ok(JSON.stringify(editor.tree).includes(error.message));
-      assert.equal(editor.timers.length, 0);
+      assert.equal(editor.timers.size, 0);
       await editor.close();
-      assert.deepEqual(editor.calls, { writes: 0, clears: 0, closes: 1 });
+      assert.deepEqual(editor.calls, { writes: 0, clears: 0, closes: 1, saves: 0 });
+    });
+  }
+}
+
+const cue = { id: 'cue', text: 'Source', startMs: 0, endMs: 1000, wordIds: [] };
+const pair = { source: cue, translation: { text: 'Translation', status: 'translated' } };
+for (const kind of ['script', 'dual']) {
+  const draftKind = kind === 'script' ? 'caption-script' : 'dual-captions-zh';
+  const path = uri.replace('caption-script', draftKind);
+  const recoveredPayload = kind === 'script' ? [{ ...cue, text: 'Recovered typing' }]
+    : { cue: { primaryText: 'Recovered typing', translatedText: 'Translation' } };
+  for (const action of ['save', 'discard', 'keep current', 'unchanged']) {
+    test(`${kind} fallback ${action} surfaces provenance and retains unread files`, async () => {
+      const h = harness();
+      h.files.set(path, '{broken primary');
+      const payload = action === 'unchanged' ? (kind === 'script' ? [cue] : { cue: { primaryText: 'Source', translatedText: 'Translation' } }) : recoveredPayload;
+      h.files.set(`${path}.previous`, envelope(payload, draftKind));
+      const before = [...h.files];
+      const editor = await mountEditor(kind, { service: h.journal, captions: [cue], pairs: [pair] });
+      assert.ok(JSON.stringify(editor.tree).includes('.previous backup'));
+      if (editor.alerts.length) {
+        assert.match(editor.alerts[0][1], /\.previous backup/);
+        await editor.choose(action === 'keep current' ? (kind === 'script' ? 'Keep current captions' : 'Keep current translation')
+          : kind === 'script' ? 'Restore' : 'Restore unsaved typing');
+      }
+      if (action === 'save' || action === 'discard') {
+        assert.ok(JSON.stringify(editor.draft()).includes('Recovered typing'));
+        await editor.edit('Current typing');
+      }
+      await editor.drainTimers();
+      assert.equal(editor.calls.writes, 0);
+      if (action === 'save') { await editor.save(); assert.equal(editor.calls.saves, 1); }
+      else {
+        await editor.close();
+        if (action === 'discard') {
+          assert.equal(editor.calls.closes, 0);
+          await editor.choose('Keep editing');
+          assert.ok(JSON.stringify(editor.draft()).includes('Current typing'));
+          await editor.close(); await editor.choose('Discard');
+        }
+        assert.equal(editor.calls.closes, 1);
+      }
+      assert.equal(editor.calls.clears, 0);
+      assert.deepEqual([...h.files], before);
+    });
+  }
+  for (const typed of ['Current typing', '   ', '']) {
+    test(`${kind} malformed recovery close requires a decision for ${JSON.stringify(typed)}`, async () => {
+      const h = harness();
+      h.files.set(path, '{bad primary');
+      h.files.set(`${path}.previous`, '{bad previous');
+      const before = [...h.files];
+      const editor = await mountEditor(kind, { service: h.journal, captions: [cue], pairs: [pair] });
+      assert.ok(JSON.stringify(editor.tree).includes('Neither recovery copy'));
+      await editor.edit(typed);
+      const draft = JSON.stringify(editor.draft());
+      await editor.close();
+      assert.equal(editor.calls.closes, 0);
+      assert.match(editor.alerts.at(-1)[1], /preserved/);
+      await editor.choose('Keep editing');
+      assert.equal(editor.calls.closes, 0);
+      assert.equal(JSON.stringify(editor.draft()), draft);
+      await editor.drainTimers();
+      await editor.close(); await editor.choose('Discard');
+      assert.deepEqual(editor.calls, { writes: 0, clears: 0, closes: 1, saves: 0 });
+      assert.deepEqual([...h.files], before);
     });
   }
 }

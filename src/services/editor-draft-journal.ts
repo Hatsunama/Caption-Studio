@@ -15,8 +15,19 @@ export type EditorDraftJournal = {
 export const MAX_JOURNAL_BYTES = 4 * 1024 * 1024;
 const journalOperations = createKeyedOperationQueue();
 
+type JournalSource = 'primary' | 'previous';
+type JournalErrorCode = 'oversized' | 'corrupt' | 'unavailable';
+type JournalReadFailure = { source: JournalSource; code: JournalErrorCode; message: string };
+type JournalReadReason = JournalReadFailure | { source: JournalSource; code: 'missing'; message: string };
+export type EditorDraftJournalRecovery = {
+  source: JournalSource;
+  failures: JournalReadFailure[];
+  warning?: string;
+};
+type EditorDraftJournalRead = EditorDraftJournal & { recovery: EditorDraftJournalRecovery };
+
 export class EditorDraftJournalError extends Error {
-  constructor(public readonly code: 'oversized' | 'corrupt' | 'unavailable', message: string) {
+  constructor(public readonly code: JournalErrorCode, message: string, public readonly reasons: JournalReadReason[] = []) {
     super(message);
     this.name = 'EditorDraftJournalError';
   }
@@ -66,11 +77,36 @@ async function readJournalFile(uri: string, projectId: string, kind: EditorDraft
   return record as EditorDraftJournal;
 }
 
-async function readEditorDraftJournalUnqueued(projectId: string, kind: EditorDraftKind): Promise<EditorDraftJournal | null> {
+async function readJournalCandidate(uri: string, projectId: string, kind: EditorDraftKind, source: JournalSource) {
+  try {
+    const journal = await readJournalFile(uri, projectId, kind);
+    return journal ? { journal } : { reason: { source, code: 'missing', message: 'No recovery file exists.' } satisfies JournalReadReason };
+  } catch (caught) {
+    return { reason: { source, code: caught instanceof EditorDraftJournalError ? caught.code : 'unavailable',
+      message: caught instanceof Error ? caught.message : 'Recovery file could not be read.' } satisfies JournalReadReason };
+  }
+}
+
+async function readEditorDraftJournalUnqueued(projectId: string, kind: EditorDraftKind): Promise<EditorDraftJournalRead | null> {
   const uri = journalUri(projectId, kind);
   if (!uri) throw new EditorDraftJournalError('unavailable', 'Recovery draft storage is unavailable. Keep the editor open and retry saving.');
-  return await readJournalFile(uri, projectId, kind)
-    ?? await readJournalFile(`${uri}.previous`, projectId, kind);
+  const primary = await readJournalCandidate(uri, projectId, kind, 'primary');
+  const previous = await readJournalCandidate(`${uri}.previous`, projectId, kind, 'previous');
+  const reasons = [primary.reason, previous.reason].filter((reason): reason is JournalReadReason => !!reason);
+  const failures = reasons.filter((reason): reason is JournalReadFailure => reason.code !== 'missing');
+  const journal = primary.journal ?? previous.journal;
+  const detail = failures.map((reason) => `${reason.source} (${reason.code}): ${reason.message}`).join(' ');
+  if (!journal) {
+    const failure = failures[0];
+    if (failure) throw new EditorDraftJournalError(failure.code,
+      `Neither recovery copy could be recovered. ${detail} Existing recovery files are preserved; automatic recovery saving is paused.`, reasons);
+    return null;
+  }
+  const source = primary.journal ? 'primary' : 'previous';
+  const provenance = source === 'previous' ? 'Recovered the .previous backup because the primary recovery file is missing or unreadable.' : '';
+  const warning = [provenance, failures.length
+    ? `${detail} Both recovery files are preserved; automatic recovery saving and cleanup are paused. Save current edits to the project before closing.` : ''].filter(Boolean).join(' ') || undefined;
+  return { ...journal, recovery: { source, failures, warning } };
 }
 
 async function writeEditorDraftJournalUnqueued(
@@ -92,7 +128,10 @@ async function writeEditorDraftJournalUnqueued(
   } satisfies EditorDraftJournal);
   checkByteBudget(utf8Bytes(encoded));
   // Refuse to replace an unreadable journal even if a caller skipped recovery.
-  await readEditorDraftJournalUnqueued(projectId, kind);
+  const existing = await readEditorDraftJournalUnqueued(projectId, kind);
+  const recovery = existing?.recovery;
+  const failure = recovery?.failures[0];
+  if (recovery && failure) throw new EditorDraftJournalError(failure.code, recovery.warning ?? failure.message, recovery.failures);
   await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
   const staging = `${uri}.writing`;
   await FileSystem.writeAsStringAsync(staging, encoded);

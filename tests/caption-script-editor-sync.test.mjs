@@ -805,7 +805,7 @@ for (const recovered of [false, true]) test(`script component split -> transform
   h.act(() => h.button('Save all caption edits').onPress());
   await settleSave();
   assert.equal(closes, 1);
-  assert.equal(h.calls.journalClears, 1);
+  assert.equal(h.calls.journalClears ?? 0, recovered ? 1 : 0, 'saving before recovery finishes must retain the unread journal');
   project = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(project)));
   assert.deepEqual(project.captions.map(({ id, text, startMs, endMs, wordIds }) => ({ id, text, startMs, endMs, wordIds })),
     draft.map(({ id, text, startMs, endMs, wordIds }) => ({ id, text, startMs, endMs, wordIds })));

@@ -318,6 +318,32 @@ test('Keep editing preserves drafts; Discard cancels pending writes before closi
   assert.equal(h.calls.close, 1); assert.equal(h.calls.writes.length, 0);
 });
 
+for (const value of ['Typing delivered before recovery failed', '   ', '']) {
+  test(`failed recovery cannot close over an in-flight input event: ${JSON.stringify(value)}`, async () => {
+    let rejectRead;
+    let requestBack;
+    const h = mount({ onBackRequestChange: (request) => { requestBack = request; } }, {
+      read: () => new Promise((_resolve, reject) => { rejectRead = reject; }),
+    });
+    await h.flush();
+    h.act(() => h.input(0).props.onChangeText(value));
+    h.act(() => requestBack());
+    assert.equal(h.calls.close, 0, 'pending recovery cannot dismiss the editor');
+    rejectRead(new Error('Read failed')); await h.flush();
+    h.act(() => requestBack());
+    assert.equal(h.calls.close, 0);
+    assert.match(h.calls.alerts.at(-1)[1], /unread recovery files will be preserved/);
+    h.choose('Keep editing'); await h.advance(1000);
+    assert.equal(h.input(0).props.value, value);
+    assert.equal(h.calls.close, 0);
+    h.press('Close dual subtitle editor'); h.choose('Discard'); await h.flush();
+    assert.equal(h.calls.close, 1);
+    assert.deepEqual(h.calls.clears, []);
+    assert.deepEqual(h.calls.writes, []);
+    assert.deepEqual(h.calls.saves, []);
+  });
+}
+
 test('successful save cancels pending journal writes and adopts the saved pair', async () => {
   let completeSave;
   const h = mount({ onSave: () => new Promise((resolve) => { completeSave = resolve; }) });
