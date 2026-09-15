@@ -31,7 +31,10 @@ const editorSource = readFileSync(process.env.CAPTION_EDITOR_SOURCE
   ?? new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
 const editorAst = ts.createSourceFile('editor.tsx', editorSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const workspace = editorAst.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'EditorWorkspace');
-const workspaceRoot = workspace.body.statements.find(ts.isReturnStatement).expression.expression;
+const workspaceShell = workspace.body.statements.find(ts.isReturnStatement).expression.expression;
+const workspaceRoot = workspaceShell.openingElement.tagName.getText(editorAst) === 'PersistedHorizontalScrollScope'
+  ? workspaceShell.children.find(ts.isJsxElement)
+  : workspaceShell;
 function evaluate(expression, context = {}) {
   const sandbox = { result: undefined, ...context };
   const compiled = ts.transpileModule(`result = (${expression});`, {
@@ -377,6 +380,29 @@ test('script input retains explicit whitespace and metadata through typing, Back
   assert.deepEqual(h.calls.saves[0][0], { ...snapshot, text: 'final\n\n', textMode: 'manual' });
   assert.deepEqual(h.calls.seeks, []);
   assert.deepEqual(original, snapshot, 'authored caption must remain immutable');
+});
+
+test('typing delivered while Save is pending stays open for an explicit second save', async () => {
+  let releaseSave;
+  let closes = 0;
+  const pendingSave = new Promise((resolve) => { releaseSave = resolve; });
+  const h = mount({
+    onSave: async (captions) => { h.calls.saves.push(plain(captions)); return pendingSave; },
+    onCancel: () => { closes += 1; },
+  });
+  h.edit(0);
+  h.act(() => h.input(0).onChangeText('first revision'));
+  const done = h.find('KeyboardAvoidingView').props.children[0].props.children[2];
+  h.act(() => done.props.onPress());
+  assert.equal(h.input(0).editable, false, 'native editing is disabled while the snapshot persists');
+  h.act(() => h.input(0).onChangeText('newer queued revision'));
+  releaseSave(true);
+  await Promise.resolve();
+  await Promise.resolve();
+  h.act(() => {});
+  assert.equal(closes, 0, 'a save of an older snapshot must not close over newer text');
+  assert.equal(h.input(0).value, 'newer queued revision');
+  assert.equal(h.calls.saves[0][0].text, 'first revision');
 });
 
 test('script input measurements survive focus transfer, reject invalid events and reset on reopen', () => {

@@ -1,7 +1,6 @@
 import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { NavigationAction } from '@react-navigation/native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,7 +18,7 @@ import {
 } from 'react-native';
 
 import { AnimationBrowser } from '@/components/editor/animation-browser';
-import { PersistedHorizontalScroll } from '@/components/editor/persisted-horizontal-scroll';
+import { PersistedHorizontalScroll, PersistedHorizontalScrollScope } from '@/components/editor/persisted-horizontal-scroll';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
 import { DualLanguagePicker } from '@/components/editor/dual-language-picker';
@@ -40,6 +39,7 @@ import { useProjectCaptionTranslation } from '@/hooks/use-project-caption-transl
 import { useForegroundOperation } from '@/hooks/use-foreground-operation';
 import { useEditorRuntimePolicy } from '@/hooks/use-editor-runtime-policy';
 import { useScriptEditorExit } from '@/hooks/use-script-editor-exit';
+import { resolveEditorBackStep } from '@/lib/editor-back-navigation';
 import { deleteAudioClip, duplicateAudioClip, moveAudioClip, splitAudioClip, updateAudioClip } from '@/lib/audio-timeline';
 import { applyTimelineItemTiming, type TimelineItemReference, type TimelineTimingEdge } from '@/lib/timeline-item-editor';
 import { findAnimationPreset } from '@/lib/animation-presets';
@@ -365,6 +365,22 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [scriptKeyboardOpen, setScriptKeyboardOpen] = useState(false);
   const [scriptEditingCaptionId, setScriptEditingCaptionId] = useState<string>();
   const editorScrollRef = useRef<ScrollView>(null);
+  const scriptBackRequestRef = useRef<(() => void) | undefined>(undefined);
+  const dualCaptionBackRequestRef = useRef<(() => void) | undefined>(undefined);
+  const textLayerBackRequestRef = useRef<(() => void) | undefined>(undefined);
+  const languagePickerBackRequestRef = useRef<(() => void) | undefined>(undefined);
+  const registerScriptBackRequest = useCallback((request: (() => void) | undefined) => {
+    scriptBackRequestRef.current = request;
+  }, []);
+  const registerDualCaptionBackRequest = useCallback((request: (() => void) | undefined) => {
+    dualCaptionBackRequestRef.current = request;
+  }, []);
+  const registerTextLayerBackRequest = useCallback((request: (() => void) | undefined) => {
+    textLayerBackRequestRef.current = request;
+  }, []);
+  const registerLanguagePickerBackRequest = useCallback((request: (() => void) | undefined) => {
+    languagePickerBackRequestRef.current = request;
+  }, []);
   const scriptExit = useScriptEditorExit(scriptEditorOpen, editorScrollRef, () => {
     setScriptKeyboardOpen(false);
     setScriptEditingCaptionId(undefined);
@@ -400,9 +416,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const interactionStartRef = useRef<CaptionProject | undefined>(undefined);
   const [historyAvailability, setHistoryAvailability] = useState({ undo: false, redo: false });
   const workspaceMountedRef = useRef(true);
-  const exitApprovedRef = useRef(false);
+  const [exitApproved, setExitApproved] = useState(false);
   const exitPromptOpenRef = useRef(false);
-  const pendingExitActionRef = useRef<NavigationAction | undefined>(undefined);
+  const pendingExitActionRef = useRef<Parameters<typeof navigation.dispatch>[0] | undefined>(undefined);
   // The script editor is a full preview transport surface, including while its
   // keyboard is open. Admit companion audio and transition media with video.
   const blockingUi = Boolean(
@@ -517,17 +533,61 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setError,
   );
   const pauseTransport = transport.pause;
+  const cancelCaptionGeneration = useCallback(async () => {
+    setTranscriptionCancelling(true);
+    const cancelled = await cancelProjectCaptionGeneration();
+    if (!cancelled) setTranscriptionCancelling(false);
+  }, []);
 
   useEffect(() => {
     if (!runtimePolicy.mediaAdmitted) pauseTransport();
   }, [isPlaying, pauseTransport, runtimePolicy.mediaAdmitted]);
 
   useEffect(() => navigation.addListener('beforeRemove', (event) => {
-    if (exitApprovedRef.current) return;
+    if (exitApproved) return;
     event.preventDefault();
+    const { data } = event;
+    const backStep = resolveEditorBackStep({
+      interactionLocked: Boolean(finishingSession || transcriptionCancelling || mediaProgress || extractAudioBusy || (exporting && exportKind !== 'video')),
+      captionGenerationActive: Boolean(progress && !transcriptionCancelling),
+      videoExportActive: Boolean(exporting && exportKind === 'video'),
+      textEditorOpen: Boolean(editingLayerId),
+      fontBrowserOpen,
+      styleScopeOpen: Boolean(pendingChange),
+      transitionTimingOpen,
+      audioSourceOpen: extractAudioOpen,
+      languagePickerOpen: dualLanguagePickerOpen,
+      dualCaptionEditorOpen,
+      scriptEditorOpen,
+      selectionActive: Boolean(
+        selectedCaptionId || selectedLayerId || selectedClipId || selectedAudioClipId || selectedTranslationTrackId
+      ),
+      timelineRooted: scriptExit.timelineRooted(),
+    });
+    if (backStep !== 'confirm-exit') {
+      pauseTransport();
+      if (backStep === 'cancel-caption-generation') void cancelCaptionGeneration();
+      else if (backStep === 'cancel-video-export') void cancelProjectVideoExport();
+      else if (backStep === 'close-text-editor') (textLayerBackRequestRef.current ?? (() => {
+        setEditingLayerId(undefined);
+        setEditingText(undefined);
+      }))();
+      else if (backStep === 'close-font-browser') setFontBrowserOpen(false);
+      else if (backStep === 'close-style-scope') setPendingChange(undefined);
+      else if (backStep === 'close-transition-timing') setTransitionTimingOpen(false);
+      else if (backStep === 'close-audio-source') setExtractAudioOpen(false);
+      else if (backStep === 'close-language-picker') (languagePickerBackRequestRef.current ?? (() => setDualLanguagePickerOpen(false)))();
+      else if (backStep === 'close-dual-caption-editor') {
+        (dualCaptionBackRequestRef.current ?? (() => setDualCaptionEditorOpen(false)))();
+      }
+      else if (backStep === 'close-script-editor') (scriptBackRequestRef.current ?? scriptExit.close)();
+      else if (backStep === 'clear-selection') clearEditorSelection();
+      else if (backStep === 'reveal-timeline') scriptExit.revealTimeline();
+      return;
+    }
     if (exitPromptOpenRef.current) return;
     exitPromptOpenRef.current = true;
-    pendingExitActionRef.current = event.data.action;
+    pendingExitActionRef.current = data.action;
     pauseTransport();
     const finishExit = async (decision: 'save' | 'discard') => {
       try {
@@ -539,9 +599,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           return null;
         });
         if (!workspaceMountedRef.current) return;
-        exitApprovedRef.current = true;
-        const action = pendingExitActionRef.current;
-        if (action) navigation.dispatch(action);
+        setExitApproved(true);
       } catch (caught) {
         exitPromptOpenRef.current = false;
         if (workspaceMountedRef.current) setFinishingSession(false);
@@ -557,7 +615,41 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         { text: 'Save draft', onPress: () => { void finishExit('save'); } },
       ],
     );
-  }), [editorSession, initialProject, navigation, pauseTransport]);
+  }), [
+    cancelCaptionGeneration,
+    dualCaptionEditorOpen,
+    dualLanguagePickerOpen,
+    editingLayerId,
+    editorSession,
+    exitApproved,
+    exportKind,
+    exporting,
+    extractAudioBusy,
+    extractAudioOpen,
+    finishingSession,
+    fontBrowserOpen,
+    initialProject,
+    mediaProgress,
+    navigation,
+    pauseTransport,
+    pendingChange,
+    progress,
+    scriptEditorOpen,
+    scriptExit,
+    selectedAudioClipId,
+    selectedCaptionId,
+    selectedClipId,
+    selectedLayerId,
+    selectedTranslationTrackId,
+    transcriptionCancelling,
+    transitionTimingOpen,
+  ]);
+
+  useEffect(() => {
+    if (!exitApproved) return;
+    const action = pendingExitActionRef.current;
+    if (action) navigation.dispatch(action);
+  }, [exitApproved, navigation]);
 
   const clipTimeline = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
   const timelineDurationMs = totalClipDuration(project.clips);
@@ -819,12 +911,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
   };
 
-  const cancelCaptionGeneration = async () => {
-    setTranscriptionCancelling(true);
-    const cancelled = await cancelProjectCaptionGeneration();
-    if (!cancelled) setTranscriptionCancelling(false);
-  };
-
   const captionForeground = useForegroundOperation({
     stage: progress?.stage,
     interrupt: cancelCaptionGeneration,
@@ -954,7 +1040,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const commitCaptionScript = async (captions: CaptionProject['captions']) => {
     const receipt = await commitEditorProject((before) => replaceVisibleCaptionScript(before, captions));
-    if (!receipt || !editorSession.isCurrent(receipt)) return;
+    if (!receipt || !editorSession.isCurrent(receipt)) return false;
     const { before, project: next } = receipt;
     if (!next.captions.some((caption) => caption.id === selectedCaptionId && caption.timelineVisible !== false)) {
       setSelectedCaptionId(captions[0]?.id);
@@ -962,7 +1048,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     const changedCaptionIds = changedPrimaryCaptionTextIds(before, next);
     const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
     if (visibleTranslation && changedCaptionIds.length > 0) offerTranslationRefresh(changedCaptionIds, visibleTranslation);
-    scriptExit.close();
+    return true;
   };
 
   const openDualCaptionEditor = () => {
@@ -1040,6 +1126,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       );
       return;
     }
+    const refresh = () => {
+      setSelectedTranslationTrackId(track.id);
+      setDualCaptionEditorOpen(true);
+      void translationController.refresh(track.id, sourceCaptionIds);
+    };
     const reviewed = track.cues.filter((cue) => sourceCaptionIds.includes(cue.sourceCaptionId) && cue.reviewed);
     if (reviewed.length > 0) {
       Alert.alert(
@@ -1047,12 +1138,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         `${reviewed.length} selected subtitle${reviewed.length === 1 ? ' was' : 's were'} edited by a person. Refresh will replace the second-language text, and Undo can restore it.`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Replace + refresh', style: 'destructive', onPress: () => { void translationController.refresh(track.id, sourceCaptionIds); } },
+          { text: 'Replace + refresh', style: 'destructive', onPress: refresh },
         ],
       );
       return;
     }
-    void translationController.refresh(track.id, sourceCaptionIds);
+    refresh();
   };
 
   const saveDualCaptionEdits = async (edits: DualCaptionTextEdit[]) => {
@@ -1619,6 +1710,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   return (
+    <PersistedHorizontalScrollScope id={project.id}>
     <View
       pointerEvents={finishingSession ? 'none' : 'auto'}
       onLayout={(event) => setWorkspaceHeight(event.nativeEvent.layout.height)}
@@ -1834,7 +1926,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         <ScrollView
           ref={editorScrollRef}
           onLayout={scriptExit.onScrollLayout}
-          onContentSizeChange={scriptExit.scheduleTimelineReveal}
+          onScroll={scriptExit.onScroll}
+          onContentSizeChange={scriptExit.onContentSizeChange}
+          scrollEventThrottle={16}
           nestedScrollEnabled
           keyboardShouldPersistTaps="handled"
           style={{ flex: 1 }}
@@ -2184,6 +2278,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         currentMs={currentMs}
         isPlaying={isPlaying}
         onSeekTimeline={seekTimeline}
+        onBackRequestChange={registerScriptBackRequest}
         onDraftChange={setScriptDraftCaptions}
         onKeyboardChange={setScriptKeyboardOpen}
         onEditingCaptionChange={setScriptEditingCaptionId}
@@ -2217,6 +2312,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         retryErrorAvailable={translationController.retryAvailable}
         onDismissError={translationController.clearError}
         onRetryError={() => { void translationController.retry(); }}
+        onBackRequestChange={registerDualCaptionBackRequest}
         onClose={() => {
           if (!translationProgress && !translationCancelling) setDualCaptionEditorOpen(false);
         }}
@@ -2232,12 +2328,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         sourceLanguageTag={primaryCaptionLanguage}
         sourceLanguageLabel={captionLanguageLabel(primaryCaptionLanguage)}
         automaticModelLabel={NATURAL_TRANSLATION_MODEL_LABEL}
+        onBackRequestChange={registerLanguagePickerBackRequest}
         onClose={() => setDualLanguagePickerOpen(false)}
         onChoose={(choice) => enableDualCaptions(choice.tag)}
       />
       <EditTextLayerModal
         visible={Boolean(editingLayerId)}
+        originalValue={selectedTextLayer?.text ?? ''}
         value={editingText ?? ''}
+        onBackRequestChange={registerTextLayerBackRequest}
         onChange={setEditingText}
         onCancel={() => {
           setEditingLayerId(undefined);
@@ -2252,7 +2351,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       />
       <MediaLoadingOverlay progress={mediaProgress} />
       {exporting ? (
-        <Modal visible transparent animationType="fade">
+        <Modal visible transparent animationType="fade" onRequestClose={() => {
+          if (exportKind === 'video') void cancelProjectVideoExport();
+        }}>
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: 'rgba(0,0,0,0.78)' }}>
             <View style={{ width: '100%', maxWidth: 380, gap: 14, padding: 22, borderRadius: 20, backgroundColor: palette.surfaceRaised }}>
               <ActivityIndicator color={palette.accent} size="large" />
@@ -2288,6 +2389,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         </Modal>
       ) : null}
     </View>
+    </PersistedHorizontalScrollScope>
   );
 }
 
@@ -2352,7 +2454,7 @@ function HistoryButton(props: { label: string; disabled: boolean; onPress: () =>
 function ExtractAudioBusyOverlay(props: { visible: boolean }) {
   if (!props.visible) return null;
   return (
-    <Modal visible transparent animationType="fade">
+    <Modal visible transparent animationType="fade" onRequestClose={() => {}}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: chrome.overlay }}>
         <View style={{ width: '100%', maxWidth: 360, alignItems: 'center', gap: 14, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <ActivityIndicator size="large" color={chrome.accent} />
@@ -2386,7 +2488,7 @@ function ProgressOverlay(props: {
   if (!props.progress) return null;
   const percent = Math.round(props.progress.progress * 100);
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={props.onCancel}>
+    <Modal visible transparent animationType="fade" onRequestClose={() => { if (!props.cancelling) props.onCancel(); }}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 26, backgroundColor: 'rgba(0,0,0,0.82)' }}>
         <View style={{ width: '100%', maxWidth: 380, gap: 16, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <ActivityIndicator color={palette.accent} size="large" />
@@ -2419,13 +2521,30 @@ function ProgressOverlay(props: {
 
 function EditTextLayerModal(props: {
   visible: boolean;
+  originalValue: string;
   value: string;
+  onBackRequestChange: (request: (() => void) | undefined) => void;
   onChange: (value: string) => void;
   onCancel: () => void;
   onSave: () => void;
 }) {
+  const { onBackRequestChange, onCancel, originalValue, value, visible } = props;
+  const requestClose = useCallback(() => {
+    if (value === originalValue) {
+      onCancel();
+      return;
+    }
+    Alert.alert('Discard unsaved text edits?', 'The text layer will keep its previous wording.', [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: onCancel },
+    ]);
+  }, [onCancel, originalValue, value]);
+  useEffect(() => {
+    onBackRequestChange(visible ? requestClose : undefined);
+    return () => onBackRequestChange(undefined);
+  }, [onBackRequestChange, requestClose, visible]);
   return (
-    <Modal visible={props.visible} transparent animationType="fade" onRequestClose={props.onCancel}>
+    <Modal visible={props.visible} transparent animationType="fade" onRequestClose={requestClose}>
       <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.72)' }}>
         <View style={{ gap: 14, padding: 20, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <Text style={{ color: palette.text, fontSize: 20, fontWeight: '800' }}>Edit text layer</Text>
@@ -2437,7 +2556,7 @@ function EditTextLayerModal(props: {
             style={{ minHeight: 110, padding: 14, borderRadius: chrome.radius.md, color: palette.text, backgroundColor: chrome.surfaceRaised, textAlignVertical: 'top' }}
           />
           <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end' }}>
-            <Pressable onPress={props.onCancel} style={{ padding: 12 }}>
+            <Pressable onPress={requestClose} style={{ padding: 12 }}>
               <Text style={{ color: palette.muted }}>Cancel</Text>
             </Pressable>
             <Pressable onPress={props.onSave} style={{ paddingHorizontal: 18, paddingVertical: 12, borderRadius: chrome.radius.pill, backgroundColor: palette.accent }}>

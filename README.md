@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.51) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.52) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.51/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.52/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.51 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.52 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -73,7 +73,7 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.51** (`v1.4.51`, Android version code 63).
+Current Android build: **1.4.52** (`v1.4.52`, Android version code 64).
 
 ## What the current Android build includes
 
@@ -116,7 +116,7 @@ Current Android build: **1.4.51** (`v1.4.51`, Android version code 63).
 - A dedicated audio timeline: import audio from the phone or extract the audio track from a selected video, then body-drag, trim or restore either source edge, split at the playhead, duplicate, mute, fade, and adjust each audio clip independently
 - 30 real-footage transition effects plus Clean cut, with adjustable timing across dips, dissolves, directional wipes, slides, pushes, zooms, folds, irises, splits, color washes, shutter, spin, flash, and glitch
 - Continuous playback across same-source splits and different video files, with an explicit decoder handoff that prevents fast clips from bleeding into the following clip
-- An explicit Save draft / Discard / Keep editing decision whenever the user backs out of the editor
+- Ordered Android Back navigation that closes the current editor or picker, clears selection, restores the measured timeline root, and only then offers Save draft / Discard / Keep editing
 - Confirmed project deletion from a trash control on every project card; linked source videos are never deleted
 - Local SQLite project snapshots
 

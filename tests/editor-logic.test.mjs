@@ -1335,7 +1335,8 @@ test('caption editing opens the full timestamped script and keeps text-layer edi
   assert.match(scriptEditor, /Split here/);
   assert.match(scriptEditor, /Join previous/);
   assert.match(scriptEditor, /Join next/);
-  assert.match(scriptEditor, /onSave\(draftCaptions\)/);
+  assert.match(scriptEditor, /onSave\(savingDraft\)/);
+  assert.match(scriptEditor, /draftVersionRef\.current !== savingVersion/);
   assert.match(scriptEditor, /Caption recovery storage could not be read/);
   assert.match(scriptEditor, /if \(!active\) return/);
 });

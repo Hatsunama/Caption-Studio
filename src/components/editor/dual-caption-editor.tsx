@@ -44,6 +44,7 @@ type DualCaptionEditorProps = {
   retryErrorAvailable: boolean;
   onDismissError: () => void;
   onRetryError: () => void;
+  onBackRequestChange?: (request: (() => void) | undefined) => void;
   onClose: () => void;
   onSave: (edits: DualCaptionTextEdit[]) => Promise<boolean>;
   onRefresh: (sourceCaptionIds: string[]) => void;
@@ -53,12 +54,24 @@ type DualCaptionEditorProps = {
   onCancelBusy: () => void;
 };
 
+const ignoreBackRequestChange = () => undefined;
+
 export function DualCaptionEditor(props: DualCaptionEditorProps) {
   // Closing or changing projects/tracks owns a new draft and recovery lifetime.
   return props.visible ? <DualCaptionEditorSession key={JSON.stringify([props.projectId, props.trackId])} {...props} /> : null;
 }
 
 function DualCaptionEditorSession(props: DualCaptionEditorProps) {
+  const {
+    busy,
+    errorMessage,
+    onBackRequestChange = ignoreBackRequestChange,
+    onCancelBusy,
+    onClose,
+    onDismissError,
+    projectId,
+    visible,
+  } = props;
   const insets = useSafeAreaInsets();
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
   const [store] = useState(() => new DualCaptionDraftStore(sourceDrafts));
@@ -145,16 +158,28 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const dirty = editCount > 0;
   const disabled = props.busy || saving || closing || !journalReady;
 
-  const closeAfterClearingJournal = () => {
+  const closeAfterClearingJournal = useCallback(() => {
     stopJournalRef.current?.();
     setClosing(true);
-    void clearEditorDraftJournal(props.projectId, journalKind).then(props.onClose)
+    void clearEditorDraftJournal(projectId, journalKind).then(onClose)
       .catch(() => setJournalError('Recovery data could not be cleared. Your edits are still here; try Save or Close again.'))
       .finally(() => setClosing(false));
-  };
+  }, [journalKind, onClose, projectId]);
 
-  const requestClose = () => {
-    if (disabled) return;
+  const requestClose = useCallback(() => {
+    if (saving || closing || !journalReady) return;
+    if (errorMessage) {
+      onDismissError();
+      return;
+    }
+    if (busy) {
+      onCancelBusy();
+      return;
+    }
+    if (selectedIds.size > 0) {
+      setSelectedIds(new Set());
+      return;
+    }
     if (store.getDirtyCount() === 0) {
       closeAfterClearingJournal();
       return;
@@ -163,7 +188,16 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       { text: 'Keep editing', style: 'cancel' },
       { text: 'Discard', style: 'destructive', onPress: closeAfterClearingJournal },
     ]);
-  };
+  }, [busy, closeAfterClearingJournal, closing, errorMessage, journalReady, onCancelBusy, onDismissError, saving, selectedIds, store]);
+
+  useEffect(() => {
+    if (!visible) {
+      onBackRequestChange(undefined);
+      return;
+    }
+    onBackRequestChange(requestClose);
+    return () => onBackRequestChange(undefined);
+  }, [onBackRequestChange, requestClose, visible]);
 
   const save = async () => {
     if (disabled) return;

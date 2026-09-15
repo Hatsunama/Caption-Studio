@@ -30,6 +30,7 @@ const CaptionCellLayoutContext = createContext<(id: string, index: number, layou
 const SCRIPT_ANCHOR = 8;
 const SCRIPT_LEADING_SPACE = 96;
 const SCRIPT_ROW_GAP = 8;
+const ignoreBackRequestChange = () => undefined;
 
 // The cell, unlike renderItem's child, is positioned in list-content coordinates.
 function CaptionCell({ item, index, onLayout, onFocusCapture, style, children }: CellRendererProps<CaptionBlock>) {
@@ -58,10 +59,20 @@ export function ScriptEditor(props: {
   currentMs: number;
   isPlaying: boolean;
   onSeekTimeline: (timelineMs: number) => void;
+  onBackRequestChange?: (request: (() => void) | undefined) => void;
   onCancel: () => void;
-  onSave: (captions: CaptionBlock[]) => Promise<void>;
+  onSave: (captions: CaptionBlock[]) => Promise<boolean>;
 }) {
-  const { onSeekTimeline, onSelectCaption, onDraftChange, onKeyboardChange, onEditingCaptionChange } = props;
+  const {
+    onBackRequestChange = ignoreBackRequestChange,
+    onCancel,
+    onDraftChange,
+    onEditingCaptionChange,
+    onKeyboardChange,
+    onSeekTimeline,
+    onSelectCaption,
+    projectId,
+  } = props;
   const listRef = useRef<FlatList<CaptionBlock>>(null);
   const inputRefs = useRef<Record<string, TextInput | null>>({});
   const sheetRef = useRef<View>(null);
@@ -75,9 +86,11 @@ export function ScriptEditor(props: {
   const [boundaryMessage, setBoundaryMessage] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [saving, setSaving] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [journalReady, setJournalReady] = useState(false);
   const [journalError, setJournalError] = useState<string>();
   const wasVisibleRef = useRef(false);
+  const draftVersionRef = useRef(0);
   const captionLayoutsRef = useRef<Record<string, { y: number; height: number; index: number }>>({});
   const listViewportHeightRef = useRef(0);
   const listOffsetRef = useRef(0);
@@ -193,6 +206,7 @@ export function ScriptEditor(props: {
     wasVisibleRef.current = props.visible;
     if (!opening) return;
     setDraftCaptions(sourceCaptions);
+    draftVersionRef.current = 0;
     setInputHeights({});
     onDraftChange(sourceCaptions);
     setSelectedCaptionId(sourceCaptions[initialIndex]?.id);
@@ -229,7 +243,7 @@ export function ScriptEditor(props: {
               setJournalReady(true);
             },
           },
-          { text: 'Restore', onPress: () => { setDraftCaptions(recovered); setJournalReady(true); } },
+          { text: 'Restore', onPress: () => { draftVersionRef.current += 1; setDraftCaptions(recovered); setJournalReady(true); } },
         ],
       );
     }).catch(() => {
@@ -244,7 +258,7 @@ export function ScriptEditor(props: {
   }, [initialIndex, onDraftChange, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
 
   useEffect(() => {
-    if (!props.visible || !journalReady || sameCaptionDraft(draftCaptions, sourceCaptions)) return;
+    if (!props.visible || closing || !journalReady || sameCaptionDraft(draftCaptions, sourceCaptions)) return;
     let active = true;
     const timer = setTimeout(() => {
       void writeEditorDraftJournal(props.projectId, 'caption-script', props.baseRevision, draftCaptions)
@@ -255,7 +269,7 @@ export function ScriptEditor(props: {
       active = false;
       clearTimeout(timer);
     };
-  }, [draftCaptions, journalReady, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
+  }, [closing, draftCaptions, journalReady, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
 
   useEffect(() => {
     if (!props.visible) return;
@@ -337,6 +351,7 @@ export function ScriptEditor(props: {
     scrollOwnerRef.current = 'programmatic';
     pendingScrollSeekRef.current = false;
     cancelNavigation();
+    draftVersionRef.current += 1;
     setDraftCaptions(captions);
     setSelectedCaptionId(captionId);
     setEditingCaptionId(captionId);
@@ -352,6 +367,7 @@ export function ScriptEditor(props: {
   const updateText = (caption: CaptionBlock, text: string) => {
     // Wrapping and literal newlines are text edits. Only the explicit split/join
     // actions below may change cue boundaries or move text to another caption.
+    draftVersionRef.current += 1;
     setDraftCaptions(updateCaptionScriptText(draftCaptions, caption.id, text));
     setBoundaryMessage(undefined);
     if (text.trim()) setEmptyCaptionId(undefined);
@@ -396,7 +412,7 @@ export function ScriptEditor(props: {
   };
 
   const save = async () => {
-    if (saving) return;
+    if (saving || closing) return;
     const empty = draftCaptions.find((caption) => !caption.text.trim());
     if (empty) {
       focusCaption(empty.id, draftCaptions);
@@ -405,9 +421,16 @@ export function ScriptEditor(props: {
     }
     setSaving(true);
     setSaveError(undefined);
+    const savingVersion = draftVersionRef.current;
+    const savingDraft = draftCaptions;
     try {
-      await props.onSave(draftCaptions);
+      if (!await props.onSave(savingDraft)) return;
+      if (draftVersionRef.current !== savingVersion) {
+        setSaveError('Captions changed while saving. Review the latest text, then tap Done again.');
+        return;
+      }
       await clearEditorDraftJournal(props.projectId, 'caption-script');
+      props.onCancel();
     } catch (caught) {
       setSaveError(caught instanceof Error ? caught.message : 'Caption changes were not saved. Try again.');
     } finally {
@@ -415,20 +438,38 @@ export function ScriptEditor(props: {
     }
   };
 
-  const cancel = () => {
-    if (saving) return;
-    const close = () => {
-      void clearEditorDraftJournal(props.projectId, 'caption-script').finally(props.onCancel);
+  const cancel = useCallback(() => {
+    if (saving || closing) return;
+    const close = async () => {
+      setClosing(true);
+      setSaveError(undefined);
+      try {
+        await clearEditorDraftJournal(projectId, 'caption-script');
+        onCancel();
+      } catch (caught) {
+        setJournalError(caught instanceof Error ? caught.message : 'Caption recovery could not be cleared. Your edits are still open.');
+      } finally {
+        setClosing(false);
+      }
     };
     if (sameCaptionDraft(draftCaptions, sourceCaptions)) {
-      close();
+      void close();
       return;
     }
     Alert.alert('Discard unsaved caption edits?', 'The recovery copy is also removed when you discard.', [
       { text: 'Keep editing', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: close },
+      { text: 'Discard', style: 'destructive', onPress: () => { void close(); } },
     ]);
-  };
+  }, [closing, draftCaptions, onCancel, projectId, saving, sourceCaptions]);
+
+  useEffect(() => {
+    if (!props.visible) {
+      onBackRequestChange(undefined);
+      return;
+    }
+    onBackRequestChange(cancel);
+    return () => onBackRequestChange(undefined);
+  }, [cancel, onBackRequestChange, props.visible]);
 
   if (!props.visible) return null;
 
@@ -466,14 +507,14 @@ export function ScriptEditor(props: {
         keyboardVerticalOffset={keyboardVerticalOffset}
         style={{ flex: 1, minHeight: 0 }}>
         <View style={{ minHeight: keyboardOpen ? 44 : 76, paddingHorizontal: 18, paddingTop: keyboardOpen ? 0 : 18, paddingBottom: keyboardOpen ? 0 : 12, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Cancel caption edits" disabled={saving} hitSlop={10} onPress={cancel} style={{ minWidth: 60, minHeight: 44, justifyContent: 'center' }}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Cancel caption edits" disabled={saving || closing} hitSlop={10} onPress={cancel} style={{ minWidth: 60, minHeight: 44, justifyContent: 'center' }}>
             <Text style={{ color: chrome.muted, fontSize: 17, fontWeight: '600' }}>Cancel</Text>
           </Pressable>
           <View style={{ flex: 1, alignItems: 'center' }}>
             <Text style={{ color: chrome.text, fontSize: 17, fontWeight: '700' }}>Edit captions</Text>
             <Text style={{ color: chrome.muted, fontSize: 12 }}>{draftCaptions.length} subtitle blocks</Text>
           </View>
-          <Pressable accessibilityRole="button" accessibilityLabel="Save all caption edits" disabled={saving} hitSlop={10} onPress={() => { void save(); }} style={{ minWidth: 60, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' }}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Save all caption edits" disabled={saving || closing} hitSlop={10} onPress={() => { void save(); }} style={{ minWidth: 60, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' }}>
             <Text style={{ color: chrome.accent, fontSize: 17, fontWeight: '700', opacity: saving ? 0.45 : 1 }}>Done</Text>
           </Pressable>
         </View>
@@ -564,6 +605,7 @@ export function ScriptEditor(props: {
                       <TextInput
                         ref={(input) => { inputRefs.current[item.id] = input; }}
                         multiline
+                        editable={!saving && !closing}
                         scrollEnabled={false}
                         submitBehavior="newline"
                         value={item.text}
@@ -587,9 +629,9 @@ export function ScriptEditor(props: {
                         style={{ height: inputHeights[item.id], minHeight: editing ? 46 : 23, padding: 0, color: chrome.text, fontSize: 17, lineHeight: 23, fontWeight: '400', textAlignVertical: 'top' }}
                       />
                       {editing ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
-                        <ScriptAction label="Split here" onPress={() => splitAtCursor(item)} />
-                        <ScriptAction label="Join previous" onPress={() => mergeWithPrevious(item)} />
-                        <ScriptAction label="Join next" onPress={() => mergeWithNext(item)} />
+                        <ScriptAction label="Split here" disabled={saving || closing} onPress={() => splitAtCursor(item)} />
+                        <ScriptAction label="Join previous" disabled={saving || closing} onPress={() => mergeWithPrevious(item)} />
+                        <ScriptAction label="Join next" disabled={saving || closing} onPress={() => mergeWithNext(item)} />
                       </View> : null}
                     </View>
                   {invalid ? <Text style={{ marginTop: 4, color: '#FF8FA2', fontSize: 11 }}>A subtitle cannot be empty. Merge it or delete its timeline block.</Text> : null}
@@ -606,14 +648,15 @@ export function ScriptEditor(props: {
   );
 }
 
-function ScriptAction(props: { label: string; onPress: () => void }) {
+function ScriptAction(props: { label: string; disabled?: boolean; onPress: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={props.label}
+      disabled={props.disabled}
       hitSlop={4}
       onPress={props.onPress}
-      style={{ minHeight: 36, justifyContent: 'center', paddingHorizontal: 12, borderRadius: chrome.radius.pill, backgroundColor: chrome.fill }}>
+      style={{ minHeight: 36, justifyContent: 'center', paddingHorizontal: 12, borderRadius: chrome.radius.pill, backgroundColor: chrome.fill, opacity: props.disabled ? 0.45 : 1 }}>
       <Text style={{ color: chrome.text, fontSize: 13, fontWeight: '600' }}>{props.label}</Text>
     </Pressable>
   );
