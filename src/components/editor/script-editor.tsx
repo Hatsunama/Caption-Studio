@@ -201,10 +201,18 @@ export function ScriptEditor(props: {
     return index < 0 ? 0 : index;
   }, [sourceCaptions, props.initialCaptionId]);
 
+  // Only opening/closing owns recovery's lifetime. A style or project revision
+  // update while storage is loading must not cancel that read or reset the draft.
+  const openingStateRef = useRef({ sourceCaptions, initialIndex, onDraftChange, baseRevision: props.baseRevision });
+  useEffect(() => {
+    openingStateRef.current = { sourceCaptions, initialIndex, onDraftChange, baseRevision: props.baseRevision };
+  }, [sourceCaptions, initialIndex, onDraftChange, props.baseRevision]);
+
   useEffect(() => {
     const opening = props.visible && !wasVisibleRef.current;
     wasVisibleRef.current = props.visible;
     if (!opening) return;
+    const { sourceCaptions, initialIndex, onDraftChange } = openingStateRef.current;
     setDraftCaptions(sourceCaptions);
     draftVersionRef.current = 0;
     setInputHeights({});
@@ -221,14 +229,14 @@ export function ScriptEditor(props: {
     selectionRef.current = {};
     splitCounterRef.current = 0;
     let active = true;
-    void readEditorDraftJournal(props.projectId, 'caption-script').then((journal) => {
+    void readEditorDraftJournal(projectId, 'caption-script').then((journal) => {
       if (!active) return;
       const recovered = decodeCaptionDraft(journal?.payload);
       if (!recovered) {
         setJournalReady(true);
         return;
       }
-      const conflict = journal?.baseRevision !== props.baseRevision;
+      const conflict = journal?.baseRevision !== openingStateRef.current.baseRevision;
       Alert.alert(
         conflict ? 'Recovery draft needs review' : 'Restore unsaved caption edits?',
         conflict
@@ -239,11 +247,17 @@ export function ScriptEditor(props: {
             text: 'Discard recovery',
             style: 'destructive',
             onPress: () => {
-              void clearEditorDraftJournal(props.projectId, 'caption-script');
+              if (!active) return;
+              void clearEditorDraftJournal(projectId, 'caption-script');
               setJournalReady(true);
             },
           },
-          { text: 'Restore', onPress: () => { draftVersionRef.current += 1; setDraftCaptions(recovered); setJournalReady(true); } },
+          { text: 'Restore', onPress: () => {
+            if (!active) return;
+            draftVersionRef.current += 1;
+            setDraftCaptions(recovered);
+            setJournalReady(true);
+          } },
         ],
       );
     }).catch(() => {
@@ -255,7 +269,7 @@ export function ScriptEditor(props: {
     return () => {
       active = false;
     };
-  }, [initialIndex, onDraftChange, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
+  }, [projectId, props.visible]);
 
   useEffect(() => {
     if (!props.visible || closing || !journalReady || sameCaptionDraft(draftCaptions, sourceCaptions)) return;
@@ -696,5 +710,8 @@ function decodeCaptionDraft(value: unknown): CaptionBlock[] | null {
 }
 
 function sameCaptionDraft(left: CaptionBlock[], right: CaptionBlock[]) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  // Script edits own text, timing and segmentation. Current appearance changes
+  // alone must not manufacture an unsaved script or a stale recovery journal.
+  const script = (captions: CaptionBlock[]) => captions.map(({ styleOverride: _appearance, ...caption }) => caption);
+  return JSON.stringify(script(left)) === JSON.stringify(script(right));
 }

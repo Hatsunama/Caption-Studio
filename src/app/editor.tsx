@@ -1,6 +1,7 @@
 import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
 import { captionPreviewState, projectHasEditorLayer } from '@/lib/caption-preview';
+import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
@@ -691,7 +692,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     () => selectedTranslationTrack ? resolveCaptionPairs(project, selectedTranslationTrack.id).filter((pair) => pair.timelineVisible) : [],
     [project, selectedTranslationTrack],
   );
-  const previewCaptions = scriptEditorOpen ? scriptDraftCaptions ?? timelineCaptions : timelineCaptions;
+  const previewCaptions = useMemo(() => scriptEditorOpen
+    ? reconcileCaptionScriptDraft(project, scriptDraftCaptions ?? timelineCaptions) : timelineCaptions,
+  [project, scriptEditorOpen, scriptDraftCaptions, timelineCaptions]);
   const { active: activeCaption, activeCaptions, selected: selectedCaption } = useMemo(
     () => captionPreviewState(previewCaptions, currentMs, selectedCaptionId),
     [currentMs, previewCaptions, selectedCaptionId],

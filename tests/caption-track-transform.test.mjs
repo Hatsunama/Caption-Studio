@@ -81,15 +81,16 @@ for (const scope of ['cue', 'track']) test(`${scope} translation geometry propag
   }
 });
 
-test('legacy translation layout is anchored on reopen and remains independent across later primary edits', () => {
+test('legacy translation layout stays unanchored on reopen and detaches on the first primary transform', () => {
   const before = fixture();
   for (const track of before.captionTracks.translations) delete track.layoutAnchor;
   const reopened = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(before)));
-  assert.ok(reopened.captionTracks.translations.every((track) => track.layoutAnchor));
+  assert.ok(reopened.captionTracks.translations.every((track) => !Object.hasOwn(track, 'layoutAnchor')));
+  for (const id of ['fr', 'de']) assert.deepEqual(secondaryGeometry(reopened, id), secondaryGeometry(before, id));
   const next = applyStylePatch(reopened, 'c0', 'caption', geometry);
-  for (const id of ['fr', 'de']) assert.deepEqual(secondaryGeometry(next, id), secondaryGeometry(reopened, id));
+  for (const id of ['fr', 'de']) assert.deepEqual(secondaryGeometry(next, id), Array(3).fill(secondaryGeometry(reopened, id)[0]));
   const legacyEdited = applyStylePatch(before, 'c0', 'caption', geometry);
-  for (const id of ['fr', 'de']) assert.deepEqual(secondaryGeometry(legacyEdited, id), secondaryGeometry(before, id));
+  for (const id of ['fr', 'de']) assert.deepEqual(secondaryGeometry(legacyEdited, id), secondaryGeometry(next, id));
 });
 
 test('serialized/reopened preview and export have identical track geometry and independent text/timing', () => {

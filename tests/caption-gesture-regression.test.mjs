@@ -7,6 +7,9 @@ import ts from 'typescript';
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 import { captionPreviewState } from '../src/lib/caption-preview.ts';
 import { timelineBlockControls, TIMELINE_GRIP_WIDTH } from '../src/lib/timeline-gesture.ts';
+import { createCaptionProject } from '../src/lib/project-factory.ts';
+import { createTranslationCaptionTrack, resolveCaptionPairs } from '../src/lib/caption-tracks.ts';
+import { applyTimelineItemTiming } from '../src/lib/timeline-item-editor.ts';
 
 const requireLocal = createRequire(import.meta.url);
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -95,6 +98,114 @@ function harness() {
 const timelineSuffix = '\nexports.TimingGrip = TimingGrip; exports.TimelineMoveGrip = TimelineMoveGrip; exports.TimedBlock = TimedBlock;';
 const event = (x, y) => ({ nativeEvent: { touches: [{ identifier: 1, pageX: x, pageY: y }] } });
 
+// Resolve the actual TimedBlock/Grip JSX bounds before dispatching native touch
+// events. A regression that widens selected bodies or overlays a neighboring
+// lane is caught here, independently of the gesture state-machine assertions.
+function blockTargets(props) {
+  const blockHarness = harness();
+  const ui = blockHarness.load('components/editor/layer-timeline.tsx', timelineSuffix);
+  const tree = blockHarness.render(ui.TimedBlock, props);
+  const targets = [];
+  function visit(node, parent) {
+    if (Array.isArray(node)) { node.forEach((child) => visit(child, parent)); return; }
+    if (!node || typeof node !== 'object' || node.props?.pointerEvents === 'none') return;
+    if (['TimingGrip', 'TimelineMoveGrip'].includes(node.type?.name)) {
+      const gripHarness = harness();
+      const grips = gripHarness.load('components/editor/layer-timeline.tsx', timelineSuffix);
+      const rendered = gripHarness.render(grips[node.type.name], node.props);
+      const s = rendered.props.style;
+      targets.push({ label: props.label, edge: node.props.side ?? 'move', rail: Boolean(node.props.side || node.props.controlRail),
+        left: parent.left + (s.left ?? parent.width - (s.right ?? 0) - (s.width ?? parent.width)),
+        top: parent.top + (s.top ?? 0),
+        width: s.width ?? parent.width - (s.left ?? 0) - (s.right ?? 0),
+        height: s.height ?? parent.height - (s.top ?? 0) - (s.bottom ?? 0), handlers: rendered.props });
+      return;
+    }
+    const s = node.props?.style;
+    const rect = s ? { left: parent.left + (s.left ?? 0), top: parent.top + (s.top ?? 0),
+      width: s.width ?? parent.width, height: s.height ?? parent.height } : parent;
+    visit(node.props?.children, rect);
+  }
+  visit(tree, { left: 0, top: 0, width: props.trackWidth, height: props.controlTop + 36 });
+  return targets;
+}
+const contains = (r, x, y) => x >= r.left && x < r.left + r.width && y >= r.top && y < r.top + r.height;
+const intersects = (a, b) => a.left < b.left + b.width && b.left < a.left + a.width
+  && a.top < b.top + b.height && b.top < a.top + a.height;
+
+for (const kind of ['caption', 'translation']) for (const selectedId of ['a', 'b', 'overlap']) {
+  for (const edge of ['move', 'start', 'end']) test(`${kind} tiny ${selectedId} ${edge}: adjacent and overlapping bodies own their touches`, () => {
+    let project = createCaptionProject({ id: 'hit-test', name: 'Hit testing', sources: [{ id: 'video',
+      uri: 'file:///test.mp4', storageMode: 'copied', displayName: 'Video', durationMs: 60000,
+      width: 1080, height: 1920, rotation: 0, frameRate: 30 }] });
+    project.captions = [['a', 100, 300], ['b', 300, 500], ['overlap', 200, 400]].map(([id, startMs, endMs]) => ({
+      id, startMs, endMs, text: 'caption-' + id, wordIds: [],
+    }));
+    project = createTranslationCaptionTrack(project, { id: 'fr', languageTag: 'fr', displayName: 'French',
+      translations: Object.fromEntries(project.captions.map((cue) => [cue.id, 'translation-' + cue.id])) });
+    const before = structuredClone(project), calls = { select: [], edits: [], history: 0, persist: 0, seeks: [] };
+    const h = harness();
+    const { LayerTimeline } = h.load('components/editor/layer-timeline.tsx');
+    h.render(LayerTimeline, { projectId: project.id, currentMs: 150, durationMs: 60000, clips: [], sources: [],
+      captions: project.captions, layers: [{ id: 'captions', kind: 'captions', name: 'Captions' }], audioClips: [], audioSources: [],
+      translationTracks: [{ id: 'fr', name: 'French', visible: true, pairs: resolveCaptionPairs(project, 'fr') }],
+      selectedLayerId: kind === 'caption' ? 'captions' : 'fr', selectedCaptionId: selectedId,
+      onSeek(ms) { calls.seeks.push(ms); }, onScrubStart() {},
+      onSelectCaption(cue) { calls.select.push(cue.id); },
+      onSelectTranslationCaption(_track, pair) { calls.select.push(pair.source.id); },
+      onTimingChangeStart() { calls.history++; }, onTimingChangeEnd() { calls.persist++; },
+      onItemTimingChange(item, side, start, end) {
+        calls.edits.push(plain({ item, side })); project = applyTimelineItemTiming(project, item, side, start, end, 60000);
+      },
+    });
+    const blocks = h.all((node) => node.type?.name === 'TimedBlock' && node.props.label.startsWith(kind + '-'));
+    assert.equal(blocks.length, 3);
+    const targets = blocks.flatMap((block) => blockTargets(block.props));
+    const bodies = targets.filter((target) => !target.rail);
+    const rails = targets.filter((target) => target.rail);
+    assert.equal(rails.length, 3);
+    for (const rail of rails) for (const body of bodies) assert.equal(intersects(rail, body), false);
+    for (const body of bodies) {
+      assert.ok(body.width < 8, 'exercise tiny cue hit bounds');
+      const hit = targets.filter((r) => contains(r, body.left + body.width / 2, body.top + body.height / 2));
+      assert.equal(hit.length, 1, body.label + ' must have exactly one responder');
+      assert.equal(hit[0], body);
+      body.handlers.onPanResponderGrant();
+      body.handlers.onPanResponderMove({}, { dx: 8, dy: 0 });
+      body.handlers.onPanResponderRelease();
+      assert.equal(calls.select.at(-1), body.label.slice(kind.length + 1));
+    }
+    assert.deepEqual(project, before);
+    assert.equal(calls.history, 0);
+    const target = rails.find((r) => r.edge === edge);
+    const hit = targets.filter((r) => contains(r, target.left + target.width / 2, target.top + target.height / 2));
+    assert.deepEqual(hit, [target]);
+    target.handlers.onPanResponderGrant();
+    for (const [dx, dy] of [[8, 0], [-8, 0], [9, 12]]) target.handlers.onPanResponderMove({}, { dx, dy });
+    assert.equal(calls.edits.length, 0);
+    target.handlers.onPanResponderMove({}, { dx: edge === 'start' ? -9 : 9, dy: 0 });
+    target.handlers.onPanResponderRelease(); target.handlers.onPanResponderTerminate();
+    assert.equal(calls.history, 1); assert.equal(calls.persist, 1);
+    assert.deepEqual(calls.edits, [{ item: kind === 'caption' ? { kind, captionId: selectedId }
+      : { kind, trackId: 'fr', sourceCaptionId: selectedId }, side: edge }]);
+    const oldItems = kind === 'caption' ? before.captions : before.captionTracks.translations[0].cues;
+    const newItems = kind === 'caption' ? project.captions : project.captionTracks.translations[0].cues;
+    const ownerId = kind === 'caption' ? selectedId : 'fr:' + selectedId;
+    for (const item of oldItems) {
+      const next = newItems.find((cue) => cue.id === item.id);
+      if (item.id !== ownerId) assert.deepEqual(next, item);
+      else {
+        assert.notDeepEqual([next.startMs, next.endMs], [item.startMs, item.endMs]);
+        if (edge === 'start') assert.equal(next.endMs, item.endMs);
+        if (edge === 'end') assert.equal(next.startMs, item.startMs);
+        if (edge === 'move') assert.equal(next.endMs - next.startMs, item.endMs - item.startMs);
+      }
+    }
+    if (kind === 'translation') assert.deepEqual(project.captions, before.captions);
+    assert.deepEqual(calls.seeks, []);
+  });
+}
+
 for (const kind of ['caption', 'translation', 'audio', 'text', 'image']) {
   for (const edge of ['start', 'end', 'move']) test(`${kind} ${edge} jittered taps never change timing, words, history, persistence or fixed-time content`, () => {
     const h = harness();
@@ -141,8 +252,8 @@ test('timing controls activate once after deliberate drag and retain the origina
 test('selected tiny blocks have separate start, move and end targets without inflated duration geometry', () => {
   for (const width of [2, 4, 10, 24, 48, 80, 150]) {
     const rail = timelineBlockControls(width, true);
-    assert.ok(rail.width - 2 * TIMELINE_GRIP_WIDTH >= 32);
-    assert.equal(rail.width - 2 * rail.inset, width);
+    assert.ok(rail.controlWidth - 2 * TIMELINE_GRIP_WIDTH >= 32);
+    assert.equal(rail.width, width);
     const h = harness();
     const ui = h.load('components/editor/layer-timeline.tsx', timelineSuffix);
     h.render(ui.TimingGrip, { side: 'start' });
@@ -182,12 +293,14 @@ test('narrow selection rails stay inside timeline bounds and preserve actual cue
     const h = harness();
     const { TimedBlock } = h.load('components/editor/layer-timeline.tsx', timelineSuffix);
     h.render(TimedBlock, { startMs, endMs: startMs + 100, durationMs: 5000, trackWidth: 200,
-      selected: true, lane: 0, color: '#FFFFFF', label: 'Narrow' });
-    const rail = h.result.props.style;
+      selected: true, lane: 0, controlTop: 35, color: '#FFFFFF', label: 'Narrow' });
+    const rail = h.all((node) => node.props?.accessibilityLabel === 'Timing controls for Narrow')[0].props.style;
+    const bodyParent = h.result.props.children[0].props.style;
     const body = h.all((node) => node.props?.style?.backgroundColor === '#FFFFFFB8')[0].props.style;
     assert.ok(rail.left >= 0 && rail.left + rail.width <= 200);
-    assert.equal(rail.left + body.left, startMs / 5000 * 200);
-    assert.equal(body.width, 2);
+    assert.equal(bodyParent.left + body.left, startMs / 5000 * 200);
+    assert.equal(body.width, 4);
+    assert.ok(rail.top >= bodyParent.top + bodyParent.height);
   }
 });
 

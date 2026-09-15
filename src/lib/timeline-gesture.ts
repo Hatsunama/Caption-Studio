@@ -1,12 +1,13 @@
 import type { TimelineTimingEdge } from '@/lib/timeline-item-editor';
 
 export const TIMELINE_DRAG_ACTIVATION_PX = 8;
-export const TIMELINE_GRIP_WIDTH = 24;
+export const TIMELINE_GRIP_WIDTH = 40;
+export const TIMELINE_CONTROL_HEIGHT = 36;
 
-/** Keep a real duration body inside a larger, nonoverlapping selection rail. */
+/** Time-interval hit bounds never expand on selection. Editing controls occupy
+ * a separate row below every content lane, with their own responder bounds. */
 export function timelineBlockControls(width: number, selected: boolean) {
-  const controlWidth = selected ? Math.max(80, width) : width;
-  return { width: controlWidth, inset: (controlWidth - width) / 2 };
+  return { width, controlWidth: selected ? 144 : 0 };
 }
 
 type TimingGestureOwner = {

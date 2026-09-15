@@ -458,8 +458,8 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
           promptVersion,
         },
         stackGap: optionalFiniteNumber(track.stackGap, `translation track ${trackIndex + 1} stack gap`, 0.008, 0.18) ?? 0.028,
-        layoutAnchor: captionTransform(track.layoutAnchor === undefined ? projectStyle
-          : decodeCaptionStyle(track.layoutAnchor, projectStyle, `translation track ${trackIndex + 1} layout anchor`)),
+        ...(track.layoutAnchor === undefined ? {} : { layoutAnchor:
+          captionTransform(decodeCaptionStyle(track.layoutAnchor, projectStyle, `translation track ${trackIndex + 1} layout anchor`)) }),
         styleOverride: decodeCaptionStylePatch(track.styleOverride, `translation track ${trackIndex + 1} style override`),
         cues,
       };

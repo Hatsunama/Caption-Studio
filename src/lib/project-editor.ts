@@ -1,4 +1,5 @@
 import { mergeStyle } from '@/lib/style-resolver';
+import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { applyCaptionTextChanges, type CaptionTextChanges } from '@/lib/caption-text-edits';
 import { applyTimelineSpliceToAudioClips } from '@/lib/audio-timeline';
@@ -139,6 +140,7 @@ function withTimelineCaptionTiming(
 }
 
 export function replaceVisibleCaptionScript(project: CaptionProject, captions: CaptionProject['captions']) {
+  captions = reconcileCaptionScriptDraft(project, captions);
   const visible = project.captions.filter((caption) => caption.timelineVisible !== false);
   const hidden = project.captions.filter((caption) => caption.timelineVisible === false);
   const hiddenIds = new Set(hidden.map((caption) => caption.id));
@@ -149,6 +151,8 @@ export function replaceVisibleCaptionScript(project: CaptionProject, captions: C
       || ids.has(caption.id)
       || hiddenIds.has(caption.id)
       || !caption.text.trim()
+      || !Number.isFinite(caption.startMs)
+      || !Number.isFinite(caption.endMs)
       || caption.endMs - caption.startMs < 80
     ) return project;
     ids.add(caption.id);

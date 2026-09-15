@@ -8,7 +8,20 @@ import {
   captionTextPrefixLength,
   safeCaptionTextOffset,
 } from '@/lib/caption-text-breaks';
-import type { CaptionBlock, WordToken } from '@/types/project';
+import { withoutCaptionTransform } from '@/lib/caption-transform';
+import type { CaptionBlock, CaptionProject, WordToken } from '@/types/project';
+
+/** Drafts own script content/segmentation, never current visual geometry.
+ * Existing cues retain the current appearance (including unmigrated legacy
+ * geometry); new cues inherit only the draft's non-geometry appearance. */
+export function reconcileCaptionScriptDraft(project: Pick<CaptionProject, 'captions'>, draft: CaptionBlock[]): CaptionBlock[] {
+  const current = new Map(project.captions.map((caption) => [caption.id, caption]));
+  return draft.map((caption) => {
+    const existing = current.get(caption.id);
+    const styleOverride = existing ? existing.styleOverride : withoutCaptionTransform(caption.styleOverride);
+    return styleOverride === caption.styleOverride ? caption : { ...caption, styleOverride };
+  });
+}
 
 const MINIMUM_CAPTION_MS = 80;
 
@@ -119,6 +132,7 @@ export function splitCaptionScriptBlock(
   };
   const right: CaptionBlock = {
     ...caption,
+    styleOverride: withoutCaptionTransform(caption.styleOverride),
     id: newCaptionId,
     text: afterText,
     textMode: 'manual',

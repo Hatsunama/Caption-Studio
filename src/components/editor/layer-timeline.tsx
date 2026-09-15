@@ -21,7 +21,7 @@ import {
 import { buildClipTimeline, remapCaptionsToTimeline } from '@/lib/video-timeline';
 import { audioClipEnd } from '@/lib/audio-timeline';
 import { audioWaveformWindow } from '@/lib/audio-waveform';
-import { createTimelineTimingGesture, timelineBlockControls, TIMELINE_GRIP_WIDTH } from '@/lib/timeline-gesture';
+import { createTimelineTimingGesture, timelineBlockControls, TIMELINE_GRIP_WIDTH, TIMELINE_CONTROL_HEIGHT } from '@/lib/timeline-gesture';
 import { ensureClipFrameThumbnail } from '@/services/project-media';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import type { TimelineItemReference, TimelineTimingEdge } from '@/lib/timeline-item-editor';
@@ -116,15 +116,25 @@ export function LayerTimeline(props: {
   const lastScrubMsRef = useRef(-1);
   const pinch = useRef({ distance: 0, scale: effectiveScale });
   const captionLayout = useMemo(() => packTimelineLanes(displayCaptions), [displayCaptions]);
-  const captionRowHeight = captionLayout.laneCount * LANE_HEIGHT + 10;
+  const captionRowHeight = captionLayout.laneCount * LANE_HEIGHT + 10
+    + (props.selectedLayerId === 'captions' && props.selectedCaptionId ? TIMELINE_CONTROL_HEIGHT : 0);
+  const translationLayouts = useMemo(() => new Map(displayTranslationTracks.map((track) => [track.id,
+    packTimelineLanes(track.pairs.filter((pair) => pair.timelineVisible).map((pair) => ({
+      id: pair.translation.id, startMs: pair.startMs, endMs: pair.endMs,
+    }))),
+  ])), [displayTranslationTracks]);
+  const translationRowHeight = (id: string) => (translationLayouts.get(id)?.laneCount ?? 1) * LANE_HEIGHT + 10
+    + (props.selectedLayerId === id && props.selectedCaptionId ? TIMELINE_CONTROL_HEIGHT : 0);
   const audioLayout = useMemo(() => packTimelineLanes(props.audioClips.map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [props.audioClips]);
-  const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10;
+  const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10
+    + (props.selectedAudioClipId ? TIMELINE_CONTROL_HEIGHT : 0);
+  const visualRowHeight = (id: string) => 46 + (props.selectedLayerId === id ? TIMELINE_CONTROL_HEIGHT : 0);
   const videoRowHeight = reorderMode ? REORDER_TILE + 18 : 46;
   const sourceById = useMemo(() => new Map(props.sources.map((source) => [source.id, source])), [props.sources]);
   const totalRowsHeight = videoRowHeight + audioRowHeight + props.layers.reduce(
-    (sum, layer) => sum + (layer.kind === 'captions' ? captionRowHeight : 46),
+    (sum, layer) => sum + (layer.kind === 'captions' ? captionRowHeight : visualRowHeight(layer.id)),
     0,
-  ) + props.translationTracks.length * captionRowHeight;
+  ) + props.translationTracks.reduce((sum, track) => sum + translationRowHeight(track.id), 0);
 
   const leadingPadding = Math.max(0, viewportWidth / 2 - LABEL_WIDTH);
   const trailingPadding = viewportWidth / 2;
@@ -399,6 +409,7 @@ export function LayerTimeline(props: {
                     durationMs={duration}
                     trackWidth={trackWidth}
                     lane={audioLayout.laneById.get(clip.id) ?? 0}
+                    controlTop={audioLayout.laneCount * LANE_HEIGHT + 3}
                     color={clip.muted ? '#59636F' : '#006D78'}
                     selected={props.selectedAudioClipId === clip.id}
                     waveformPeaks={source?.waveformPeaks}
@@ -426,7 +437,7 @@ export function LayerTimeline(props: {
                   onPressLabel={() => selectTimelineItem(() => props.onSelectLayer(layer.id))}
                   onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }}
                   trackWidth={trackWidth}
-                  height={isCaptions ? captionRowHeight : 46}
+                  height={isCaptions ? captionRowHeight : visualRowHeight(layer.id)}
                   controls={<View style={{ gap: 2 }}>
                     {isCaptions && captionLayout.laneCount > 1 ? <Text style={{ color: '#19D98B', fontSize: 7, fontWeight: '800' }}>{captionLayout.laneCount} AUTO LANES</Text> : null}
                     <View style={{ flexDirection: 'row', gap: 2 }}>
@@ -436,9 +447,9 @@ export function LayerTimeline(props: {
                     </View>
                   </View>}>
                   {isCaptions ? displayCaptions.map((caption, index) => ({ caption, index })).filter(({ caption }) => isVisible(caption.startMs, caption.endMs)).map(({ caption, index }) => (
-                    <TimedBlock key={caption.id} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} lane={captionLayout.laneById.get(caption.id) ?? 0} color={NEON_CAPTION_COLORS[index % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
+                    <TimedBlock key={caption.id} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} lane={captionLayout.laneById.get(caption.id) ?? 0} controlTop={captionLayout.laneCount * LANE_HEIGHT + 3} color={NEON_CAPTION_COLORS[index % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )) : (
-                    <TimedBlock label={layer.kind === 'text' ? layer.text : 'IMAGE'} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
+                    <TimedBlock label={layer.kind === 'text' ? layer.text : 'IMAGE'} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} controlTop={LANE_HEIGHT + 3} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )}
                 </TimelineRow>
                 {isCaptions ? displayTranslationTracks.map((track, trackIndex) => (
@@ -453,7 +464,7 @@ export function LayerTimeline(props: {
                     }}
                     onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }}
                     trackWidth={trackWidth}
-                    height={captionRowHeight}
+                    height={translationRowHeight(track.id)}
                     controls={<Text style={{ color: track.visible ? '#19D98B' : '#7B8591', fontSize: 7, fontWeight: '900' }}>{track.visible ? 'VISIBLE · INDEPENDENT' : 'HIDDEN · INDEPENDENT'}</Text>}>
                     {track.pairs.filter((pair) => pair.timelineVisible && isVisible(pair.startMs, pair.endMs)).map((pair, pairIndex) => (
                       <TimedBlock
@@ -463,7 +474,8 @@ export function LayerTimeline(props: {
                         endMs={pair.endMs}
                         durationMs={duration}
                         trackWidth={trackWidth}
-                        lane={0}
+                        lane={translationLayouts.get(track.id)?.laneById.get(pair.translation.id) ?? 0}
+                        controlTop={(translationLayouts.get(track.id)?.laneCount ?? 1) * LANE_HEIGHT + 3}
                         color={pair.translation.status === 'stale' || pair.translation.status === 'pending' || pair.translation.status === 'failed'
                           ? '#A66220'
                           : NEON_CAPTION_COLORS[(pairIndex + trackIndex + 1) % NEON_CAPTION_COLORS.length]}
@@ -850,6 +862,7 @@ function TimedBlock(props: {
   durationMs: number;
   trackWidth: number;
   lane: number;
+  controlTop: number;
   color: string;
   selected: boolean;
   waveformPeaks?: number[];
@@ -863,14 +876,14 @@ function TimedBlock(props: {
   onChange: (edge: TimelineTimingEdge, startMs: number, endMs: number) => void;
   onEnd: () => void;
 }) {
-  const width = Math.max(2, (props.endMs - props.startMs) / props.durationMs * props.trackWidth - 2);
+  const width = Math.max(0, (props.endMs - props.startMs) / props.durationMs * props.trackWidth);
   const controls = timelineBlockControls(width, props.selected);
   const bodyLeft = props.startMs / props.durationMs * props.trackWidth;
-  const controlsLeft = Math.max(0, Math.min(bodyLeft - controls.inset, Math.max(0, props.trackWidth - controls.width)));
+  const controlsLeft = Math.max(0, Math.min(bodyLeft, Math.max(0, props.trackWidth - controls.controlWidth)));
   return (
-    <View style={{ position: 'absolute', left: controlsLeft, width: controls.width, top: props.lane * LANE_HEIGHT + 3, height: LANE_HEIGHT - 6, zIndex: props.selected ? 6 : 1, justifyContent: 'center', overflow: 'visible' }}>
-      {controls.inset > 0 ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: 1, backgroundColor: '#FFFFFF' }} /> : null}
-      <View pointerEvents="none" style={{ position: 'absolute', left: bodyLeft - controlsLeft, width, top: 0, bottom: 0, overflow: 'hidden', borderRadius: 6, borderWidth: props.selected ? 2 : 1, borderColor: props.selected ? '#FFFFFF' : `${props.color}CC`, backgroundColor: `${props.color}B8` }}>
+    <>
+    <View style={{ position: 'absolute', left: bodyLeft, width: controls.width, top: props.lane * LANE_HEIGHT + 3, height: LANE_HEIGHT - 6, zIndex: props.selected ? 6 : 1, justifyContent: 'center' }}>
+      <View pointerEvents="none" style={{ position: 'absolute', left: 0, width, top: 0, bottom: 0, overflow: 'hidden', borderRadius: 6, borderWidth: props.selected ? 2 : 1, borderColor: props.selected ? '#FFFFFF' : `${props.color}CC`, backgroundColor: `${props.color}B8` }}>
         {props.waveformPeaks && props.waveformPeaks.length >= 8 ? (
           <AudioWaveform
             peaks={props.waveformPeaks}
@@ -888,13 +901,17 @@ function TimedBlock(props: {
         <Text numberOfLines={1} style={{ position: 'absolute', left: 7, right: 7, top: 1, color: '#FFFFFF', fontSize: 7, fontWeight: '900', zIndex: 2, textShadowColor: '#00161A', textShadowRadius: 2 }}>{props.label}</Text>
       </View>
       <TimelineMoveGrip {...props} />
+    </View>
       {props.selected ? (
-        <>
+        <View accessibilityLabel={`Timing controls for ${props.label}`} style={{ position: 'absolute', left: controlsLeft,
+          top: props.controlTop, width: controls.controlWidth,
+          height: TIMELINE_CONTROL_HEIGHT - 6, borderRadius: 6, backgroundColor: '#334155' }}>
+          <TimelineMoveGrip {...props} controlRail />
           <TimingGrip side="start" {...props} />
           <TimingGrip side="end" {...props} />
-        </>
+        </View>
       ) : null}
-    </View>
+    </>
   );
 }
 
@@ -950,6 +967,7 @@ function useTimelineTimingResponder(props: Parameters<typeof TimedBlock>[0], edg
   const propsRef = useRef(props);
   propsRef.current = props;
   const gesture = useMemo(() => createTimelineTimingGesture(), []);
+  useEffect(() => () => gesture.finish(), [gesture]);
   return useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
@@ -962,7 +980,7 @@ function useTimelineTimingResponder(props: Parameters<typeof TimedBlock>[0], edg
   }), [edge, gesture]);
 }
 
-function TimelineMoveGrip(props: Parameters<typeof TimedBlock>[0]) {
+function TimelineMoveGrip(props: Parameters<typeof TimedBlock>[0] & { controlRail?: boolean }) {
   const responder = useTimelineTimingResponder(props, 'move');
   return (
     <View
@@ -970,14 +988,14 @@ function TimelineMoveGrip(props: Parameters<typeof TimedBlock>[0]) {
       accessible
       accessibilityRole="adjustable"
       accessibilityLabel={`${props.label}. Tap to select. Drag to move this timeline item without changing adjacent items.`}
-      style={{ position: 'absolute', left: props.selected ? TIMELINE_GRIP_WIDTH : 0, right: props.selected ? TIMELINE_GRIP_WIDTH : 0, top: 0, bottom: 0 }}
-    />
+      style={{ position: 'absolute', left: props.controlRail ? TIMELINE_GRIP_WIDTH : 0, right: props.controlRail ? TIMELINE_GRIP_WIDTH : 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}
+    >{props.controlRail ? <Text pointerEvents="none" style={{ color: '#FFFFFF', fontSize: 10 }}>Move</Text> : null}</View>
   );
 }
 
 function TimingGrip(props: Parameters<typeof TimedBlock>[0] & { side: 'start' | 'end' }) {
   const responder = useTimelineTimingResponder(props, props.side);
-  return <View {...responder.panHandlers} accessible accessibilityRole="adjustable" accessibilityLabel={`${props.side === 'start' ? 'Start' : 'End'} timeline boundary. Drag to trim this item.`} style={{ position: 'absolute', [props.side === 'start' ? 'left' : 'right']: 0, top: 0, bottom: 0, width: TIMELINE_GRIP_WIDTH, zIndex: 10, borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}><View pointerEvents="none" style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: '#151A20' }} /></View>;
+  return <View {...responder.panHandlers} accessible accessibilityRole="adjustable" accessibilityLabel={`${props.side === 'start' ? 'Start' : 'End'} timeline boundary. Drag to trim this item.`} style={{ position: 'absolute', [props.side === 'start' ? 'left' : 'right']: 0, top: 0, bottom: 0, width: TIMELINE_GRIP_WIDTH, zIndex: 10, borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}><Text pointerEvents="none" style={{ color: '#151A20', fontSize: 9 }}>{props.side === 'start' ? 'Start' : 'End'}</Text></View>;
 }
 
 function TinyButton(props: { label: string; danger?: boolean; disabled?: boolean; onPress: () => void }) {

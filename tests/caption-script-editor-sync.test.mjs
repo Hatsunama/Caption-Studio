@@ -4,7 +4,10 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as scriptMutations from '../src/lib/caption-script.ts';
-import { resolveCaptionStyle } from '../src/lib/style-resolver.ts';
+import { applyStylePatch, resolveCaptionStyle } from '../src/lib/style-resolver.ts';
+import { captionTransform } from '../src/lib/caption-transform.ts';
+import { replaceVisibleCaptionScript } from '../src/lib/project-editor.ts';
+import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
 import { captionPreviewState } from '../src/lib/caption-preview.ts';
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 
@@ -50,7 +53,8 @@ function workspaceValue(name, context) {
       || (ts.isObjectBindingPattern(node.name) && node.name.elements.some((element) => element.name.getText(editorAst) === name)));
   const value = evaluate(declaration.initializer.getText(editorAst), { scriptEditorOpen: true, scriptKeyboardOpen: false,
     scriptEditingCaption: undefined, scriptCropActive: false, currentMs: 0, selectedCaptionId: undefined,
-    useMemo: (fn) => fn(), captionPreviewState, ...context });
+    useMemo: (fn) => fn(), captionPreviewState, project: { captions: cues },
+    reconcileCaptionScriptDraft: scriptMutations.reconcileCaptionScriptDraft, ...context });
   if (!ts.isObjectBindingPattern(declaration.name)) return value;
   const element = declaration.name.elements.find((entry) => entry.name.getText(editorAst) === name);
   return value[(element.propertyName ?? element.name).getText(editorAst)];
@@ -116,7 +120,8 @@ function mount(overrides = {}, platform = 'android') {
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, pill: 20 } } };
       if (name === '@/services/editor-draft-journal') return {
         readEditorDraftJournal: () => ({ then: (callback) => { recover = callback; return { catch: () => {} }; } }),
-        clearEditorDraftJournal: async () => {}, writeEditorDraftJournal: async () => {},
+        clearEditorDraftJournal: async () => { calls.journalClears = (calls.journalClears ?? 0) + 1; },
+        writeEditorDraftJournal: async (...args) => { (calls.journals ??= []).push(plain(args)); },
       };
       throw new Error(`Unexpected dependency: ${name}`);
     },
@@ -207,6 +212,7 @@ function mount(overrides = {}, platform = 'android') {
     action: (index, label) => act(() => walk(row(index), (node) => node.props?.label === label).props.onPress()),
     recover: (payload) => act(() => recover({ payload, baseRevision: 'revision' })),
     restore: () => act(() => calls.alerts.at(-1)[2].find(({ text }) => text === 'Restore').onPress()),
+    button: (label) => walk(tree, (node) => node.props?.accessibilityLabel === label).props,
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
   };
 }
@@ -651,6 +657,86 @@ test('opening and reopening never publish an empty or discarded previous draft',
   h.update({ visible: false }); h.calls.drafts.length = 0;
   h.update({ visible: true });
   assert.ok(h.calls.drafts.filter(Boolean).length > 0, 'unchanged drafts still publish on reopen');
+});
+
+const migrationProject = () => JSON.parse(readFileSync(new URL('./fixtures/legacy-caption-layout.json', import.meta.url), 'utf8')).project;
+const scriptTransform = { position: { x: 0.4, y: 0.3 }, rotation: 33, scale: 1.4, scaleX: 0.8, scaleY: 1.2,
+  box: { width: 0.7, height: 0.2 } };
+const settleSave = () => new Promise((resolve) => setImmediate(resolve));
+
+for (const recovered of [false, true]) test(`script component split -> transform -> ${recovered ? 'delayed recovery -> ' : ''}save -> reopen uses current geometry`, async () => {
+  let project = migrationProject(), closes = 0;
+  // Execute the workspace's real save transaction, with the project fetched at
+  // commit time. The sheet still owns its pre-transform draft and split IDs.
+  const save = workspaceValue('commitCaptionScript', {
+    commitEditorProject: async (mutation) => {
+      const before = project;
+      project = mutation(before);
+      return { before, project };
+    },
+    replaceVisibleCaptionScript, editorSession: { isCurrent: () => true }, selectedCaptionId: 'c0',
+    changedPrimaryCaptionTextIds: () => [], setSelectedCaptionId: () => {},
+  });
+  const h = mount({ captions: project.captions, onSave: save, onCancel: () => { closes++; } });
+  h.edit(0);
+  h.act(() => h.input(0).onSelectionChange({ nativeEvent: { selection: { start: 6, end: 6 } } }));
+  h.action(0, 'Split here');
+  const draft = plain(h.list().data);
+  assert.equal(draft.length, 3);
+  project = applyStylePatch(project, 'c1', 'caption', scriptTransform);
+  project.captions[0].styleOverride = { italic: false, textColor: '#FFFFFF' };
+  h.update({ captions: project.captions, baseRevision: 'after-transform' });
+  if (recovered) { h.recover(draft); h.restore(); }
+  const preview = workspaceValue('previewCaptions', {
+    project, timelineCaptions: project.captions, scriptDraftCaptions: h.list().data,
+  });
+  for (const cue of preview) assert.deepEqual(captionTransform(resolveCaptionStyle(project.projectStyle, cue)), scriptTransform);
+  h.act(() => h.button('Save all caption edits').onPress());
+  await settleSave();
+  assert.equal(closes, 1);
+  assert.equal(h.calls.journalClears, 1);
+  project = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(project)));
+  assert.deepEqual(project.captions.map(({ id, text, startMs, endMs, wordIds }) => ({ id, text, startMs, endMs, wordIds })),
+    draft.map(({ id, text, startMs, endMs, wordIds }) => ({ id, text, startMs, endMs, wordIds })));
+  for (const cue of project.captions) assert.deepEqual(captionTransform(resolveCaptionStyle(project.projectStyle, cue)), scriptTransform);
+  assert.equal(project.captions[0].styleOverride.italic, false);
+  assert.equal(project.captions[1].styleOverride.italic, true, 'new split keeps authored non-geometry appearance');
+});
+
+test('cancel after a transform preserves project and clears only the script recovery; stale restore cannot cross sessions', async () => {
+  let project = migrationProject(), closes = 0;
+  const h = mount({ captions: project.captions, onCancel: () => { closes++; } });
+  h.recover(project.captions.map((cue) => ({ ...cue, text: 'Recovered ' + cue.text })));
+  const staleRestore = h.calls.alerts.at(-1)[2].find((action) => action.text === 'Restore').onPress;
+  h.restore();
+  project = applyStylePatch(project, 'c0', 'caption', scriptTransform);
+  h.update({ captions: project.captions, baseRevision: 'transformed' });
+  const snapshot = serializeProjectSnapshot(project);
+  h.act(() => h.button('Cancel caption edits').onPress());
+  assert.equal(h.calls.alerts.at(-1)[0], 'Discard unsaved caption edits?');
+  h.act(() => h.calls.alerts.at(-1)[2].find((action) => action.text === 'Discard').onPress());
+  await settleSave();
+  assert.equal(closes, 1);
+  assert.equal(h.calls.journalClears, 1);
+  assert.deepEqual(h.calls.saves, []);
+  assert.equal(serializeProjectSnapshot(project), snapshot);
+  h.update({ visible: false }); h.update({ visible: true });
+  h.act(staleRestore);
+  assert.deepEqual(plain(h.list().data), project.captions);
+});
+
+test('appearance-only project updates do not create a dirty script or cancel pending recovery', async () => {
+  let project = migrationProject(), closes = 0;
+  const h = mount({ captions: project.captions, onCancel: () => { closes++; } });
+  project = applyStylePatch(project, 'c0', 'caption', scriptTransform);
+  h.update({ captions: project.captions, baseRevision: 'transformed' });
+  h.recover(null);
+  h.advance(1000);
+  assert.equal(h.calls.journals, undefined);
+  h.act(() => h.button('Cancel caption edits').onPress());
+  await settleSave();
+  assert.equal(closes, 1);
+  assert.deepEqual(h.calls.alerts, []);
 });
 
 test('iOS keyboard avoidance uses the sheet screen position and compacts chrome for typing', () => {
