@@ -12,26 +12,65 @@ export type EditorDraftJournal = {
   payload: unknown;
 };
 
-const MAX_JOURNAL_BYTES = 4 * 1024 * 1024;
+export const MAX_JOURNAL_BYTES = 4 * 1024 * 1024;
 const journalOperations = createKeyedOperationQueue();
 
-async function readEditorDraftJournalUnqueued(projectId: string, kind: EditorDraftKind) {
-  const uri = journalUri(projectId, kind);
-  if (!uri) return null;
-  const info = await FileSystem.getInfoAsync(uri);
-  if (!info.exists || info.isDirectory || (info.size ?? 0) > MAX_JOURNAL_BYTES) return null;
-  const raw = await FileSystem.readAsStringAsync(uri);
-  try {
-    if (raw.length > MAX_JOURNAL_BYTES) return null;
-    const value: unknown = JSON.parse(raw);
-    if (!value || typeof value !== 'object') return null;
-    const record = value as Partial<EditorDraftJournal>;
-    if (record.schemaVersion !== 1 || record.projectId !== projectId || record.kind !== kind
-      || typeof record.baseRevision !== 'string' || typeof record.savedAt !== 'string') return null;
-    return record as EditorDraftJournal;
-  } catch {
-    return null;
+export class EditorDraftJournalError extends Error {
+  constructor(public readonly code: 'oversized' | 'corrupt' | 'unavailable', message: string) {
+    super(message);
+    this.name = 'EditorDraftJournalError';
   }
+}
+
+// Count UTF-8 without allocating a second, potentially multi-megabyte buffer.
+// Unpaired UTF-16 surrogates encode as the three-byte replacement character.
+function utf8Bytes(value: string) {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff
+      && value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff) {
+      bytes += 4;
+      index += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+function checkByteBudget(bytes: number) {
+  if (bytes > MAX_JOURNAL_BYTES) throw new EditorDraftJournalError('oversized',
+    'The recovery draft exceeds the 4 MiB UTF-8 limit. Existing recovery data is preserved. Keep the editor open until you save your current edits.');
+}
+
+function corruptJournal(): never {
+  throw new EditorDraftJournalError('corrupt',
+    'The recovery draft is corrupt or incompatible. It has been preserved; automatic recovery saving is paused.');
+}
+
+async function readJournalFile(uri: string, projectId: string, kind: EditorDraftKind): Promise<EditorDraftJournal | null> {
+  const info = await FileSystem.getInfoAsync(uri);
+  if (!info.exists) return null;
+  if (info.isDirectory) return corruptJournal();
+  checkByteBudget(info.size ?? 0);
+  const raw = await FileSystem.readAsStringAsync(uri);
+  checkByteBudget(utf8Bytes(raw));
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { return corruptJournal(); }
+  if (!value || typeof value !== 'object') return corruptJournal();
+  const record = value as Partial<EditorDraftJournal>;
+  if (record.schemaVersion !== 1 || record.projectId !== projectId || record.kind !== kind
+    || typeof record.baseRevision !== 'string' || typeof record.savedAt !== 'string'
+    || !Object.hasOwn(record, 'payload')) return corruptJournal();
+  return record as EditorDraftJournal;
+}
+
+async function readEditorDraftJournalUnqueued(projectId: string, kind: EditorDraftKind): Promise<EditorDraftJournal | null> {
+  const uri = journalUri(projectId, kind);
+  if (!uri) throw new EditorDraftJournalError('unavailable', 'Recovery draft storage is unavailable. Keep the editor open and retry saving.');
+  return await readJournalFile(uri, projectId, kind)
+    ?? await readJournalFile(`${uri}.previous`, projectId, kind);
 }
 
 async function writeEditorDraftJournalUnqueued(
@@ -51,16 +90,31 @@ async function writeEditorDraftJournalUnqueued(
     savedAt: new Date().toISOString(),
     payload,
   } satisfies EditorDraftJournal);
-  if (encoded.length > MAX_JOURNAL_BYTES) throw new Error('This editor recovery draft is too large to save safely.');
+  checkByteBudget(utf8Bytes(encoded));
+  // Refuse to replace an unreadable journal even if a caller skipped recovery.
+  await readEditorDraftJournalUnqueued(projectId, kind);
   await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
   const staging = `${uri}.writing`;
   await FileSystem.writeAsStringAsync(staging, encoded);
+  const previous = `${uri}.previous`;
+  // Expo's iOS move removes its destination first. Move only to an empty
+  // destination: the project queue gives atomic visibility to live readers,
+  // and .previous gives old-or-new recovery across process interruption.
+  if ((await FileSystem.getInfoAsync(uri)).exists) {
+    if ((await FileSystem.getInfoAsync(previous)).exists) await FileSystem.deleteAsync(previous, { idempotent: true });
+    await FileSystem.moveAsync({ from: uri, to: previous });
+  }
   await FileSystem.moveAsync({ from: staging, to: uri });
+  if ((await FileSystem.getInfoAsync(previous)).exists) await FileSystem.deleteAsync(previous, { idempotent: true });
 }
 
 async function clearEditorDraftJournalUnqueued(projectId: string, kind: EditorDraftKind) {
   const uri = journalUri(projectId, kind);
-  if (uri) await FileSystem.deleteAsync(uri, { idempotent: true });
+  if (uri) {
+    // Delete fallback first so an interrupted explicit clear cannot resurrect it.
+    await FileSystem.deleteAsync(`${uri}.previous`, { idempotent: true });
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+  }
 }
 
 function journalDirectoryUri() {
@@ -98,7 +152,7 @@ export function clearProjectEditorDraftJournals(projectId: string) {
     const entries = await FileSystem.readDirectoryAsync(directory);
     const results = await Promise.allSettled(entries
       .filter((name) => name.startsWith(prefix)
-        && /^(caption-script|dual-captions-[a-zA-Z0-9_-]*)\.json(\.writing)?$/.test(name.slice(prefix.length)))
+        && /^(caption-script|dual-captions-[a-zA-Z0-9_-]*)\.json(\.(writing|previous))?$/.test(name.slice(prefix.length)))
       .map(async (name) => {
         const uri = `${directory}${name}`;
         const entry = await FileSystem.getInfoAsync(uri);

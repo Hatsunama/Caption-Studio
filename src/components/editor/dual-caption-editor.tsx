@@ -96,6 +96,10 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       if (!active) return;
       const recovered = decodeDualDraft(journal?.payload, allowedIds);
       const nextCommitted = store.committed;
+      if (journal && !recovered) {
+        setJournalError('The recovery draft could not be decoded. It is preserved; close and reopen the editor to retry.');
+        return;
+      }
       if (!recovered || !shouldRestoreDualCaptionJournal(recovered, nextCommitted)) {
         if (recovered) void clearEditorDraftJournal(props.projectId, journalKind).catch(() => { if (active) setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'); });
         setJournalReady(true);
@@ -109,10 +113,10 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           { text: 'Restore unsaved typing', onPress: () => { if (!active) return; store.replace(mergeRecoveredDualCaptionDrafts(recovered, store.committed)); setJournalReady(true); } },
         ],
       );
-    }).catch(() => {
+    }).catch((caught) => {
       if (active) {
-        setJournalError('Dual-subtitle recovery storage could not be read. Save your changes before leaving this editor.');
-        setJournalReady(true);
+        setJournalError(caught instanceof Error ? caught.message : 'Dual-subtitle recovery storage could not be read. Existing recovery data is preserved.');
+        setJournalReady(false);
       }
     });
     return () => { active = false; };
@@ -140,7 +144,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
         // operations may be queued, so never pass the mutable draft map itself.
         void writeEditorDraftJournal(props.projectId, journalKind, props.baseRevision, store.snapshot())
           .then(() => { if (active) setJournalError(undefined); })
-          .catch(() => { if (active) setJournalError('Dual-subtitle recovery could not be saved. Keep this editor open until you save.'); });
+          .catch((caught) => { if (active) setJournalError(caught instanceof Error ? caught.message : 'Dual-subtitle recovery could not be saved. Keep this editor open until you save.'); });
       }, 600);
     };
     const unsubscribe = store.subscribeChanges(schedule);
@@ -167,7 +171,11 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   }, [journalKind, onClose, projectId]);
 
   const requestClose = useCallback(() => {
-    if (saving || closing || !journalReady) return;
+    if (saving || closing) return;
+    if (!journalReady) {
+      if (journalError) onClose();
+      return;
+    }
     if (errorMessage) {
       onDismissError();
       return;
@@ -188,7 +196,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       { text: 'Keep editing', style: 'cancel' },
       { text: 'Discard', style: 'destructive', onPress: closeAfterClearingJournal },
     ]);
-  }, [busy, closeAfterClearingJournal, closing, errorMessage, journalReady, onCancelBusy, onDismissError, saving, selectedIds, store]);
+  }, [busy, closeAfterClearingJournal, closing, errorMessage, journalError, journalReady, onCancelBusy, onClose, onDismissError, saving, selectedIds, store]);
 
   useEffect(() => {
     if (!visible) {
@@ -240,7 +248,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
                 {props.sourceLanguageLabel} + {props.targetLanguageLabel} · independent text and timing
               </Text>
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close dual subtitle editor" disabled={disabled} onPress={requestClose} hitSlop={10}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close dual subtitle editor" disabled={saving || closing || props.busy || (!journalReady && !journalError)} onPress={requestClose} hitSlop={10}>
               <Text style={{ color: chrome.text, fontSize: 28, lineHeight: 30 }}>×</Text>
             </Pressable>
           </View>

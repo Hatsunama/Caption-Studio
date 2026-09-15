@@ -236,7 +236,7 @@ export function ScriptEditor(props: {
       const recovered = decodeCaptionDraft(journal?.payload);
       if (!recovered) {
         if (journal) {
-          setJournalError('The recovery draft could not be decoded. It is preserved until you explicitly save or discard your edits.');
+          setJournalError('The recovery draft could not be decoded. It is preserved; automatic recovery saving is paused.');
           return;
         }
         setJournalReady(true);
@@ -254,8 +254,9 @@ export function ScriptEditor(props: {
             style: 'destructive',
             onPress: () => {
               if (!active) return;
-              void clearEditorDraftJournal(projectId, 'caption-script');
-              setJournalReady(true);
+              void clearEditorDraftJournal(projectId, 'caption-script')
+                .then(() => { if (active) setJournalReady(true); })
+                .catch(() => { if (active) setJournalError('Recovery data could not be cleared. It is preserved; try opening the editor again.'); });
             },
           },
           { text: 'Restore', onPress: () => {
@@ -266,9 +267,9 @@ export function ScriptEditor(props: {
           } },
         ],
       );
-    }).catch(() => {
+    }).catch((caught) => {
       if (active) {
-        setJournalError('Caption recovery storage could not be read. Save your changes before leaving this editor.');
+        setJournalError(caught instanceof Error ? caught.message : 'Caption recovery storage could not be read. Existing recovery data is preserved.');
         // A failed read must never authorize overwriting an unread journal.
         setJournalReady(false);
       }
@@ -284,7 +285,7 @@ export function ScriptEditor(props: {
     const timer = setTimeout(() => {
       void writeEditorDraftJournal(props.projectId, 'caption-script', props.baseRevision, draftCaptions)
         .then(() => { if (active) setJournalError(undefined); })
-        .catch(() => { if (active) setJournalError('Caption recovery could not be saved. Keep this editor open until you save.'); });
+        .catch((caught) => { if (active) setJournalError(caught instanceof Error ? caught.message : 'Caption recovery could not be saved. Keep this editor open until you save.'); });
     }, 600);
     return () => {
       active = false;
@@ -453,7 +454,8 @@ export function ScriptEditor(props: {
         setSaveError('Captions changed while saving. Review the latest text, then tap Done again.');
         return;
       }
-      await clearEditorDraftJournal(props.projectId, 'caption-script');
+      // Saving current edits does not authorize deleting an unread older draft.
+      if (journalReady) await clearEditorDraftJournal(props.projectId, 'caption-script');
       props.onCancel();
     } catch (caught) {
       setSaveError(caught instanceof Error ? caught.message : 'Caption changes were not saved. Try again.');
@@ -468,7 +470,7 @@ export function ScriptEditor(props: {
       setClosing(true);
       setSaveError(undefined);
       try {
-        await clearEditorDraftJournal(projectId, 'caption-script');
+        if (journalReady) await clearEditorDraftJournal(projectId, 'caption-script');
         onCancel();
       } catch (caught) {
         setJournalError(caught instanceof Error ? caught.message : 'Caption recovery could not be cleared. Your edits are still open.');
@@ -480,11 +482,13 @@ export function ScriptEditor(props: {
       void close();
       return;
     }
-    Alert.alert('Discard unsaved caption edits?', 'The recovery copy is also removed when you discard.', [
+    Alert.alert('Discard unsaved caption edits?', journalReady
+      ? 'The recovery copy is also removed when you discard.'
+      : 'Current edits will be discarded. The unread recovery copy will be preserved.', [
       { text: 'Keep editing', style: 'cancel' },
       { text: 'Discard', style: 'destructive', onPress: () => { void close(); } },
     ]);
-  }, [closing, draftCaptions, onCancel, projectId, saving, sourceCaptions]);
+  }, [closing, draftCaptions, journalReady, onCancel, projectId, saving, sourceCaptions]);
 
   useEffect(() => {
     if (!props.visible) {
