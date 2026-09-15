@@ -232,6 +232,8 @@ export type TextVisualLayer = {
   startMs: number;
   endMs: number;
   style: CaptionStyle;
+  /** Timeline ownership keeps explicit canvas ranges independent of clip edits. */
+  timingMode?: 'source' | 'timeline';
   sourceAnchors?: LayerSourceAnchor[];
   timelineVisible?: boolean;
 };
@@ -248,6 +250,8 @@ export type ImageVisualLayer = NormalizedTransform & {
   box: { width: number; height: number };
   rotation: number;
   opacity: number;
+  /** Timeline ownership keeps explicit canvas ranges independent of clip edits. */
+  timingMode?: 'source' | 'timeline';
   sourceAnchors?: LayerSourceAnchor[];
   timelineVisible?: boolean;
 };

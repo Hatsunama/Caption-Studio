@@ -527,6 +527,7 @@ function decodeTextLayer(layer: Record<string, unknown>, index: number, projectS
     endMs: finiteNumber(layer.endMs, `text layer ${index + 1} end`, startMs, Number.MAX_SAFE_INTEGER),
     style: decodeCaptionStyle(layer.style, projectStyle, `text layer ${index + 1} style`),
     sourceAnchors: decodeSourceAnchors(layer.sourceAnchors, `text layer ${index + 1}`),
+    timingMode: optionalEnum(layer.timingMode, ['source', 'timeline'] as const, `text layer ${index + 1} timing mode`),
     timelineVisible: layer.timelineVisible === undefined ? true : booleanValue(layer.timelineVisible, `text layer ${index + 1} timeline visibility`),
   };
 }
@@ -551,6 +552,7 @@ function decodeImageLayer(layer: Record<string, unknown>, index: number): ImageV
     rotation: finiteNumber(layer.rotation, `image layer ${index + 1} rotation`, -360_000, 360_000),
     opacity: finiteNumber(layer.opacity, `image layer ${index + 1} opacity`, 0, 1),
     sourceAnchors: decodeSourceAnchors(layer.sourceAnchors, `image layer ${index + 1}`),
+    timingMode: optionalEnum(layer.timingMode, ['source', 'timeline'] as const, `image layer ${index + 1} timing mode`),
     timelineVisible: layer.timelineVisible === undefined ? true : booleanValue(layer.timelineVisible, `image layer ${index + 1} timeline visibility`),
   };
 }

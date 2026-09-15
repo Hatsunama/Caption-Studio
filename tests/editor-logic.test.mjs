@@ -55,7 +55,7 @@ test('inserted audio is persistent, trimmable, movable, and independently mutabl
   assert.equal(deleteAudioClip(muted, 'audio-clip').audioClips.length, 0);
 });
 
-test('text and image timing stays bounded and splits into independently editable timeline items', () => {
+test('image timing extends canvas and splits into independently editable timeline items', () => {
   const visual = {
     clips: [{ id: 'video', sourceId: 'source', sourceStartMs: 0, sourceEndMs: 10_000, availableSourceStartMs: 0, availableSourceEndMs: 10_000, playbackRate: 1, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0, gapBeforeMs: 0, gapAfterMs: 0, transitionAfter: { type: 'none', durationMs: 0 } }],
     layers: [
@@ -65,7 +65,9 @@ test('text and image timing stays bounded and splits into independently editable
     updatedAt: 'before',
   };
   const moved = setLayerTiming(visual, 'image', 'move', 9_000, 12_000);
-  assert.deepEqual([moved.layers[1].startMs, moved.layers[1].endMs], [7_000, 10_000]);
+  assert.deepEqual([moved.layers[1].startMs, moved.layers[1].endMs], [9_000, 12_000]);
+  assert.equal(moved.layers[1].timingMode, 'timeline');
+  assert.equal(moved.layers[1].sourceAnchors, undefined);
   const split = splitVisualLayer(visual, 'image', 3_500, 'image-left', 'image-right');
   assert.ok(split);
   assert.deepEqual(split.project.layers.slice(1).map((layer) => [layer.id, layer.startMs, layer.endMs, layer.uri]), [

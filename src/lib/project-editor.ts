@@ -36,7 +36,7 @@ import {
   type VideoClip,
   type VideoTransformPatch,
 } from '@/types/project';
-import { editCanvasTimelineRange, editTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
+import { editCanvasTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
 
 export function setCaptionTexts(project: CaptionProject, changes: CaptionTextChanges) {
   const changed = applyCaptionTextChanges(project.captions, changes);
@@ -173,19 +173,13 @@ export function setLayerTiming(
   endMs: number,
 ) {
   const selected = project.layers.find((layer) => layer.id === layerId && layer.kind !== 'captions');
-  if (!selected || selected.kind === 'captions') return project;
-  const range = selected.kind === 'text' ? editCanvasTimelineRange(selected, edge, startMs, endMs) : editTimelineRange(
-    { startMs: selected.startMs, endMs: selected.endMs },
-    edge,
-    startMs,
-    endMs,
-    projectTimelineDuration(project),
-  );
+  if (!selected || selected.kind === 'captions' || selected.timelineVisible === false) return project;
+  const range = editCanvasTimelineRange(selected, edge, startMs, endMs);
   if (range.startMs === selected.startMs && range.endMs === selected.endMs) return project;
   const entries = buildClipTimeline(project.clips);
   return updateProject(project, {
     layers: project.layers.map((layer) => layer.id === layerId && layer.kind !== 'captions'
-      ? attachLayerToTimeline({ ...layer, ...range, timelineVisible: true }, entries, true)
+      ? attachLayerToTimeline({ ...layer, ...range }, entries, true)
       : layer),
   });
 }
@@ -230,15 +224,17 @@ export function addImageLayer(project: CaptionProject, options: {
   currentMs: number;
   durationMs: number;
 }) {
-  const startMs = clamp(options.currentMs, 0, Math.max(0, options.durationMs - 500));
+  const startMs = Number.isFinite(options.currentMs) ? Math.max(0, options.currentMs) : 0;
+  const defaultEndMs = Number.isFinite(options.durationMs) && startMs < options.durationMs
+    ? Math.min(options.durationMs, startMs + 3_000) : startMs + 3_000;
+  const range = editCanvasTimelineRange({ startMs, endMs: defaultEndMs }, 'end', startMs, defaultEndMs);
   const layer = attachLayerToTimeline<ImageVisualLayer>({
     id: options.id,
     kind: 'image',
     name: options.name.slice(0, 18) || 'Sticker',
     visible: true,
     uri: options.uri,
-    startMs,
-    endMs: Math.min(options.durationMs, startMs + 3_000),
+    ...range,
     position: { x: 0.5, y: 0.5 },
     box: { width: 0.34, height: 0.24 },
     rotation: 0,
@@ -273,6 +269,7 @@ export function splitVisualLayer(
   if (
     !layer
     || layer.kind === 'captions'
+    || layer.timelineVisible === false
     || leftId === rightId
     || project.layers.some((candidate) => candidate.id === leftId || candidate.id === rightId)
   ) return null;
@@ -644,7 +641,7 @@ function rebuildAfterLayoutEdit(
     words,
   );
   const captions = [...remapped, ...unanchored].sort((left, right) => left.startMs - right.startMs);
-  const layers = remapVisualLayers(anchorVisualLayers(sourceLayers, project.clips), clips, splice);
+  const layers = remapVisualLayers(anchorVisualLayers(sourceLayers, project.clips), clips);
   return updateProject(project, {
     clips,
     transcription: { ...project.transcription, words },
@@ -699,8 +696,8 @@ function spliceTimedRange<T extends { startMs: number; endMs: number }>(
 
 function anchorVisualLayers(layers: CaptionProject['layers'], clips: VideoClip[]) {
   const entries = buildClipTimeline(clips);
-  return layers.map((layer) => layer.kind === 'captions' || layer.sourceAnchors?.length
-    || (layer.timelineVisible === false && layer.sourceAnchors !== undefined)
+  return layers.map((layer) => layer.kind === 'captions' || layer.timingMode === 'timeline' || layer.sourceAnchors?.length
+    || layer.timelineVisible === false
     ? layer
     : attachLayerToTimeline(layer, entries));
 }
@@ -710,7 +707,20 @@ function attachLayerToTimeline<T extends TextVisualLayer | ImageVisualLayer>(
   entries: ReturnType<typeof buildClipTimeline>,
   replaceExisting = false,
 ): T {
+  // Ownership is sticky: footage moving underneath a canvas layer must not
+  // silently acquire it, including after save/reopen or a visual-layer split.
+  if (layer.timingMode === 'timeline') return { ...layer, sourceAnchors: undefined };
   if (layer.sourceAnchors?.length && !replaceExisting) return layer;
+  // Every part of the interval must be covered, including internal gaps.
+  let coveredUntilMs = layer.startMs;
+  for (const entry of entries) {
+    if (entry.endMs <= coveredUntilMs) continue;
+    if (entry.startMs > coveredUntilMs || coveredUntilMs >= layer.endMs) break;
+    coveredUntilMs = entry.endMs;
+  }
+  if (coveredUntilMs < layer.endMs) {
+    return { ...layer, timingMode: 'timeline', sourceAnchors: undefined };
+  }
   const sourceAnchors = entries
     .filter((entry) => layer.startMs < entry.endMs && layer.endMs > entry.startMs)
     .map((entry) => ({
@@ -720,8 +730,9 @@ function attachLayerToTimeline<T extends TextVisualLayer | ImageVisualLayer>(
     }));
   return {
     ...layer,
+    timingMode: 'source',
     sourceAnchors: sourceAnchors.length > 0 ? sourceAnchors : undefined,
-    timelineVisible: true,
+    timelineVisible: layer.timelineVisible ?? true,
   };
 }
 
@@ -750,12 +761,13 @@ function reanchorVisualLayersAfterSplit(
 function remapVisualLayers(
   layers: CaptionProject['layers'],
   clips: VideoClip[],
-  splice: { atMs: number; removeMs: number; insertMs: number },
 ) {
   const entryByClipId = new Map(buildClipTimeline(clips).map((entry) => [entry.clip.id, entry]));
   return layers.map((layer) => {
-    if (layer.kind === 'captions') return layer;
-    if (!layer.sourceAnchors?.length) return spliceTimedRange(layer, splice);
+    if (layer.kind === 'captions' || layer.timingMode === 'timeline') return layer;
+    // Empty anchors are also the tombstone of a deleted owner. Never splice
+    // those hidden layers away or attach them to unrelated replacement footage.
+    if (!layer.sourceAnchors?.length) return layer;
     const survivingAnchors = layer.sourceAnchors.filter((anchor) => entryByClipId.has(anchor.clipId));
     const visibleRanges = survivingAnchors.flatMap((anchor) => {
       const entry = entryByClipId.get(anchor.clipId);
