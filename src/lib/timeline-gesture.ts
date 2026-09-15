@@ -10,6 +10,21 @@ export function timelineBlockControls(width: number, selected: boolean) {
   return { width, controlWidth: selected ? 144 : 0 };
 }
 
+export type TimelineTrackBounds = { left: number; right: number };
+
+/** Scroll content includes the label and leading playhead padding. */
+export function timelineVisibleTrackBounds(scrollX: number, viewportWidth: number, trackWidth: number, trackOrigin: number): TimelineTrackBounds {
+  return {
+    left: Math.max(0, Math.min(trackWidth, scrollX - trackOrigin)),
+    right: Math.max(0, Math.min(trackWidth, scrollX + viewportWidth - trackOrigin)),
+  };
+}
+
+export function timelineControlRail(bodyLeft: number, trackWidth: number, bounds: TimelineTrackBounds = { left: 0, right: trackWidth }) {
+  const width = Math.min(144, Math.max(0, bounds.right - bounds.left));
+  return { left: Math.max(bounds.left, Math.min(bodyLeft, bounds.right - width)), width };
+}
+
 type TimingGestureOwner = {
   startMs: number;
   endMs: number;

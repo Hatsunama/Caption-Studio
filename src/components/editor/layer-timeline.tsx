@@ -3,7 +3,7 @@ import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 
 import { chrome } from '@/lib/ui-theme';
-import { packTimelineLanes } from '@/lib/timeline-layout';
+import { packTimelineLanes, packTimelineMarkers, TIMELINE_MARKER_HEIGHT } from '@/lib/timeline-layout';
 import { previewVideoClipLeadingGap, previewVideoClipReorder, previewVideoClipTrim } from '@/lib/project-editor';
 import {
   clampTimelineScale,
@@ -21,7 +21,7 @@ import {
 import { buildClipTimeline, remapCaptionsToTimeline } from '@/lib/video-timeline';
 import { audioClipEnd } from '@/lib/audio-timeline';
 import { audioWaveformWindow } from '@/lib/audio-waveform';
-import { createTimelineTimingGesture, timelineBlockControls, TIMELINE_GRIP_WIDTH, TIMELINE_CONTROL_HEIGHT } from '@/lib/timeline-gesture';
+import { createTimelineTimingGesture, timelineBlockControls, timelineControlRail, timelineVisibleTrackBounds, type TimelineTrackBounds, TIMELINE_GRIP_WIDTH, TIMELINE_CONTROL_HEIGHT } from '@/lib/timeline-gesture';
 import { ensureClipFrameThumbnail } from '@/services/project-media';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import type { TimelineItemReference, TimelineTimingEdge } from '@/lib/timeline-item-editor';
@@ -112,18 +112,28 @@ export function LayerTimeline(props: {
   const scrubEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrubbingRef = useRef(false);
   const scrollXRef = useRef(0);
+  const [viewportScrollX, setViewportScrollX] = useState(0);
   const [visibleCenterX, setVisibleCenterX] = useState(0);
   const lastScrubMsRef = useRef(-1);
   const pinch = useRef({ distance: 0, scale: effectiveScale });
   const captionLayout = useMemo(() => packTimelineLanes(displayCaptions), [displayCaptions]);
-  const captionRowHeight = captionLayout.laneCount * LANE_HEIGHT + 10
+  const captionMarkers = useMemo(() => packTimelineMarkers(displayCaptions, duration, trackWidth), [displayCaptions, duration, trackWidth]);
+  const captionControlTop = captionLayout.laneCount * LANE_HEIGHT + captionMarkers.laneCount * TIMELINE_MARKER_HEIGHT + 3;
+  const captionRowHeight = captionControlTop + 7
     + (props.selectedLayerId === 'captions' && props.selectedCaptionId ? TIMELINE_CONTROL_HEIGHT : 0);
   const translationLayouts = useMemo(() => new Map(displayTranslationTracks.map((track) => [track.id,
     packTimelineLanes(track.pairs.filter((pair) => pair.timelineVisible).map((pair) => ({
       id: pair.translation.id, startMs: pair.startMs, endMs: pair.endMs,
     }))),
   ])), [displayTranslationTracks]);
-  const translationRowHeight = (id: string) => (translationLayouts.get(id)?.laneCount ?? 1) * LANE_HEIGHT + 10
+  const translationMarkers = useMemo(() => new Map(displayTranslationTracks.map((track) => [track.id,
+    packTimelineMarkers(track.pairs.filter((pair) => pair.timelineVisible).map((pair) => ({
+      id: pair.translation.id, startMs: pair.startMs, endMs: pair.endMs,
+    })), duration, trackWidth),
+  ])), [displayTranslationTracks, duration, trackWidth]);
+  const translationControlTop = (id: string) => (translationLayouts.get(id)?.laneCount ?? 1) * LANE_HEIGHT
+    + (translationMarkers.get(id)?.laneCount ?? 0) * TIMELINE_MARKER_HEIGHT + 3;
+  const translationRowHeight = (id: string) => translationControlTop(id) + 7
     + (props.selectedLayerId === id && props.selectedCaptionId ? TIMELINE_CONTROL_HEIGHT : 0);
   const audioLayout = useMemo(() => packTimelineLanes(props.audioClips.map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [props.audioClips]);
   const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10
@@ -137,6 +147,10 @@ export function LayerTimeline(props: {
   ) + props.translationTracks.reduce((sum, track) => sum + translationRowHeight(track.id), 0);
 
   const leadingPadding = Math.max(0, viewportWidth / 2 - LABEL_WIDTH);
+  const visibleTrackBounds = timelineVisibleTrackBounds(viewportScrollX, viewportWidth, trackWidth, leadingPadding + LABEL_WIDTH);
+  const markerPlacement = (marker: { left: number; width: number; lane: number } | undefined, bodyLanes: number) => marker
+    ? { left: marker.left, width: marker.width, top: bodyLanes * LANE_HEIGHT + marker.lane * TIMELINE_MARKER_HEIGHT + 3 }
+    : undefined;
   const trailingPadding = viewportWidth / 2;
   const scrollContentWidth = leadingPadding + LABEL_WIDTH + trackWidth + trailingPadding;
   const visibleRange = useMemo(() => {
@@ -165,6 +179,7 @@ export function LayerTimeline(props: {
     if (scrubbingRef.current || gestureLock) return;
     const x = timelineScrollOffset(props.currentMs, duration, trackWidth);
     scrollXRef.current = x;
+    setViewportScrollX(x);
     setVisibleCenterX(x);
     horizontalRef.current?.scrollTo({ x, animated: false });
   }, [duration, gestureLock, props.currentMs, trackWidth, viewportWidth]);
@@ -277,6 +292,7 @@ export function LayerTimeline(props: {
         onScroll={(event) => {
           const x = clamp(event.nativeEvent.contentOffset.x, 0, trackWidth);
           scrollXRef.current = x;
+          setViewportScrollX(x);
           if (Math.abs(x - visibleCenterX) >= Math.max(120, viewportWidth / 3)) setVisibleCenterX(x);
           if (scrubbingRef.current && !gestureLockRef.current) seekFromScroll(x);
         }}
@@ -415,6 +431,7 @@ export function LayerTimeline(props: {
                     waveformPeaks={source?.waveformPeaks}
                     waveformVisibleStartMs={visibleRange.startMs}
                     waveformVisibleEndMs={visibleRange.endMs}
+                    visibleTrackBounds={visibleTrackBounds}
                     sourceStartMs={clip.sourceStartMs}
                     sourceEndMs={clip.sourceEndMs}
                     sourceDurationMs={source?.durationMs}
@@ -447,9 +464,9 @@ export function LayerTimeline(props: {
                     </View>
                   </View>}>
                   {isCaptions ? displayCaptions.map((caption, index) => ({ caption, index })).filter(({ caption }) => isVisible(caption.startMs, caption.endMs)).map(({ caption, index }) => (
-                    <TimedBlock key={caption.id} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} lane={captionLayout.laneById.get(caption.id) ?? 0} controlTop={captionLayout.laneCount * LANE_HEIGHT + 3} color={NEON_CAPTION_COLORS[index % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
+                    <TimedBlock key={caption.id} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} lane={captionLayout.laneById.get(caption.id) ?? 0} controlTop={captionControlTop} marker={markerPlacement(captionMarkers.byId.get(caption.id), captionLayout.laneCount)} visibleTrackBounds={visibleTrackBounds} color={NEON_CAPTION_COLORS[index % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )) : (
-                    <TimedBlock label={layer.kind === 'text' ? layer.text : 'IMAGE'} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} controlTop={LANE_HEIGHT + 3} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
+                    <TimedBlock label={layer.kind === 'text' ? layer.text : 'IMAGE'} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} controlTop={LANE_HEIGHT + 3} visibleTrackBounds={visibleTrackBounds} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )}
                 </TimelineRow>
                 {isCaptions ? displayTranslationTracks.map((track, trackIndex) => (
@@ -475,7 +492,9 @@ export function LayerTimeline(props: {
                         durationMs={duration}
                         trackWidth={trackWidth}
                         lane={translationLayouts.get(track.id)?.laneById.get(pair.translation.id) ?? 0}
-                        controlTop={(translationLayouts.get(track.id)?.laneCount ?? 1) * LANE_HEIGHT + 3}
+                        controlTop={translationControlTop(track.id)}
+                        marker={markerPlacement(translationMarkers.get(track.id)?.byId.get(pair.translation.id), translationLayouts.get(track.id)?.laneCount ?? 1)}
+                        visibleTrackBounds={visibleTrackBounds}
                         color={pair.translation.status === 'stale' || pair.translation.status === 'pending' || pair.translation.status === 'failed'
                           ? '#A66220'
                           : NEON_CAPTION_COLORS[(pairIndex + trackIndex + 1) % NEON_CAPTION_COLORS.length]}
@@ -863,6 +882,8 @@ function TimedBlock(props: {
   trackWidth: number;
   lane: number;
   controlTop: number;
+  marker?: { left: number; width: number; top: number };
+  visibleTrackBounds?: TimelineTrackBounds;
   color: string;
   selected: boolean;
   waveformPeaks?: number[];
@@ -879,7 +900,7 @@ function TimedBlock(props: {
   const width = Math.max(0, (props.endMs - props.startMs) / props.durationMs * props.trackWidth);
   const controls = timelineBlockControls(width, props.selected);
   const bodyLeft = props.startMs / props.durationMs * props.trackWidth;
-  const controlsLeft = Math.max(0, Math.min(bodyLeft, Math.max(0, props.trackWidth - controls.controlWidth)));
+  const rail = timelineControlRail(bodyLeft, props.trackWidth, props.visibleTrackBounds);
   return (
     <>
     <View style={{ position: 'absolute', left: bodyLeft, width: controls.width, top: props.lane * LANE_HEIGHT + 3, height: LANE_HEIGHT - 6, zIndex: props.selected ? 6 : 1, justifyContent: 'center' }}>
@@ -902,9 +923,18 @@ function TimedBlock(props: {
       </View>
       <TimelineMoveGrip {...props} />
     </View>
+      {props.marker ? (
+        <Pressable accessibilityRole="button" accessibilityLabel={`Select short cue: ${props.label}`}
+          onPress={props.onPress}
+          style={{ position: 'absolute', ...props.marker, height: TIMELINE_MARKER_HEIGHT - 6,
+            borderRadius: 6, borderWidth: 1, borderColor: props.selected ? '#FFFFFF' : props.color,
+            backgroundColor: '#334155', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 }}>
+          <Text pointerEvents="none" numberOfLines={2} style={{ color: '#FFFFFF', fontSize: 9 }}>{props.label}</Text>
+        </Pressable>
+      ) : null}
       {props.selected ? (
-        <View accessibilityLabel={`Timing controls for ${props.label}`} style={{ position: 'absolute', left: controlsLeft,
-          top: props.controlTop, width: controls.controlWidth,
+        <View accessibilityLabel={`Timing controls for ${props.label}`} style={{ position: 'absolute', left: rail.left,
+          top: props.controlTop, width: rail.width,
           height: TIMELINE_CONTROL_HEIGHT - 6, borderRadius: 6, backgroundColor: '#334155' }}>
           <TimelineMoveGrip {...props} controlRail />
           <TimingGrip side="start" {...props} />

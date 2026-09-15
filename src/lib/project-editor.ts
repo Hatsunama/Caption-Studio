@@ -89,19 +89,7 @@ export function setCaptionTiming(
   const selected = project.captions.find((caption) => caption.id === captionId);
   if (!selected || selected.timelineVisible === false) return project;
   const durationMs = totalClipDuration(project.clips);
-  if (durationMs < 80) return project;
-  const minDuration = 80;
-  let safeStartMs = selected.startMs;
-  let safeEndMs = selected.endMs;
-  if (edge === 'start') {
-    safeStartMs = clamp(startMs, 0, selected.endMs - minDuration);
-  } else if (edge === 'end') {
-    safeEndMs = clamp(endMs, selected.startMs + minDuration, durationMs);
-  } else {
-    const captionDurationMs = Math.min(durationMs, Math.max(minDuration, selected.endMs - selected.startMs));
-    safeStartMs = clamp(startMs, 0, durationMs - captionDurationMs);
-    safeEndMs = safeStartMs + captionDurationMs;
-  }
+  const { startMs: safeStartMs, endMs: safeEndMs } = editTimelineRange(selected, edge, startMs, endMs, durationMs);
   if (safeStartMs === selected.startMs && safeEndMs === selected.endMs) return project;
   const captions = project.captions
     .map((caption) => caption.id === captionId
@@ -144,8 +132,12 @@ export function replaceVisibleCaptionScript(project: CaptionProject, captions: C
   const visible = project.captions.filter((caption) => caption.timelineVisible !== false);
   const hidden = project.captions.filter((caption) => caption.timelineVisible === false);
   const hiddenIds = new Set(hidden.map((caption) => caption.id));
+  const currentById = new Map(visible.map((caption) => [caption.id, caption]));
   const ids = new Set<string>();
   for (const caption of captions) {
+    const current = currentById.get(caption.id);
+    // Schema-valid short legacy timings are grandfathered only when unchanged.
+    const unchangedTiming = current?.startMs === caption.startMs && current?.endMs === caption.endMs;
     if (
       !caption.id
       || ids.has(caption.id)
@@ -153,8 +145,10 @@ export function replaceVisibleCaptionScript(project: CaptionProject, captions: C
       || !caption.text.trim()
       || !Number.isFinite(caption.startMs)
       || !Number.isFinite(caption.endMs)
-      || caption.endMs - caption.startMs < 80
-    ) return project;
+      || caption.startMs < 0
+      || caption.endMs < caption.startMs
+      || (!unchangedTiming && caption.endMs - caption.startMs < 80)
+    ) throw new Error('Caption edits were not saved. Each caption needs unique identity, text, and valid timing; new or retimed captions must last at least 0.08 seconds.');
     ids.add(caption.id);
   }
   if (captions.length === visible.length && captions.every((caption, index) => caption === visible[index])) return project;

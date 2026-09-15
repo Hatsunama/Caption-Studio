@@ -387,6 +387,8 @@ export type CaptionProject = {
   };
   captions: CaptionBlock[];
   captionTracks: CaptionTrackCollection;
+  /** Absent in legacy snapshots. Set atomically by an explicit primary transform. */
+  captionGeometryMode?: 'legacy-cue' | 'track';
   projectStyle: CaptionStyle;
   layers: VisualLayer[];
   clips: VideoClip[];

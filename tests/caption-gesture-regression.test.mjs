@@ -6,13 +6,18 @@ import test from 'node:test';
 import ts from 'typescript';
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 import { captionPreviewState } from '../src/lib/caption-preview.ts';
-import { timelineBlockControls, TIMELINE_GRIP_WIDTH } from '../src/lib/timeline-gesture.ts';
+import { timelineBlockControls, timelineControlRail, timelineVisibleTrackBounds, TIMELINE_GRIP_WIDTH } from '../src/lib/timeline-gesture.ts';
+import { packTimelineMarkers } from '../src/lib/timeline-layout.ts';
+import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { createTranslationCaptionTrack, resolveCaptionPairs } from '../src/lib/caption-tracks.ts';
 import { applyTimelineItemTiming } from '../src/lib/timeline-item-editor.ts';
 
 const requireLocal = createRequire(import.meta.url);
 const plain = (value) => JSON.parse(JSON.stringify(value));
+// Reuse compilation only. Every mount still executes fresh production code in
+// its own VM with independent hooks, effects, responders and native adapters.
+const compiledModules = new Map();
 // Execute the production hook, timeline responders and overlay JSX. Only React
 // scheduling, native views and the OS event source are adapted for Node.
 function harness() {
@@ -49,11 +54,16 @@ function harness() {
   function load(path, suffix = '') {
     if (modules.has(path)) return modules.get(path);
     const exports = {}; modules.set(path, exports);
-    const source = readFileSync(new URL('../src/' + path, import.meta.url), 'utf8');
-    const { outputText } = ts.transpileModule(source + suffix, {
-      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
-      fileName: path,
-    });
+    const cacheKey = path + suffix;
+    let outputText = compiledModules.get(cacheKey);
+    if (!outputText) {
+      const source = readFileSync(new URL('../src/' + path, import.meta.url), 'utf8');
+      outputText = ts.transpileModule(source + suffix, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+        fileName: path,
+      }).outputText;
+      compiledModules.set(cacheKey, outputText);
+    }
     runInNewContext(outputText, { exports,
       requestAnimationFrame(fn) { frames.set(++nextId, fn); return nextId; },
       cancelAnimationFrame(id) { frames.delete(id); },
@@ -351,4 +361,158 @@ test('caption selection cancels pending scrub completion; scroll-end noise never
   assert.deepEqual(calls.select, ['cue', 'cue', 'fr', 'fr']);
   scroll.onScrollBeginDrag(); scroll.onScroll({ nativeEvent: { contentOffset: { x: 10 } } });
   assert.equal(calls.seek.length, 1, 'intentional scrub still seeks');
+});
+
+for (const kind of ['caption', 'translation']) for (const selectedId of ['zero', 'tiny']) {
+  for (const edge of ['move', 'start', 'end']) test(`${kind} ${selectedId} at minimum zoom: owned marker selects, then deliberate ${edge} edits only its cue`, () => {
+    let project = createCaptionProject({ id: 'marker-test', name: 'Markers', sources: [{ id: 'video',
+      uri: 'file:///test.mp4', storageMode: 'copied', displayName: 'Video', durationMs: 600000,
+      width: 1080, height: 1920, rotation: 0, frameRate: 30 }] });
+    project.captions = [['zero', 0, 0], ['tiny', 0, 80], ['adjacent', 80, 160], ['overlap', 40, 120]]
+      .map(([id, startMs, endMs]) => ({ id, startMs, endMs, text: 'caption-' + id, wordIds: [] }));
+    project = createTranslationCaptionTrack(project, { id: 'fr', languageTag: 'fr', displayName: 'French',
+      translations: Object.fromEntries(project.captions.map((cue) => [cue.id, 'translation-' + cue.id])) });
+    project = structuredClone(decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(project))));
+    const before = structuredClone(project), calls = { selects: [], edits: [], history: 0, persist: 0, seeks: [] };
+    const h = harness(), { LayerTimeline } = h.load('components/editor/layer-timeline.tsx');
+    const props = { projectId: project.id, currentMs: 0, durationMs: 600000, clips: [], sources: [],
+      captions: project.captions, layers: [{ id: 'captions', kind: 'captions', name: 'Captions' }], audioClips: [], audioSources: [],
+      translationTracks: [{ id: 'fr', name: 'French', visible: true, pairs: resolveCaptionPairs(project, 'fr') }],
+      onSeek(ms) { calls.seeks.push(ms); }, onScrubStart() {},
+      onSelectCaption(cue) { props.selectedLayerId = 'captions'; props.selectedCaptionId = cue.id; calls.selects.push(cue.id); },
+      onSelectTranslationCaption(id, pair) { props.selectedLayerId = id; props.selectedCaptionId = pair.source.id; calls.selects.push(pair.source.id); },
+      onTimingChangeStart() { calls.history++; }, onTimingChangeEnd() { calls.persist++; },
+      onItemTimingChange(item, side, start, end) {
+        calls.edits.push(plain({ item, side })); project = applyTimelineItemTiming(project, item, side, start, end, 600000);
+      },
+    };
+    h.render(LayerTimeline, props);
+    for (let step = 0; step < 12; step++) {
+      h.all((node) => node.type?.name === 'ZoomButton' && node.props.label !== '+')[0].props.onPress(); h.render();
+    }
+    const blocks = () => h.all((node) => node.type?.name === 'TimedBlock' && node.props.label.startsWith(kind + '-'));
+    assert.equal(blocks()[0].props.trackWidth, 300, '0.5 pixels/second is the minimum scale');
+    const bodies = blocks().flatMap((block) => blockTargets(block.props)).filter((target) => !target.rail);
+    const markers = blocks().map((block) => {
+      const markerHarness = harness(), ui = markerHarness.load('components/editor/layer-timeline.tsx', timelineSuffix);
+      markerHarness.render(ui.TimedBlock, block.props);
+      const node = markerHarness.all((entry) => entry.type === 'Pressable' && entry.props.accessibilityLabel?.startsWith('Select short cue:'))[0];
+      return { label: block.props.label, ...node.props.style, onPress: node.props.onPress };
+    });
+    assert.equal(markers.length, 4);
+    for (const marker of markers) {
+      assert.ok(marker.width >= 44 && marker.height >= 36);
+      for (const body of bodies) assert.equal(intersects(marker, body), false);
+      for (const other of markers) if (other !== marker) assert.equal(intersects(marker, other), false);
+      assert.ok(marker.left >= 0 && marker.left + marker.width <= 300);
+    }
+    const marker = markers.find((entry) => entry.label === kind + '-' + selectedId);
+    marker.onPress(); h.render();
+    const scroll = h.all((node) => node.type === 'ScrollView' && node.props.horizontal)[0].props;
+    scroll.onScrollEndDrag(); scroll.onMomentumScrollBegin(); scroll.onMomentumScrollEnd(); h.timers();
+    assert.deepEqual(calls.selects, [selectedId]);
+    assert.deepEqual(calls.seeks, []);
+    assert.deepEqual(project, before);
+    const selected = blocks().find((block) => block.props.selected);
+    const rails = blockTargets(selected.props).filter((target) => target.rail);
+    assert.equal(rails.length, 3);
+    for (const rail of rails) {
+      assert.ok(rail.width >= 32);
+      for (const target of [...bodies, ...markers]) assert.equal(intersects(rail, target), false);
+    }
+    const target = rails.find((entry) => entry.edge === edge);
+    target.handlers.onPanResponderGrant(); target.handlers.onPanResponderMove({}, { dx: 8, dy: 0 });
+    target.handlers.onPanResponderRelease();
+    assert.equal(calls.history, 0); assert.equal(calls.persist, 0); assert.deepEqual(project, before);
+    target.handlers.onPanResponderGrant();
+    target.handlers.onPanResponderMove({}, { dx: edge === 'start' ? -9 : 9, dy: 0 });
+    target.handlers.onPanResponderRelease(); target.handlers.onPanResponderTerminate();
+    assert.equal(calls.history, 1); assert.equal(calls.persist, 1);
+    assert.deepEqual(calls.edits, [{ item: kind === 'caption' ? { kind, captionId: selectedId }
+      : { kind, trackId: 'fr', sourceCaptionId: selectedId }, side: edge }]);
+    const oldItems = kind === 'caption' ? before.captions : before.captionTracks.translations[0].cues;
+    const nextItems = kind === 'caption' ? project.captions : project.captionTracks.translations[0].cues;
+    const ownerId = kind === 'caption' ? selectedId : 'fr:' + selectedId;
+    for (const item of oldItems) {
+      const next = nextItems.find((cue) => cue.id === item.id);
+      if (item.id !== ownerId) assert.deepEqual(next, item);
+      else { assert.ok(next.startMs >= 0); assert.ok(next.endMs - next.startMs >= 80); }
+    }
+    if (kind === 'translation') assert.deepEqual(project.captions, before.captions);
+    assert.deepEqual(calls.seeks, []);
+    const reopened = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(project)));
+    const saved = kind === 'caption' ? reopened.captions : reopened.captionTracks.translations[0].cues;
+    assert.deepEqual(saved.map(({ id, startMs, endMs }) => ({ id, startMs, endMs })),
+      nextItems.map(({ id, startMs, endMs }) => ({ id, startMs, endMs })));
+  });
+}
+
+test('tiny marker lanes pack independently at both track edges and across zoom levels', () => {
+  for (const trackWidth of [278, 300, 960, 144000]) {
+    const duration = 600000;
+    const cues = [['zero-start', 0, 0], ['start', 0, 80], ['adjacent', 80, 160],
+      ['overlap', 40, 120], ['end', duration - 80, duration], ['zero-end', duration, duration]]
+      .map(([id, startMs, endMs]) => ({ id, startMs, endMs }));
+    const packed = packTimelineMarkers(cues, duration, trackWidth);
+    const markers = [...packed.byId.values()].map((entry) => ({ ...entry, top: entry.lane * 44, height: 38 }));
+    assert.equal(markers.length, cues.length);
+    for (const marker of markers) {
+      assert.ok(marker.left >= 0 && marker.left + marker.width <= trackWidth);
+      for (const other of markers) if (marker !== other) assert.equal(intersects(marker, other), false);
+    }
+  }
+});
+
+for (const kind of ['caption', 'translation']) test(`${kind} selected long-cue rail follows actual viewport scroll at start, middle, end and zoom`, () => {
+  const h = harness(), { LayerTimeline } = h.load('components/editor/layer-timeline.tsx');
+  const duration = 600000;
+  const cue = { id: 'long', text: 'Long cue', startMs: 0, endMs: duration, wordIds: [] };
+  const calls = { seeks: [], edits: 0 };
+  const props = { projectId: 'long-test', currentMs: 0, durationMs: duration, clips: [], sources: [],
+    captions: [cue], layers: [{ id: 'captions', kind: 'captions', name: 'Captions' }], audioClips: [], audioSources: [],
+    translationTracks: [{ id: 'fr', name: 'French', visible: true, pairs: [{ source: cue,
+      translation: { id: 'fr:long', text: 'Long translation' }, startMs: 0, endMs: duration, timelineVisible: true }] }],
+    selectedLayerId: kind === 'caption' ? 'captions' : 'fr', selectedCaptionId: 'long',
+    onSeek(ms) { calls.seeks.push(ms); }, onItemTimingChange() { calls.edits++; },
+  };
+  h.render(LayerTimeline, props);
+  for (const viewportWidth of [240, 360, 768]) {
+    h.result.props.onLayout({ nativeEvent: { layout: { width: viewportWidth } } }); h.render();
+    for (let zoom = 0; zoom < 3; zoom++) {
+      if (zoom) { h.all((node) => node.type?.name === 'ZoomButton' && node.props.label === '+')[0].props.onPress(); h.render(); }
+      const block = () => h.all((node) => node.type?.name === 'TimedBlock' && node.props.selected)[0];
+      const trackWidth = block().props.trackWidth;
+      for (const offset of [0, 1, 33, 119, trackWidth / 2, trackWidth / 2 + 7, trackWidth - 33, trackWidth]) {
+        const scroll = h.all((node) => node.type === 'ScrollView' && node.props.horizontal)[0];
+        scroll.props.onScroll({ nativeEvent: { contentOffset: { x: offset } } }); h.render();
+        const b = block();
+        const targets = blockTargets(b.props), rails = targets.filter((entry) => entry.rail);
+        const originOnScreen = viewportWidth / 2 - offset;
+        assert.equal(rails.length, 3);
+        for (const rail of rails) {
+          assert.ok(rail.left + originOnScreen >= 0, 'left stays visible');
+          assert.ok(rail.left + rail.width + originOnScreen <= viewportWidth, 'right stays visible');
+          assert.ok(rail.left >= 0 && rail.left + rail.width <= trackWidth);
+          assert.ok(rail.width >= 32, 'each operation remains reachable');
+          for (const body of targets.filter((entry) => !entry.rail)) assert.equal(intersects(rail, body), false);
+        }
+      }
+    }
+  }
+  assert.deepEqual(calls.seeks, [], 'positioning controls never seeks'); assert.equal(calls.edits, 0);
+});
+
+test('control placement accounts for the actual label/padding origin and current visible bounds', () => {
+  for (const viewport of [240, 360, 768]) for (const trackWidth of [278, 960, 144000]) {
+    for (const scroll of [0, trackWidth / 2, trackWidth]) {
+      const origin = Math.max(82, viewport / 2);
+      const bounds = timelineVisibleTrackBounds(scroll, viewport, trackWidth, origin);
+      for (const bodyLeft of [0, trackWidth / 2, trackWidth - 1]) {
+        const rail = timelineControlRail(bodyLeft, trackWidth, bounds);
+        assert.ok(rail.left >= bounds.left && rail.left + rail.width <= bounds.right);
+        assert.ok(rail.left + origin - scroll >= 0);
+        assert.ok(rail.left + rail.width + origin - scroll <= viewport);
+      }
+    }
+  }
 });

@@ -48,6 +48,41 @@ test('timeline non-active cue selection preserves fixed-playhead content, select
   assert.equal(h.calls.writes.length, 0);
 });
 
+test('legacy short cue script save rejects invalid timing atomically and commits a separate edit with undo/redo', async () => {
+  const original = fixture();
+  original.captions[0] = { ...original.captions[0], startMs: 0, endMs: 40 };
+  const h = mount(original);
+  h.actions.beginEditCaption(); h.render();
+  const script = () => h.all((node) => node.type === 'ScriptEditor')[0].props;
+  const invalid = structuredClone(original.captions);
+  invalid[1].endMs = invalid[1].startMs + 40;
+  await assert.rejects(script().onSave(invalid), /not saved/);
+  await h.flush();
+  assert.equal(h.actions.scriptEditorOpen, true);
+  assert.equal(h.project, original);
+  assert.equal(h.calls.writes.length, 0);
+  const draft = structuredClone(original.captions);
+  draft[1].text = 'Saved despite a 40 ms neighbor';
+  assert.equal(await script().onSave(draft), true);
+  await h.flush();
+  const edited = h.project;
+  assert.equal(h.disk, edited);
+  assert.equal(edited.captions[0].endMs, 40);
+  assert.equal(edited.captions[1].text, draft[1].text);
+  assert.deepEqual(edited.layers, original.layers);
+  assert.deepEqual(edited.clips, original.clips);
+  assert.deepEqual(edited.audioClips, original.audioClips);
+  h.actions.undo(); await h.flush();
+  assert.equal(h.project, original);
+  h.actions.redo(); await h.flush();
+  assert.equal(h.project, edited);
+  const reopened = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(h.disk)));
+  assert.throws(() => buildTimelineRenderPlan(reopened), /translation or review/);
+  const exported = buildTimelineRenderPlan(reopened, new Map(), true).captions.find((cue) => cue.id === draft[1].id);
+  assert.equal(exported.text, draft[1].text);
+  h.unmount();
+});
+
 test('workspace sends every overlapping active primary and translated cue to preview in export order', () => {
   const project = fixture();
   project.captions[1].startMs = 500;

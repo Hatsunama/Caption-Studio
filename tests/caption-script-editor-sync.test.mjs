@@ -664,6 +664,62 @@ const scriptTransform = { position: { x: 0.4, y: 0.3 }, rotation: 33, scale: 1.4
   box: { width: 0.7, height: 0.2 } };
 const settleSave = () => new Promise((resolve) => setImmediate(resolve));
 
+for (const rejection of ['throw', 'false']) test(`rejected script save (${rejection}) retains the open editor and recovery journal`, async () => {
+  let project = migrationProject(), closes = 0;
+  const before = serializeProjectSnapshot(project);
+  const parentSave = workspaceValue('commitCaptionScript', {
+    commitEditorProject: async (mutation) => {
+      const next = mutation(project);
+      project = next;
+      return { before: project, project: next };
+    },
+    replaceVisibleCaptionScript, editorSession: { isCurrent: () => true }, selectedCaptionId: 'c0',
+    changedPrimaryCaptionTextIds: () => [], setSelectedCaptionId: () => {},
+  });
+  const h = mount({ captions: project.captions, onSave: rejection === 'false' ? async () => false : parentSave,
+    onCancel: () => { closes++; } });
+  const invalid = structuredClone(project.captions);
+  invalid[0].endMs = invalid[0].startMs + 40;
+  invalid[1].text = 'Keep this unsaved edit';
+  h.recover(invalid); h.restore(); h.advance(1000);
+  const journals = plain(h.calls.journals);
+  assert.ok(journals.length > 0);
+  h.act(() => h.button('Save all caption edits').onPress());
+  await settleSave(); h.act(() => {});
+  assert.equal(closes, 0);
+  assert.equal(h.calls.journalClears ?? 0, 0);
+  assert.deepEqual(h.calls.journals, journals);
+  assert.deepEqual(plain(h.list().data), invalid);
+  assert.equal(h.button('Save all caption edits').disabled, false);
+  assert.equal(serializeProjectSnapshot(project), before);
+  h.unmount();
+});
+
+test('script component commits a separate edit alongside a schema-valid 40 ms legacy cue before clearing recovery', async () => {
+  let project = migrationProject(), closes = 0;
+  project.captions[0].endMs = 40;
+  project = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(project)));
+  const save = workspaceValue('commitCaptionScript', {
+    commitEditorProject: async (mutation) => {
+      const before = project;
+      project = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(mutation(before))));
+      return { before, project };
+    },
+    replaceVisibleCaptionScript, editorSession: { isCurrent: () => true }, selectedCaptionId: 'c0',
+    changedPrimaryCaptionTextIds: () => [], setSelectedCaptionId: () => {},
+  });
+  const h = mount({ captions: project.captions, onSave: save, onCancel: () => {
+    assert.equal(project.captions[1].text, 'Durable separate edit'); closes++;
+  } });
+  h.edit(1); h.act(() => h.input(1).onChangeText('Durable separate edit')); h.advance(1000);
+  h.act(() => h.button('Save all caption edits').onPress());
+  await settleSave();
+  assert.equal(closes, 1);
+  assert.equal(h.calls.journalClears, 1);
+  assert.equal(project.captions[0].endMs, 40);
+  h.unmount();
+});
+
 for (const recovered of [false, true]) test(`script component split -> transform -> ${recovered ? 'delayed recovery -> ' : ''}save -> reopen uses current geometry`, async () => {
   let project = migrationProject(), closes = 0;
   // Execute the workspace's real save transaction, with the project fetched at

@@ -73,7 +73,7 @@ test('invalid recovered timings fail atomically without changing project geometr
   for (const value of [NaN, Infinity, -Infinity]) {
     const draft = structuredClone(p.captions);
     draft[0].startMs = value;
-    assert.equal(replaceVisibleCaptionScript(p, draft), p);
+    assert.throws(() => replaceVisibleCaptionScript(p, draft), /not saved/);
   }
 });
 
@@ -148,7 +148,7 @@ test('split -> transform -> script save -> reopen cannot resurrect stale geometr
   const split = splitCaptionScriptBlock(p.captions, 'c0', 6, [], 'split-new');
   assert.ok(split);
   const newCue = split.captions.find((cue) => cue.id === 'split-new');
-  assert.equal(hasCaptionTransform(newCue.styleOverride), false);
+  assert.equal(hasCaptionTransform(newCue.styleOverride), true, 'unmigrated split retains legacy geometry');
   assert.equal(newCue.styleOverride.italic, true);
   const transformed = applyStylePatch(p, 'c1', 'caption', target);
   const preview = reconcileCaptionScriptDraft(transformed, split.captions);
@@ -177,4 +177,59 @@ test('cancel/recovered stale drafts never mutate current geometry and save prese
   assert.deepEqual(primary(saved), [target, target]);
   assert.equal(saved.captions[0].text, 'Recovered text');
   assert.deepEqual(saved.captions[0].styleOverride, transformed.captions[0].styleOverride);
+});
+
+test('legacy split/save/reopen preserves both halves of the original effective geometry until explicit migration', () => {
+  const p = reopen(fixture());
+  const before = serializeProjectSnapshot(p);
+  const expected = primary(p);
+  const split = splitCaptionScriptBlock(p.captions, 'c0', 6, [], 'arbitrary-new-identity');
+  assert.ok(split);
+  const draftPreview = reconcileCaptionScriptDraft(p, split.captions);
+  assert.deepEqual(draftPreview.map((cue) => captionTransform(resolveCaptionStyle(p.projectStyle, cue))),
+    [expected[0], expected[0], expected[1]]);
+  let saved = replaceVisibleCaptionScript(p, split.captions);
+  for (let pass = 0; pass < 3; pass++) {
+    saved = reopen(saved);
+    assert.equal(saved.captionGeometryMode, undefined);
+    assert.deepEqual(primary(saved), [expected[0], expected[0], expected[1]]);
+    assert.throws(() => buildTimelineRenderPlan(saved), /translation or review/);
+    const plan = buildTimelineRenderPlan(saved, new Map(), true);
+    for (const cue of saved.captions) {
+      assert.deepEqual(captionTransform(plan.captions.find((entry) => entry.id === cue.id).style),
+        cue.id === 'c1' ? expected[1] : expected[0]);
+    }
+    for (const track of p.captionTracks.translations) {
+      const oldPairs = resolveCaptionPairs(p, track.id);
+      const newPairs = resolveCaptionPairs(saved, track.id);
+      for (const pair of oldPairs) assert.deepEqual(captionTransform(newPairs.find((next) => next.source.id === pair.source.id).style), captionTransform(pair.style));
+    }
+  }
+  const migrated = reopen(applyStylePatch(saved, 'c1', 'caption', target));
+  assert.equal(migrated.captionGeometryMode, 'track');
+  const staleSaved = reopen(replaceVisibleCaptionScript(migrated, split.captions));
+  assert.deepEqual(primary(staleSaved), [target, target, target]);
+  assert.equal(serializeProjectSnapshot(p), before);
+});
+
+test('script validation distinguishes unchanged valid legacy timings from rejected new or retimed cues', () => {
+  for (const duration of [0, 40, 79, 80]) {
+    const p = fixture();
+    p.captions[0].endMs = p.captions[0].startMs + duration;
+    const valid = reopen(p);
+    assert.equal(replaceVisibleCaptionScript(valid, valid.captions), valid);
+    const draft = structuredClone(valid.captions);
+    draft[1].text = 'A separate edited cue';
+    const saved = reopen(replaceVisibleCaptionScript(valid, draft));
+    assert.equal(saved.captions[1].text, draft[1].text);
+    assert.equal(saved.captions[0].endMs - saved.captions[0].startMs, duration);
+    for (const bad of [
+      { ...draft[0], id: 'new', startMs: 0, endMs: 40 },
+      { ...draft[0], startMs: 10, endMs: 50 },
+      { ...draft[0], startMs: -1 },
+      { ...draft[0], endMs: -1 },
+      { ...draft[0], text: ' ' },
+      { ...draft[0], id: draft[1].id },
+    ]) assert.throws(() => replaceVisibleCaptionScript(valid, [bad, draft[1]]), /not saved/);
+  }
 });

@@ -42,6 +42,7 @@ export function applyStylePatch(
     project = {
       ...project,
       updatedAt,
+      captionGeometryMode: 'track',
       projectStyle: mergeStyle(project.projectStyle, geometry),
       captions: project.captions.map((caption) => ({ ...caption, styleOverride: withoutCaptionTransform(caption.styleOverride) })),
       transcription: { ...project.transcription, words: project.transcription.words.map((word) => ({

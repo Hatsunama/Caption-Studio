@@ -438,7 +438,10 @@ export function ScriptEditor(props: {
     const savingVersion = draftVersionRef.current;
     const savingDraft = draftCaptions;
     try {
-      if (!await props.onSave(savingDraft)) return;
+      if (!await props.onSave(savingDraft)) {
+        setSaveError('Caption edits were not saved. Review the draft and try again.');
+        return;
+      }
       if (draftVersionRef.current !== savingVersion) {
         setSaveError('Captions changed while saving. Review the latest text, then tap Done again.');
         return;

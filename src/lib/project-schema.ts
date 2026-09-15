@@ -115,6 +115,9 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
     transcription,
     captions,
     captionTracks,
+    ...(candidate.captionGeometryMode === undefined ? {} : {
+      captionGeometryMode: enumValue(candidate.captionGeometryMode, ['legacy-cue', 'track'] as const, 'caption geometry mode'),
+    }),
     projectStyle,
     layers,
     clips,
@@ -426,7 +429,9 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
           status,
           reviewed,
           startMs: optionalFiniteNumber(cue.startMs, `translation cue ${cueIndex + 1} start`, 0, Number.MAX_SAFE_INTEGER),
-          endMs: optionalFiniteNumber(cue.endMs, `translation cue ${cueIndex + 1} end`, 1, Number.MAX_SAFE_INTEGER),
+          // Zero-length cues are valid legacy state on either track. A deliberate
+          // timing edit applies the minimum duration at the mutation boundary.
+          endMs: optionalFiniteNumber(cue.endMs, `translation cue ${cueIndex + 1} end`, 0, Number.MAX_SAFE_INTEGER),
           timelineVisible: cue.timelineVisible === undefined ? undefined : booleanValue(cue.timelineVisible, `translation cue ${cueIndex + 1} timeline visibility`),
           styleOverride: decodeCaptionStylePatch(cue.styleOverride, `translation cue ${cueIndex + 1} style override`),
         };
