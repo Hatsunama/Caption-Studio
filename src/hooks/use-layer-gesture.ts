@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type GestureResponderEvent, PanResponder, type View } from 'react-native';
 import { createGeometryFrameQueue, createLayerGesture, sameLayerGeometry, type LayerCanvas, type LayerGeometry, type LayerGeometryInput, type LayerGestureMode } from '@/lib/layer-geometry';
 
@@ -9,29 +9,39 @@ type GestureOwner = {
   onChange?: (geometry: LayerGeometry) => void;
   onEnd?: () => void;
 };
+type TouchPoints = ReturnType<typeof touches>;
+type PendingGrant = { mode: LayerGestureMode; points: TouchPoints; owner: GestureOwner; moves: TouchPoints[] };
 
 function createGestureRuntime(
   queue: ReturnType<typeof createGeometryFrameQueue<GestureDraft>>,
 ) {
   let session: ReturnType<typeof createLayerGesture> | undefined;
-  let canvas: LayerCanvas = { width: 1, height: 1, pageX: 0, pageY: 0 };
+  let size: { width: number; height: number } | undefined;
+  let origin: { pageX: number; pageY: number } | undefined;
   let owner: GestureOwner | undefined;
+  const canvas = (): LayerCanvas | undefined => size ? {
+    width: size.width, height: size.height,
+    pageX: origin?.pageX ?? 0, pageY: origin?.pageY ?? 0,
+    located: origin !== undefined,
+  } : undefined;
   return {
     active: () => session?.active() ?? false,
     measure(width: number, height: number) {
-      canvas = { ...canvas, width, height };
+      if (width > 0 && height > 0) size = { width, height };
     },
     locate(pageX: number, pageY: number) {
-      canvas = { ...canvas, pageX, pageY };
+      origin = { pageX, pageY };
     },
-    begin(mode: LayerGestureMode, points: ReturnType<typeof touches>, nextOwner: GestureOwner) {
+    begin(mode: LayerGestureMode, points: TouchPoints, nextOwner: GestureOwner) {
+      const next = canvas();
+      if (!next) return false;
       session ??= createLayerGesture(nextOwner.source);
       session.sync(nextOwner.source);
-      if (!session.begin(mode, points, canvas)) return false;
+      if (!session.begin(mode, points, next)) return false;
       owner = nextOwner;
       return true;
     },
-    update(points: ReturnType<typeof touches>) {
+    update(points: TouchPoints) {
       if (owner && session?.active()) queue.push({ id: owner.id, source: owner.source, geometry: session.update(points) });
     },
     finish() {
@@ -50,45 +60,74 @@ export function useLayerGesture(options: {
   id: string; geometry: LayerGeometryInput; interactive?: boolean; selectable?: boolean;
   onSelect?: () => void; onStart?: () => void; onChange?: (geometry: LayerGeometry) => void; onEnd?: () => void;
 }) {
-  const { id, geometry, interactive, selectable, onSelect, onStart, onChange, onEnd } = options;
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   const [draft, setDraft] = useState<GestureDraft>();
   const queue = useMemo(() => createGeometryFrameQueue<GestureDraft>(requestAnimationFrame, cancelAnimationFrame, setDraft), []);
   const runtime = useMemo(() => createGestureRuntime(queue), [queue]);
+  const viewRef = useRef<View | null>(null);
+  const pendingRef = useRef<PendingGrant | undefined>(undefined);
 
   useEffect(() => () => {
+    pendingRef.current = undefined;
     runtime.finish();
     queue.clear();
-  }, [id, queue, runtime]);
+  }, [options.id, queue, runtime]);
 
   const measureCanvas = useCallback((width: number, height: number, view: View | null) => {
+    if (view) viewRef.current = view;
     runtime.measure(width, height);
-    view?.measureInWindow(runtime.locate);
+    (view ?? viewRef.current)?.measureInWindow(runtime.locate);
+  }, [runtime]);
+
+  const flushPending = useCallback(() => {
+    const pending = pendingRef.current;
+    if (!pending) return;
+    pendingRef.current = undefined;
+    if (runtime.begin(pending.mode, pending.points, pending.owner)) {
+      optionsRef.current.onStart?.();
+      for (const points of pending.moves) runtime.update(points);
+    }
   }, [runtime]);
 
   const begin = useCallback((mode: LayerGestureMode, event: GestureResponderEvent) => {
-    if (!interactive) {
-      onSelect?.();
+    const current = optionsRef.current;
+    if (!current.interactive) {
+      current.onSelect?.();
       return;
     }
-    if (runtime.begin(mode, touches(event), {
-      id,
-      source: geometry,
-      onChange,
-      onEnd,
-    })) {
-      onStart?.();
+    const points = touches(event);
+    const owner = { id: current.id, source: current.geometry, onChange: current.onChange, onEnd: current.onEnd };
+    const view = viewRef.current;
+    if (view) {
+      pendingRef.current = { mode, points, owner, moves: [] };
+      view.measureInWindow((pageX, pageY) => {
+        runtime.locate(pageX, pageY);
+        flushPending();
+      });
+      return;
     }
-  }, [geometry, id, interactive, onChange, onEnd, onSelect, onStart, runtime]);
+    if (runtime.begin(mode, points, owner)) current.onStart?.();
+  }, [flushPending, runtime]);
 
   const move = useCallback((event: GestureResponderEvent) => {
-    runtime.update(touches(event));
+    const points = touches(event);
+    if (pendingRef.current) {
+      pendingRef.current.moves.push(points);
+      return;
+    }
+    runtime.update(points);
   }, [runtime]);
 
   const endTouches = useCallback((event: GestureResponderEvent) => {
-    if (event.nativeEvent.touches.length) runtime.update(touches(event));
+    if (!event.nativeEvent.touches.length) return;
+    const points = touches(event);
+    if (pendingRef.current) pendingRef.current.moves.push(points);
+    else runtime.update(points);
   }, [runtime]);
 
   const finish = useCallback(() => {
+    pendingRef.current = undefined;
     runtime.finish();
     setDraft(undefined);
   }, [runtime]);
@@ -97,8 +136,10 @@ export function useLayerGesture(options: {
     (['move', 'corner', 'left', 'right', 'top', 'bottom'] as const).map((mode) => [
       mode,
       PanResponder.create({
-        onStartShouldSetPanResponder: () =>
-          !runtime.active() && Boolean(interactive || (mode === 'move' && selectable)),
+        onStartShouldSetPanResponder: () => {
+          const { interactive, selectable } = optionsRef.current;
+          return !runtime.active() && Boolean(interactive || (mode === 'move' && selectable));
+        },
         onMoveShouldSetPanResponder: () => false,
         onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: (event) => begin(mode, event),
@@ -110,12 +151,12 @@ export function useLayerGesture(options: {
       }).panHandlers,
     ]),
   ) as Record<LayerGestureMode, ReturnType<typeof PanResponder.create>['panHandlers']>,
-  [begin, endTouches, finish, interactive, move, runtime, selectable]);
+  [begin, endTouches, finish, move, runtime]);
 
+  const { id, geometry } = options;
   return {
     responders,
     measureCanvas,
-    transforming: runtime.active(),
     geometry: draft?.id === id && (runtime.active() || draft.source === geometry) ? draft.geometry : geometry,
   };
 }

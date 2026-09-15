@@ -119,7 +119,6 @@ test('maximum-length track and caption components produce a bounded persistent c
   });
   const reopened = decodeVersionTwoProject(JSON.parse(JSON.stringify(translated)));
   assert.equal(reopened.captionTracks.translations[0].cues[0].id.length, TRANSLATION_CUE_IDENTIFIER_MAX_LENGTH);
-  // Hydration of a missing cue uses exactly the same identifier contract.
   translated.captionTracks.translations[0].cues = [];
   const hydrated = decodeVersionTwoProject(JSON.parse(JSON.stringify(translated)));
   assert.deepEqual(JSON.parse(JSON.stringify(hydrated)), JSON.parse(JSON.stringify(reopened)));

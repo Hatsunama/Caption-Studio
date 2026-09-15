@@ -9,7 +9,7 @@ export type LayerGeometryInput = {
 
 export type LayerGeometry = Required<LayerGeometryInput>;
 export type LayerTouch = { id: number; x: number; y: number };
-export type LayerCanvas = { width: number; height: number; pageX: number; pageY: number };
+export type LayerCanvas = { width: number; height: number; pageX: number; pageY: number; located?: boolean };
 export type LayerGestureMode = 'move' | 'corner' | 'left' | 'right' | 'top' | 'bottom';
 
 export function positiveLayerScale(value: unknown = 1): number {
@@ -53,7 +53,7 @@ export function createLayerGesture(initial: LayerGeometryInput) {
   let baseline = current;
   let points: LayerTouch[] = [];
   let mode: LayerGestureMode = 'move';
-  let canvas: LayerCanvas = { width: 1, height: 1, pageX: 0, pageY: 0 };
+  let canvas: Required<LayerCanvas> | undefined;
   let active = false;
   const rebase = (touches: LayerTouch[]) => { baseline = current; points = touches; };
   return {
@@ -62,16 +62,18 @@ export function createLayerGesture(initial: LayerGeometryInput) {
     sync(value: LayerGeometryInput) { if (!active) current = resolveLayerGeometry(value); },
     begin(nextMode: LayerGestureMode, touches: readonly LayerTouch[], size: LayerCanvas) {
       if (active || touches.length === 0) return false;
+      if (!(size.width > 0) || !(size.height > 0)) return false;
+      const located = size.located !== false;
+      if (nextMode === 'corner' && !located) return false;
       mode = nextMode;
-      canvas = { ...size, width: Math.max(1, size.width), height: Math.max(1, size.height) };
+      canvas = { width: size.width, height: size.height, pageX: size.pageX, pageY: size.pageY, located };
       active = true;
       rebase(ordered(touches));
       return true;
     },
     update(touches: readonly LayerTouch[]) {
-      if (!active || touches.length === 0) return current;
+      if (!active || !canvas || touches.length === 0) return current;
       const next = ordered(touches);
-      // Touch membership changes rebase from the last emitted geometry, never delayed React props.
       if (next.length !== points.length || next.some((point, index) => point.id !== points[index].id)) {
         rebase(next);
         return current;
@@ -79,6 +81,7 @@ export function createLayerGesture(initial: LayerGeometryInput) {
       const extent = layerExtent(baseline);
       const minimumRatio = Math.max(1 / (extent.width * canvas.width), 1 / (extent.height * canvas.height));
       if (next.length === 2) {
+        if (!canvas.located) return current;
         const origin = midpoint(points[0], points[1]);
         const target = midpoint(next[0], next[1]);
         const initialDistance = distance(points[0], points[1]);
@@ -98,6 +101,7 @@ export function createLayerGesture(initial: LayerGeometryInput) {
           y: baseline.position.y + (next[0].y - points[0].y) / canvas.height,
         } };
       } else if (mode === 'corner') {
+        if (!canvas.located) return current;
         const center = { id: -1, x: canvas.pageX + baseline.position.x * canvas.width, y: canvas.pageY + baseline.position.y * canvas.height };
         const ratio = Math.max(minimumRatio, distance(center, next[0]) / Math.max(1, distance(center, points[0])));
         current = { ...baseline, scale: baseline.scale * ratio };

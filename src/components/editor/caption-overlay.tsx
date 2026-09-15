@@ -40,7 +40,7 @@ export function CaptionOverlay(props: {
     }}>
     {(props.captions ?? (props.caption ? [props.caption] : [])).map((caption) => (
       <CaptionPresentation key={caption.id} caption={caption} words={props.words} projectStyle={props.projectStyle}
-        geometry={gesture.transforming ? gesture.geometry : resolveCaptionStyle(props.projectStyle, caption)}
+        geometry={gesture.geometry}
         currentMs={props.currentMs} authored={Boolean(props.preserveLineBreaks)} editingPreview={props.editingPreview} />
     ))}
     <LayerTransformOverlay geometry={gesture.geometry} interactive={props.interactive} selectable={props.selectable} responders={gesture.responders} onDelete={props.onDelete} />

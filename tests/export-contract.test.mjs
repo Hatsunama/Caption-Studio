@@ -300,7 +300,6 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-// Release regressions: translation completion and export visibility are behavioral contracts.
 import { automaticTranslationCueWrites } from '../src/lib/caption-translation-commit.ts';
 import { commitTranslationAttempt, translationAttemptMessage } from '../src/lib/translation-attempt.ts';
 import { createKeyedOperationQueue } from '../src/lib/keyed-operation-queue.ts';

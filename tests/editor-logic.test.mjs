@@ -976,14 +976,12 @@ test('reorder filmstrip track width and scroll stay on-screen (not full timeline
   assert.equal(filmstrip, clips * (tile + gap) + gap);
   assert.equal(reorderTileLeft(2, tile, gap), 2 * (tile + gap));
 
-  const viewportContent = 278; // 360 - 82 label
+  const viewportContent = 278;
   const fullTimelineWidth = 8_000;
-  // Bug: Math.max(fullTimeline, filmstrip) kept the huge track. Fixed width is filmstrip-sized.
   assert.equal(reorderTrackWidth(filmstrip, viewportContent), Math.max(filmstrip, viewportContent));
   assert.ok(reorderTrackWidth(filmstrip, viewportContent) < fullTimelineWidth);
   assert.ok(reorderTrackWidth(filmstrip, viewportContent) !== Math.max(fullTimelineWidth, filmstrip));
 
-  // Short strip (fits in viewport content) pins to start so tiles stay on-screen.
   const shortClips = 2;
   const shortStrip = reorderFilmstripWidth(shortClips, tile, gap);
   assert.ok(shortStrip <= viewportContent);
@@ -991,7 +989,6 @@ test('reorder filmstrip track width and scroll stay on-screen (not full timeline
   assert.equal(shortTrack, viewportContent);
   assert.equal(reorderScrollOffsetForTile(1, tile, gap, shortTrack, viewportContent), 0);
 
-  // Long strip (many clips) centers the active tile instead of leaving scroll at playhead mid-timeline.
   const many = 20;
   const longStrip = reorderFilmstripWidth(many, tile, gap);
   const longTrack = reorderTrackWidth(longStrip, viewportContent);
@@ -1001,15 +998,12 @@ test('reorder filmstrip track width and scroll stay on-screen (not full timeline
   assert.ok(centered > 0);
   assert.ok(centered < longTrack);
 
-  // Edge auto-scroll nudges when the drop index approaches the visible edge.
   const mid = longTrack / 2;
   const nudgedLeft = reorderAutoScrollOffset(mid, 0, tile, gap, longTrack, 360, 56);
   assert.ok(nudgedLeft < mid);
   const nudgedRight = reorderAutoScrollOffset(0, many - 1, tile, gap, longTrack, 360, 56);
   assert.ok(nudgedRight > 0);
 });
-
-
 
 test('script caption edits commit atomically and preserve caption invariants', () => {
   const captions = [
@@ -1400,11 +1394,12 @@ test('timeline selection does not move or snap the playhead', () => {
 
 test('every timed content body captures movement while only the selected item exposes trim handles', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
-  const block = timeline.slice(timeline.indexOf('function TimedBlock'), timeline.indexOf('function LinkedCaptionBlock'));
+  const block = timeline.slice(timeline.indexOf('function TimedBlock'), timeline.indexOf('function AudioWaveform'));
   assert.match(block, /<TimelineMoveGrip/);
   assert.doesNotMatch(block, /movable\?: boolean/);
-  assert.match(block, /\{props\.selected && !props\.hideControls \? \(/);
-  assert.match(timeline, /testID="caption-timing-dock"/);
+  assert.match(block, /\{props\.selected \? \(/);
+  assert.doesNotMatch(block, /hideBody|hideControls|ordinal\?:|marker\?:/);
+  assert.doesNotMatch(timeline, /caption-timing-dock|hideControls|TIMELINE_MARKER|MAX_TIMELINE_PAGE_CUES|jumpToCueNumber|selectOrdinal/);
   assert.match(block, /<TimingGrip side="start"/);
   assert.match(block, /<TimingGrip side="end"/);
   assert.match(block, /zIndex: props\.selected \? 6 : 1/);
