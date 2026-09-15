@@ -85,6 +85,26 @@ test('touch membership rebases synchronously despite stale props, reordered IDs,
   near(gesture.current().scale, 2);
 });
 
+test('unmeasured and unlocated canvases cannot fly a layer off-screen', () => {
+  const start = geometry();
+  const gesture = createLayerGesture(start);
+  assert.equal(gesture.begin('move', [point(10000, 8000)], { width: 0, height: 0, pageX: 0, pageY: 0 }), false);
+  assert.deepEqual(gesture.current().position, start.position);
+  const sized = { width: 200, height: 100, pageX: 0, pageY: 0, located: false };
+  assert.equal(gesture.begin('corner', [point(250, 450)], sized), false);
+  assert.equal(gesture.begin('move', [point(250, 450), point(350, 450, 2)], sized), true);
+  const twoFinger = gesture.update([point(250, 50), point(350, 850, 2)]);
+  assert.deepEqual(twoFinger.position, start.position);
+  assert.equal(twoFinger.scale, 1);
+  assert.deepEqual(gesture.end().position, start.position);
+  const placed = createLayerGesture(start);
+  assert.equal(placed.begin('move', [point(180, 170), point(240, 170, 2)], { width: 200, height: 100, pageX: 80, pageY: 120 }), true);
+  const next = placed.update([point(210, 140), point(210, 200, 2)]);
+  assert.ok(next.position.x > 0 && next.position.x < 1);
+  assert.ok(next.position.y > 0 && next.position.y < 1);
+  assert.ok(Math.abs(next.position.x) < 2 && Math.abs(next.position.y) < 2);
+});
+
 test('a selected owner rejects competing responders and clamps only degenerate box inversion', () => {
   const gesture = createLayerGesture(geometry());
   assert.equal(gesture.begin('right', [point(0, 0)], size), true);

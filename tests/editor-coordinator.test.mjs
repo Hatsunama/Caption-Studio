@@ -95,7 +95,6 @@ for (const legacyDuration of [0, 1, 40, 79]) test(`no-op script save after trans
   h.actions.updateSharedCaptionTransform(transform);
   h.actions.finishHistoryInteraction(); await h.flush();
   const transformed = h.project;
-  // Create a redo entry above the transform, then return to transformed state.
   const editedDraft = structuredClone(transformed.captions);
   editedDraft[1].text = 'Redo must survive';
   await h.actions.commitCaptionScript(editedDraft); await h.flush();
@@ -103,7 +102,6 @@ for (const legacyDuration of [0, 1, 40, 79]) test(`no-op script save after trans
   h.actions.undo(); await h.flush();
   assert.equal(h.project, transformed);
   const writes = h.calls.writes.length;
-  // Reverse cue and object-property order and add omitted decoder defaults.
   const draft = staleDraft.reverse().map((cue) => Object.fromEntries(Object.entries({ ...cue, timelineVisible: true }).reverse()));
   assert.equal(await h.actions.commitCaptionScript(draft), true); await h.flush();
   assert.equal(h.project, transformed);

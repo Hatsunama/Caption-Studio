@@ -1,10 +1,8 @@
 export type TimelineInterval = { id: string; startMs: number; endMs: number };
 
-export const TIMELINE_MARKER_WIDTH = 44;
-export const TIMELINE_MARKER_HEIGHT = 44;
-export const MAX_TIMELINE_PAGE_CUES = 4;
 export const MAX_TIMELINE_BODY_CUES = 64;
 export const MAX_TIMELINE_DENSITY_BINS = 16;
+export const MIN_TIMELINE_DENSITY_BIN_PX = 44;
 
 /** One index per content revision. Scroll/selection never sorts, filters, or
  * packs the full track. The index owns references, not copies of cue payloads. */
@@ -69,25 +67,18 @@ export function timelineCuePage<T extends TimelineInterval>(
   bounds: { left: number; right: number },
   selectedId?: string,
 ) {
-  const capacity = Math.max(0, Math.min(MAX_TIMELINE_PAGE_CUES, Math.floor((bounds.right - bounds.left) / TIMELINE_MARKER_WIDTH)));
   const startMs = bounds.left / trackWidth * durationMs;
   const endMs = bounds.right / trackWidth * durationMs;
   const query = queryTimelineCues(index, startMs, endMs, MAX_TIMELINE_BODY_CUES + 1);
   const selectedIndex = selectedId === undefined ? undefined : index.byId.get(selectedId);
   const selected = selectedIndex === undefined ? undefined : index.ordered[selectedIndex];
-  const selectedIntersects = selected && selected.startMs <= endMs && selected.endMs >= startMs;
-  const cues = query.cues.slice(0, capacity);
-  if (selectedIntersects && capacity > 0 && !cues.some((cue) => cue.id === selected.id)) {
-    if (cues.length === capacity) cues.pop();
-    cues.push(selected);
-  }
-  const first = index.byId.get(cues[0]?.id) ?? 0;
+  const selectedIntersects = Boolean(selected && selected.startMs <= endMs && selected.endMs >= startMs);
   const dense = query.cues.length > MAX_TIMELINE_BODY_CUES;
-  const bodies = dense ? (selectedIntersects ? [selected] : []) : query.cues;
+  const bodies = dense ? (selected && selectedIntersects ? [selected] : []) : query.cues;
   const layout = packTimelineLanes(bodies);
   const density: { left: number; width: number; startMs: number; endMs: number; count: number }[] = [];
   if (dense) {
-    const bins = Math.max(1, Math.min(MAX_TIMELINE_DENSITY_BINS, Math.floor((bounds.right - bounds.left) / 44)));
+    const bins = Math.max(1, Math.min(MAX_TIMELINE_DENSITY_BINS, Math.floor((bounds.right - bounds.left) / MIN_TIMELINE_DENSITY_BIN_PX)));
     for (let i = 0; i < bins; i++) {
       const left = bounds.left + (bounds.right - bounds.left) * i / bins;
       const right = bounds.left + (bounds.right - bounds.left) * (i + 1) / bins;
@@ -95,20 +86,10 @@ export function timelineCuePage<T extends TimelineInterval>(
       const count = countTimelineCues(index, from, to);
       if (count) density.push({ left, width: right - left, startMs: from, endMs: to, count });
     }
-    // The selected interval has its own faithful body below the density row.
     for (const [id, lane] of layout.laneById) layout.laneById.set(id, lane + 1);
     layout.laneCount = bodies.length ? 2 : 1;
   }
-  const bodyIds = new Set(bodies.map((cue) => cue.id));
-  const renderCues = [...bodies, ...cues.filter((cue) => !bodyIds.has(cue.id))];
-  // Cards describe chronological order, not expanded time intervals. Their
-  // separate row has disjoint 44px targets even for coincident zero-length cues.
-  const markers = new Map(cues.map((cue, offset) => [cue.id, {
-    left: bounds.left + offset * TIMELINE_MARKER_WIDTH,
-    width: TIMELINE_MARKER_WIDTH, top: 3,
-  }]));
-  return { cues, bodies, bodyIds, renderCues, density, first, capacity, layout, markers,
-    probes: query.probes, height: layout.laneCount * 32 + TIMELINE_MARKER_HEIGHT + 8 };
+  return { bodies, density, layout };
 }
 
 export function packTimelineLanes(intervals: TimelineInterval[]) {

@@ -2,7 +2,6 @@ package app.captionstudio.media
 
 import kotlin.math.max
 
-/** Pure helpers for lossless audio remux / duration selection used by CaptionMediaModule. */
 internal object AudioTrackExtraction {
   const val AAC_MIME = "audio/mp4a-latm"
   const val OUTPUT_MIME = "audio/mp4"

@@ -28,7 +28,6 @@ function fixture(kind, mixed = false) {
 }
 
 function assertPersistable(project, deletedClipId, checkLayer) {
-  // Check the actual mutation, direct schema decode, and the saved/reopened snapshot.
   const check = (value) => {
     assert.equal(value.clips.some((clip) => clip.id === deletedClipId), false);
     const clipIds = new Set(value.clips.map((clip) => clip.id));

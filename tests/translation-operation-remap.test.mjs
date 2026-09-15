@@ -199,7 +199,6 @@ test('spanning and split/reorder intervals never widen, including repeated reord
       }
     }
   }
-  // With room on both sides, the whole interval shifts without losing duration.
   const original = fixture(3_500, 4_500);
   original.clips.push({ ...original.clips[0], id: 'c' });
   assert.deepEqual(bounds(reorderVideoClip(original, 'b', 0).project), [7_500, 8_500]);

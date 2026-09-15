@@ -37,6 +37,10 @@ test('preview layers own hit testing, authored lines, stable transform baselines
   assert.match(editor, /onSelect=\{\(\) => selectEditorObject\(/);
   assert.match(captions, /<CaptionPresentation/);
   assert.match(captions, /authored=\{Boolean\(props\.preserveLineBreaks\)\}/);
+  assert.match(captions, /ref=\{canvasRef\}/);
+  assert.doesNotMatch(captions, /ref=\{\(node\) =>/);
+  assert.match(images, /ref=\{canvasRef\}/);
+  assert.doesNotMatch(images, /ref=\{\(node\) =>/);
   assert.match(presentation, /rawText\.replace\("\\r\\n", "\\n"\)/);
   assert.match(presentation, /text\.contains\('\\n'\)/);
   assert.match(gesture, /activeOwner\.source/);
