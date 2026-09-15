@@ -56,7 +56,13 @@ for (const kind of ['text', 'image']) {
     const result = deleteVideoClip(project, first.id);
     assert.ok(result);
     assert.deepEqual(result.project.clips.map((clip) => clip.id), [second.id]);
-    assertPersistable(result.project, first.id, (layer) => {
+    const reopened = assertPersistable(result.project, first.id, (layer) => {
+      assert.equal(layer.timelineVisible, false);
+      assert.deepEqual(layer.sourceAnchors, []);
+    });
+    const shifted = setVideoClipGap(reopened, second.id, 400, 'before');
+    assert.ok(shifted);
+    assertPersistable(shifted.project, first.id, (layer) => {
       assert.equal(layer.timelineVisible, false);
       assert.deepEqual(layer.sourceAnchors, []);
     });

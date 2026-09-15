@@ -667,6 +667,7 @@ function spliceTimedRange<T extends { startMs: number; endMs: number }>(
 function anchorVisualLayers(layers: CaptionProject['layers'], clips: VideoClip[]) {
   const entries = buildClipTimeline(clips);
   return layers.map((layer) => layer.kind === 'captions' || layer.sourceAnchors?.length
+    || (layer.timelineVisible === false && layer.sourceAnchors !== undefined)
     ? layer
     : attachLayerToTimeline(layer, entries));
 }
