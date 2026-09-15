@@ -722,7 +722,8 @@ function remapVisualLayers(
   return layers.map((layer) => {
     if (layer.kind === 'captions') return layer;
     if (!layer.sourceAnchors?.length) return spliceTimedRange(layer, splice);
-    const visibleRanges = layer.sourceAnchors.flatMap((anchor) => {
+    const survivingAnchors = layer.sourceAnchors.filter((anchor) => entryByClipId.has(anchor.clipId));
+    const visibleRanges = survivingAnchors.flatMap((anchor) => {
       const entry = entryByClipId.get(anchor.clipId);
       if (!entry) return [];
       const sourceStartMs = Math.max(anchor.sourceStartMs, entry.clip.sourceStartMs);
@@ -733,9 +734,10 @@ function remapVisualLayers(
         endMs: timelineTimeAt(entry, sourceEndMs),
       }];
     });
-    if (visibleRanges.length === 0) return { ...layer, timelineVisible: false };
+    if (visibleRanges.length === 0) return { ...layer, sourceAnchors: survivingAnchors, timelineVisible: false };
     return {
       ...layer,
+      sourceAnchors: survivingAnchors,
       startMs: Math.min(...visibleRanges.map((range) => range.startMs)),
       endMs: Math.max(...visibleRanges.map((range) => range.endMs)),
       timelineVisible: true,
