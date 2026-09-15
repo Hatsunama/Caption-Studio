@@ -1,5 +1,5 @@
 import type { CaptionBlock, CaptionProject, VideoClip, VisualLayer, WordToken } from '@/types/project';
-import { audioClipEnd, constrainAudioClips } from '@/lib/audio-timeline';
+import { applyTimelineSpliceToAudioClips } from '@/lib/audio-timeline';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { captionLayoutText } from '@/lib/caption-text-breaks';
 import { effectiveVideoTransition } from '@/lib/video-transitions';
@@ -354,11 +354,8 @@ export function rippleTimedContent(project: CaptionProject, cutStartMs: number, 
       return range ? { ...layer, ...range } : undefined;
     })
     .filter((layer): layer is VisualLayer => Boolean(layer));
-  const audioClips = project.audioClips.flatMap((clip) => {
-    const range = rippleRange(clip.startMs, audioClipEnd(clip), cutStartMs, cutEndMs);
-    if (!range) return [];
-    const duration = range.endMs - range.startMs;
-    return [{ ...clip, startMs: range.startMs, sourceEndMs: clip.sourceStartMs + duration }];
+  const audioClips = applyTimelineSpliceToAudioClips(project.audioClips, {
+    atMs: cutStartMs, removeMs: Math.max(0, cutEndMs - cutStartMs), insertMs: 0,
   });
   return {
     ...project,
@@ -396,10 +393,8 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
   const layers = project.layers.map((layer) => layer.kind === 'captions'
     ? layer
     : { ...layer, startMs: mapTime(layer.startMs), endMs: mapTime(layer.endMs) });
-  const audioClips = constrainAudioClips(
-    project.audioClips.map((clip) => clip.startMs >= entry.endMs ? { ...clip, startMs: clip.startMs + delta } : clip),
-    totalClipDuration(project.clips.map((clip) => clip.id === clipId ? replacement : clip)),
-  );
+  const audioClips = project.audioClips.map((clip) => clip.startMs >= entry.endMs
+    ? { ...clip, startMs: clip.startMs + delta } : clip);
   return {
     ...project,
     updatedAt: new Date().toISOString(),

@@ -1,3 +1,4 @@
+import { projectTimelineDuration } from '@/lib/project-timeline';
 import { mergeStyle } from '@/lib/style-resolver';
 import { decodeCaptionDraft, reconcileCaptionScriptDraft, sameCaptionContent } from '@/lib/caption-script';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
@@ -90,7 +91,7 @@ export function setCaptionTiming(
   const entries = buildClipTimeline(project.clips);
   const selected = project.captions.find((caption) => caption.id === captionId);
   if (!selected || selected.timelineVisible === false) return project;
-  const durationMs = totalClipDuration(project.clips);
+  const durationMs = projectTimelineDuration(project);
   const { startMs: safeStartMs, endMs: safeEndMs } = editTimelineRange(selected, edge, startMs, endMs, durationMs);
   if (safeStartMs === selected.startMs && safeEndMs === selected.endMs) return project;
   const captions = project.captions
@@ -179,7 +180,7 @@ export function setLayerTiming(
     edge,
     startMs,
     endMs,
-    totalClipDuration(project.clips),
+    projectTimelineDuration(project),
   );
   if (range.startMs === selected.startMs && range.endMs === selected.endMs) return project;
   const entries = buildClipTimeline(project.clips);
@@ -406,7 +407,6 @@ function translationReorderMapping(before: VideoClip[], after: VideoClip[]): Tra
   };
 }
 export function deleteVideoClip(project: CaptionProject, clipId: string) {
-  if (project.clips.length <= 1) return null;
   const entry = buildClipTimeline(project.clips).find((candidate) => candidate.clip.id === clipId);
   if (!entry) return null;
   const anchoredCaptions = anchorCaptionsToClips(project.captions, project.clips, project.transcription.words)
@@ -417,7 +417,7 @@ export function deleteVideoClip(project: CaptionProject, clipId: string) {
     removeMs: entry.afterGapEndMs - entry.gapStartMs,
     insertMs: 0,
   });
-  const duration = totalClipDuration(clips);
+  const duration = projectTimelineDuration(next);
   return { project: next, seekMs: Math.min(entry.gapStartMs, Math.max(0, duration - 1)) };
 }
 

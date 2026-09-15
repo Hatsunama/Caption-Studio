@@ -32,7 +32,7 @@ test('native export keeps the local MP4 until JS delivery and never covers the v
     'Media3 renders the first registered video sequence on top, so footage must precede the opaque canvas',
   );
   assert.match(exporter, /const val VIDEO_SEQUENCE_INDEX = 0/);
-  assert.match(exporter, /if \(inputId != VIDEO_SEQUENCE_INDEX\) return StaticOverlaySettings\.Builder\(\)\.build\(\)/);
+  assert.match(exporter, /if \(plan.clips.isEmpty\(\) \|\| inputId != VIDEO_SEQUENCE_INDEX\) return StaticOverlaySettings\.Builder\(\)\.build\(\)/);
   assert.doesNotMatch(exporter, /CLOCK_SEQUENCE_INDEX/);
   assert.doesNotMatch(compositorTest, /getOverlaySettings\(2,/);
   assert.match(compositorTest, /val active = settings\.getOverlaySettings\(0, 500_000\)/);

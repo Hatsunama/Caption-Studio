@@ -1,3 +1,4 @@
+import { projectTimelineDuration } from '@/lib/project-timeline';
 import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
 import { captionPreviewState, projectHasEditorLayer } from '@/lib/caption-preview';
@@ -654,7 +655,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   }, [exitApproved, navigation]);
 
   const clipTimeline = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
-  const timelineDurationMs = totalClipDuration(project.clips);
+  const timelineDurationMs = projectTimelineDuration(project);
   const seekTimeline = transport.seek;
 
   useEffect(() => {
@@ -1348,7 +1349,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         ownedAssetLedgerRef.current = trackProjectOwnedAssets(ownedAssetLedgerRef.current, [stored.uri]);
         return addImageLayerToProject(before, {
           id, name: stored.name, uri: stored.uri, currentMs,
-          durationMs: Math.max(500, totalClipDuration(before.clips)),
+          durationMs: Math.max(500, projectTimelineDuration(before)),
         }).project;
       });
       if (editorSession.isCurrent(receipt)) selectEditorObject({ kind: 'image', id });
@@ -1459,7 +1460,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const deleteSelectedClip = () => {
-    if (!selectedClipId || editorSession.current().clips.length <= 1) return;
+    if (!selectedClipId) return;
     const result = deleteVideoClip(editorSession.current(), selectedClipId);
     if (!result) return;
     pushUndo();
@@ -1481,7 +1482,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject(next);
     persistProjectInBackground();
     transport.pause();
-    queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, totalClipDuration(next.clips) - 1))));
+    queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, projectTimelineDuration(next) - 1))));
   };
 
   const setClipGap = (clipId: string, gapMs: number, edge: 'before' | 'after' = 'before') => {
@@ -1551,6 +1552,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const commitAudioProject = (next: CaptionProject) => {
+    transport.synchronizeProject(next);
     setProject(next);
     persistProjectInBackground();
   };
@@ -1627,7 +1629,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject(result.project);
     persistProjectInBackground();
     transport.pause();
-    queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, totalClipDuration(result.project.clips) - 1))));
+    queueMicrotask(() => seekTimeline(Math.min(result.seekMs, Math.max(0, projectTimelineDuration(result.project) - 1))));
   };
 
   const exportVideo = async () => {
@@ -1785,7 +1787,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           </View>
           {transport.isGap ? (
             <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
-              <Text style={{ color: '#7F8996', fontSize: 12, fontWeight: '800' }}>EMPTY TIMELINE GAP</Text>
             </View>
           ) : transport.phase === 'loading' ? (
             <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
@@ -2040,7 +2041,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 </Text>
                 <PersistedHorizontalScroll id="tool:video:clip-actions" contentContainerStyle={{ gap: 8 }}>
                   <Action label="Split at playhead" onPress={splitClipAtPlayhead} />
-                  <Action label="Delete + close gap" danger disabled={project.clips.length <= 1} onPress={deleteSelectedClip} />
+                  <Action label="Delete + close gap" danger onPress={deleteSelectedClip} />
                   <Action label="Gap −0.5s" disabled={selectedClip.gapBeforeMs <= 0} onPress={() => setClipGap(selectedClip.id, Math.max(0, selectedClip.gapBeforeMs - 500))} />
                   <Action label={selectedClip.gapBeforeMs > 0 ? `Remove ${formatSeconds(selectedClip.gapBeforeMs)} gap` : 'No gap'} color={selectedClip.gapBeforeMs > 0 ? '#FF7C8D' : '#64E8FF'} disabled={selectedClip.gapBeforeMs <= 0} onPress={() => setClipGap(selectedClip.id, 0)} />
                   <Action label="Gap +0.5s" onPress={() => setClipGap(selectedClip.id, selectedClip.gapBeforeMs + 500)} />

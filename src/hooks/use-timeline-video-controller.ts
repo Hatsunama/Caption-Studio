@@ -1,3 +1,4 @@
+import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project-timeline';
 import { useEventListener } from 'expo';
 import { useVideoPlayer, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -6,7 +7,7 @@ import {
   buildClipTimeline,
   clipPlaybackVolume,
   sourceTimeAt,
-  timelineSegmentAt,
+
   timelineTimeAt,
   type ClipTimelineEntry,
 } from '@/lib/video-timeline';
@@ -38,7 +39,7 @@ export function useTimelineVideoController(
 ) {
   const entries = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
   const initialEntry = entries[0];
-  const initialSource = project.sources.find((source) => source.id === initialEntry?.clip.sourceId) ?? project.sources[0];
+  const initialSource = project.sources.find((source) => source.id === initialEntry?.clip.sourceId);
   const playerA = useVideoPlayer(initialSource?.uri ?? null, (instance) => {
     configureTimelinePlayer(instance);
     if (initialEntry) instance.currentTime = initialEntry.clip.sourceStartMs / 1000;
@@ -88,7 +89,7 @@ export function useTimelineVideoController(
   };
 
   const setCurrentMs = (value: number) => {
-    const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
+    const duration = projectTimelineDuration(projectRef.current);
     const next = clamp(value, 0, duration);
     currentMsRef.current = next;
     if (mountedRef.current) setCurrentMsState(next);
@@ -255,10 +256,10 @@ export function useTimelineVideoController(
       while (desiredRef.current && mountedRef.current) {
         const target = desiredRef.current;
         desiredRef.current = undefined;
-        const segment = timelineSegmentAt(entriesRef.current, target.timelineMs);
+        const segment = projectTimelineSegmentAt(projectRef.current, target.timelineMs, entriesRef.current);
         if (!segment) {
           stopTransport();
-          setCurrentMs(entriesRef.current.at(-1)?.afterGapEndMs ?? 0);
+          setCurrentMs(projectTimelineDuration(projectRef.current));
           setPhase('ended');
           continue;
         }
@@ -285,7 +286,7 @@ export function useTimelineVideoController(
   });
 
   const seek = useCallback((timelineMs: number) => {
-    const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
+    const duration = projectTimelineDuration(projectRef.current);
     const targetMs = clamp(timelineMs, 0, duration);
     setCurrentMs(targetMs);
     invalidateStandbyPrime();
@@ -294,7 +295,7 @@ export function useTimelineVideoController(
   }, [invalidateStandbyPrime]);
 
   const play = useCallback(() => {
-    const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
+    const duration = projectTimelineDuration(projectRef.current);
     const targetMs = currentMsRef.current >= duration - 1 ? 0 : currentMsRef.current;
     playIntentRef.current = true;
     setIsPlaying(true);
@@ -304,14 +305,14 @@ export function useTimelineVideoController(
 
   const pause = useCallback(() => {
     stopTransport();
-    const segment = timelineSegmentAt(entriesRef.current, currentMsRef.current);
+    const segment = projectTimelineSegmentAt(projectRef.current, currentMsRef.current, entriesRef.current);
     if (segment?.kind === 'gap') setPhase('gap');
   }, [stopTransport]);
 
   const synchronizeProject = useCallback((nextProject: CaptionProject) => {
     projectRef.current = nextProject;
     entriesRef.current = buildClipTimeline(nextProject.clips);
-    const duration = entriesRef.current.at(-1)?.afterGapEndMs ?? 0;
+    const duration = projectTimelineDuration(projectRef.current);
     const timelineMs = clamp(currentMsRef.current, 0, duration);
     setCurrentMs(timelineMs);
     invalidateStandbyPrime();
@@ -325,7 +326,7 @@ export function useTimelineVideoController(
     const currentEntries = entriesRef.current;
     const index = currentEntries.findIndex((candidate) => candidate.clip.id === entry.clip.id);
     const next = currentEntries[index + 1];
-    const gapEndMs = next?.startMs ?? entry.afterGapEndMs;
+    const gapEndMs = next?.startMs ?? projectTimelineDuration(projectRef.current);
     if (gapEndMs > entry.endMs + CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS) {
       runGap(entry.endMs, gapEndMs, next, ++generationRef.current);
       return;
@@ -441,7 +442,7 @@ export function useTimelineVideoController(
     currentMs,
     isPlaying,
     phase,
-    isGap: phase === 'gap',
+    isGap: phase === 'gap' || entries.length === 0 || projectTimelineSegmentAt(project, currentMs, entries)?.kind === 'gap',
     seek,
     play,
     pause,

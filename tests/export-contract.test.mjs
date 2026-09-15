@@ -75,8 +75,9 @@ test('render plans are pure, detached, inherited, and exclude trim-hidden conten
   assert.deepEqual(project, before);
   assert.deepEqual(plan.captions.map((caption) => caption.id), ['visible-caption']);
   assert.deepEqual(plan.layers.map((layer) => layer.id), ['captions', 'visible-title']);
-  assert.deepEqual([plan.captions[0].startMs, plan.captions[0].endMs], [0, 4_000]);
-  assert.deepEqual([plan.layers[1].startMs, plan.layers[1].endMs], [0, 4_000]);
+  assert.equal(plan.durationMs, 5_000);
+  assert.deepEqual([plan.captions[0].startMs, plan.captions[0].endMs], [0, 5_000]);
+  assert.deepEqual([plan.layers[1].startMs, plan.layers[1].endMs], [0, 5_000]);
   assert.equal(plan.captions[0].style.fontSize, 64);
   assert.equal(plan.captions[0].style.font.uri, 'file:///resolved-anton.ttf');
   assert.equal(plan.captions[0].words[0].style.textColor, '#00FF00');

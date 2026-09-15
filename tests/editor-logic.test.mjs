@@ -148,7 +148,7 @@ test('timeline export is native, local, multi-track, and version-aligned', () =>
   assert.match(transitionTimeline, /outgoingSourceTimeMs/);
   assert.match(transitionTimeline, /incomingSourceTimeMs/);
   assert.match(transitionTimeline, /transitionAudioGain/);
-  assert.match(exporter, /availableDurationMs/);
+  assert.match(exporter, /val sourceEndMs = clip.sourceEndMs/);
   assert.match(exportService, /buildTimelineRenderPlan/);
   assert.doesNotMatch(exportService, /clips\.length !== 1|playbackRate !== 1/);
   assert.match(renderPlan, /resolveCaptionStyle/);

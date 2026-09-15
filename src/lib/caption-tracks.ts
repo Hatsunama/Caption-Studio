@@ -1,8 +1,9 @@
+import { projectTimelineDuration } from '@/lib/project-timeline';
 import { mergePatch, mergeStyle, removePatchedKeys } from '@/lib/caption-style';
 import { captionTransform, hasCaptionTransform, withoutCaptionTransform } from '@/lib/caption-transform';
 import { layerExtent } from '@/lib/layer-geometry';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
-import { totalClipDuration, type TranslationTimeMapping } from '@/lib/video-timeline';
+import { type TranslationTimeMapping } from '@/lib/video-timeline';
 import {
   canonicalCaptionLanguageTag,
   captionLanguageFamily,
@@ -307,7 +308,7 @@ export function setTranslationCueTiming(
   endMs: number,
   updatedAt = project.updatedAt,
 ) {
-  const timelineEndMs = Math.max(80, totalClipDuration(project.clips));
+  const timelineEndMs = Math.max(80, projectTimelineDuration(project));
   return mapTranslationTrack(project, trackId, (track) => ({
     ...track,
     cues: track.cues.map((cue) => {
