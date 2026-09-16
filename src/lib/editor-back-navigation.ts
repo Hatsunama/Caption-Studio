@@ -6,6 +6,7 @@ export type EditorBackStep =
   | 'close-font-browser'
   | 'close-style-scope'
   | 'close-transition-timing'
+  | 'close-voiceover'
   | 'close-audio-source'
   | 'close-language-picker'
   | 'close-dual-caption-editor'
@@ -22,6 +23,7 @@ export interface EditorBackState {
   fontBrowserOpen: boolean;
   styleScopeOpen: boolean;
   transitionTimingOpen: boolean;
+  voiceoverOpen: boolean;
   audioSourceOpen: boolean;
   languagePickerOpen: boolean;
   dualCaptionEditorOpen: boolean;
@@ -38,6 +40,7 @@ export function resolveEditorBackStep(state: EditorBackState): EditorBackStep {
   if (state.fontBrowserOpen) return 'close-font-browser';
   if (state.styleScopeOpen) return 'close-style-scope';
   if (state.transitionTimingOpen) return 'close-transition-timing';
+  if (state.voiceoverOpen) return 'close-voiceover';
   if (state.audioSourceOpen) return 'close-audio-source';
   if (state.languagePickerOpen) return 'close-language-picker';
   if (state.dualCaptionEditorOpen) return 'close-dual-caption-editor';

@@ -3,8 +3,9 @@ import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type 
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
 import { captionPreviewState, projectHasEditorLayer } from '@/lib/caption-preview';
 import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
+import { AudioModule, RecordingPresets, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -117,6 +118,7 @@ import { validateProjectSources } from '@/services/project-media';
 import {
   appendVideosToProject,
   appendAudioToProject,
+  appendRecordedAudioToProject,
   appendProjectVideoAudioToProject,
   cancelProjectCaptionGeneration,
   checkpointEditorProject,
@@ -407,6 +409,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [animationScope, setAnimationScope] = useState<StyleScope>('caption');
   const [extractAudioOpen, setExtractAudioOpen] = useState(false);
   const [extractAudioBusy, setExtractAudioBusy] = useState(false);
+  const [voiceoverOpen, setVoiceoverOpen] = useState(false);
+  const [voiceoverSaving, setVoiceoverSaving] = useState(false);
+  const [voiceoverStartMs, setVoiceoverStartMs] = useState<number>();
+  const voiceoverRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const voiceoverRecorderState = useAudioRecorderState(voiceoverRecorder, 100);
+  const voiceoverBackRequestRef = useRef<(() => void) | undefined>(undefined);
   const [transitionTimingOpen, setTransitionTimingOpen] = useState(false);
   const clearEditorSelection = () => {
     setSelectedCaptionId(undefined);
@@ -552,13 +560,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     event.preventDefault();
     const { data } = event;
     const backStep = resolveEditorBackStep({
-      interactionLocked: Boolean(finishingSession || transcriptionCancelling || mediaProgress || extractAudioBusy || (exporting && exportKind !== 'video')),
+      interactionLocked: Boolean(finishingSession || transcriptionCancelling || mediaProgress || extractAudioBusy || voiceoverSaving || (exporting && exportKind !== 'video')),
       captionGenerationActive: Boolean(progress && !transcriptionCancelling),
       videoExportActive: Boolean(exporting && exportKind === 'video'),
       textEditorOpen: Boolean(editingLayerId),
       fontBrowserOpen,
       styleScopeOpen: Boolean(pendingChange),
       transitionTimingOpen,
+      voiceoverOpen,
       audioSourceOpen: extractAudioOpen,
       languagePickerOpen: dualLanguagePickerOpen,
       dualCaptionEditorOpen,
@@ -579,6 +588,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       else if (backStep === 'close-font-browser') setFontBrowserOpen(false);
       else if (backStep === 'close-style-scope') setPendingChange(undefined);
       else if (backStep === 'close-transition-timing') setTransitionTimingOpen(false);
+      else if (backStep === 'close-voiceover') (voiceoverBackRequestRef.current ?? (() => setVoiceoverOpen(false)))();
       else if (backStep === 'close-audio-source') setExtractAudioOpen(false);
       else if (backStep === 'close-language-picker') (languagePickerBackRequestRef.current ?? (() => setDualLanguagePickerOpen(false)))();
       else if (backStep === 'close-dual-caption-editor') {
@@ -647,6 +657,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     selectedTranslationTrackId,
     transcriptionCancelling,
     transitionTimingOpen,
+    voiceoverOpen,
+    voiceoverSaving,
   ]);
 
   useEffect(() => {
@@ -705,6 +717,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const selectedClipIndex = project.clips.findIndex((clip) => clip.id === selectedClipId);
   const transitionBoundaryAvailable = canApplyVideoTransition(project.clips, selectedClipIndex);
   const selectedAudioClip = project.audioClips.find((clip) => clip.id === selectedAudioClipId);
+  const voiceoverMeterLevel = clamp(((voiceoverRecorderState.metering ?? -60) + 60) / 60, 0.05, 1);
   const selectedLayer = project.layers.find((layer) => layer.id === selectedLayerId);
   const selectedTextLayer = selectedLayer?.kind === 'text' ? selectedLayer : undefined;
   const selectedImageLayer = selectedLayer?.kind === 'image' ? selectedLayer : undefined;
@@ -1552,6 +1565,64 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
   };
 
+  const startVoiceover = async () => {
+    if (voiceoverSaving || voiceoverRecorderState.isRecording) return;
+    try {
+      const permission = await AudioModule.requestRecordingPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Microphone permission needed', 'Allow microphone access to record a voice-over. Your project has not changed.');
+        return;
+      }
+      await AudioModule.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, interruptionMode: 'mixWithOthers', shouldRouteThroughEarpiece: false });
+      await voiceoverRecorder.prepareToRecordAsync(VOICEOVER_RECORDING_OPTIONS);
+      setVoiceoverStartMs(currentMs);
+      voiceoverRecorder.record();
+      if (!isPlaying && runtimePolicy.mediaAdmitted) transport.play();
+    } catch (caught) {
+      Alert.alert('Could not start voice-over', caught instanceof Error ? caught.message : 'The microphone could not start.');
+    }
+  };
+
+  const stopVoiceover = async (closeWhenSaved = false) => {
+    if (voiceoverSaving) return;
+    if (!voiceoverRecorderState.isRecording) {
+      if (closeWhenSaved) setVoiceoverOpen(false);
+      return;
+    }
+    setVoiceoverSaving(true);
+    try {
+      transport.pause();
+      await voiceoverRecorder.stop();
+      const recordingUri = voiceoverRecorder.uri;
+      if (!recordingUri) throw new Error('The phone did not provide a recording file.');
+      const receipt = await commitEditorProject(async (before) => {
+        const result = await appendRecordedAudioToProject(before, voiceoverStartMs ?? currentMs, recordingUri);
+        return result.project;
+      }, true);
+      if (!receipt || !editorSession.isCurrent(receipt)) return;
+      const added = receipt.project.audioClips.find((clip) => !receipt.before.audioClips.some((previous) => previous.id === clip.id));
+      if (added) selectEditorObject({ kind: 'audio', id: added.id });
+      if (closeWhenSaved) setVoiceoverOpen(false);
+    } catch (caught) {
+      Alert.alert('Could not save voice-over', caught instanceof Error ? caught.message : 'The recorded take was not added to the project.');
+    } finally {
+      setVoiceoverStartMs(undefined);
+      setVoiceoverSaving(false);
+      await AudioModule.setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, interruptionMode: 'mixWithOthers', shouldRouteThroughEarpiece: false }).catch(() => undefined);
+    }
+  };
+
+  useEffect(() => {
+    const closeVoiceover = () => {
+      if (voiceoverRecorderState.isRecording) void stopVoiceover(true);
+      else setVoiceoverOpen(false);
+    };
+    voiceoverBackRequestRef.current = closeVoiceover;
+    return () => {
+      if (voiceoverBackRequestRef.current === closeVoiceover) voiceoverBackRequestRef.current = undefined;
+    };
+  });
+
   const commitAudioProject = (next: CaptionProject) => {
     transport.synchronizeProject(next);
     setProject(next);
@@ -2012,7 +2083,19 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           )}
         </View>
 
-        <View onLayout={scriptExit.onTimelineLayout}>
+        {voiceoverOpen ? <VoiceoverTimeline
+          currentMs={currentMs}
+          durationMs={timelineDurationMs}
+          meterLevel={voiceoverMeterLevel}
+          recording={voiceoverRecorderState.isRecording}
+          saving={voiceoverSaving}
+          playing={isPlaying}
+          onTogglePlayback={() => { if (isPlaying) transport.pause(); else transport.play(); }}
+          onStart={() => void startVoiceover()}
+          onStop={() => void stopVoiceover()}
+          onClose={() => voiceoverBackRequestRef.current?.()}
+        /> : null}
+        <View onLayout={scriptExit.onTimelineLayout} style={{ display: voiceoverOpen ? 'none' : 'flex' }}>
         <LayerTimeline
           projectId={project.id}
           durationMs={timelineDurationMs}
@@ -2115,6 +2198,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         ) : activeTool === 'audio' ? (
           <View style={{ gap: 8 }}>
             <PersistedHorizontalScroll id="tool:audio:add" contentContainerStyle={{ gap: 8 }}>
+              <Action label="Record voice over" color="#FF4D6D" onPress={() => { transport.pause(); setVoiceoverOpen(true); }} />
+              <Action label={selectedClip?.muted ? 'Unmute selected video audio' : 'Mute selected video audio'} disabled={!selectedClip} onPress={() => selectedClip && updateSelectedClip({ muted: !selectedClip.muted })} />
               <Action label="Add audio file" onPress={() => void addAudio('audio-file')} />
               <Action label="Extract from video" onPress={() => void addAudio('video-audio')} />
             </PersistedHorizontalScroll>
@@ -2123,7 +2208,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 VIDEO CLIP AUDIO · {project.sources.find((source) => source.id === selectedClip.sourceId)?.displayName ?? 'Video'}
               </Text>
               <PersistedHorizontalScroll id="tool:audio:clip" contentContainerStyle={{ gap: 8 }}>
-                <Action label={selectedClip.muted ? 'Unmute clip audio' : 'Mute clip audio'} onPress={() => updateSelectedClip({ muted: !selectedClip.muted })} />
                 <Action label="Volume −" disabled={selectedClip.muted || selectedClip.volume <= 0} onPress={() => updateSelectedClip({ volume: clamp(selectedClip.volume - 0.1, 0, 1) })} />
                 <Action label={`${Math.round(selectedClip.volume * 100)}% volume`} color="#64E8FF" onPress={() => updateSelectedClip({ volume: 1, muted: false })} />
                 <Action label="Volume +" disabled={selectedClip.volume >= 1} onPress={() => updateSelectedClip({ volume: clamp(selectedClip.volume + 0.1, 0, 1) })} />
@@ -2623,6 +2707,52 @@ function formatSeconds(ms: number) {
 
 function formatMegabytes(bytes: number) {
   return `${Math.ceil(bytes / (1024 * 1024))} MB`;
+}
+
+const VOICEOVER_RECORDING_OPTIONS = {
+  directory: 'cache' as const,
+  extension: '.m4a',
+  sampleRate: 44_100,
+  numberOfChannels: 1,
+  bitRate: 128_000,
+  isMeteringEnabled: true,
+  android: {
+    outputFormat: 'mpeg4' as const,
+    audioEncoder: 'aac' as const,
+    audioSource: 'voice_performance' as const,
+  },
+};
+
+function VoiceoverTimeline(props: {
+  currentMs: number;
+  durationMs: number;
+  meterLevel: number;
+  recording: boolean;
+  saving: boolean;
+  playing: boolean;
+  onTogglePlayback: () => void;
+  onStart: () => void;
+  onStop: () => void;
+  onClose: () => void;
+}) {
+  const progress = clamp(props.currentMs / Math.max(1, props.durationMs), 0, 1);
+  const bars = Array.from({ length: 36 }, (_value, index) => clamp(props.meterLevel * (0.35 + ((index * 7) % 11) / 16), 0.05, 1));
+  return <View style={{ minHeight: 142, gap: 8, padding: 10, borderRadius: 18, backgroundColor: '#15191E', borderWidth: 1, borderColor: '#33414D' }}>
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+      <Text style={{ color: '#F7F8FA', fontSize: 11, fontWeight: '900' }}>VOICE-OVER RECORDING</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Close voice-over recording" onPress={props.onClose}><Text style={{ color: '#B7C2CC', fontSize: 12, fontWeight: '800' }}>Close</Text></Pressable>
+    </View>
+    <VoiceoverRow label="VIDEO" color="#64D2FF"><View style={{ height: 6, borderRadius: 4, overflow: 'hidden', backgroundColor: '#27313B' }}><View style={{ width: `${progress * 100}%`, height: '100%', backgroundColor: '#64D2FF' }} /></View></VoiceoverRow>
+    <VoiceoverRow label="VOICE OVER" color="#FF4D6D"><View style={{ height: 24, flexDirection: 'row', alignItems: 'center', gap: 2 }}>{bars.map((level, index) => <View key={index} style={{ flex: 1, minWidth: 1, height: 4 + level * 20, borderRadius: 2, backgroundColor: props.recording ? '#FF4D6D' : '#6A3644' }} />)}</View></VoiceoverRow>
+    <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
+      <Pressable accessibilityRole="button" onPress={props.onTogglePlayback} style={{ minWidth: 88, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, backgroundColor: '#25313B' }}><Text style={{ color: '#FFFFFF', textAlign: 'center', fontSize: 12, fontWeight: '900' }}>{props.playing ? 'Pause video' : 'Play video'}</Text></Pressable>
+      <Pressable accessibilityRole="button" disabled={props.saving} onPress={props.recording ? props.onStop : props.onStart} style={{ minWidth: 138, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: props.recording ? '#FFFFFF' : '#FF4D6D', opacity: props.saving ? 0.6 : 1 }}><Text style={{ color: props.recording ? '#D71345' : '#FFFFFF', textAlign: 'center', fontSize: 12, fontWeight: '900' }}>{props.saving ? 'Saving take…' : props.recording ? 'Stop and add take' : 'Start recording'}</Text></Pressable>
+    </View>
+  </View>;
+}
+
+function VoiceoverRow(props: { label: string; color: string; children: ReactNode }) {
+  return <View style={{ gap: 4 }}><Text style={{ color: props.color, fontSize: 9, fontWeight: '900' }}>{props.label}</Text>{props.children}</View>;
 }
 
 function translationProgressLabel(progress?: CaptionTranslationProgress) {

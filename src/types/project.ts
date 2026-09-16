@@ -340,7 +340,7 @@ export type ProjectAudioSource = {
   displayName: string;
   durationMs: number;
   mimeType?: string;
-  origin: 'audio-file' | 'video-audio';
+  origin: 'audio-file' | 'video-audio' | 'voiceover';
   /** Normalized 0..1 amplitude peaks for timeline waveform rendering. */
   waveformPeaks?: number[];
   waveformVersion?: 2;

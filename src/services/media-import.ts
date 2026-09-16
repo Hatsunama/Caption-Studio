@@ -139,6 +139,36 @@ export async function pickAndStoreAudio(projectId: string, audioId: string): Pro
   }
 }
 
+export async function storeRecordedAudio(projectId: string, audioId: string, recordingUri: string): Promise<ProjectAudioSource> {
+  const recording = await CaptionMedia.getMediaInfo(recordingUri);
+  if (!recording.hasAudio || recording.durationMs < 80) {
+    throw new Error('Record a little longer before adding a voice-over take.');
+  }
+  await requireFreeSpace(MIN_IMPORT_HEADROOM_BYTES, 'save this voice-over');
+  let uri: string | undefined;
+  try {
+    uri = await storeProjectAudio({
+      projectId,
+      audioId,
+      sourceUri: recordingUri,
+      fileName: 'voice-over.m4a',
+    });
+    const info = await CaptionMedia.getMediaInfo(uri);
+    return {
+      id: audioId,
+      uri,
+      storageMode: 'copied',
+      displayName: 'Voice over',
+      durationMs: info.durationMs,
+      mimeType: 'audio/mp4',
+      origin: 'voiceover',
+    };
+  } catch (error) {
+    if (uri) await deleteProjectOwnedFiles(projectId, [uri]).catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function pickVideoAndExtractAudio(
   projectId: string,
   audioId: string,

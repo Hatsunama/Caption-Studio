@@ -209,7 +209,7 @@ function decodeAudioSource(value: unknown, index: number): ProjectAudioSource {
     mimeType: optionalNonEmptyString(source.mimeType, `audio source ${index + 1} MIME type`),
     origin: source.origin === undefined
       ? 'audio-file'
-      : enumValue(source.origin, ['audio-file', 'video-audio'] as const, `audio source ${index + 1} origin`),
+      : enumValue(source.origin, ['audio-file', 'video-audio', 'voiceover'] as const, `audio source ${index + 1} origin`),
     ...(waveformPeaks ? { waveformPeaks } : {}),
     ...(source.waveformVersion === 2 ? { waveformVersion: 2 as const } : {}),
   };
