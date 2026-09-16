@@ -68,7 +68,11 @@ export function LayerTimeline(props: {
   onDeleteLayer: (layerId: string) => void;
   onAddVideos: () => void;
   onSelectAudioClip: (clipId: string) => void;
+  voiceoverMode?: boolean;
+  voiceoverDraft?: { startMs: number; endMs: number; meterLevel: number };
 }) {
+  const displayLayers = useMemo(() => props.voiceoverMode ? [] : props.layers, [props.layers, props.voiceoverMode]);
+  const displayAudioClips = useMemo(() => props.voiceoverMode ? [] : props.audioClips, [props.audioClips, props.voiceoverMode]);
   const horizontalRef = useRef<ScrollView>(null);
   const verticalRef = useRef<ScrollView>(null);
   const [viewportWidth, setViewportWidth] = useState(360);
@@ -141,15 +145,15 @@ export function LayerTimeline(props: {
   const captionLayout = captionPage.layout;
   const captionRowHeight = captionLayout.laneCount * LANE_HEIGHT + 10;
   const translationRowHeight = (id: string) => translationPages.get(id)!.layout.laneCount * LANE_HEIGHT + 10;
-  const audioLayout = useMemo(() => packTimelineLanes(props.audioClips.map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [props.audioClips]);
+  const audioLayout = useMemo(() => packTimelineLanes(displayAudioClips.map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [displayAudioClips]);
   const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10;
   const visualRowHeight = () => 46;
   const videoRowHeight = reorderMode ? REORDER_TILE + 18 : 46;
   const sourceById = useMemo(() => new Map(props.sources.map((source) => [source.id, source])), [props.sources]);
-  const totalRowsHeight = videoRowHeight + audioRowHeight + props.layers.reduce(
+  const totalRowsHeight = videoRowHeight + audioRowHeight + displayLayers.reduce(
     (sum, layer) => sum + (layer.kind === 'captions' ? captionRowHeight : visualRowHeight()),
     0,
-  ) + props.translationTracks.reduce((sum, track) => sum + translationRowHeight(track.id), 0);
+  ) + (props.voiceoverMode ? 0 : props.translationTracks.reduce((sum, track) => sum + translationRowHeight(track.id), 0));
 
   const trailingPadding = viewportWidth / 2;
   const scrollContentWidth = leadingPadding + LABEL_WIDTH + trackWidth + trailingPadding;
@@ -165,7 +169,7 @@ export function LayerTimeline(props: {
 
   const selectedRowTop = (() => {
     let top = videoRowHeight + audioRowHeight;
-    for (const layer of props.layers) {
+    for (const layer of displayLayers) {
       if (layer.id === props.selectedLayerId) return top;
       top += layer.kind === 'captions' ? captionRowHeight : visualRowHeight();
       if (layer.kind === 'captions') for (const track of displayTranslationTracks) {
@@ -459,8 +463,8 @@ export function LayerTimeline(props: {
                 );
               })}
             </TimelineRow>
-            <TimelineRow label="AUDIO" labelColor="#64E8FF" selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: '#6F7985', fontSize: 8 }}>{props.audioClips.length} TRACK{props.audioClips.length === 1 ? '' : 'S'}</Text>}>
-              {props.audioClips.filter((clip) => isVisible(clip.startMs, audioClipEnd(clip))).map((clip) => {
+            <TimelineRow label={props.voiceoverMode ? "VOICE OVER" : "AUDIO"} labelColor={props.voiceoverMode ? "#FF4D6D" : "#64E8FF"} selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: props.voiceoverMode ? '#FFB8C5' : '#6F7985', fontSize: 8 }}>{props.voiceoverMode ? 'LIVE TAKE' : `${props.audioClips.length} TRACK${props.audioClips.length === 1 ? '' : 'S'}`}</Text>}>
+              {displayAudioClips.filter((clip) => isVisible(clip.startMs, audioClipEnd(clip))).map((clip) => {
                 const source = props.audioSources.find((candidate) => candidate.id === clip.sourceId);
                 return (
                   <TimedBlock
@@ -487,8 +491,9 @@ export function LayerTimeline(props: {
                   />
                 );
               })}
+              {props.voiceoverDraft ? <LiveRecordingBlock {...props.voiceoverDraft} durationMs={duration} trackWidth={trackWidth} /> : null}
             </TimelineRow>
-            {props.layers.map((layer, layerIndex) => {
+            {displayLayers.map((layer, layerIndex) => {
               const isCaptions = layer.kind === 'captions';
               return (
                 <View key={layer.id}>
@@ -504,7 +509,7 @@ export function LayerTimeline(props: {
                     {isCaptions && captionLayout.laneCount > 1 ? <Text style={{ color: '#19D98B', fontSize: 7, fontWeight: '800' }}>{captionLayout.laneCount} AUTO LANES</Text> : null}
                     <View style={{ flexDirection: 'row', gap: 2 }}>
                       <TinyButton label="↑" disabled={layerIndex === 0} onPress={() => props.onMoveLayer(layer.id, -1)} />
-                      <TinyButton label="↓" disabled={layerIndex === props.layers.length - 1} onPress={() => props.onMoveLayer(layer.id, 1)} />
+                      <TinyButton label="↓" disabled={layerIndex === displayLayers.length - 1} onPress={() => props.onMoveLayer(layer.id, 1)} />
                       {!isCaptions ? <TinyButton label="×" danger onPress={() => props.onDeleteLayer(layer.id)} /> : null}
                     </View>
                   </View>}>
@@ -983,12 +988,23 @@ function TimedBlock(props: {
             color={props.selected ? '#E8FDFF' : '#B8F7FF'}
           />
         ) : null}
-        {props.thumbnailUri ? <Image source={{ uri: props.thumbnailUri }} contentFit="cover" style={{ position: 'absolute', left: 3, top: 3, width: 24, height: 24, borderRadius: 3, zIndex: 2 }} /> : null}
-        <Text numberOfLines={1} style={{ position: 'absolute', left: props.thumbnailUri ? 33 : 7, right: 7, top: 1, color: '#FFFFFF', fontSize: 7, fontWeight: '900', zIndex: 2, textShadowColor: '#00161A', textShadowRadius: 2 }}>{props.label}</Text>
       </View>
+      {props.thumbnailUri ? <View pointerEvents="none" style={{ position: 'absolute', left: visualLeft + 3, top: 3, width: 24, height: 24, borderRadius: 3, overflow: 'hidden', zIndex: 2, backgroundColor: '#172027' }}><Image source={{ uri: props.thumbnailUri }} contentFit="cover" style={{ width: '100%', height: '100%' }} /></View> : null}
+      <Text pointerEvents="none" numberOfLines={1} style={{ position: 'absolute', left: visualLeft + (props.selected ? 38 : props.thumbnailUri ? 32 : 10), right: props.selected ? 38 : 7, top: 1, color: '#FFFFFF', fontSize: 7, fontWeight: '900', zIndex: 2, textShadowColor: '#00161A', textShadowRadius: 2 }}>{props.label}</Text>
       <DirectTimelineGestureSurface {...props} width={interactionWidth} />
     </View>
   );
+}
+
+function LiveRecordingBlock(props: { startMs: number; endMs: number; meterLevel: number; durationMs: number; trackWidth: number }) {
+  const startMs = clamp(props.startMs, 0, props.durationMs);
+  const endMs = clamp(Math.max(startMs + 80, props.endMs), startMs + 80, props.durationMs);
+  const left = startMs / props.durationMs * props.trackWidth;
+  const width = Math.max(4, (endMs - startMs) / props.durationMs * props.trackWidth);
+  const bars = Array.from({ length: Math.max(6, Math.min(40, Math.round(width / 5))) }, (_value, index) => clamp(props.meterLevel * (0.58 + ((index * 17) % 13) / 30), 0.04, 1));
+  return <View pointerEvents="none" style={{ position: 'absolute', left, width, top: 3, bottom: 3, overflow: 'hidden', borderRadius: 6, borderWidth: 1, borderColor: '#FF6D83', backgroundColor: '#6B2636', flexDirection: 'row', alignItems: 'center', gap: 1, paddingHorizontal: 2 }}>
+    {bars.map((level, index) => <View key={index} style={{ flex: 1, minWidth: 1, height: Math.max(2, level * (LANE_HEIGHT - 9)), borderRadius: 2, backgroundColor: '#FFD5DC' }} />)}
+  </View>;
 }
 
 const DIRECT_TIMELINE_GRIP = 32;

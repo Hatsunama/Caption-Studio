@@ -3,7 +3,7 @@ import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type 
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
 import { captionPreviewState, projectHasEditorLayer } from '@/lib/caption-preview';
 import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { AudioModule, RecordingPresets, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { VideoView } from 'expo-video';
@@ -717,7 +717,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const selectedClipIndex = project.clips.findIndex((clip) => clip.id === selectedClipId);
   const transitionBoundaryAvailable = canApplyVideoTransition(project.clips, selectedClipIndex);
   const selectedAudioClip = project.audioClips.find((clip) => clip.id === selectedAudioClipId);
-  const voiceoverMeterLevel = clamp(((voiceoverRecorderState.metering ?? -60) + 60) / 60, 0.05, 1);
+  const voiceoverMeterLevel = recordingMeterLevel(voiceoverRecorderState.metering);
   const selectedLayer = project.layers.find((layer) => layer.id === selectedLayerId);
   const selectedTextLayer = selectedLayer?.kind === 'text' ? selectedLayer : undefined;
   const selectedImageLayer = selectedLayer?.kind === 'image' ? selectedLayer : undefined;
@@ -1891,7 +1891,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               onEnd={finishHistoryInteraction}
             />
           ) : null}
-          {[...timelineLayers].reverse().map((layer) => {
+          {timelineLayers.map((layer) => {
             if (!layer.visible) return null;
             if (layer.kind === 'captions') {
               return (
@@ -2083,19 +2083,16 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           )}
         </View>
 
-        {voiceoverOpen ? <VoiceoverTimeline
-          currentMs={currentMs}
-          durationMs={timelineDurationMs}
-          meterLevel={voiceoverMeterLevel}
+        {voiceoverOpen ? <VoiceoverControls
           recording={voiceoverRecorderState.isRecording}
           saving={voiceoverSaving}
           playing={isPlaying}
           onTogglePlayback={() => { if (isPlaying) transport.pause(); else transport.play(); }}
           onStart={() => void startVoiceover()}
-          onStop={() => void stopVoiceover()}
+          onStop={() => void stopVoiceover(true)}
           onClose={() => voiceoverBackRequestRef.current?.()}
         /> : null}
-        <View onLayout={scriptExit.onTimelineLayout} style={{ display: voiceoverOpen ? 'none' : 'flex' }}>
+        <View onLayout={scriptExit.onTimelineLayout}>
         <LayerTimeline
           projectId={project.id}
           durationMs={timelineDurationMs}
@@ -2129,6 +2126,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onDeleteLayer={deleteLayer}
           onAddVideos={() => { void addVideosToTimeline(); }}
           onSelectAudioClip={(clipId) => selectEditorObject({ kind: 'audio', id: clipId })}
+          voiceoverMode={voiceoverOpen}
+          voiceoverDraft={voiceoverRecorderState.isRecording && voiceoverStartMs != null ? {
+            startMs: voiceoverStartMs,
+            endMs: Math.max(voiceoverStartMs + 80, currentMs),
+            meterLevel: voiceoverMeterLevel,
+          } : undefined}
         />
         </View>
         {selectedCaption || selectedTranslationPair || selectedAudioClip || selectedTextLayer || selectedImageLayer ? (
@@ -2719,14 +2722,10 @@ const VOICEOVER_RECORDING_OPTIONS = {
   android: {
     outputFormat: 'mpeg4' as const,
     audioEncoder: 'aac' as const,
-    audioSource: 'voice_performance' as const,
   },
 };
 
-function VoiceoverTimeline(props: {
-  currentMs: number;
-  durationMs: number;
-  meterLevel: number;
+function VoiceoverControls(props: {
   recording: boolean;
   saving: boolean;
   playing: boolean;
@@ -2735,24 +2734,22 @@ function VoiceoverTimeline(props: {
   onStop: () => void;
   onClose: () => void;
 }) {
-  const progress = clamp(props.currentMs / Math.max(1, props.durationMs), 0, 1);
-  const bars = Array.from({ length: 36 }, (_value, index) => clamp(props.meterLevel * (0.35 + ((index * 7) % 11) / 16), 0.05, 1));
-  return <View style={{ minHeight: 142, gap: 8, padding: 10, borderRadius: 18, backgroundColor: '#15191E', borderWidth: 1, borderColor: '#33414D' }}>
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-      <Text style={{ color: '#F7F8FA', fontSize: 11, fontWeight: '900' }}>VOICE-OVER RECORDING</Text>
-      <Pressable accessibilityRole="button" accessibilityLabel="Close voice-over recording" onPress={props.onClose}><Text style={{ color: '#B7C2CC', fontSize: 12, fontWeight: '800' }}>Close</Text></Pressable>
+  return <View style={{ gap: 8, padding: 10, borderRadius: 18, backgroundColor: '#15191E', borderWidth: 1, borderColor: '#FF6D83' }}>
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+      <Text style={{ color: '#F7F8FA', fontSize: 11, fontWeight: '900' }}>VOICE-OVER · LIVE TIMELINE</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Exit voice-over recording" onPress={props.onClose} style={{ minHeight: 42, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 12, backgroundColor: '#FFE7EC', borderWidth: 1, borderColor: '#FF4D6D' }}><Text style={{ color: '#B7153A', fontSize: 12, fontWeight: '900' }}>Exit voice-over</Text></Pressable>
     </View>
-    <VoiceoverRow label="VIDEO" color="#64D2FF"><View style={{ height: 6, borderRadius: 4, overflow: 'hidden', backgroundColor: '#27313B' }}><View style={{ width: `${progress * 100}%`, height: '100%', backgroundColor: '#64D2FF' }} /></View></VoiceoverRow>
-    <VoiceoverRow label="VOICE OVER" color="#FF4D6D"><View style={{ height: 24, flexDirection: 'row', alignItems: 'center', gap: 2 }}>{bars.map((level, index) => <View key={index} style={{ flex: 1, minWidth: 1, height: 4 + level * 20, borderRadius: 2, backgroundColor: props.recording ? '#FF4D6D' : '#6A3644' }} />)}</View></VoiceoverRow>
+    <Text style={{ color: '#B7C2CC', fontSize: 11 }}>Record on the live second track. The video timeline remains available for scrubbing and positioning.</Text>
     <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
-      <Pressable accessibilityRole="button" onPress={props.onTogglePlayback} style={{ minWidth: 88, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, backgroundColor: '#25313B' }}><Text style={{ color: '#FFFFFF', textAlign: 'center', fontSize: 12, fontWeight: '900' }}>{props.playing ? 'Pause video' : 'Play video'}</Text></Pressable>
-      <Pressable accessibilityRole="button" disabled={props.saving} onPress={props.recording ? props.onStop : props.onStart} style={{ minWidth: 138, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: props.recording ? '#FFFFFF' : '#FF4D6D', opacity: props.saving ? 0.6 : 1 }}><Text style={{ color: props.recording ? '#D71345' : '#FFFFFF', textAlign: 'center', fontSize: 12, fontWeight: '900' }}>{props.saving ? 'Saving take…' : props.recording ? 'Stop and add take' : 'Start recording'}</Text></Pressable>
+      <Pressable accessibilityRole="button" onPress={props.onTogglePlayback} style={{ minWidth: 96, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, backgroundColor: '#25313B' }}><Text style={{ color: '#FFFFFF', textAlign: 'center', fontSize: 12, fontWeight: '900' }}>{props.playing ? 'Pause video' : 'Play video'}</Text></Pressable>
+      <Pressable accessibilityRole="button" disabled={props.saving} onPress={props.recording ? props.onStop : props.onStart} style={{ minWidth: 178, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: props.recording ? '#FFFFFF' : '#FF4D6D', opacity: props.saving ? 0.6 : 1 }}><Text style={{ color: props.recording ? '#D71345' : '#FFFFFF', textAlign: 'center', fontSize: 12, fontWeight: '900' }}>{props.saving ? 'Saving take…' : props.recording ? 'Stop, add take, and exit' : 'Start recording'}</Text></Pressable>
     </View>
   </View>;
 }
 
-function VoiceoverRow(props: { label: string; color: string; children: ReactNode }) {
-  return <View style={{ gap: 4 }}><Text style={{ color: props.color, fontSize: 9, fontWeight: '900' }}>{props.label}</Text>{props.children}</View>;
+function recordingMeterLevel(metering: number | undefined) {
+  if (!Number.isFinite(metering)) return 0.05;
+  return clamp(((metering ?? -120) + 120) / 120, 0.05, 1);
 }
 
 function translationProgressLabel(progress?: CaptionTranslationProgress) {
