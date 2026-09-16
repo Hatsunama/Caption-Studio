@@ -37,5 +37,24 @@ test('domain libraries and services do not depend on presentation layers', async
   for (const filePath of await sourceFiles(path.join(sourceRoot, 'services'))) {
     const source = await readFile(filePath, 'utf8');
     assert.doesNotMatch(source, /@\/(?:app|components|hooks)\//, `${path.basename(filePath)} depends on presentation code`);
+    assert.doesNotMatch(source, /import\s*\{[^}]*\bAlert\b[^}]*\}\s*from\s*['"]react-native['"]/, `${path.basename(filePath)} imports UI prompts`);
   }
+});
+
+test('media recovery keeps domain compatibility, service workflow, and UI prompts in their owning layers', async () => {
+  const read = (file) => readFile(path.join(sourceRoot, file), 'utf8');
+  const domain = await read('lib/project-media-relink.ts');
+  const types = await read('types/project-media-recovery.ts');
+  const workflow = await read('services/project-media-recovery.ts');
+  const adapter = await read('services/project-media-access.ts');
+  const prompts = await read('components/editor/project-media-recovery-prompts.ts');
+  const editor = await read('app/editor.tsx');
+  assert.doesNotMatch(domain + types, /caption-media|react-native|@\/services\/|ports\.(?:check|persist|choose)/);
+  assert.match(workflow, /await ports\.persist\(recovered\)/);
+  assert.doesNotMatch(workflow + adapter, /Alert|Restore video access|Confirm original video|clearProjectEditorDraftJournals|deleteProject|releaseReadPermission|copyTo/);
+  assert.match(adapter, /CaptionMedia\.checkReadAccess/);
+  assert.match(adapter, /prompts\.requestOriginal/);
+  assert.match(adapter, /prompts\.confirmOriginal/);
+  assert.match(prompts, /Alert\.alert/);
+  assert.match(editor, /loadProjectForEditing\(projectId, projectMediaRecoveryPrompts\)/);
 });

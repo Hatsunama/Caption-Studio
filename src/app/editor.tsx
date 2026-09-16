@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 
 import { AnimationBrowser } from '@/components/editor/animation-browser';
+import { projectMediaRecoveryPrompts } from '@/components/editor/project-media-recovery-prompts';
 import { PersistedHorizontalScroll, PersistedHorizontalScrollScope } from '@/components/editor/persisted-horizontal-scroll';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
@@ -195,7 +196,7 @@ export default function EditorScreen() {
 
   useEffect(() => {
     let active = true;
-    void loadProjectForEditing(projectId)
+    void loadProjectForEditing(projectId, projectMediaRecoveryPrompts)
       .then((stored) => {
         if (!active) return;
         if (!stored) throw new Error('This project no longer exists on this device.');

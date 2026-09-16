@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
-import { recoverProjectVideoAccess, relinkProjectVideo } from '../src/lib/project-media-relink.ts';
+import { relinkProjectVideo } from '../src/lib/project-media-relink.ts';
+import { recoverProjectVideoAccess } from '../src/services/project-media-recovery.ts';
+import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
 
 const oldUri = 'content://com.android.providers.media.documents/document/video%3A7121';
 const newUri = 'content://com.android.externalstorage.documents/document/primary%3ADCIM%2Foriginal.mp4';
@@ -165,8 +168,72 @@ test('native contract owns result grants before returning URIs, with read-only a
   assert.match(access, /takePersistableUriPermission[\s\S]*retained\(uri\)/);
   assert.match(access, /openAssetFileDescriptor\(uri, "r"\).*use/);
   assert.doesNotMatch(picker + access, /FLAG_GRANT_WRITE|MANAGE_EXTERNAL_STORAGE|READ_MEDIA_VIDEO|copyTo|releasePersistable/);
-  assert.match(workflow, /project = await ensureProjectVideoAccess\(project\);[\s\S]*const loadedProject/);
+  assert.match(workflow, /project = await ensureProjectVideoAccess\(project, prompts\);[\s\S]*const loadedProject/);
   assert.match(mediaImport, /pickVideoDocuments\(true\)/);
   assert.match(mediaImport, /pickVideoDocuments\(false\)/);
   assert.doesNotMatch(mediaImport, /type: 'video\/\*'/);
+});
+
+function loadWithPorts(path, dependencies) {
+  const source = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+  const { outputText } = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  });
+  const exports = {};
+  runInNewContext(outputText, { exports, require: (name) => {
+    assert.ok(Object.hasOwn(dependencies, name), `unexpected dependency: ${name}`);
+    return dependencies[name];
+  } });
+  return exports;
+}
+
+test('service adapts native access and UI decisions, deduplicates opens, and retries after cancellation', async () => {
+  const calls = [];
+  const service = loadWithPorts('src/services/project-media-access.ts', {
+    'caption-media': { __esModule: true, default: {
+      checkReadAccess: async (uri) => { calls.push('check'); return { status: uri === oldUri ? 'permission-required' : 'ready' }; },
+      pickVideoDocuments: async (multiple) => { assert.equal(multiple, false); calls.push('pick'); return { canceled: false, assets: [document] }; },
+      getMediaInfo: async () => { calls.push('probe'); return info; },
+    } },
+    '@/services/project-media-recovery': { recoverProjectVideoAccess },
+    '@/services/database': { saveProject: async () => { calls.push('save'); } },
+  });
+  const project = fixture();
+  const original = structuredClone(project);
+  const prompts = {
+    requestOriginal: async () => { calls.push('request'); return false; },
+    confirmOriginal: async () => { calls.push('confirm'); return true; },
+  };
+  const first = service.ensureProjectVideoAccess(project, prompts);
+  assert.equal(service.ensureProjectVideoAccess(project, prompts), first);
+  await assert.rejects(first, /preserved/);
+  assert.deepEqual(calls, ['check', 'request']);
+  calls.length = 0;
+  const next = await service.ensureProjectVideoAccess(project, {
+    ...prompts, requestOriginal: async () => { calls.push('request'); return true; },
+  });
+  assert.deepEqual(calls, ['check', 'request', 'pick', 'check', 'probe', 'confirm', 'save']);
+  assert.equal(next.sources[0].uri, newUri);
+  assert.deepEqual(project, original);
+});
+
+test('UI requires an explicit affirmative action and dismissing either prompt cancels', async () => {
+  let alert;
+  const { projectMediaRecoveryPrompts: prompts } = loadWithPorts('src/components/editor/project-media-recovery-prompts.ts', {
+    'react-native': { Alert: { alert: (...args) => { alert = args; } } },
+  });
+  for (const start of [
+    () => prompts.requestOriginal(fixture().sources[0], 'unavailable'),
+    () => prompts.confirmOriginal(fixture().sources[0], document),
+  ]) {
+    const dismissed = start();
+    alert[3].onDismiss();
+    assert.equal(await dismissed, false);
+    const cancelled = start();
+    alert[2][0].onPress();
+    assert.equal(await cancelled, false);
+    const accepted = start();
+    alert[2][1].onPress();
+    assert.equal(await accepted, true);
+  }
 });
