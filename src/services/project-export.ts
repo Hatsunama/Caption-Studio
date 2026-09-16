@@ -1,4 +1,5 @@
 import { exportCaptionPairs } from '@/lib/export-caption-pairs';
+import { assertExportSourcesAvailable } from '@/lib/export-source-availability';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import CaptionMedia from 'caption-media';
@@ -26,6 +27,10 @@ export async function exportProjectVideo(project: CaptionProject, allowIncomplet
   return videoExportSession.run(async (session) => {
     if (!FileSystem.cacheDirectory) throw new Error('Export storage is unavailable on this device.');
     const unresolvedPlan = buildTimelineRenderPlan(project, undefined, allowIncompleteTranslations);
+    await session.waitFor(assertExportSourcesAvailable(unresolvedPlan, {
+      media: (uri) => CaptionMedia.getMediaInfo(uri),
+      image: (uri) => CaptionMedia.validateImageFile(uri),
+    }));
     const directory = await session.waitFor(prepareCaptionStudioExportCache());
     await session.waitFor(requireFreeSpace(
       estimateVideoExportStorageBytes(unresolvedPlan),

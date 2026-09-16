@@ -77,7 +77,7 @@ test('durable media and font imports validate staging before atomic promotion', 
   assert.match(native, /mime\.startsWith\("video\/"\)/);
   assert.match(native, /probeVideoFrame\(retriever,/);
   assert.match(native, /"hasVideo" to frameDecodable/);
-  assert.match(mediaImport, /probeVideoForImport\(asset\.uri, asset\.name\)[\s\S]*persistReadPermission/);
+  assert.match(mediaImport, /pickVideoDocuments\(true\)[\s\S]*probeVideoForImport\(asset\.uri, asset\.name\)/);
   assert.match(projectMedia, /copyAsync\(\{ from: options\.sourceUri, to: stagingUri \}\)[\s\S]*validateImageFile\(stagingUri\)[\s\S]*moveAsync/);
   assert.match(fontStorage, /copyAsync\(\{ from: asset\.uri, to: stagingUri \}\)[\s\S]*validateFontFile\(stagingUri\)[\s\S]*moveAsync/);
   assert.match(transcription, /modelVerificationMarkerMatches/);

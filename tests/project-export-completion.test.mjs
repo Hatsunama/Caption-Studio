@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 
 import * as storagePolicy from '../src/services/export-storage-policy.ts';
+import { assertExportSourcesAvailable } from '../src/lib/export-source-availability.ts';
 import { createVideoExportSession, VideoExportCancelledError } from '../src/services/video-export-session.ts';
 
 const { outputText } = ts.transpileModule(
@@ -25,11 +26,13 @@ const published = {
 const project = { name: 'Test project' };
 
 function loadService(overrides = {}) {
-  const calls = { native: 0, cancel: 0, available: 0, share: [], cleanup: [], released: 0 };
+  const calls = { native: 0, cancel: 0, available: 0, probes: 0, share: [], cleanup: [], released: 0 };
   const modules = {
     '@/lib/export-caption-pairs': { exportCaptionPairs: () => [] },
+    '@/lib/export-source-availability': { assertExportSourcesAvailable },
     '@/lib/export-render-plan': {
-      buildTimelineRenderPlan: () => ({ width: 1080, height: 1920, durationMs: 4000, frameRate: 30 }),
+      buildTimelineRenderPlan: () => ({ width: 1080, height: 1920, durationMs: 4000, frameRate: 30,
+        clips: [{ id: 'clip1', uri: 'content://video/12' }], audioClips: [], layers: [] }),
       collectUnresolvedFontFamilies: () => [],
       toNativeRenderPlan: (plan) => plan,
     },
@@ -55,6 +58,11 @@ function loadService(overrides = {}) {
       },
     },
     'caption-media': { __esModule: true, default: {
+      getMediaInfo: async () => {
+        calls.probes += 1;
+        return overrides.mediaInfo ? overrides.mediaInfo() : { durationMs: 4000, hasVideo: true, hasAudio: true };
+      },
+      validateImageFile: async () => ({ width: 1, height: 1 }),
       requestLegacyMediaWritePermission: overrides.permission ?? (async () => true),
       exportTimelineVideo: async (path) => {
         calls.native += 1;
@@ -89,6 +97,15 @@ function loadService(overrides = {}) {
   });
   return { ...module.exports, calls };
 }
+
+test('lost source access fails before rendering or publishing a video', async () => {
+  const service = loadService({ mediaInfo: async () => { throw Error('Permission Denial'); } });
+  await assert.rejects(service.exportProjectVideo(project), /Cannot export: the video source/);
+  assert.equal(service.calls.probes, 1);
+  assert.equal(service.calls.native, 0);
+  assert.equal(service.calls.available, 0);
+  assert.deepEqual(service.calls.cleanup, []);
+});
 
 for (const [name, overrides, expectedShares] of [
   ['successful sharing', {}, 1],

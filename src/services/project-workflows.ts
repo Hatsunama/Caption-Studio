@@ -36,6 +36,8 @@ import {
 } from '@/services/project-media';
 import { generateProjectCaptions } from '@/services/project-transcription';
 import { persistProjectCheckpoint } from '@/services/project-persistence';
+import { ensureProjectVideoAccess } from '@/services/project-media-access';
+import type { ProjectMediaRecoveryPrompts } from '@/types/project-media-recovery';
 import { cleanupStaleProjectRecoveryCache } from '@/services/project-recovery';
 import { clearProjectEditorDraftJournals } from '@/services/editor-draft-journal';
 import CaptionMedia from 'caption-media';
@@ -83,9 +85,10 @@ export type EditorMediaLedger = {
   linked: LinkedMediaPermissionLedger;
 };
 
-export async function loadProjectForEditing(projectId: string) {
+export async function loadProjectForEditing(projectId: string, prompts: ProjectMediaRecoveryPrompts) {
   let project = await getProject(projectId);
   if (project) {
+    project = await ensureProjectVideoAccess(project, prompts);
     const loadedProject = project;
     await runBestEffortCleanup('project media reconciliation', [
       reconcileProjectOwnedFiles(loadedProject.id, collectProjectOwnedUris(loadedProject)),

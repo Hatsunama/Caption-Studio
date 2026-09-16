@@ -47,7 +47,7 @@ function harness() {
       });
     },
   };
-  const native = { View: 'View', Text: 'Text', TextInput: 'TextInput', Pressable: 'Pressable', ScrollView: 'ScrollView',
+  const native = { View: 'View', Text: 'Text', TextInput: 'TextInput', Pressable: 'Pressable', ScrollView: 'ScrollView', Modal: 'Modal',
     PanResponder: { create: (handlers) => ({ panHandlers: handlers }) } };
   const jsx = (type, props) => ({ type, props: props ?? {} });
   const modules = new Map();
@@ -105,11 +105,12 @@ function harness() {
     return out;
   }
   return { load, render, all, scrolls, get result() { return result; },
+    unmount() { slots.forEach((slot) => slot?.cleanup?.()); },
     frame() { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach((fn) => fn()); render(); },
     timers() { const callbacks = [...timers.values()]; timers.clear(); callbacks.forEach((fn) => fn()); },
   };
 }
-const timelineSuffix = '\nexports.TimingGrip = TimingGrip; exports.TimelineMoveGrip = TimelineMoveGrip; exports.TimedBlock = TimedBlock;';
+const timelineSuffix = '\nexports.TimingGrip = TimingGrip; exports.TimelineMoveGrip = TimelineMoveGrip; exports.TimedBlock = TimedBlock; exports.CaptionGestureSurface = CaptionGestureSurface; exports.CaptionTimingGrip = CaptionTimingGrip; exports.CaptionMagnifier = CaptionMagnifier;';
 const allTimelineSuffix = timelineSuffix + '\nexports.TimelineRow = TimelineRow; exports.TimelineRuler = TimelineRuler; exports.TinyButton = TinyButton; exports.ZoomButton = ZoomButton; exports.TimelineDensityBin = TimelineDensityBin;';
 function renderedHostCount(node) {
   if (Array.isArray(node)) return node.reduce((sum, child) => sum + renderedHostCount(child), 0);
@@ -126,37 +127,196 @@ const event = (x, y) => ({ nativeEvent: { touches: [{ identifier: 1, pageX: x, p
 // Resolve the actual TimedBlock/Grip JSX bounds before dispatching native touch
 // events. A regression that widens selected bodies or overlays a neighboring
 // lane is caught here, independently of the gesture state-machine assertions.
-function blockTargets(props) {
-  const blockHarness = harness();
-  const ui = blockHarness.load('components/editor/layer-timeline.tsx', timelineSuffix);
-  const tree = blockHarness.render(ui.TimedBlock, props);
+function blockTargets(props, magnify = props.captionGesture && props.selected) {
   const targets = [];
-  function visit(node, parent) {
-    if (Array.isArray(node)) { node.forEach((child) => visit(child, parent)); return; }
+  function visit(node, parent, surface) {
+    if (Array.isArray(node)) { node.forEach((child) => visit(child, parent, surface)); return; }
     if (!node || typeof node !== 'object' || node.props?.pointerEvents === 'none') return;
-    if (['TimingGrip', 'TimelineMoveGrip'].includes(node.type?.name)) {
-      const gripHarness = harness();
-      const grips = gripHarness.load('components/editor/layer-timeline.tsx', timelineSuffix);
-      const rendered = gripHarness.render(grips[node.type.name], node.props);
-      const s = rendered.props.style;
-      targets.push({ label: props.label, edge: node.props.side ?? 'move', rail: Boolean(node.props.side || node.props.controlRail),
-        left: parent.left + (s.left ?? parent.width - (s.right ?? 0) - (s.width ?? parent.width)),
-        top: parent.top + (s.top ?? 0),
-        width: s.width ?? parent.width - (s.left ?? 0) - (s.right ?? 0),
-        height: s.height ?? parent.height - (s.top ?? 0) - (s.bottom ?? 0), handlers: rendered.props });
+    if (typeof node.type === 'function') {
+      const h = harness(), ui = h.load('components/editor/layer-timeline.tsx', timelineSuffix);
+      if (node.type.name === 'CaptionGestureSurface') {
+        visit(h.render(ui.CaptionGestureSurface, node.props), parent, surface); return;
+      }
+      if (!['TimingGrip', 'TimelineMoveGrip', 'CaptionTimingGrip'].includes(node.type.name)) return;
+      const rendered = h.render(ui[node.type.name], node.props), style = rendered.props.style;
+      targets.push({ label: props.label, edge: node.props.edge ?? node.props.side ?? 'move', surface,
+        rail: surface === 'overlay' || Boolean(node.props.side || node.props.controlRail),
+        left: parent.left + (style.left ?? parent.width - (style.right ?? 0) - (style.width ?? parent.width)),
+        top: parent.top + (style.top ?? 0), width: style.width ?? parent.width - (style.left ?? 0) - (style.right ?? 0),
+        height: style.height ?? parent.height - (style.top ?? 0) - (style.bottom ?? 0), handlers: rendered.props });
       return;
     }
-    const s = node.props?.style;
-    const rect = s ? { left: parent.left + (s.left ?? 0), top: parent.top + (s.top ?? 0),
-      width: s.width ?? parent.width, height: s.height ?? parent.height } : parent;
-    visit(node.props?.children, rect);
+    const style = node.props?.style;
+    const rect = style ? { left: parent.left + (style.left ?? 0), top: parent.top + (style.top ?? 0),
+      width: style.width ?? parent.width, height: style.height ?? parent.height } : parent;
+    visit(node.props?.children, rect, surface);
   }
-  visit(tree, { left: 0, top: 0, width: props.trackWidth, height: props.controlTop + 36 });
+  const h = harness(), ui = h.load('components/editor/layer-timeline.tsx', timelineSuffix);
+  visit(h.render(ui.TimedBlock, props), { left: 0, top: 0, width: props.trackWidth, height: props.controlTop + 36 }, 'timeline');
+  // A selected cue's explicit editor is a separate native modal, not another
+  // timeline lane. Mount its real surface, including its production conversion.
+  // Entry, navigation and dismissal are exercised separately below.
+  if (magnify) {
+    const modal = harness(), m = modal.load('components/editor/layer-timeline.tsx', timelineSuffix);
+    modal.render(m.CaptionMagnifier, { ...props, onMagnify: undefined, onDismiss() {} });
+    const surface = modal.all((node) => node.type?.name === 'CaptionGestureSurface')[0];
+    visit(surface, { left: 0, top: 0, width: 192, height: 48 }, 'overlay');
+  }
   return targets;
 }
-const contains = (r, x, y) => x >= r.left && x < r.left + r.width && y >= r.top && y < r.top + r.height;
-const intersects = (a, b) => a.left < b.left + b.width && b.left < a.left + a.width
+const contains = (r, x, y, surface = 'timeline') => r.surface === surface && x >= r.left && x < r.left + r.width && y >= r.top && y < r.top + r.height;
+const intersects = (a, b) => a.surface === b.surface && a.left < b.left + b.width && b.left < a.left + a.width
   && a.top < b.top + b.height && b.top < a.top + a.height;
+
+test('caption direct and magnified hit-area contract has no strip, inflation, words or overlapping targets', () => {
+  for (const width of [0, 0.04, 2, 32, 95, 96, 192, 500]) {
+    const props = { captionGesture: true, selected: true, label: 'Cue', startMs: 1000,
+      endMs: 1000 + width, durationMs: 5000, trackWidth: 5000, lane: 0, controlTop: 35, color: '#00B8FF' };
+    const h = harness(), ui = h.load('components/editor/layer-timeline.tsx', timelineSuffix);
+    h.render(ui.TimedBlock, props);
+    const body = h.all((node) => node.type === 'View' && node.props.style?.left === 1000)[0];
+    const surface = h.all((node) => node.type?.name === 'CaptionGestureSurface')[0];
+    const renderedWidth = body.props.style.width;
+    assert.equal(renderedWidth, props.endMs - props.startMs, 'unit pixel scale preserves the represented interval');
+    assert.equal(surface.props.width, renderedWidth, 'hit surface uses the actual controls.width');
+    assert.equal(h.all((node) => node.props.pointerEvents === 'none')[0].props.style.width, renderedWidth);
+    if (width === 96) assert.equal(renderedWidth, 96, 'the exact 96px fixture must not round below the threshold');
+    const direct = blockTargets(props, false);
+    assert.equal(direct.length, renderedWidth < 96 ? 1 : 3);
+    assert.ok(Math.abs(direct.reduce((sum, target) => sum + target.width, 0) - renderedWidth) < 1e-9,
+      'direct targets partition the exact visible cue width within floating-point precision');
+    for (const target of direct) {
+      assert.equal(target.top, 0); assert.equal(target.height, 32);
+      if (renderedWidth >= 96) assert.ok(target.width >= 32);
+      for (const other of direct) if (other !== target) assert.equal(intersects(target, other), false);
+    }
+    const magnified = blockTargets(props).filter((target) => target.surface === 'overlay');
+    assert.equal(magnified.length, 3);
+    for (const target of magnified) {
+      assert.equal(target.width, 64); assert.equal(target.height, 48);
+      assert.equal(magnified.filter((other) => contains(other, target.left + 32, 24, 'overlay')).length, 1);
+      for (const other of magnified) if (other !== target) assert.equal(intersects(target, other), false);
+    }
+    assert.equal(h.all((node) => node.props.accessibilityLabel?.startsWith('Timing controls')).length, 0);
+    for (const edge of ['move', 'start', 'end']) {
+      const grip = harness(), g = grip.load('components/editor/layer-timeline.tsx', timelineSuffix);
+      grip.render(g.CaptionTimingGrip, { ...props, edge, width: 64, height: 48, left: 0, allowDrag: true });
+      assert.equal(grip.all((node) => node.type === 'Text').length, 0, 'gesture targets are not word buttons');
+    }
+  }
+});
+
+test('caption direct threshold uses rendered bounds with strict 32px targets on both sides of 96px', () => {
+  const fixtures = [
+    { endMs: 1, durationMs: 1, trackWidth: 95.99999999999999, width: 95.99999999999999 },
+    { endMs: 1, durationMs: 1, trackWidth: 96, width: 96 },
+    { endMs: 1, durationMs: 1, trackWidth: 96.00000000000001, width: 96.00000000000001 },
+    { endMs: 6000, durationMs: 10000, trackWidth: 160, width: 96 },
+    { endMs: 960, durationMs: 5000, trackWidth: 500, width: 96 },
+  ];
+  for (const selected of [false, true]) for (const fixture of fixtures) {
+    const props = { captionGesture: true, selected, label: 'Boundary cue', startMs: 0,
+      ...fixture, lane: 0, controlTop: 35, color: '#00B8FF' };
+    const h = harness(), ui = h.load('components/editor/layer-timeline.tsx', timelineSuffix);
+    h.render(ui.TimedBlock, props);
+    const body = h.all((node) => node.type === 'View')[0];
+    const surface = h.all((node) => node.type?.name === 'CaptionGestureSurface')[0];
+    assert.equal(body.props.style.width, fixture.width);
+    assert.equal(surface.props.width, body.props.style.width);
+    const targets = blockTargets(props, false).sort((a, b) => a.left - b.left);
+    assert.equal(targets.length, fixture.width >= 96 ? 3 : 1);
+    assert.equal(targets[0].left, 0);
+    assert.equal(targets.at(-1).left + targets.at(-1).width, fixture.width);
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i];
+      assert.equal(target.height, 32);
+      if (targets.length === 3) assert.ok(target.width >= 32, 'no epsilon discount on minimum touch width');
+      if (i > 0) assert.equal(targets[i - 1].left + targets[i - 1].width, target.left);
+      for (const other of targets) if (other !== target) assert.equal(intersects(target, other), false);
+    }
+  }
+});
+
+for (const mode of ['vertical', 'pinch', 'longPress', 'tap', 'terminate', 'unmount', 'horizontal']) {
+  test(`caption touch arbitration: ${mode}`, () => {
+    const h = harness(), ui = h.load('components/editor/layer-timeline.tsx', timelineSuffix);
+    const calls = { select: 0, begin: 0, end: 0, magnify: 0, edits: [], locks: [] };
+    const props = { label: 'Cue', selected: true, startMs: 1000, endMs: 1080, durationMs: 5000, trackWidth: 1000,
+      edge: 'move', width: 64, height: 48, left: 0, allowDrag: true,
+      onPress() { calls.select++; }, onChangeStart() { calls.begin++; }, onEnd() { calls.end++; },
+      onChange(...args) { calls.edits.push(args); }, onMagnify() { calls.magnify++; }, onTouchLock(value) { calls.locks.push(value); } };
+    h.render(ui.CaptionTimingGrip, props);
+    const handlers = h.result.props;
+    assert.equal(handlers.onStartShouldSetPanResponder(event(0, 0)), true);
+    assert.equal(handlers.onStartShouldSetPanResponder({ nativeEvent: { touches: [{}, {}] } }), false);
+    handlers.onPanResponderGrant();
+    assert.equal(handlers.onPanResponderTerminationRequest(), true);
+    handlers.onPanResponderMove(event(2, 1), { dx: 2, dy: 1 });
+    if (mode === 'vertical') handlers.onPanResponderMove(event(2, 16), { dx: 2, dy: 16 });
+    if (mode === 'pinch') handlers.onPanResponderMove({ nativeEvent: { touches: [{}, {}] } }, { dx: 30, dy: 0 });
+    if (mode === 'longPress') h.timers();
+    if (mode === 'horizontal') {
+      handlers.onPanResponderMove(event(12, 0), { dx: 12, dy: 0 });
+      assert.equal(handlers.onPanResponderTerminationRequest(), false);
+    }
+    if (mode === 'unmount') h.unmount();
+    else if (mode === 'terminate') handlers.onPanResponderTerminate();
+    else handlers.onPanResponderRelease();
+    handlers.onPanResponderTerminate(); h.timers();
+    assert.equal(calls.select, 1);
+    assert.equal(calls.magnify, mode === 'longPress' ? 1 : 0);
+    assert.equal(calls.begin, mode === 'horizontal' ? 1 : 0);
+    assert.equal(calls.end, calls.begin);
+    assert.equal(calls.edits.length, calls.begin);
+    assert.deepEqual(calls.locks, [true, false]);
+  });
+}
+
+for (const edge of ['start', 'move', 'end']) test(`magnified ${edge} uses the cue scale frozen at grant`, () => {
+  const calls = [], props = { captionGesture: true, selected: true, label: 'Tiny', startMs: 1000, endMs: 1080,
+    durationMs: 600000, trackWidth: 300, lane: 0, controlTop: 35, color: '#00B8FF',
+    onPress() {}, onChangeStart() { calls.push('begin'); }, onChange(...args) { calls.push(args); }, onEnd() { calls.push('end'); } };
+  const target = blockTargets(props).find((entry) => entry.surface === 'overlay' && entry.edge === edge);
+  target.handlers.onPanResponderGrant();
+  target.handlers.onPanResponderMove(event(24, 0), { dx: 24, dy: 0 });
+  target.handlers.onPanResponderRelease();
+  assert.deepEqual(calls, ['begin', [edge, edge === 'end' ? 1000 : 1010, edge === 'start' ? 1080 : 1090], 'end']);
+});
+
+for (const kind of ['caption', 'translation']) test(`${kind}: accessible zero-cue editor preserves scale, row height, viewport and playhead through navigation and dismissal`, () => {
+  const h = harness(), ui = h.load('components/editor/layer-timeline.tsx', allTimelineSuffix);
+  const captions = [{ id: 'zero', text: 'Zero', startMs: 0, endMs: 0, wordIds: [] },
+    { id: 'tiny', text: 'Tiny', startMs: 10000, endMs: 10080, wordIds: [] }];
+  const props = { projectId: 'overlay', currentMs: 2000, durationMs: 600000, clips: [], sources: [], captions,
+    layers: [{ id: 'captions', kind: 'captions', name: 'Captions' }], audioClips: [], audioSources: [],
+    translationTracks: [{ id: 'fr', name: 'French', visible: true, pairs: captions.map((source) => ({ source,
+      translation: { id: 'fr:' + source.id, text: 'French ' + source.text }, startMs: source.startMs, endMs: source.endMs, timelineVisible: true })) }],
+    onSelectCaption(cue) { props.selectedLayerId = 'captions'; props.selectedCaptionId = cue.id; },
+    onSelectTranslationCaption(id, pair) { props.selectedLayerId = id; props.selectedCaptionId = pair.source.id; },
+    onSeek() { assert.fail('editor must not seek'); }, onScrubStart() {},
+  };
+  h.render(ui.LayerTimeline, props);
+  const rows = () => h.all((node) => node.type?.name === 'TimelineRow');
+  const heights = rows().map((node) => node.props.height), scrollCount = h.scrolls.filter((x) => x.horizontal).length;
+  const width = rows()[0].props.trackWidth;
+  const row = rows().find((node) => node.props.label.includes(kind === 'caption' ? 'CAPTIONS' : 'FRENCH'));
+  const rowHarness = harness(), rowUI = rowHarness.load('components/editor/layer-timeline.tsx', allTimelineSuffix);
+  rowHarness.render(rowUI.TimelineRow, row.props);
+  const label = rowHarness.all((node) => node.props.accessibilityLabel === row.props.label)[0];
+  assert.ok(label.props.style.width >= 32 && row.props.height >= 32);
+  label.props.onAccessibilityAction({ nativeEvent: { actionName: 'editTiming' } }); h.render();
+  const modal = () => h.all((node) => node.type?.name === 'CaptionMagnifier')[0];
+  assert.equal(props.selectedCaptionId, 'zero'); assert.equal(modal().props.endMs, 0);
+  assert.equal(modal().props.onPrevious, undefined);
+  modal().props.onNext(); h.render(); assert.equal(props.selectedCaptionId, 'tiny');
+  assert.equal(modal().props.onNext, undefined);
+  modal().props.onPrevious(); h.render(); assert.equal(props.selectedCaptionId, 'zero');
+  modal().props.onDismiss(); h.render(); assert.equal(modal(), undefined);
+  assert.equal(rows()[0].props.trackWidth, width);
+  assert.deepEqual(rows().map((node) => node.props.height), heights);
+  assert.equal(h.scrolls.filter((x) => x.horizontal).length, scrollCount);
+  assert.equal(props.currentMs, 2000);
+});
 
 for (const kind of ['caption', 'translation']) for (const selectedId of ['a', 'b', 'overlap']) {
   for (const edge of ['move', 'start', 'end']) test(`${kind} tiny ${selectedId} ${edge}: adjacent and overlapping bodies own their touches`, () => {
@@ -203,10 +363,10 @@ for (const kind of ['caption', 'translation']) for (const selectedId of ['a', 'b
     assert.deepEqual(project, before);
     assert.equal(calls.history, 0);
     const target = rails.find((r) => r.edge === edge);
-    const hit = targets.filter((r) => contains(r, target.left + target.width / 2, target.top + target.height / 2));
+    const hit = targets.filter((r) => contains(r, target.left + target.width / 2, target.top + target.height / 2, target.surface));
     assert.deepEqual(hit, [target]);
     target.handlers.onPanResponderGrant();
-    for (const [dx, dy] of [[8, 0], [-8, 0], [9, 12]]) target.handlers.onPanResponderMove({}, { dx, dy });
+    for (const [dx, dy] of [[8, 0], [-8, 0]]) target.handlers.onPanResponderMove({}, { dx, dy });
     assert.equal(calls.edits.length, 0);
     target.handlers.onPanResponderMove({}, { dx: edge === 'start' ? -9 : 9, dy: 0 });
     target.handlers.onPanResponderRelease(); target.handlers.onPanResponderTerminate();
@@ -474,7 +634,7 @@ test('caption selection cancels pending scrub completion; scroll-end noise never
 });
 
 for (const kind of ['caption', 'translation']) for (const selectedId of ['zero', 'tiny']) {
-  for (const edge of ['move', 'start', 'end']) test(`${kind} ${selectedId} at minimum zoom: owned body selects, then deliberate ${edge} edits only its cue`, () => {
+  for (const edge of ['move', 'start', 'end']) test(`${kind} ${selectedId} at minimum zoom: accessible navigation selects, then deliberate ${edge} edits only its cue`, () => {
     let project = createCaptionProject({ id: 'body-test', name: 'Bodies', sources: [{ id: 'video',
       uri: 'file:///test.mp4', storageMode: 'copied', displayName: 'Video', durationMs: 600000,
       width: 1080, height: 1920, rotation: 0, frameRate: 30 }] });
@@ -504,14 +664,19 @@ for (const kind of ['caption', 'translation']) for (const selectedId of ['zero',
     assert.equal(blocks()[0].props.trackWidth, 300, '0.5 pixels/second is the minimum scale');
     const targetBlock = blocks().find((block) => block.props.label === kind + '-' + selectedId);
     assert.ok(targetBlock);
-    const body = blockTargets(targetBlock.props).find((target) => !target.rail);
-    assert.ok(body);
-    body.handlers.onPanResponderGrant();
-    body.handlers.onPanResponderRelease();
-    h.render();
+    const body = blockTargets(targetBlock.props, false).find((target) => !target.rail);
+    assert.equal(body.width, selectedId === 'zero' ? 0 : 0.04);
+    // No fabricated touch on a zero/subpixel rectangle. The row's accessible
+    // edit command opens an indexed navigator with actual >=32px controls.
+    const row = h.all((node) => node.type?.name === 'TimelineRow' && node.props.label.includes(kind === 'caption' ? 'CAPTIONS' : 'FRENCH'))[0];
+    row.props.onEditCues(); h.render();
+    let modal = h.all((node) => node.type?.name === 'CaptionMagnifier')[0];
+    if (selectedId === 'tiny') { modal.props.onNext(); h.render(); }
+    modal = h.all((node) => node.type?.name === 'CaptionMagnifier')[0];
+    assert.equal(modal.props.label, kind + '-' + selectedId);
     const scroll = h.all((node) => node.type === 'ScrollView' && node.props.horizontal)[0].props;
     scroll.onScrollEndDrag(); scroll.onMomentumScrollBegin(); scroll.onMomentumScrollEnd(); h.timers();
-    assert.deepEqual(calls.selects, [selectedId]);
+    assert.equal(calls.selects.at(-1), selectedId);
     assert.deepEqual(calls.seeks, []);
     assert.deepEqual(project, before);
     const selected = blocks().find((block) => block.props.selected);
@@ -574,7 +739,7 @@ test('selected intersecting bodies stay time-aligned at both track edges and acr
   }
 });
 
-for (const kind of ['caption', 'translation']) test(`${kind} selected long-cue rail follows actual viewport scroll at start, middle, end and zoom`, () => {
+for (const kind of ['caption', 'translation']) test(`${kind} selected long cue has a separate magnified edit surface at every scroll and zoom`, () => {
   const h = harness(), { LayerTimeline } = h.load('components/editor/layer-timeline.tsx');
   const duration = 600000;
   const cue = { id: 'long', text: 'Long cue', startMs: 0, endMs: duration, wordIds: [] };
@@ -600,8 +765,8 @@ for (const kind of ['caption', 'translation']) test(`${kind} selected long-cue r
         assert.equal(rails.length, 3);
         const bounds = block().props.visibleTrackBounds;
         for (const rail of rails) {
-          assert.ok(rail.left >= bounds.left, 'left stays visible');
-          assert.ok(rail.left + rail.width <= bounds.right, 'right stays visible');
+          assert.ok(rail.left >= 0, 'magnifier left stays visible');
+          assert.ok(rail.left + rail.width <= 192, 'magnifier right stays visible');
           assert.ok(rail.top >= 0 && rail.top + rail.height <= h.result.props.style.height);
           assert.ok(rail.width >= 32, 'each operation remains reachable');
         }
@@ -725,7 +890,7 @@ for (const count of [100, 1000, 5000]) for (const kind of ['caption', 'translati
             const bounds = selected.props.visibleTrackBounds;
             for (const rail of rails) {
               assert.ok(rail.top >= 0 && rail.top + rail.height <= h.result.props.style.height);
-              assert.ok(rail.left >= bounds.left && rail.left + rail.width <= bounds.right && rail.width >= 32);
+              assert.ok(rail.left >= 0 && rail.left + rail.width <= 192 && rail.width >= 32 && rail.height >= 32);
               for (const other of rails) if (rail !== other) assert.equal(intersects(rail, other), false);
             }
           }
@@ -820,7 +985,7 @@ for (const kind of ['caption', 'translation']) {
     assert.equal(selected.props.startMs, kind === 'caption' ? 0 : 10000);
     assert.equal(selected.props.endMs, kind === 'caption' ? 100000 : 90000);
     assert.equal(blockTargets(selected.props).filter((entry) => entry.rail).length, 3);
-    assert.equal(h.all((node) => node.props.accessibilityLabel === 'Next cue').length, 0);
+    assert.equal(h.all((node) => node.type?.name === 'CaptionMagnifier').length, 0, 'selection alone does not open a modal');
     assert.deepEqual(seeks, []);
   });
 

@@ -1,4 +1,5 @@
 import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project-timeline';
+import { canReuseVideoSource, loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
 import { useEventListener } from 'expo';
 import { useVideoPlayer, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -50,15 +51,17 @@ export function useTimelineVideoController(
   const [activeSlot, setActiveSlotState] = useState<TimelinePlayerSlot>(0);
   const [currentMs, setCurrentMsState] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [phase, setPhaseState] = useState<'loading' | 'ready' | 'gap' | 'ended'>(initialEntry ? 'loading' : 'ended');
+  const [sourceFailure, setSourceFailure] = useState<VideoSourceFailure>();
+  const [phase, setPhaseState] = useState<'loading' | 'ready' | 'gap' | 'ended' | 'error'>(initialEntry ? 'loading' : 'ended');
 
   const projectRef = useRef(project);
   const entriesRef = useRef(entries);
   const currentMsRef = useRef(0);
   const playIntentRef = useRef(false);
-  const phaseRef = useRef<'loading' | 'ready' | 'gap' | 'ended'>(initialEntry ? 'loading' : 'ended');
+  const phaseRef = useRef<'loading' | 'ready' | 'gap' | 'ended' | 'error'>(initialEntry ? 'loading' : 'ended');
   const activeSlotRef = useRef<TimelinePlayerSlot>(0);
   const confirmedSourceIdRef = useRef<string | undefined>(initialSource?.id);
+  const slotSourcesRef = useRef<(typeof initialSource)[]>([initialSource, undefined]);
   const activeClipIdRef = useRef<string | undefined>(initialEntry?.clip.id);
   const primedRef = useRef<PrimedStandby | undefined>(undefined);
   const primingRef = useRef<Promise<void> | undefined>(undefined);
@@ -78,7 +81,7 @@ export function useTimelineVideoController(
     onErrorRef.current = onError;
   }, [entries, onError, project]);
 
-  const setPhase = (next: 'loading' | 'ready' | 'gap' | 'ended') => {
+  const setPhase = (next: 'loading' | 'ready' | 'gap' | 'ended' | 'error') => {
     phaseRef.current = next;
     if (mountedRef.current) setPhaseState(next);
   };
@@ -131,6 +134,18 @@ export function useTimelineVideoController(
     return source;
   };
 
+  const failSource = (source: NonNullable<typeof initialSource>, error: unknown) => {
+    if (!mountedRef.current) return;
+    // Invalidate in-flight work before pausing: late replacement completions
+    // must not mark a failed player ready or restart transport.
+    generationRef.current += 1;
+    desiredRef.current = undefined;
+    confirmedSourceIdRef.current = undefined;
+    stopTransport();
+    setPhase('error');
+    setSourceFailure(videoSourceFailure(source, error));
+  };
+
   const applyClipToPlayer = (player: VideoPlayer, entry: ClipTimelineEntry, timelineMs: number) => {
     player.playbackRate = entry.clip.playbackRate;
     player.muted = entry.clip.muted;
@@ -175,11 +190,14 @@ export function useTimelineVideoController(
     if (
       primedRef.current?.clipId === entry.clip.id
       && primedRef.current.sourceId === source.id
+      && primedRef.current.sourceUri === source.uri
+      && standbyPlayer().status === 'readyToPlay'
     ) return;
     const generation = generationRef.current;
     const standby = standbyPlayer();
     standby.pause();
-    await standby.replaceAsync(source.uri);
+    slotSourcesRef.current[oppositeTimelineSlot(activeSlotRef.current)] = source;
+    await loadPlayableVideoSource(standby, source.uri);
     if (!mountedRef.current || generation !== generationRef.current) return;
     applyClipToPlayer(standby, entry, entry.startMs);
     standby.pause();
@@ -213,13 +231,15 @@ export function useTimelineVideoController(
     clearStandbyPrime();
     setCurrentMs(timelineMs);
     setPhase('ready');
+    setSourceFailure(undefined);
     if (playIntentRef.current) standby.play();
   };
 
   const applyClipTarget = async (entry: ClipTimelineEntry, timelineMs: number, generation: number) => {
     cancelGapClock();
     const source = sourceForEntry(entry);
-    const seamless = canSeamlessSwapToClip({
+    const seamless = standbyPlayer().status === 'readyToPlay'
+      && primedRef.current?.sourceUri === source.uri && canSeamlessSwapToClip({
       primedClipId: primedRef.current?.clipId,
       primedSourceId: primedRef.current?.sourceId,
       targetClipId: entry.clip.id,
@@ -231,14 +251,22 @@ export function useTimelineVideoController(
     }
 
     const player = activePlayer();
-    const sourceChanged = confirmedSourceIdRef.current !== source.id;
+    const sourceChanged = confirmedSourceIdRef.current !== source.id
+      || !canReuseVideoSource(slotSourcesRef.current[activeSlotRef.current], source, player.status);
     internalPauseGenerationRef.current = generation;
     player.pause();
     standbyPlayer().pause();
     if (sourceChanged) {
       clearStandbyPrime();
-      await player.replaceAsync(source.uri);
-      if (!mountedRef.current) return;
+      setPhase('loading');
+      slotSourcesRef.current[activeSlotRef.current] = source;
+      try {
+        await loadPlayableVideoSource(player, source.uri);
+      } catch (error) {
+        if (generation === generationRef.current) failSource(source, error);
+        return;
+      }
+      if (!mountedRef.current || generation !== generationRef.current) return;
       confirmedSourceIdRef.current = source.id;
     }
     if (generation !== generationRef.current) return;
@@ -247,6 +275,7 @@ export function useTimelineVideoController(
     applyClipToPlayer(player, entry, timelineMs);
     setCurrentMs(timelineMs);
     setPhase('ready');
+    setSourceFailure(undefined);
     if (playIntentRef.current) player.play();
   };
 
@@ -271,8 +300,10 @@ export function useTimelineVideoController(
       }
     })().catch((error) => {
       if (!mountedRef.current) return;
-      stopTransport();
-      onErrorRef.current(error instanceof Error ? error.message : 'The video timeline could not be played.');
+      const segment = projectTimelineSegmentAt(projectRef.current, currentMsRef.current, entriesRef.current);
+      const id = segment?.kind === 'clip' ? segment.entry.clip.sourceId : 'unknown';
+      const source = projectRef.current.sources.find((candidate) => candidate.id === id);
+      failSource(source ?? { ...initialSource!, id, uri: '', displayName: 'Source video' }, error);
     }).finally(() => {
       processingRef.current = undefined;
       if (desiredRef.current && mountedRef.current) void drainTargetsRef.current();
@@ -404,10 +435,13 @@ export function useTimelineVideoController(
   };
 
   const onStatusChange = (player: VideoPlayer, status: string, error?: { message?: string }) => {
-    if (player !== activePlayer()) return;
+    if (player !== activePlayer()) {
+      if (status === 'error') clearStandbyPrime();
+      return;
+    }
     if (status === 'error') {
-      stopTransport();
-      onErrorRef.current(error?.message ?? 'The current video could not be decoded.');
+      const source = slotSourcesRef.current[activeSlotRef.current];
+      if (source) failSource(source, error);
     }
   };
 
@@ -442,6 +476,12 @@ export function useTimelineVideoController(
     currentMs,
     isPlaying,
     phase,
+    sourceFailure,
+    retrySource: () => {
+      stopTransport();
+      confirmedSourceIdRef.current = undefined;
+      seek(currentMsRef.current);
+    },
     isGap: phase === 'gap' || entries.length === 0 || projectTimelineSegmentAt(project, currentMs, entries)?.kind === 'gap',
     seek,
     play,

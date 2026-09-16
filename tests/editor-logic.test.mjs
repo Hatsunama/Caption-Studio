@@ -121,9 +121,12 @@ test('video acquisition links the selected source without a hidden picker copy',
   assert.equal(packageJson.dependencies['expo-image-picker'], undefined);
   assert.equal(packageJson.dependencies['expo-media-library'], undefined);
   assert.doesNotMatch(JSON.stringify(appConfig.expo.plugins), /image-picker|media-library/);
-  assert.match(mediaStorage, /type: 'video\/\*'[\s\S]*copyToCacheDirectory: false/);
-  assert.match(mediaStorage, /multiple: true/);
-  assert.match(mediaStorage, /persistReadPermission\(asset\.uri\)/);
+  const nativePicker = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/LinkedVideoDocuments.kt', import.meta.url), 'utf8');
+  assert.match(mediaStorage, /pickVideoDocuments\(true\)/);
+  assert.match(mediaStorage, /probeVideoForImport\(asset\.uri, asset\.name\)/);
+  assert.doesNotMatch(mediaStorage, /copyToCacheDirectory:\s*true/);
+  assert.match(nativePicker, /Intent\(Intent.ACTION_OPEN_DOCUMENT\)/);
+  assert.match(nativePicker, /retainResult\(it, intent.flags\)/);
 });
 
 test('timeline export is native, local, multi-track, and version-aligned', () => {
@@ -1392,12 +1395,15 @@ test('timeline selection does not move or snap the playhead', () => {
   assert.match(timeline, /gestureLockRef\.current = false;[\s\S]*setReorderDrag\(undefined\)/);
 });
 
-test('every timed content body captures movement while only the selected item exposes trim handles', () => {
+test('timed content keeps body movement while captions use direct or magnified timing without an attached row', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   const block = timeline.slice(timeline.indexOf('function TimedBlock'), timeline.indexOf('function AudioWaveform'));
   assert.match(block, /<TimelineMoveGrip/);
   assert.doesNotMatch(block, /movable\?: boolean/);
-  assert.match(block, /\{props\.selected \? \(/);
+  assert.match(block, /\{props\.captionGesture \? <CaptionGestureSurface/);
+  assert.match(block, /\{props\.selected && !props\.captionGesture \? \(/);
+  assert.match(block, /const CAPTION_DIRECT_GRIP = 32/);
+  assert.match(block, /const CAPTION_MAGNIFIED_WIDTH = 192/);
   assert.doesNotMatch(block, /hideBody|hideControls|ordinal\?:|marker\?:/);
   assert.doesNotMatch(timeline, /caption-timing-dock|hideControls|TIMELINE_MARKER|MAX_TIMELINE_PAGE_CUES|jumpToCueNumber|selectOrdinal/);
   assert.match(block, /<TimingGrip side="start"/);

@@ -24,5 +24,5 @@ test('ordinary transport operations invalidate and pause stale standby media wit
   assert.doesNotMatch(controller, /replaceAsync\(null\)/);
   assert.match(controller, /const invalidateStandbyPrime = useCallback/);
   assert.match(controller, /players\[oppositeTimelineSlot\(activeSlotRef\.current\)\]\.pause\(\)/);
-  assert.doesNotMatch(controller, /^\s*setPhase\('loading'\);$/m);
+  assert.match(controller, /await loadPlayableVideoSource\(player, source\.uri\)/);
 });

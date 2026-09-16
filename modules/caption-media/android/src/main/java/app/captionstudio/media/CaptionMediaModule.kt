@@ -42,12 +42,26 @@ import kotlin.math.roundToInt
 class CaptionMediaModule : Module() {
   private val timelineVideoExporter = lazy { TimelineVideoExporter(context) }
   private val audioExtractionEpoch = AtomicLong(0L)
+  private val videoDocuments = lazy { LinkedVideoDocuments(context) }
 
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
   override fun definition() = ModuleDefinition {
     Name("CaptionMedia")
+
+    AsyncFunction("pickVideoDocuments") { multiple: Boolean, promise: Promise ->
+      val activity = appContext.throwingActivity
+      activity.runOnUiThread { videoDocuments.value.launch(activity, multiple, promise) }
+    }
+
+    OnActivityResult { _, (requestCode, resultCode, intent) ->
+      if (videoDocuments.isInitialized()) videoDocuments.value.onResult(requestCode, resultCode, intent)
+    }
+
+    AsyncFunction("checkReadAccess") { inputUri: String ->
+      DocumentReadAccess(context.contentResolver).check(inputUri)
+    }
 
     View(CaptionPresentationView::class) {
       Prop("caption") { view: CaptionPresentationView, value: Map<String, Any> -> view.setCaption(value) }
@@ -169,7 +183,7 @@ class CaptionMediaModule : Module() {
   private fun persistReadPermission(input: String): Boolean {
     val uri = Uri.parse(input)
     if (uri.scheme != "content") return true
-    context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    DocumentReadAccess(context.contentResolver).retain(uri)
     return true
   }
 
