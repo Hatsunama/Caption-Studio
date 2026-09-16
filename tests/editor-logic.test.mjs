@@ -121,9 +121,12 @@ test('video acquisition links the selected source without a hidden picker copy',
   assert.equal(packageJson.dependencies['expo-image-picker'], undefined);
   assert.equal(packageJson.dependencies['expo-media-library'], undefined);
   assert.doesNotMatch(JSON.stringify(appConfig.expo.plugins), /image-picker|media-library/);
-  assert.match(mediaStorage, /type: 'video\/\*'[\s\S]*copyToCacheDirectory: false/);
-  assert.match(mediaStorage, /multiple: true/);
-  assert.match(mediaStorage, /persistReadPermission\(asset\.uri\)/);
+  const nativePicker = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/LinkedVideoDocuments.kt', import.meta.url), 'utf8');
+  assert.match(mediaStorage, /pickVideoDocuments\(true\)/);
+  assert.match(mediaStorage, /probeVideoForImport\(asset\.uri, asset\.name\)/);
+  assert.doesNotMatch(mediaStorage, /copyToCacheDirectory:\s*true/);
+  assert.match(nativePicker, /Intent\(Intent.ACTION_OPEN_DOCUMENT\)/);
+  assert.match(nativePicker, /retainResult\(it, intent.flags\)/);
 });
 
 test('timeline export is native, local, multi-track, and version-aligned', () => {
