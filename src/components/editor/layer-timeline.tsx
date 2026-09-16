@@ -143,7 +143,7 @@ export function LayerTimeline(props: {
   const editIndex = magnifiedCue?.trackId === 'captions' ? captionIndex : translationIndexes.get(magnifiedCue?.trackId ?? '');
   const editOrdinal = editIndex?.byId.get(magnifiedCue?.id ?? '');
   const editCue = editOrdinal === undefined ? undefined : editIndex?.ordered[editOrdinal];
-  useEffect(() => { if (magnifiedCue && !editCue) setMagnifiedCue(undefined); }, [magnifiedCue, editCue]);
+  const activeMagnifiedCue = editCue ? magnifiedCue : undefined;
   const audioLayout = useMemo(() => packTimelineLanes(props.audioClips.map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [props.audioClips]);
   const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10
     + (props.selectedAudioClipId ? TIMELINE_CONTROL_HEIGHT : 0);
@@ -315,7 +315,7 @@ export function LayerTimeline(props: {
     if (locked) selectTimelineItem(() => {});
     setItemGestureLock(locked);
   };
-  const editingTrack = magnifiedCue?.trackId;
+  const editingTrack = activeMagnifiedCue?.trackId;
   const editOwner = editCue && editingTrack ? {
     label: 'pair' in editCue ? editCue.pair.translation.text || 'Translation pending' : editCue.text,
     startMs: editCue.startMs, endMs: editCue.endMs, durationMs: duration, trackWidth,
@@ -329,8 +329,8 @@ export function LayerTimeline(props: {
   return (
     <View
       onLayout={(event) => setViewportWidth(Math.max(1, event.nativeEvent.layout.width))}
-      onStartShouldSetResponderCapture={(event) => !magnifiedCue && event.nativeEvent.touches.length === 2}
-      onMoveShouldSetResponderCapture={(event) => !magnifiedCue && event.nativeEvent.touches.length === 2}
+      onStartShouldSetResponderCapture={(event) => !activeMagnifiedCue && event.nativeEvent.touches.length === 2}
+      onMoveShouldSetResponderCapture={(event) => !activeMagnifiedCue && event.nativeEvent.touches.length === 2}
       onResponderGrant={(event) => {
         const [first, second] = event.nativeEvent.touches;
         pinch.current = { distance: touchDistance(first, second), scale: effectiveScale };
@@ -351,7 +351,7 @@ export function LayerTimeline(props: {
         style={{ flex: 1 }}
         horizontal
         nestedScrollEnabled
-        scrollEnabled={!gestureLock && !magnifiedCue}
+        scrollEnabled={!gestureLock && !activeMagnifiedCue}
         decelerationRate="fast"
         scrollEventThrottle={32}
         showsHorizontalScrollIndicator={false}
@@ -608,10 +608,10 @@ export function LayerTimeline(props: {
         style={{ position: 'absolute', left: 8, top: 2, width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: '#334155' }}>
         <Text style={{ color: '#FFFFFF', fontSize: 20 }}>↔</Text>
       </Pressable>
-      {editOwner && magnifiedCue ? <CaptionMagnifier key={`${magnifiedCue.trackId}:${magnifiedCue.id}`} {...editOwner}
+      {editOwner && activeMagnifiedCue ? <CaptionMagnifier key={`${activeMagnifiedCue.trackId}:${activeMagnifiedCue.id}`} {...editOwner}
         onDismiss={() => setMagnifiedCue(undefined)}
-        onPrevious={editOrdinal! > 0 ? () => openCueEditor(magnifiedCue.trackId, editIndex!.ordered[editOrdinal! - 1].id) : undefined}
-        onNext={editOrdinal! + 1 < editIndex!.ordered.length ? () => openCueEditor(magnifiedCue.trackId, editIndex!.ordered[editOrdinal! + 1].id) : undefined}
+        onPrevious={editOrdinal! > 0 ? () => openCueEditor(activeMagnifiedCue.trackId, editIndex!.ordered[editOrdinal! - 1].id) : undefined}
+        onNext={editOrdinal! + 1 < editIndex!.ordered.length ? () => openCueEditor(activeMagnifiedCue.trackId, editIndex!.ordered[editOrdinal! + 1].id) : undefined}
       /> : null}
       <View pointerEvents="none" style={{ position: 'absolute', left: '50%', top: 36, bottom: 0, width: 2, marginLeft: -1, backgroundColor: '#FF5267' }}>
         <View style={{ position: 'absolute', left: -7, top: 0, width: 0, height: 0, borderLeftWidth: 8, borderRightWidth: 8, borderTopWidth: 11, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: '#FF5267' }} />
