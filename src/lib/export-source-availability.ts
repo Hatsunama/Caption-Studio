@@ -11,9 +11,11 @@ export async function assertExportSourcesAvailable(plan: TimelineRenderPlan, pro
   const checked = new Set<string>();
   const sources = [
     ...plan.clips.map((clip) => ({ ...clip, kind: 'video' as const })),
-    ...plan.audioClips.map((clip) => ({ ...clip, kind: 'audio' as const })),
-    ...plan.layers.filter((layer) => layer.kind === 'image' && layer.visible)
-      .map((layer) => ({ id: layer.id, uri: (layer as { uri: string }).uri, kind: 'image' as const })),
+    // Match buildInsertedAudioSequence: inaudible clips never open their source.
+    ...plan.audioClips.filter((clip) => !clip.muted && clip.volume > 0)
+      .map((clip) => ({ ...clip, kind: 'audio' as const })),
+    ...plan.layers.flatMap((layer) => layer.kind === 'image' && layer.visible
+      ? [{ id: layer.id, uri: layer.uri, kind: 'image' as const }] : []),
   ];
   for (const source of sources) {
     const key = `${source.kind}:${source.uri}`;
