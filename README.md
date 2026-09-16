@@ -100,7 +100,7 @@ Current Android build: **1.4.55** (`v1.4.55`, Android version code 67).
 - A floating timeline add button for appending one or many videos to the end
 - Neon pink/blue/green subtitle blocks that stay end-to-end on one lane; genuine overlaps automatically move to additional visible lanes so no subtitle can hide underneath another
 - TikTok-style script boundaries: press Enter between words to split one subtitle at its spoken-word timing, or Backspace at the beginning to merge with the block above
-- Time-aligned caption blocks on the timeline: tap a cue to select it and drag its body or edges directly; the cyan preview box and caption text share one live track transform
+- Time-aligned caption blocks on the timeline: wide cues move and trim directly on the tile; hold a tiny cue or use **Edit cue timing** in the timeline header for a separate magnified timing surface with large touch targets. No Start / Move / End strip sits under captions; selection and timing edits do not seek the fixed playhead. The cyan preview box and caption text share one live track transform
 - Clear **Undo** and **Redo** controls directly below the video for timeline, transform, style, layer, and video-edit changes
 - Font-metric-driven caption and screen-text fitting across every bundled or imported font, with hard line breaks preserved and no artificial minimum type-size floor
 - One transform contract for captions, translated cues, screen text, and images: drag to move, pinch to resize, twist to rotate, stretch either axis from four large edge bars, or scale uniformly from the corner; only the selected cue changes

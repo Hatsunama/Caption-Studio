@@ -1395,12 +1395,15 @@ test('timeline selection does not move or snap the playhead', () => {
   assert.match(timeline, /gestureLockRef\.current = false;[\s\S]*setReorderDrag\(undefined\)/);
 });
 
-test('every timed content body captures movement while only the selected item exposes trim handles', () => {
+test('timed content keeps body movement while captions use direct or magnified timing without an attached row', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   const block = timeline.slice(timeline.indexOf('function TimedBlock'), timeline.indexOf('function AudioWaveform'));
   assert.match(block, /<TimelineMoveGrip/);
   assert.doesNotMatch(block, /movable\?: boolean/);
-  assert.match(block, /\{props\.selected \? \(/);
+  assert.match(block, /\{props\.captionGesture \? <CaptionGestureSurface/);
+  assert.match(block, /\{props\.selected && !props\.captionGesture \? \(/);
+  assert.match(block, /const CAPTION_DIRECT_GRIP = 32/);
+  assert.match(block, /const CAPTION_MAGNIFIED_WIDTH = 192/);
   assert.doesNotMatch(block, /hideBody|hideControls|ordinal\?:|marker\?:/);
   assert.doesNotMatch(timeline, /caption-timing-dock|hideControls|TIMELINE_MARKER|MAX_TIMELINE_PAGE_CUES|jumpToCueNumber|selectOrdinal/);
   assert.match(block, /<TimingGrip side="start"/);
