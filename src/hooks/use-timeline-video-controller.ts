@@ -72,6 +72,7 @@ export function useTimelineVideoController(
   const boundaryClipIdRef = useRef<string | undefined>(undefined);
   const gapFrameRef = useRef<number | undefined>(undefined);
   const internalPauseGenerationRef = useRef<number | undefined>(undefined);
+  const lastRequestedSourceTimeRef = useRef([{ clipId: undefined as string | undefined, timeSeconds: undefined as number | undefined }, { clipId: undefined as string | undefined, timeSeconds: undefined as number | undefined }]);
   const mountedRef = useRef(true);
   const onErrorRef = useRef(onError);
 
@@ -150,7 +151,13 @@ export function useTimelineVideoController(
     player.playbackRate = entry.clip.playbackRate;
     player.muted = entry.clip.muted;
     player.volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
-    player.currentTime = sourceTimeAt(entry, timelineMs) / 1000;
+    const slot = player === players[0] ? 0 : 1;
+    const timeSeconds = sourceTimeAt(entry, timelineMs) / 1000;
+    const last = lastRequestedSourceTimeRef.current[slot];
+    if (last.clipId !== entry.clip.id || last.timeSeconds == null || Math.abs(last.timeSeconds - timeSeconds) >= 0.075) {
+      player.currentTime = timeSeconds;
+      lastRequestedSourceTimeRef.current[slot] = { clipId: entry.clip.id, timeSeconds };
+    }
   };
 
   const runGap = (startMs: number, endMs: number, next: ClipTimelineEntry | undefined, generation: number) => {
@@ -196,7 +203,9 @@ export function useTimelineVideoController(
     const generation = generationRef.current;
     const standby = standbyPlayer();
     standby.pause();
-    slotSourcesRef.current[oppositeTimelineSlot(activeSlotRef.current)] = source;
+    const standbySlot = oppositeTimelineSlot(activeSlotRef.current);
+    slotSourcesRef.current[standbySlot] = source;
+    lastRequestedSourceTimeRef.current[standbySlot] = { clipId: undefined, timeSeconds: undefined };
     await loadPlayableVideoSource(standby, source.uri);
     if (!mountedRef.current || generation !== generationRef.current) return;
     applyClipToPlayer(standby, entry, entry.startMs);
@@ -260,6 +269,7 @@ export function useTimelineVideoController(
       clearStandbyPrime();
       setPhase('loading');
       slotSourcesRef.current[activeSlotRef.current] = source;
+      lastRequestedSourceTimeRef.current[activeSlotRef.current] = { clipId: undefined, timeSeconds: undefined };
       try {
         await loadPlayableVideoSource(player, source.uri);
       } catch (error) {
