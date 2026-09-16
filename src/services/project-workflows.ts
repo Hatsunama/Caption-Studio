@@ -87,7 +87,6 @@ export type EditorMediaLedger = {
 export async function loadProjectForEditing(projectId: string) {
   let project = await getProject(projectId);
   if (project) {
-    // Recover source access before thumbnail shortcuts, reconciliation or player creation.
     project = await ensureProjectVideoAccess(project);
     const loadedProject = project;
     await runBestEffortCleanup('project media reconciliation', [

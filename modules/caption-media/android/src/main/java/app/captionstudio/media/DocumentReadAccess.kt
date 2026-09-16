@@ -53,7 +53,7 @@ internal class DocumentReadAccess(private val resolver: ContentResolver) {
   }
 
   private fun open(uri: Uri) {
-    resolver.openAssetFileDescriptor(uri, "r")?.use { /* Probe only; never read/copy the video. */ }
+    resolver.openAssetFileDescriptor(uri, "r")?.use { }
       ?: throw FileNotFoundException("The video document is unavailable.")
   }
 
