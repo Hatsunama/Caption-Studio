@@ -1935,6 +1935,25 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         </View>
       </Pressable>
 
+      {transport.sourceFailure ? (
+        <View accessibilityLiveRegion="polite" style={{ padding: 12, gap: 6, backgroundColor: palette.surfaceRaised }}>
+          <Text style={{ color: palette.text, fontWeight: '800' }}>
+            Video unavailable: {transport.sourceFailure.displayName}
+          </Text>
+          <Text style={{ color: palette.text }}>{transport.sourceFailure.message}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Try loading source video again"
+            disabled={transport.phase === 'loading' || !runtimePolicy.mediaAdmitted}
+            onPress={transport.retrySource}
+            style={{ minHeight: 44, justifyContent: 'center' }}>
+            <Text style={{ color: palette.accent, fontWeight: '800' }}>
+              {transport.phase === 'loading' ? 'Loading video...' : 'Try loading video again'}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       <View style={{ flex: 1, display: scriptEditorOpen ? 'none' : 'flex' }}>
         <ScrollView
           ref={editorScrollRef}
