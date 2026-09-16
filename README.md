@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.57) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.58) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.57/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.58/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -37,7 +37,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.57 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
+5. Run this PowerShell script. It downloads the maintained installer for **Caption Studio 1.4.58 or newer**, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -73,7 +73,7 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.57** (`v1.4.57`, Android version code 69).
+Current Android build: **1.4.58** (`v1.4.58`, Android version code 70).
 
 ## What the current Android build includes
 
@@ -86,6 +86,7 @@ Current Android build: **1.4.57** (`v1.4.57`, Android version code 69).
 - A dedicated `com.hatsunama.captionstudio` Android identity so Caption Studio installs as its own app
 - On-device Whisper transcription through `whisper.rn`
 - Native Android audio decoding to PCM WAV without a cloud API
+- Foreground voice-over recording with multiple editable takes, live level feedback, and project-owned waveform persistence
 - Presentation-timestamp-aware audio extraction plus on-device Silero voice-activity detection, so Whisper tokens inside opening or interior silence are rejected instead of becoming early captions
 - Responsive preparation feedback that reaches 5% after 3 seconds, advances from 6% through 10% in 22-second steps, then follows real decoding progress
 - Safe **Generate again** control for replacing caption text/timing while preserving the project style and added layers
