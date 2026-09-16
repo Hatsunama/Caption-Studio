@@ -209,15 +209,13 @@ test('provider URIs stay in persistence and never cross the navigation URL', () 
   assert.match(projectsScreen, /params: \{ projectId: project\.id \}/);
 });
 
-test('selected caption trim grips stay distinct even on tiny blocks', () => {
+test('selected timeline items expose direct edges without an attached control rail', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
-  assert.match(timeline, /<TimingGrip side="start" \{\.\.\.props\} \/>/);
-  assert.match(timeline, /<TimingGrip side="end" \{\.\.\.props\} \/>/);
-  const grip = timeline.slice(timeline.indexOf('function TimingGrip'));
-  assert.match(grip, /\[props\.side === 'start' \? 'left' : 'right'\]: 0/);
-  assert.match(grip, /width: TIMELINE_GRIP_WIDTH/);
-  assert.match(timeline, /timelineBlockControls\(width, props\.selected\)/);
-  assert.doesNotMatch(grip, /left: 4, right: 4/);
+  assert.match(timeline, /const DIRECT_TIMELINE_GRIP = 32/);
+  assert.match(timeline, /<TimelineTimingGrip \{\.\.\.props\} edge="start"/);
+  assert.match(timeline, /<TimelineTimingGrip \{\.\.\.props\} edge="end"/);
+  assert.match(timeline, /const interactionWidth = props\.selected \? Math\.max\(width, 3 \* DIRECT_TIMELINE_GRIP\) : width/);
+  assert.doesNotMatch(timeline, /timelineBlockControls|timelineControlRail|Magnified cue timing/);
 });
 
 test('downloaded transcription models are pinned by SHA-256', () => {
@@ -1395,27 +1393,14 @@ test('timeline selection does not move or snap the playhead', () => {
   assert.match(timeline, /gestureLockRef\.current = false;[\s\S]*setReorderDrag\(undefined\)/);
 });
 
-test('timed content keeps body movement while captions use direct or magnified timing without an attached row', () => {
+test('every timed content type uses the same direct edge and body gesture surface', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   const block = timeline.slice(timeline.indexOf('function TimedBlock'), timeline.indexOf('function AudioWaveform'));
-  assert.match(block, /<TimelineMoveGrip/);
-  assert.doesNotMatch(block, /movable\?: boolean/);
-  assert.match(block, /\{props\.captionGesture \? <CaptionGestureSurface/);
-  assert.match(block, /\{props\.selected && !props\.captionGesture \? \(/);
-  assert.match(block, /const CAPTION_DIRECT_GRIP = 32/);
-  assert.match(block, /const CAPTION_MAGNIFIED_WIDTH = 192/);
-  assert.doesNotMatch(block, /hideBody|hideControls|ordinal\?:|marker\?:/);
-  assert.doesNotMatch(timeline, /caption-timing-dock|hideControls|TIMELINE_MARKER|MAX_TIMELINE_PAGE_CUES|jumpToCueNumber|selectOrdinal/);
-  assert.match(block, /<TimingGrip side="start"/);
-  assert.match(block, /<TimingGrip side="end"/);
-  assert.match(block, /zIndex: props\.selected \? 6 : 1/);
-  const moveGrip = timeline.slice(timeline.indexOf('function useTimelineTimingResponder'), timeline.indexOf('function TimingGrip'));
-  assert.match(moveGrip, /onPanResponderTerminationRequest: \(\) => false/);
-  assert.match(moveGrip, /onShouldBlockNativeResponder: \(\) => true/);
-  const timingGrip = timeline.slice(timeline.indexOf('function TimingGrip'), timeline.indexOf('function TinyButton'));
-  assert.doesNotMatch(timingGrip, /clamp\(/);
-  assert.match(timingGrip, /useTimelineTimingResponder\(props, props\.side\)/);
-  assert.doesNotMatch(timingGrip, /hitSlop/);
+  assert.match(block, /<DirectTimelineGestureSurface \{\.\.\.props\} width=\{interactionWidth\} \/>/);
+  assert.doesNotMatch(block, /captionGesture|Timing controls|controlTop|visibleTrackBounds/);
+  assert.doesNotMatch(timeline, /caption-timing-dock|Magnified cue timing|TimelineMoveGrip|function TimingGrip/);
+  assert.match(timeline, /onPanResponderTerminationRequest: \(\) => !state\.current\.active/);
+  assert.match(timeline, /gesture\.begin\(current\.current, current\.current\.edge\)/);
 });
 
 test('the add-video button stays in the timeline header instead of covering clip gestures', () => {
