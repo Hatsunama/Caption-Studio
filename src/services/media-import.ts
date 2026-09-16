@@ -27,11 +27,8 @@ export async function pickLinkedVideos(
   projectId: string,
   onProgress?: (progress: MediaImportProgress) => void,
 ): Promise<ProjectVideoSource[] | null> {
-  const result = await DocumentPicker.getDocumentAsync({
-    type: 'video/*',
-    copyToCacheDirectory: false,
-    multiple: true,
-  });
+  await requireFreeSpace(MIN_IMPORT_HEADROOM_BYTES, 'import a video');
+  const result = await CaptionMedia.pickVideoDocuments(true);
   if (result.canceled) return null;
   if (result.assets.length === 0) throw new Error('No videos were returned by the Android picker.');
 
@@ -41,9 +38,8 @@ export async function pickLinkedVideos(
     total: result.assets.length,
     detail: `Preparing ${result.assets.length === 1 ? 'your video' : `${result.assets.length} videos`}`,
   });
-  await requireFreeSpace(MIN_IMPORT_HEADROOM_BYTES, 'import a video');
   const sources: ProjectVideoSource[] = [];
-  const persistedUris: string[] = [];
+  const persistedUris = result.assets.map((asset) => asset.uri);
   try {
     for (let index = 0; index < result.assets.length; index += 1) {
       const asset = result.assets[index];
@@ -58,20 +54,14 @@ export async function pickLinkedVideos(
       if (info.durationMs < MINIMUM_CLIP_TIMELINE_MS) {
         throw new Error(`${asset.name} is shorter than ${MINIMUM_CLIP_TIMELINE_MS / 1000} seconds and cannot be edited reliably.`);
       }
-      try {
-        await CaptionMedia.persistReadPermission(asset.uri);
-        persistedUris.push(asset.uri);
-      } catch {
-        throw new Error(`Android did not grant lasting access to ${asset.name}. Select it from Files or Photos and try again.`);
-      }
       sources.push({
         id: sourceId,
         uri: asset.uri,
         storageMode: 'linked',
         thumbnailUri: await generateProjectThumbnail(projectId, sourceId, asset.uri),
         displayName: asset.name,
-        mimeType: asset.mimeType,
-        sizeBytes: asset.size,
+        mimeType: asset.mimeType ?? undefined,
+        sizeBytes: asset.size ?? undefined,
         durationMs: info.durationMs,
         width: info.width,
         height: info.height,
@@ -154,17 +144,12 @@ export async function pickVideoAndExtractAudio(
   audioId: string,
   onSourceChosen?: () => void,
 ): Promise<ProjectAudioSource | null> {
-  const result = await DocumentPicker.getDocumentAsync({
-    type: 'video/*',
-    copyToCacheDirectory: false,
-    multiple: false,
-  });
+  const result = await CaptionMedia.pickVideoDocuments(false);
   if (result.canceled) return null;
   const asset = result.assets[0];
-  const sourceInfo = await probeVideoForImport(asset.uri, asset.name);
-  await CaptionMedia.persistReadPermission(asset.uri);
-  onSourceChosen?.();
   try {
+    const sourceInfo = await probeVideoForImport(asset.uri, asset.name);
+    onSourceChosen?.();
     return await extractAudioFromVideo(projectId, audioId, asset.uri, asset.name, sourceInfo);
   } finally {
     await releaseReadPermissions([asset.uri]);

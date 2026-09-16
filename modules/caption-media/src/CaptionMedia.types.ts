@@ -1,3 +1,14 @@
+export type VideoDocument = {
+  uri: string;
+  name: string;
+  size?: number | null;
+  mimeType?: string | null;
+};
+
+export type DocumentReadStatus = 'ready' | 'permission-required' | 'missing' | 'unavailable';
+
+export type VideoDocumentResult = { canceled: boolean; assets: VideoDocument[] };
+
 export type MediaInfo = {
   durationMs: number;
   width: number;

@@ -1,10 +1,13 @@
 import { NativeModule, requireNativeModule } from 'expo';
+import type { DocumentReadStatus, VideoDocumentResult } from './CaptionMedia.types';
 
 import type { AudioExtractionResult, AudioPeaksResult, AudioTrackExtractionResult, FontValidationResult, ImageValidationResult, MediaInfo, TimelineVideoExportProgress, TimelineVideoExportResult, VideoThumbnailResult } from './CaptionMedia.types';
 
 export type { TimelineVideoExportProgress } from './CaptionMedia.types';
 
 declare class CaptionMediaModule extends NativeModule<Record<never, never>> {
+  pickVideoDocuments(multiple: boolean): Promise<VideoDocumentResult>;
+  checkReadAccess(inputUri: string): Promise<{ status: DocumentReadStatus }>;
   persistReadPermission(inputUri: string): Promise<boolean>;
   releaseReadPermission(inputUri: string): Promise<boolean>;
   sha256(inputUri: string): Promise<string>;

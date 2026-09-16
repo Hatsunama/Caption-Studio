@@ -36,6 +36,7 @@ import {
 } from '@/services/project-media';
 import { generateProjectCaptions } from '@/services/project-transcription';
 import { persistProjectCheckpoint } from '@/services/project-persistence';
+import { ensureProjectVideoAccess } from '@/services/project-media-access';
 import { cleanupStaleProjectRecoveryCache } from '@/services/project-recovery';
 import { clearProjectEditorDraftJournals } from '@/services/editor-draft-journal';
 import CaptionMedia from 'caption-media';
@@ -86,6 +87,8 @@ export type EditorMediaLedger = {
 export async function loadProjectForEditing(projectId: string) {
   let project = await getProject(projectId);
   if (project) {
+    // Recover source access before thumbnail shortcuts, reconciliation or player creation.
+    project = await ensureProjectVideoAccess(project);
     const loadedProject = project;
     await runBestEffortCleanup('project media reconciliation', [
       reconcileProjectOwnedFiles(loadedProject.id, collectProjectOwnedUris(loadedProject)),
