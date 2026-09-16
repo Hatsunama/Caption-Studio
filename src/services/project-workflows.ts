@@ -1,3 +1,5 @@
+import * as FileSystem from 'expo-file-system/legacy';
+
 import { projectTimelineDuration } from '@/lib/project-timeline';
 import { createCaptionProject, createVideoClip } from '@/lib/project-factory';
 import { addAudioSourceToProject } from '@/lib/audio-timeline';
@@ -21,6 +23,7 @@ import {
 } from '@/services/database';
 import {
   pickAndStoreAudio,
+  storeRecordedAudio,
   pickLinkedVideos,
   pickVideoAndExtractAudio,
   extractAudioFromProjectVideo,
@@ -49,7 +52,7 @@ import {
   retryPendingReadPermissionReleases,
 } from '@/services/media-permissions';
 import type { TranscriptionModelId, TranscriptionProgress } from '@/services/transcription';
-import type { CaptionProject } from '@/types/project';
+import type { CaptionProject, ProjectAudioSource } from '@/types/project';
 import type { ProjectRecordSummary } from '@/types/project-library';
 
 const captionGenerationSession = createCaptionGenerationSession(() => CaptionMedia.cancelAudioExtraction());
@@ -164,29 +167,20 @@ export async function appendAudioToProject(
     ? await pickAndStoreAudio(project.id, sourceId)
     : await pickVideoAndExtractAudio(project.id, sourceId, onExtractSourceChosen);
   if (!importedSource) return null;
-  let source;
-  try {
-    source = await prepareTimelineAudioSource(importedSource);
-  } catch (error) {
-    await runBestEffortCleanup('failed audio waveform preparation', [deleteProjectOwnedFiles(project.id, [importedSource.uri])]);
-    throw error;
-  }
-  const result = addAudioSourceToProject(
-    project,
-    source,
-    `audio-clip-${nonce}`,
-    currentMs,
-    projectTimelineDuration(project),
-  );
-  if (!result) {
-    await runBestEffortCleanup('unused audio import', [deleteProjectOwnedFiles(project.id, [source.uri])]);
-    throw new Error('Move the playhead earlier so the audio has room on the video timeline.');
-  }
-  try {
-    await saveProject(result.project);
-  } catch (error) {
-    await runBestEffortCleanup('failed audio append', [deleteProjectOwnedFiles(project.id, [source.uri])]);
-    throw error;
+  return appendOwnedAudioSource(project, currentMs, importedSource, nonce, 'audio import');
+}
+
+export async function appendRecordedAudioToProject(
+  project: CaptionProject,
+  currentMs: number,
+  recordingUri: string,
+) {
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const source = await storeRecordedAudio(project.id, `audio-source-${nonce}`, recordingUri);
+  const result = await appendOwnedAudioSource(project, currentMs, source, nonce, 'voice-over');
+  const cacheDirectory = FileSystem.cacheDirectory;
+  if (cacheDirectory && recordingUri.startsWith(cacheDirectory)) {
+    await FileSystem.deleteAsync(recordingUri, { idempotent: true }).catch(() => undefined);
   }
   return result;
 }
@@ -222,11 +216,21 @@ export async function appendProjectVideoAudioToProject(
   if (!videoSource) throw new Error('That project video is no longer available.');
   const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const extractedSource = await extractAudioFromProjectVideo(project.id, `audio-source-${nonce}`, videoSource);
+  return appendOwnedAudioSource(project, currentMs, extractedSource, nonce, 'extracted audio');
+}
+
+async function appendOwnedAudioSource(
+  project: CaptionProject,
+  currentMs: number,
+  importedSource: ProjectAudioSource,
+  nonce: string,
+  label: string,
+) {
   let source;
   try {
-    source = await prepareTimelineAudioSource(extractedSource);
+    source = await prepareTimelineAudioSource(importedSource);
   } catch (error) {
-    await runBestEffortCleanup('failed extracted audio waveform preparation', [deleteProjectOwnedFiles(project.id, [extractedSource.uri])]);
+    await runBestEffortCleanup(`failed ${label} waveform preparation`, [deleteProjectOwnedFiles(project.id, [importedSource.uri])]);
     throw error;
   }
   const result = addAudioSourceToProject(
@@ -237,13 +241,13 @@ export async function appendProjectVideoAudioToProject(
     projectTimelineDuration(project),
   );
   if (!result) {
-    await runBestEffortCleanup('unused extracted audio', [deleteProjectOwnedFiles(project.id, [source.uri])]);
+    await runBestEffortCleanup(`unused ${label}`, [deleteProjectOwnedFiles(project.id, [source.uri])]);
     throw new Error('Move the playhead earlier so the audio has room on the video timeline.');
   }
   try {
     await saveProject(result.project);
   } catch (error) {
-    await runBestEffortCleanup('failed extracted audio append', [deleteProjectOwnedFiles(project.id, [source.uri])]);
+    await runBestEffortCleanup(`failed ${label} append`, [deleteProjectOwnedFiles(project.id, [source.uri])]);
     throw error;
   }
   return result;

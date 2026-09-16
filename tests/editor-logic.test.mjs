@@ -310,7 +310,6 @@ test('production builds cannot use the debug signing config', () => {
     'android.permission.FOREGROUND_SERVICE',
     'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
     'android.permission.READ_EXTERNAL_STORAGE',
-    'android.permission.RECORD_AUDIO',
     'android.permission.SYSTEM_ALERT_WINDOW',
   ]);
   assert.match(mediaManifest, /WRITE_EXTERNAL_STORAGE/);

@@ -26,8 +26,8 @@ test('Expo media modules are configured for foreground-only editing', () => {
     supportsPictureInPicture: false,
   });
   assert.deepEqual(pluginOptions('expo-audio'), {
-    microphonePermission: false,
-    recordAudioAndroid: false,
+    microphonePermission: 'Allow Caption Studio to record voice-over narration.',
+    recordAudioAndroid: true,
     enableBackgroundRecording: false,
     enableBackgroundPlayback: false,
   });
