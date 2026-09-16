@@ -511,7 +511,7 @@ export function LayerTimeline(props: {
                   {isCaptions ? captionPage.bodies.map((caption) => (
                     <TimedBlock key={caption.id} onTouchLock={timelineTouchLock} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} lane={captionLayout.laneById.get(caption.id) ?? 0} color={NEON_CAPTION_COLORS[captionIndex.byId.get(caption.id)! % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )) : (
-                    <TimedBlock onTouchLock={timelineTouchLock} label={layer.kind === 'text' ? layer.text : 'IMAGE'} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
+                    <TimedBlock onTouchLock={timelineTouchLock} label={layer.kind === 'text' ? layer.text : 'IMAGE'} thumbnailUri={layer.kind === 'image' ? layer.uri : undefined} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )}
                   {isCaptions ? captionPage.density.map((bin) => (
                     <TimelineDensityBin key={bin.left} {...bin} onPress={() => {
@@ -949,6 +949,7 @@ function TimedBlock(props: {
   lane: number;
   color: string;
   selected: boolean;
+  thumbnailUri?: string;
   waveformPeaks?: number[];
   waveformVisibleStartMs?: number;
   waveformVisibleEndMs?: number;
@@ -982,7 +983,8 @@ function TimedBlock(props: {
             color={props.selected ? '#E8FDFF' : '#B8F7FF'}
           />
         ) : null}
-        <Text numberOfLines={1} style={{ position: 'absolute', left: 7, right: 7, top: 1, color: '#FFFFFF', fontSize: 7, fontWeight: '900', zIndex: 2, textShadowColor: '#00161A', textShadowRadius: 2 }}>{props.label}</Text>
+        {props.thumbnailUri ? <Image source={{ uri: props.thumbnailUri }} contentFit="cover" style={{ position: 'absolute', left: 3, top: 3, width: 24, height: 24, borderRadius: 3, zIndex: 2 }} /> : null}
+        <Text numberOfLines={1} style={{ position: 'absolute', left: props.thumbnailUri ? 33 : 7, right: 7, top: 1, color: '#FFFFFF', fontSize: 7, fontWeight: '900', zIndex: 2, textShadowColor: '#00161A', textShadowRadius: 2 }}>{props.label}</Text>
       </View>
       <DirectTimelineGestureSurface {...props} width={interactionWidth} />
     </View>
