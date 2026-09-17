@@ -286,7 +286,7 @@ function mount(initialProject = fixture()) {
     },
   };
   const transport = {
-    currentMs: 600, isPlaying: false, players: ['a', 'b'], activeSlot: 0, phase: 'ready', isGap: false,
+    currentMs: 600, isPlaying: false, player: 'a', phase: 'ready', isGap: false,
     pause() { transport.isPlaying = false; calls.pauses += 1; dirty = true; },
     play() { transport.isPlaying = true; calls.plays += 1; dirty = true; },
     seek(ms) { transport.currentMs = ms; dirty = true; },

@@ -12,7 +12,7 @@ export function ImageLayerOverlay(props: {
 }) {
   const canvasRef = useRef<View>(null);
   const gesture = useLayerGesture({ id: props.layer.id, geometry: props.layer, interactive: props.interactive,
-    selectable: props.selectable, onSelect: props.onSelect, onStart: props.onInteractionStart, onChange: props.onChange, onEnd: props.onEnd });
+    onStart: props.onInteractionStart, onChange: props.onChange, onEnd: props.onEnd });
   const geometry = resolveLayerGeometry(gesture.geometry);
   return <View ref={canvasRef} pointerEvents="box-none" collapsable={false} style={{ position: 'absolute', inset: 0, zIndex: props.interactive ? 100 : 0 }} onLayout={({ nativeEvent }) => {
     gesture.measureCanvas(nativeEvent.layout.width, nativeEvent.layout.height, canvasRef.current);
@@ -22,6 +22,6 @@ export function ImageLayerOverlay(props: {
       width: `${geometry.box.width * 100}%`, height: `${geometry.box.height * 100}%`,
       transform: [{ rotate: `${geometry.rotation}deg` }, { scaleX: geometry.scale * geometry.scaleX }, { scaleY: geometry.scale * geometry.scaleY }],
     }}><Image source={props.layer.uri} contentFit="contain" style={{ width: '100%', height: '100%', opacity: props.layer.opacity }} /></View>
-    <LayerTransformOverlay geometry={geometry} interactive={props.interactive} selectable={props.selectable} responders={gesture.responders} onDelete={props.onDelete} />
+    <LayerTransformOverlay geometry={geometry} interactive={props.interactive} selectable={props.selectable} responders={gesture.responders} onSelect={props.onSelect} onDelete={props.onDelete} />
   </View>;
 }
