@@ -38,8 +38,10 @@ test('preview layers own hit testing, authored lines, stable transform baselines
   assert.match(captions, /<CaptionPresentation/);
   assert.match(captions, /authored=\{Boolean\(props\.preserveLineBreaks\)\}/);
   assert.match(captions, /ref=\{canvasRef\}/);
+  assert.match(captions, /zIndex: props\.interactive \? 100 : 0/);
   assert.doesNotMatch(captions, /ref=\{\(node\) =>/);
   assert.match(images, /ref=\{canvasRef\}/);
+  assert.match(images, /zIndex: props\.interactive \? 100 : 0/);
   assert.doesNotMatch(images, /ref=\{\(node\) =>/);
   assert.match(presentation, /rawText\.replace\("\\r\\n", "\\n"\)/);
   assert.match(presentation, /text\.contains\('\\n'\)/);
@@ -47,4 +49,11 @@ test('preview layers own hit testing, authored lines, stable transform baselines
   assert.match(gesture, /Boolean\(interactive \|\| \(mode === 'move' && selectable\)\)/);
   assert.match(images, /useLayerGesture/);
   assert.doesNotMatch(images, /function ImageCornerHandle/);
+});
+
+test('timeline seeks retain an already owned source instead of replacing its decoder on transient status', () => {
+  const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
+  assert.match(controller, /const loadedSource = slotSourcesRef\.current\[activeSlotRef\.current\];/);
+  assert.match(controller, /loadedSource\?\.id !== source\.id[\s\S]*loadedSource\.uri !== source\.uri/);
+  assert.doesNotMatch(controller, /const sourceChanged = confirmedSourceIdRef\.current !== source\.id\n\s*\|\| !canReuseVideoSource/);
 });

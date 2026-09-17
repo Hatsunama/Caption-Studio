@@ -1,5 +1,5 @@
 import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project-timeline';
-import { canReuseVideoSource, loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
+import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
 import { useEventListener } from 'expo';
 import { useVideoPlayer, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -260,8 +260,10 @@ export function useTimelineVideoController(
     }
 
     const player = activePlayer();
+    const loadedSource = slotSourcesRef.current[activeSlotRef.current];
     const sourceChanged = confirmedSourceIdRef.current !== source.id
-      || !canReuseVideoSource(slotSourcesRef.current[activeSlotRef.current], source, player.status);
+      || loadedSource?.id !== source.id
+      || loadedSource.uri !== source.uri;
     internalPauseGenerationRef.current = generation;
     player.pause();
     standbyPlayer().pause();
