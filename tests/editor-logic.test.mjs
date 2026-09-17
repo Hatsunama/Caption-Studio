@@ -1419,19 +1419,15 @@ test('timeline keeps a fixed playhead, scrubs its content, renders a ruler, and 
   assert.match(timeline, /onAddVideos/);
 });
 
-test('video transport has dual primed players for seamless clip handoff', () => {
+test('video transport has one ordinary decoder and reserves extra decoders for transition preview only', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
-  assert.match(editor, /timeline-player-a/);
-  assert.match(editor, /timeline-player-b/);
-  assert.match(editor, /players\.map/);
+  assert.match(editor, /testID="timeline-player"/);
+  assert.doesNotMatch(editor, /timeline-player-a|timeline-player-b|players\.map/);
   assert.match(editor, /surfaceType="textureView"/);
   assert.match(editor, /useExoShutter=\{false\}/);
-  assert.match(controller, /playerA/);
-  assert.match(controller, /playerB/);
-  assert.match(controller, /primeStandby/);
-  assert.match(controller, /swapToStandby/);
-  assert.match(controller, /clipHandoffPrimeAt/);
+  assert.match(controller, /const player = useVideoPlayer/);
+  assert.doesNotMatch(controller, /playerB|primeStandby|swapToStandby|clipHandoffPrimeAt/);
   assert.match(controller, /playIntentRef/);
   assert.match(controller, /desiredRef/);
   assert.match(controller, /processingRef/);
@@ -1479,7 +1475,7 @@ test('an unexpected native pause while playback is intended resumes instead of k
     controller.indexOf('const onStatusChange'),
   );
   assert.match(playingChange, /if \(!playIntentRef\.current/);
-  assert.match(playingChange, /player\.play\(\)/);
+  assert.match(playingChange, /activePlayer\(\)\.play\(\)/);
   assert.doesNotMatch(playingChange, /stopTransport\(/);
 });
 

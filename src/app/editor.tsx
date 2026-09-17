@@ -519,7 +519,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const transport = useTimelineVideoController(project, setError);
-  const { players, activeSlot, currentMs, isPlaying } = transport;
+  const { player, currentMs, isPlaying } = transport;
   useTimelineAudioController(project, currentMs, isPlaying, runtimePolicy.mediaAdmitted, setError);
   useProjectAudioWaveforms(
     project,
@@ -1840,22 +1840,16 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 { rotate: `${currentVideoTransform.rotation}deg` },
               ],
             }}>
-            {players.map((slotPlayer, slot) => (
-              <VideoView
-                key={slot === 0 ? 'timeline-player-a' : 'timeline-player-b'}
-                pointerEvents="none"
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  opacity: slot !== activeSlot ? 0 : 1,
-                }}
-                player={slotPlayer}
-                nativeControls={false}
-                contentFit={currentVideoTransform.fit === 'fill' ? 'cover' : 'contain'}
-                surfaceType="textureView"
-                useExoShutter={false}
-              />
-            ))}
+            <VideoView
+              testID="timeline-player"
+              pointerEvents="none"
+              style={{ position: 'absolute', inset: 0 }}
+              player={player}
+              nativeControls={false}
+              contentFit={currentVideoTransform.fit === 'fill' ? 'cover' : 'contain'}
+              surfaceType="textureView"
+              useExoShutter={false}
+            />
           </View>
           {transport.isGap ? (
             <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>

@@ -5,7 +5,7 @@ import { chrome } from '@/lib/ui-theme';
 
 export function LayerTransformOverlay(props: {
   geometry: LayerGeometryInput; interactive?: boolean; selectable?: boolean;
-  responders: ReturnType<typeof useLayerGesture>['responders']; onDelete?: () => void;
+  responders: ReturnType<typeof useLayerGesture>['responders']; onSelect?: () => void; onDelete?: () => void;
 }) {
   if (!props.interactive && !props.selectable) return null;
   const extent = layerExtent(props.geometry);
@@ -13,7 +13,9 @@ export function LayerTransformOverlay(props: {
     left: `${(props.geometry.position.x - extent.width / 2) * 100}%`, top: `${(props.geometry.position.y - extent.height / 2) * 100}%`,
     width: `${extent.width * 100}%`, height: `${extent.height * 100}%`, transform: [{ rotate: `${props.geometry.rotation}deg` }],
   }}>
-    <View {...props.responders.move} collapsable={false} style={{ position: 'absolute', inset: 0 }} />
+    {props.interactive ? <View {...props.responders.move} collapsable={false} style={{ position: 'absolute', inset: 0 }} /> : null}
+    {!props.interactive && props.selectable ? <Pressable accessibilityRole="button" accessibilityLabel="Select layer" onPress={props.onSelect}
+      style={{ position: 'absolute', inset: 0 }} /> : null}
     {props.interactive ? <>
       <View pointerEvents="none" style={{ position: 'absolute', inset: 0, borderWidth: 2, borderColor: chrome.accent, borderRadius: 4 }} />
       {(['left', 'right', 'top', 'bottom', 'corner'] as LayerGestureMode[]).map((mode) => {

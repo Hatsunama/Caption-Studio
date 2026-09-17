@@ -57,8 +57,8 @@ function createGestureRuntime(
 }
 
 export function useLayerGesture(options: {
-  id: string; geometry: LayerGeometryInput; interactive?: boolean; selectable?: boolean;
-  onSelect?: () => void; onStart?: () => void; onChange?: (geometry: LayerGeometry) => void; onEnd?: () => void;
+  id: string; geometry: LayerGeometryInput; interactive?: boolean;
+  onStart?: () => void; onChange?: (geometry: LayerGeometry) => void; onEnd?: () => void;
 }) {
   const optionsRef = useRef(options);
   optionsRef.current = options;
@@ -92,10 +92,7 @@ export function useLayerGesture(options: {
 
   const begin = useCallback((mode: LayerGestureMode, event: GestureResponderEvent) => {
     const current = optionsRef.current;
-    if (!current.interactive) {
-      current.onSelect?.();
-      return;
-    }
+    if (!current.interactive) return;
     const points = touches(event);
     const owner = { id: current.id, source: current.geometry, onChange: current.onChange, onEnd: current.onEnd };
     const view = viewRef.current;
@@ -137,8 +134,7 @@ export function useLayerGesture(options: {
       mode,
       PanResponder.create({
         onStartShouldSetPanResponder: () => {
-          const { interactive, selectable } = optionsRef.current;
-          return !runtime.active() && Boolean(interactive || (mode === 'move' && selectable));
+          return !runtime.active() && Boolean(optionsRef.current.interactive);
         },
         onMoveShouldSetPanResponder: () => false,
         onPanResponderTerminationRequest: () => false,

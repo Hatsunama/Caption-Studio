@@ -19,10 +19,9 @@ test('caption generation consumes the audible timeline and restores real project
   assert.match(moduleSource, /TimelineAudioRenderer\.cancel\(\)/);
 });
 
-test('ordinary transport operations invalidate and pause stale standby media without reloading it', async () => {
+test('ordinary transport owns one decoder and never creates a hidden standby player', async () => {
   const controller = await readFile(new URL('src/hooks/use-timeline-video-controller.ts', repositoryRoot), 'utf8');
-  assert.doesNotMatch(controller, /replaceAsync\(null\)/);
-  assert.match(controller, /const invalidateStandbyPrime = useCallback/);
-  assert.match(controller, /players\[oppositeTimelineSlot\(activeSlotRef\.current\)\]\.pause\(\)/);
-  assert.match(controller, /await loadPlayableVideoSource\(player, source\.uri\)/);
+  assert.match(controller, /const player = useVideoPlayer/);
+  assert.doesNotMatch(controller, /playerB|standby|primeStandby|swapToStandby/);
+  assert.match(controller, /await loadPlayableVideoSource\(activePlayer\(\), source\.uri\)/);
 });

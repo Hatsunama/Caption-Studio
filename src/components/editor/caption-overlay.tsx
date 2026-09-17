@@ -31,7 +31,7 @@ export function CaptionOverlay(props: {
     ?? (props.selectionCaption ? resolveCaptionStyle(props.projectStyle, props.selectionCaption) : style),
   [props.selectionStyle, props.selectionCaption, props.projectStyle, style]);
   const gesture = useLayerGesture({ id: props.interactionId ?? props.caption?.id ?? '', geometry: selectionStyle,
-    interactive: props.interactive, selectable: props.selectable, onSelect: props.onSelect,
+    interactive: props.interactive,
     onStart: props.onInteractionStart, onChange: props.onTransform, onEnd: props.onTransformEnd });
   if (!props.caption && !props.selectionCaption) return null;
   return <View ref={canvasRef} pointerEvents="box-none" collapsable={false} style={{ position: 'absolute', inset: 0, zIndex: props.interactive ? 100 : 0 }}
@@ -43,6 +43,6 @@ export function CaptionOverlay(props: {
         geometry={gesture.geometry}
         currentMs={props.currentMs} authored={Boolean(props.preserveLineBreaks)} editingPreview={props.editingPreview} />
     ))}
-    <LayerTransformOverlay geometry={gesture.geometry} interactive={props.interactive} selectable={props.selectable} responders={gesture.responders} onDelete={props.onDelete} />
+    <LayerTransformOverlay geometry={gesture.geometry} interactive={props.interactive} selectable={props.selectable} responders={gesture.responders} onSelect={props.onSelect} onDelete={props.onDelete} />
   </View>;
 }

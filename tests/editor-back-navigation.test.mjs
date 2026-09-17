@@ -87,7 +87,7 @@ function mount(t, initialProject = fixture()) {
     canGoBack: () => true,
   };
   const transport = {
-    currentMs: 600, isPlaying: false, players: ['a', 'b'], activeSlot: 0, phase: 'ready', isGap: false,
+    currentMs: 600, isPlaying: false, player: 'a', phase: 'ready', isGap: false,
     pause() { if (transport.isPlaying) { transport.isPlaying = false; dirty = true; } },
     seek(ms) { transport.currentMs = ms; dirty = true; },
     synchronizeProject() {},
