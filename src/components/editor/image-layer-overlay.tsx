@@ -14,7 +14,7 @@ export function ImageLayerOverlay(props: {
   const gesture = useLayerGesture({ id: props.layer.id, geometry: props.layer, interactive: props.interactive,
     selectable: props.selectable, onSelect: props.onSelect, onStart: props.onInteractionStart, onChange: props.onChange, onEnd: props.onEnd });
   const geometry = resolveLayerGeometry(gesture.geometry);
-  return <View ref={canvasRef} pointerEvents="box-none" collapsable={false} style={{ position: 'absolute', inset: 0 }} onLayout={({ nativeEvent }) => {
+  return <View ref={canvasRef} pointerEvents="box-none" collapsable={false} style={{ position: 'absolute', inset: 0, zIndex: props.interactive ? 100 : 0 }} onLayout={({ nativeEvent }) => {
     gesture.measureCanvas(nativeEvent.layout.width, nativeEvent.layout.height, canvasRef.current);
   }}>
     <View pointerEvents="none" style={{ position: 'absolute',

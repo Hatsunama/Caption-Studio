@@ -34,7 +34,7 @@ export function CaptionOverlay(props: {
     interactive: props.interactive, selectable: props.selectable, onSelect: props.onSelect,
     onStart: props.onInteractionStart, onChange: props.onTransform, onEnd: props.onTransformEnd });
   if (!props.caption && !props.selectionCaption) return null;
-  return <View ref={canvasRef} pointerEvents="box-none" collapsable={false} style={{ position: 'absolute', inset: 0 }}
+  return <View ref={canvasRef} pointerEvents="box-none" collapsable={false} style={{ position: 'absolute', inset: 0, zIndex: props.interactive ? 100 : 0 }}
     onLayout={({ nativeEvent }) => {
       gesture.measureCanvas(nativeEvent.layout.width, nativeEvent.layout.height, canvasRef.current);
     }}>
