@@ -11,10 +11,9 @@ import java.util.function.BooleanSupplier;
 import java.util.function.IntConsumer;
 
 final class OfficialQwenModelVerifier implements TranslationModelVerifier {
-  static final long EXPECTED_MODEL_BYTES = 1_597_931_520L;
-  static final String EXPECTED_MODEL_SHA256 =
-      "faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9";
-  static final String MODEL_ID = "qwen2.5-1.5b-q8";
+  static final long EXPECTED_MODEL_BYTES = GeneratedProductContract.MODEL_BYTES;
+  static final String EXPECTED_MODEL_SHA256 = GeneratedProductContract.MODEL_SHA256;
+  static final String MODEL_ID = GeneratedProductContract.MODEL_ID;
   private VerifiedModel verifiedModel;
 
   @Override

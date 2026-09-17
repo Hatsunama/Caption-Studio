@@ -57,8 +57,8 @@ export type NaturalCaptionTranslationResult = {
   durationMs: number;
   backend: 'cpu';
   offline: true;
-  modelId: 'qwen2.5-1.5b-q8';
-  promptContract: 'qwen2.5-caption-json-v2';
+  modelId: typeof TRANSLATION_RELEASE_CONTRACT.id;
+  promptContract: typeof TRANSLATION_RELEASE_CONTRACT.promptContract;
   batchCount: number;
 };
 
@@ -92,3 +92,4 @@ export type NaturalCaptionTranslationErrorCode =
   | 'E_TRANSLATION_UNSUPPORTED'
   | 'E_TRANSLATION_FAILED'
   | 'E_TRANSLATION_RELEASED';
+import { TRANSLATION_RELEASE_CONTRACT } from './TranslationReleaseContract.generated';

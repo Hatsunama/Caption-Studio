@@ -8,6 +8,7 @@ import { editorSelectionState, shouldOpenEditorTool } from '../src/lib/editor-se
 import { applyStylePatch, resolveCaptionStyle } from '../src/lib/style-resolver.ts';
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 import { CaptionGenerationCancelledError } from '../src/services/caption-generation-session.ts';
+import { createEditorSession } from '../src/services/editor-session.ts';
 
 // Execute the workspace's real callbacks and menu JSX with only native UI,
 // persistence, and generation replaced. This catches selection guards and wiring.
@@ -25,9 +26,6 @@ function visit(node) {
   ts.forEachChild(node, visit);
 }
 visit(source);
-const createEditorSession = evaluate(source.statements.find((node) => ts.isFunctionDeclaration(node)
-  && node.name?.text === 'createEditorSession').getText(source), { Error });
-
 function evaluate(expression, context) {
   assert.ok(expression, 'The production callback or menu must exist');
   const { outputText } = ts.transpileModule(`(() => { return (${expression}); })();`, {

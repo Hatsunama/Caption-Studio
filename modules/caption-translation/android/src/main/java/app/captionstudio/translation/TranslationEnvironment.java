@@ -10,4 +10,8 @@ interface TranslationEnvironment {
   }
 
   void verifyDeviceCapacity(File model) throws NaturalCaptionTranslator.TranslationFailure;
+
+  default int runtimeThreadCount() {
+    return 1;
+  }
 }

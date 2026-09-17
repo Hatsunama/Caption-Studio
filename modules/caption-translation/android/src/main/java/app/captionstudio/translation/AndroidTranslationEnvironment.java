@@ -55,6 +55,18 @@ final class AndroidTranslationEnvironment implements TranslationEnvironment {
   }
 
   @Override
+  public int runtimeThreadCount() {
+    ActivityManager activityManager =
+        (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+    if (activityManager == null) return 1;
+    return selectRuntimeThreadCount(
+        Runtime.getRuntime().availableProcessors(),
+        activityManager.getMemoryClass(),
+        activityManager.isLowRamDevice()
+    );
+  }
+
+  @Override
   public File prepareCheckpointDirectory() {
     // Unlike cacheDir, this survives process death and Android cache eviction.
     // noBackupFilesDir keeps subtitle text out of cloud/device backups.
@@ -72,6 +84,12 @@ final class AndroidTranslationEnvironment implements TranslationEnvironment {
     return supports64Bit
         && !lowRamDevice
         && totalMemoryBytes >= MINIMUM_TOTAL_MEMORY_BYTES;
+  }
+
+  static int selectRuntimeThreadCount(int availableProcessors, int memoryClassMb, boolean lowRamDevice) {
+    if (lowRamDevice || availableProcessors <= 2 || memoryClassMb < 256) return 1;
+    if (availableProcessors <= 4 || memoryClassMb < 512) return 2;
+    return Math.min(4, availableProcessors);
   }
 
   private static NaturalCaptionTranslator.TranslationFailure unsupported(String message) {

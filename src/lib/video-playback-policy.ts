@@ -2,6 +2,12 @@ import type { ClipTimelineEntry } from '@/lib/video-timeline';
 
 export const CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS = 48;
 
+export function shouldApplyTimelineSeek(currentSeconds: number, targetSeconds: number) {
+  return !Number.isFinite(currentSeconds)
+    || !Number.isFinite(targetSeconds)
+    || Math.abs(currentSeconds - targetSeconds) > 0.001;
+}
+
 export function canContinueTimelineClip(
   current: ClipTimelineEntry,
   next: ClipTimelineEntry | undefined,

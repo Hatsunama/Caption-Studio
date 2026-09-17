@@ -1,9 +1,18 @@
 $ErrorActionPreference = 'Stop'
 
-$Repository = 'Hatsunama/Caption-Studio'
-$MinimumVersion = [Version]'1.4.61'
-$Package = 'com.hatsunama.captionstudio.fixed'
-$AssetName = 'caption-studio-android.apk'
+$ContractUri = 'https://raw.githubusercontent.com/Hatsunama/Caption-Studio/main/config/product-contract.json'
+$Contract = Invoke-RestMethod -Uri $ContractUri -Headers @{ Accept = 'application/vnd.github+json' }
+$Repository = [string]$Contract.repository
+$MinimumVersion = [Version]([string]$Contract.android.release.minimumVersion)
+$Package = [string]$Contract.android.release.package
+$AssetName = [string]$Contract.android.release.assetName
+$ExpectedCertificate = ([string]$Contract.android.release.signingCertificateSha256).ToUpperInvariant()
+if ($Repository -ne 'Hatsunama/Caption-Studio' -or
+    $Package -notmatch '^[a-zA-Z][a-zA-Z0-9_.]+$' -or
+    $AssetName -notmatch '^[a-zA-Z0-9._-]+\.apk$' -or
+    $ExpectedCertificate -notmatch '^[A-F0-9]{64}$') {
+    throw 'The Caption Studio product contract is invalid. Refusing installation.'
+}
 $TempDir = Join-Path $env:TEMP ("CaptionStudioInstaller-" + [Guid]::NewGuid().ToString('N'))
 $Apk = Join-Path $TempDir $AssetName
 $OwnsTempDir = $false
@@ -68,9 +77,55 @@ function Invoke-AssetDownload {
     }
 }
 
+function Resolve-ApkSigner {
+    foreach ($Name in @('apksigner.bat', 'apksigner')) {
+        $Command = Get-Command $Name -ErrorAction SilentlyContinue
+        if ($Command) { return $Command.Source }
+    }
+    $AdbCommand = Get-Command adb -ErrorAction SilentlyContinue
+    if (-not $AdbCommand) { return $null }
+    $SdkRoot = Split-Path -Parent (Split-Path -Parent $AdbCommand.Source)
+    $BuildTools = Join-Path $SdkRoot 'build-tools'
+    if (-not (Test-Path -LiteralPath $BuildTools -PathType Container)) { return $null }
+    foreach ($Directory in @(Get-ChildItem -LiteralPath $BuildTools -Directory | Sort-Object {
+        try { [Version]$_.Name } catch { [Version]'0.0' }
+    } -Descending)) {
+        $Candidate = Join-Path $Directory.FullName 'apksigner.bat'
+        if (Test-Path -LiteralPath $Candidate -PathType Leaf) { return $Candidate }
+    }
+    $null
+}
+
+function Get-ApkCertificateSha256 {
+    param(
+        [Parameter(Mandatory)][string]$ApkSigner,
+        [Parameter(Mandatory)][string]$ApkPath
+    )
+    $PreviousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $PSNativeCommandUseErrorActionPreference = $false
+        $Output = @(& $ApkSigner verify --print-certs $ApkPath 2>&1 | ForEach-Object { $_.ToString() })
+        $ExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $PreviousPreference
+    }
+    if ($ExitCode -ne 0) { throw 'The downloaded APK signature is invalid. Refusing installation.' }
+    $Line = @($Output | Where-Object { $_ -match 'certificate SHA-256 digest:' } | Select-Object -First 1)
+    if ($Line.Count -ne 1) { throw 'The downloaded APK signing certificate could not be verified.' }
+    $CertificateMatch = [regex]::Match([string]$Line[0], 'certificate SHA-256 digest:\s*([A-Fa-f0-9:]{64,95})')
+    if (-not $CertificateMatch.Success) { throw 'The downloaded APK signing certificate could not be verified.' }
+    ($CertificateMatch.Groups[1].Value -replace ':', '').ToUpperInvariant()
+}
+
 try {
     if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
         throw 'adb was not found. Install Android SDK Platform Tools and add it to PATH.'
+    }
+    $ApkSigner = Resolve-ApkSigner
+    if (-not $ApkSigner) {
+        throw 'Android SDK Build Tools with apksigner are required to verify the APK signing certificate.'
     }
 
     $Headers = @{ Accept = 'application/vnd.github+json' }
@@ -139,6 +194,10 @@ try {
     $ActualHash = (Get-FileHash -LiteralPath $Apk -Algorithm SHA256).Hash
     if ($ActualHash -ne $ExpectedHash) {
         throw 'APK checksum mismatch. Refusing installation.'
+    }
+    $ActualCertificate = Get-ApkCertificateSha256 -ApkSigner $ApkSigner -ApkPath $Apk
+    if ($ActualCertificate -ne $ExpectedCertificate) {
+        throw 'APK signing certificate mismatch. Refusing installation.'
     }
 
     $InstallOutput = @(Invoke-Adb @('-s', $Serial, 'install', '-r', '--no-streaming', $Apk))

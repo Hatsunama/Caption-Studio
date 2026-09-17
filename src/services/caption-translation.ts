@@ -1,6 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import CaptionMedia from 'caption-media';
 import CaptionTranslation, {
+  TRANSLATION_RELEASE_CONTRACT,
   type NaturalCaptionTranslationLimits,
   type NaturalCaptionTranslationInput,
 } from 'caption-translation';
@@ -28,16 +29,7 @@ import {
   resumableModelDownloadReservation,
 } from '@/services/verified-model-download';
 
-const NATURAL_TRANSLATION_MODEL = {
-  id: 'qwen2.5-1.5b-q8',
-  label: 'Natural multilingual',
-  fileName: 'Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
-  downloadBytes: 1_597_931_520,
-  sha256: 'faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9',
-  revision: '19edb84c69a0212f29a6ef17ba0d6f278b6a1614',
-  promptVersion: 5,
-  downloadUrl: 'https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/19edb84c69a0212f29a6ef17ba0d6f278b6a1614/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
-} as const;
+const NATURAL_TRANSLATION_MODEL = TRANSLATION_RELEASE_CONTRACT;
 
 export const NATURAL_TRANSLATION_MODEL_LABEL = NATURAL_TRANSLATION_MODEL.label;
 
@@ -261,7 +253,7 @@ export async function translateNaturalCaptionOperations(options: {
         result.offline !== true
         || result.backend !== 'cpu'
         || result.modelId !== NATURAL_TRANSLATION_MODEL.id
-        || result.promptContract !== 'qwen2.5-caption-json-v2'
+        || result.promptContract !== NATURAL_TRANSLATION_MODEL.promptContract
         || result.batchCount !== totalBatches
         || result.operations.length !== prepared.length
       ) {
@@ -509,7 +501,7 @@ async function translateWithNative(
     result.offline !== true
     || result.backend !== 'cpu'
     || result.modelId !== NATURAL_TRANSLATION_MODEL.id
-    || result.promptContract !== 'qwen2.5-caption-json-v2'
+    || result.promptContract !== NATURAL_TRANSLATION_MODEL.promptContract
   ) {
     throw new Error('The local model returned an incomplete translation. No captions were changed.');
   }

@@ -2,10 +2,9 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SIDECAR_NAME = 'Caption Studio';
-const SIDECAR_SLUG = 'caption-studio-fixed';
-const SIDECAR_SCHEME = 'captionstudiofixed';
-const SIDECAR_PACKAGE = 'com.hatsunama.captionstudio.fixed';
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const productContract = JSON.parse(await readFile(path.join(repositoryRoot, 'config', 'product-contract.json'), 'utf8'));
+const releaseContract = productContract.android.release;
 
 export function configureSidecarApp(config, version, versionCode) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) {
@@ -14,7 +13,7 @@ export function configureSidecarApp(config, version, versionCode) {
   if (!Number.isSafeInteger(versionCode) || versionCode < 1) {
     throw new Error('Sidecar versionCode must be a positive integer.');
   }
-  if (config?.expo?.android?.package !== 'com.hatsunama.captionstudio') {
+  if (config?.expo?.android?.package !== productContract.android.sourcePackage) {
     throw new Error('Refusing to derive a sidecar from an unexpected Android package.');
   }
 
@@ -22,18 +21,18 @@ export function configureSidecarApp(config, version, versionCode) {
     ...config,
     expo: {
       ...config.expo,
-      name: SIDECAR_NAME,
-      slug: SIDECAR_SLUG,
-      scheme: SIDECAR_SCHEME,
+      name: releaseContract.name,
+      slug: releaseContract.slug,
+      scheme: releaseContract.scheme,
       version,
       android: {
         ...config.expo.android,
-        package: SIDECAR_PACKAGE,
+        package: releaseContract.package,
         versionCode,
       },
       extra: {
         ...config.expo.extra,
-        releaseChannel: 'fixed-sidecar',
+        releaseChannel: releaseContract.channel,
       },
     },
   };

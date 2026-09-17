@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { canContinueTimelineClip } from '../src/lib/video-playback-policy.ts';
+import { canContinueTimelineClip, shouldApplyTimelineSeek } from '../src/lib/video-playback-policy.ts';
 import {
   TIMELINE_PLAYER_BUFFER_OPTIONS,
   TRANSITION_PLAYER_BUFFER_OPTIONS,
@@ -37,6 +37,12 @@ test('contiguous cuts on one source keep the active decoder and audio clock', ()
   };
   assert.equal(canContinueTimelineClip(current, next), true);
   assert.equal(canContinueTimelineClip(current, { ...next, clip: { ...next.clip, sourceStartMs: 2_500 } }), false);
+});
+
+test('explicit seeks compare with the player position rather than a stale requested position', () => {
+  assert.equal(shouldApplyTimelineSeek(15, 10), true);
+  assert.equal(shouldApplyTimelineSeek(10, 10), false);
+  assert.equal(shouldApplyTimelineSeek(Number.NaN, 10), true);
 });
 
 test('timeline and transition players receive distinct lifecycle settings', () => {

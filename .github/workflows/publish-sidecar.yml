@@ -36,6 +36,9 @@ jobs:
           java-version: 17
           cache: gradle
 
+      - name: Load product contract
+        run: node ./scripts/generate-product-contract.mjs --check --github-env
+
       - name: Validate release inputs
         shell: bash
         env:
@@ -64,6 +67,7 @@ jobs:
       - name: Install and verify locked project
         run: |
           npm ci
+          npm run verify:product-contract
           npm audit --omit=dev --audit-level=high
           npm run test:logic
           npx tsc --noEmit
@@ -80,7 +84,7 @@ jobs:
       - name: Generate clean Android project
         env:
           NODE_ENV: production
-          CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE: com.hatsunama.captionstudio.fixed
+          CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE: ${{ env.CAPTION_STUDIO_RELEASE_PACKAGE }}
         run: |
           npx expo prebuild --platform android --clean --no-install
           node ./scripts/patch-react-native-gradle.js
@@ -138,19 +142,21 @@ jobs:
           ndk_root="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           badging="$($build_tools/aapt dump badging "$source_apk")"
           printf '%s\n' "$badging"
-          grep -Fq "package: name='com.hatsunama.captionstudio.fixed' versionCode='$VERSION_CODE' versionName='$VERSION'" <<< "$badging"
+          grep -Fq "package: name='$CAPTION_STUDIO_RELEASE_PACKAGE' versionCode='$VERSION_CODE' versionName='$VERSION'" <<< "$badging"
           grep -Fq "targetSdkVersion:'36'" <<< "$badging"
           "$build_tools/zipalign" -c -P 16 4 "$source_apk"
           bash ./scripts/check-elf-16k-alignment.sh "$source_apk" "$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
           certificate="$($build_tools/apksigner verify --verbose --print-certs "$source_apk")"
           printf '%s\n' "$certificate"
+          actual_certificate="$(sed -nE 's/^.*certificate SHA-256 digest: ([0-9a-fA-F]+).*$/\1/p' <<< "$certificate" | head -n 1 | tr '[:upper:]' '[:lower:]')"
+          test "$actual_certificate" = "$CAPTION_STUDIO_RELEASE_CERT_SHA256"
           if grep -Eqi "Android Debug|androiddebugkey|Caption Studio CI" <<< "$certificate"; then
             echo 'APK has an invalid signing identity.' >&2
             exit 1
           fi
           mkdir -p dist
-          cp "$source_apk" dist/caption-studio-android.apk
-          (cd dist && sha256sum caption-studio-android.apk > caption-studio-android.apk.sha256)
+          cp "$source_apk" "dist/$CAPTION_STUDIO_RELEASE_ASSET"
+          (cd dist && sha256sum "$CAPTION_STUDIO_RELEASE_ASSET" > "$CAPTION_STUDIO_RELEASE_ASSET.sha256")
 
       - name: Publish immutable prerelease
         shell: bash
@@ -161,11 +167,11 @@ jobs:
           set -euo pipefail
           tag="v${VERSION}"
           gh release create "$tag" \
-            dist/caption-studio-android.apk \
-            dist/caption-studio-android.apk.sha256 \
+            "dist/$CAPTION_STUDIO_RELEASE_ASSET" \
+            "dist/$CAPTION_STUDIO_RELEASE_ASSET.sha256" \
             --prerelease \
             --title "Caption Studio ${VERSION}" \
-            --notes "Data-preserving Android build from main at $GITHUB_SHA. It updates package com.hatsunama.captionstudio.fixed without uninstalling, clearing, or migrating either Caption Studio installation."
+            --notes "Data-preserving Android build from main at $GITHUB_SHA. It updates package $CAPTION_STUDIO_RELEASE_PACKAGE without uninstalling, clearing, or migrating either Caption Studio installation."
 
       - name: Retain Caption Studio APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -33,9 +33,9 @@ test('background processing and person motion have no executable product path', 
 
 test('legacy project metadata is inert but remains visible to asset cleanup', () => {
   const schema = source('../src/lib/project-schema.ts');
-  const database = source('../src/services/database.ts');
+  const codec = source('../src/lib/project-codec.ts');
   const lifecycle = source('../src/lib/media-lifecycle.ts');
   assert.match(schema, /function decodeBackgroundReplacement[\s\S]*enabled: false[\s\S]*keyframes: \[\]/);
-  assert.match(database, /function hydrateBackgroundReplacement[\s\S]*enabled: false[\s\S]*keyframes: \[\]/);
+  assert.match(codec, /function hydrateBackgroundReplacement[\s\S]*enabled: false[\s\S]*keyframes: \[\]/);
   assert.match(lifecycle, /project\.backgroundReplacement\.source/);
 });

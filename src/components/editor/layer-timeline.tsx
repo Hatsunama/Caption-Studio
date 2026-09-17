@@ -694,7 +694,7 @@ function ClipFrameThumb(props: {
   style: object;
   contentFit: 'cover' | 'contain';
 }) {
-  const cacheKey = `${props.projectId}:${props.clipId}:${Math.round(props.sourceStartMs)}`;
+  const cacheKey = `${props.projectId}:${props.clipId}:${props.sourceUri ?? ''}:${Math.round(props.sourceStartMs)}`;
   const [generatedUri, setGeneratedUri] = useState<string | undefined>(() => clipThumbCache.get(cacheKey));
   useEffect(() => {
     let cancelled = false;

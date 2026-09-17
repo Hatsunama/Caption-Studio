@@ -52,7 +52,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final int MAX_OUTPUT_CHARACTERS = 65_536;
   static final int MAX_OUTPUT_TEXT_CHARACTERS = 2_000;
   static final int MAX_TOTAL_OUTPUT_CHARACTERS = 16_000;
-  static final String PROMPT_CONTRACT = "qwen2.5-caption-json-v2";
+  static final String PROMPT_CONTRACT = GeneratedProductContract.PROMPT_CONTRACT;
   // Bump when runtime settings or response acceptance change; old accepted text is not evidence of validity.
   static final String CHECKPOINT_PROFILE = "v5;litertlm-0.16.1;cpu;4096;128-1536;topk1;topp1;temperature0;seed0;isolated-fragments-480;strict-boundary";
 
@@ -438,7 +438,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
 
   private TranslationRuntime openRuntime(ActiveRun run, File model) throws Exception {
     checkCancelled(run);
-    int threadCount = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors()));
+    int threadCount = environment.runtimeThreadCount();
     TranslationRuntime opened = runtimeFactory.open(model, environment.prepareCacheDirectory(), threadCount, SYSTEM_INSTRUCTION);
     run.nativeLifecycleLock.lock();
     try { run.runtime.set(opened); }

@@ -64,7 +64,6 @@ export function createVideoExportSession(cancelNative: () => Promise<void>) {
           attempt.nativeStarted = true;
           try {
             const value = await start();
-            throwIfCancelled();
             return value;
           } catch (error) {
             throwIfCancelled();

@@ -11,7 +11,11 @@ import {
   timelineTimeAt,
   type ClipTimelineEntry,
 } from '@/lib/video-timeline';
-import { CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS, canContinueTimelineClip } from '@/lib/video-playback-policy';
+import {
+  CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS,
+  canContinueTimelineClip,
+  shouldApplyTimelineSeek,
+} from '@/lib/video-playback-policy';
 import { configureTimelinePlayer } from '@/services/video-player-runtime';
 import type { CaptionProject, ProjectVideoSource } from '@/types/project';
 
@@ -47,7 +51,6 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const boundaryClipIdRef = useRef<string | undefined>(undefined);
   const gapFrameRef = useRef<number | undefined>(undefined);
   const internalPauseGenerationRef = useRef<number | undefined>(undefined);
-  const lastRequestedSourceTimeRef = useRef<{ clipId?: string; timeSeconds?: number }>({});
   const reloadRequestedRef = useRef(false);
   const mountedRef = useRef(true);
 
@@ -97,11 +100,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     media.muted = entry.clip.muted;
     media.volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
     const timeSeconds = sourceTimeAt(entry, timelineMs) / 1_000;
-    const last = lastRequestedSourceTimeRef.current;
-    if (last.clipId !== entry.clip.id || last.timeSeconds == null || Math.abs(last.timeSeconds - timeSeconds) >= 0.075) {
-      media.currentTime = timeSeconds;
-      lastRequestedSourceTimeRef.current = { clipId: entry.clip.id, timeSeconds };
-    }
+    if (shouldApplyTimelineSeek(media.currentTime, timeSeconds)) media.currentTime = timeSeconds;
   };
   const runGap = (startMs: number, endMs: number, next: ClipTimelineEntry | undefined, generation: number) => {
     cancelGapClock();
@@ -146,7 +145,6 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     if (sourceChanged) {
       setPhase('loading');
       loadedSourceRef.current = source;
-      lastRequestedSourceTimeRef.current = {};
       try {
         await loadPlayableVideoSource(activePlayer(), source.uri);
       } catch (error) {
@@ -252,7 +250,6 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       media.playbackRate = next.clip.playbackRate;
       media.muted = next.clip.muted;
       media.volume = clipPlaybackVolume(next.clip, 0);
-      lastRequestedSourceTimeRef.current = { clipId: next.clip.id, timeSeconds: media.currentTime };
       setCurrentMs(next.startMs);
       setPhase('ready');
       return;

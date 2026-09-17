@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = new URL('../', import.meta.url);
+const productContract = JSON.parse(readFileSync(fileURLToPath(new URL('config/product-contract.json', root)), 'utf8'));
 
 test('side-by-side release derives an isolated Android identity', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'caption-studio-sidecar-'));
@@ -27,10 +28,10 @@ test('side-by-side release derives an isolated Android identity', async () => {
     assert.equal(result.status, 0, result.stderr);
     const configured = JSON.parse(readFileSync(configPath, 'utf8'));
     assert.equal(configured.expo.name, 'Caption Studio');
-    assert.equal(configured.expo.android.package, 'com.hatsunama.captionstudio.fixed');
+    assert.equal(configured.expo.android.package, productContract.android.release.package);
     assert.equal(configured.expo.android.versionCode, 15);
     assert.equal(configured.expo.version, '1.4.3');
-    assert.equal(configured.expo.scheme, 'captionstudiofixed');
+    assert.equal(configured.expo.scheme, productContract.android.release.scheme);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -40,12 +41,13 @@ test('release workflow uses stable secrets and publishes a verified immutable AP
   const workflow = await readFile(new URL('.github/workflows/publish-sidecar.yml', root), 'utf8');
   assert.match(workflow, /workflow_dispatch/);
   assert.match(workflow, /CAPTION_STUDIO_FIXED_KEYSTORE_BASE64/);
-  assert.match(workflow, /com\.hatsunama\.captionstudio\.fixed/);
+  assert.match(workflow, /CAPTION_STUDIO_RELEASE_PACKAGE/);
+  assert.match(workflow, /CAPTION_STUDIO_RELEASE_CERT_SHA256/);
   assert.match(workflow, /apksigner verify --verbose --print-certs/);
   assert.match(workflow, /zipalign" -c -P 16 4/);
   assert.match(workflow, /gh release create/);
   assert.match(workflow, /tag="v\$\{VERSION\}"/);
-  assert.match(workflow, /caption-studio-android\.apk/);
+  assert.match(workflow, /CAPTION_STUDIO_RELEASE_ASSET/);
   assert.match(workflow, /:app:lintRelease/);
   assert.match(workflow, /--init-script \.\.\/scripts\/first-party-android-lint\.gradle/);
   assert.doesNotMatch(workflow, /Caption Studio Fixed/);
@@ -64,13 +66,15 @@ test('verification workflow runs Android lint before retaining release artifacts
 
 test('installer is fail-closed and cannot delete the production app', async () => {
   const installer = await readFile(new URL('scripts/install-caption-studio.ps1', root), 'utf8');
-  const appConfig = JSON.parse(await readFile(new URL('app.json', root), 'utf8'));
-  assert.ok(installer.includes(`$MinimumVersion = [Version]'${appConfig.expo.version}'`));
+  assert.match(installer, /config\/product-contract\.json/);
+  assert.match(installer, /signingCertificateSha256/);
+  assert.match(installer, /Get-ApkCertificateSha256/);
+  assert.match(installer, /apksigner/);
   assert.match(installer, /Multiple Android devices are connected/);
   assert.match(installer, /device\|unauthorized\|offline/);
   assert.match(installer, /Get-FileHash -LiteralPath \$Apk -Algorithm SHA256/);
   assert.match(installer, /'install', '-r', '--no-streaming'/);
-  assert.match(installer, /com\.hatsunama\.captionstudio\.fixed/);
+  assert.match(installer, /\$Package = \[string\]\$Contract\.android\.release\.package/);
   assert.doesNotMatch(installer, /['"](?:uninstall|clear)['"]/);
   assert.doesNotMatch(installer, /com\.hatsunama\.captionstudio(?:['"]|\s)/);
 });

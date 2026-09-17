@@ -6,6 +6,7 @@ import { assertSupportedVideo } from '@/lib/media-validation';
 
 const MAX_STORED_IMAGE_BYTES = 50 * 1024 * 1024;
 const PROJECT_POSTER_VERSION = 3;
+const CLIP_THUMBNAIL_VERSION = 2;
 
 const ORPHAN_DIRECTORY_GRACE_SECONDS = 24 * 60 * 60;
 
@@ -35,20 +36,21 @@ export async function generateProjectThumbnail(projectId: string, sourceId: stri
   }
 }
 
-/** First visible frame for a timeline clip at its sourceStartMs. Cached per clip+sourceStart. */
 export async function ensureClipFrameThumbnail(options: {
   projectId: string;
   clipId: string;
   videoUri: string;
   sourceStartMs: number;
 }): Promise<string | undefined> {
-  if (!FileSystem.documentDirectory) return undefined;
+  if (!FileSystem.cacheDirectory) return undefined;
   const timeMs = Math.max(0, Math.round(options.sourceStartMs));
-  const outputUri = `${FileSystem.documentDirectory}projects/${safePathSegment(options.projectId)}/clip-${safePathSegment(options.clipId)}-t${timeMs}-thumb.jpg`;
+  const directoryUri = `${FileSystem.cacheDirectory}caption-studio-derived/${safePathSegment(options.projectId)}/`;
+  const sourceKey = stableCacheKey(options.videoUri);
+  const outputUri = `${directoryUri}clip-${safePathSegment(options.clipId)}-${sourceKey}-t${timeMs}-v${CLIP_THUMBNAIL_VERSION}.jpg`;
   const existing = await FileSystem.getInfoAsync(outputUri);
   if (existing.exists && !existing.isDirectory) return outputUri;
   try {
-    await FileSystem.makeDirectoryAsync(`${FileSystem.documentDirectory}projects/${safePathSegment(options.projectId)}/`, { intermediates: true });
+    await FileSystem.makeDirectoryAsync(directoryUri, { intermediates: true });
     await CaptionMedia.generateVideoThumbnail(options.videoUri, outputUri, timeMs);
     const generated = await FileSystem.getInfoAsync(outputUri);
     return generated.exists && !generated.isDirectory ? outputUri : undefined;
@@ -56,6 +58,15 @@ export async function ensureClipFrameThumbnail(options: {
     await FileSystem.deleteAsync(outputUri, { idempotent: true }).catch(() => undefined);
     return undefined;
   }
+}
+
+function stableCacheKey(value: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 export async function generateAudioWaveformPeaks(audioUri: string, durationMs: number): Promise<number[]> {
