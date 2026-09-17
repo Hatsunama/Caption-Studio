@@ -1,4 +1,3 @@
-import { projectTimelineDuration } from '@/lib/project-timeline';
 import { useCallback, useEffect, useState } from 'react';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -22,8 +21,7 @@ import {
   loadProjectLibrary,
 } from '@/services/project-workflows';
 import { chrome } from '@/lib/ui-theme';
-import type { CaptionProject } from '@/types/project';
-import type { ProjectRecordSummary } from '@/types/project-library';
+import type { ProjectLibraryProject, ProjectRecordSummary } from '@/types/project-library';
 
 const palette = {
   background: chrome.background,
@@ -97,7 +95,7 @@ export default function ProjectsScreen() {
     );
   };
 
-  const confirmDeleteProject = (project: CaptionProject) => {
+  const confirmDeleteProject = (project: ProjectLibraryProject) => {
     Alert.alert(
       'Delete this project?',
       `“${project.name}” and its Caption Studio edits will be removed. Your original videos will not be changed.`,
@@ -182,6 +180,15 @@ export default function ProjectsScreen() {
           <Text selectable style={{ color: palette.text, fontSize: 19, fontWeight: '700', marginTop: 6 }}>
             Projects
           </Text>
+          {loadError ? (
+            <View style={{ gap: 8, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: '#7A3243', backgroundColor: '#24151B' }}>
+              <Text style={{ color: '#FFBBC8', fontSize: 15, fontWeight: '700' }}>Projects could not be refreshed</Text>
+              <Text style={{ color: palette.muted, fontSize: 13 }}>{loadError}</Text>
+              <Pressable accessibilityRole="button" onPress={() => void refresh()} style={{ alignSelf: 'flex-start', paddingHorizontal: 18, paddingVertical: 10, borderRadius: chrome.radius.pill, backgroundColor: palette.accent }}>
+                <Text style={{ color: chrome.accentInk, fontWeight: '700' }}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
       }
       ListEmptyComponent={
@@ -198,15 +205,7 @@ export default function ProjectsScreen() {
           }}>
           {loading ? (
             <ActivityIndicator color={palette.accent} />
-          ) : loadError ? (
-            <>
-              <Text style={{ color: '#FFBBC8', fontSize: 17, fontWeight: '700' }}>Projects could not be loaded</Text>
-              <Text style={{ color: palette.muted, fontSize: 13, textAlign: 'center' }}>{loadError}</Text>
-              <Pressable accessibilityRole="button" onPress={() => void refresh()} style={{ paddingHorizontal: 18, paddingVertical: 10, borderRadius: chrome.radius.pill, backgroundColor: palette.accent }}>
-                <Text style={{ color: chrome.accentInk, fontWeight: '700' }}>Retry</Text>
-              </Pressable>
-            </>
-          ) : (
+          ) : loadError ? null : (
             <>
               <Text style={{ color: palette.text, fontSize: 17, fontWeight: '700' }}>No projects yet</Text>
               <Text style={{ color: palette.muted, fontSize: 14 }}>Your first import will appear here.</Text>
@@ -257,13 +256,13 @@ export default function ProjectsScreen() {
   </>;
 }
 
-function ProjectCard(props: { project: CaptionProject; onOpen: () => void; onDelete: () => void }) {
-  const [thumbnailUri, setThumbnailUri] = useState(props.project.sources[0]?.thumbnailUri);
+function ProjectCard(props: { project: ProjectLibraryProject; onOpen: () => void; onDelete: () => void }) {
+  const [thumbnailUri, setThumbnailUri] = useState(props.project.thumbnailUri);
   useEffect(() => {
     let active = true;
     void ensureLibraryProjectThumbnail(props.project)
       .then((prepared) => {
-        if (active) setThumbnailUri(prepared.sources[0]?.thumbnailUri);
+        if (active) setThumbnailUri(prepared.thumbnailUri);
       })
       .catch(() => undefined);
     return () => { active = false; };
@@ -281,7 +280,7 @@ function ProjectCard(props: { project: CaptionProject; onOpen: () => void; onDel
       <View style={{ flex: 1, justifyContent: 'center', gap: 5 }}>
         <Text numberOfLines={1} style={{ color: palette.text, fontSize: 16, fontWeight: '700', paddingRight: 36 }}>{props.project.name}</Text>
         <Text style={{ color: palette.muted, fontSize: 13 }}>
-          {props.project.lifecycle.status === 'draft' ? 'DRAFT · ' : ''}{props.project.clips.length} clip{props.project.clips.length === 1 ? '' : 's'} · {props.project.captions.length} subtitles · {formatDuration(projectTimelineDuration(props.project))}
+          {props.project.lifecycleStatus === 'draft' ? 'DRAFT · ' : ''}{props.project.clipCount} clip{props.project.clipCount === 1 ? '' : 's'} · {props.project.captionCount} subtitles · {formatDuration(props.project.durationMs)}
         </Text>
       </View>
       <Pressable

@@ -13,6 +13,7 @@ import { resolveCaptionPairs } from '../src/lib/caption-tracks.ts';
 import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
 import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
 import { adjustTimelineTiming } from '../src/lib/timeline-gesture.ts';
+import { createEditorSession } from '../src/services/editor-session.ts';
 
 test('timeline non-active cue selection preserves fixed-playhead content, selection handles and project state', async () => {
   const h = mount();
@@ -300,6 +301,7 @@ function mount(initialProject = fixture()) {
     return next;
   };
   const services = {
+    createEditorSession,
     checkpointEditorProject: write,
     saveEditorDraft: async (latest) => { calls.exits.push(['save', latest]); return write(latest); },
     discardEditorSession: async (_initial, latest) => { calls.exits.push(['discard', latest]); disk = _initial; },

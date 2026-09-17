@@ -231,7 +231,7 @@ test('pre-native cancellation rejects immediately and never starts the native ex
   assert.equal(nativeCancellations, 0);
 });
 
-test('native-stage cancellation is forwarded once and the session can be reused', async () => {
+test('native publication acknowledgement wins a cancellation race and the session can be reused', async () => {
   let nativeCancellations = 0;
   const native = deferred();
   const session = createVideoExportSession(async () => { nativeCancellations += 1; });
@@ -239,8 +239,8 @@ test('native-stage cancellation is forwarded once and the session can be reused'
   await Promise.resolve();
   assert.equal(await session.cancel(), true);
   assert.equal(await session.cancel(), false);
-  native.resolve('late success');
-  await assert.rejects(exporting, VideoExportCancelledError);
+  native.resolve('published');
+  assert.equal(await exporting, 'published');
   assert.equal(nativeCancellations, 1);
   assert.equal(await session.run(async () => 'next export'), 'next export');
 });

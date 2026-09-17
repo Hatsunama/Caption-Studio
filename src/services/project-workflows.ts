@@ -20,6 +20,7 @@ import {
   listProjectRecordIds,
   listProjectRecords,
   saveProject,
+  updateProjectSourceThumbnail,
 } from '@/services/database';
 import {
   pickAndStoreAudio,
@@ -53,7 +54,7 @@ import {
 } from '@/services/media-permissions';
 import type { TranscriptionModelId, TranscriptionProgress } from '@/services/transcription';
 import type { CaptionProject, ProjectAudioSource } from '@/types/project';
-import type { ProjectRecordSummary } from '@/types/project-library';
+import type { ProjectLibraryProject, ProjectRecordSummary } from '@/types/project-library';
 
 const captionGenerationSession = createCaptionGenerationSession(() => CaptionMedia.cancelAudioExtraction());
 
@@ -358,22 +359,21 @@ export async function loadProjectLibrary(): Promise<ProjectRecordSummary[]> {
       });
 }
 
-export async function ensureLibraryProjectThumbnail(project: CaptionProject) {
-  const source = project.sources[0];
-  if (!source) return project;
+export async function ensureLibraryProjectThumbnail(project: ProjectLibraryProject) {
+  if (!project.sourceId || !project.sourceUri) return project;
   const thumbnailUri = await ensureProjectThumbnail({
     projectId: project.id,
-    sourceId: source.id,
-    videoUri: source.uri,
-    thumbnailUri: source.thumbnailUri,
+    sourceId: project.sourceId,
+    videoUri: project.sourceUri,
+    thumbnailUri: project.thumbnailUri,
   });
-  if (!thumbnailUri || thumbnailUri === source.thumbnailUri) return project;
-  const sources = project.sources.map((candidate) => candidate.id === source.id
-    ? { ...candidate, thumbnailUri }
-    : candidate);
-  const prepared = { ...project, sources };
-  await saveProject(prepared);
-  return prepared;
+  if (!thumbnailUri || thumbnailUri === project.thumbnailUri) return project;
+  return await updateProjectSourceThumbnail({
+    projectId: project.id,
+    sourceId: project.sourceId,
+    sourceUri: project.sourceUri,
+    thumbnailUri,
+  }) ?? project;
 }
 
 async function runBestEffortCleanup(label: string, operations: Promise<unknown>[]) {

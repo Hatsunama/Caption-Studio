@@ -7,6 +7,7 @@ import ts from 'typescript';
 
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { resolveEditorBackStep } from '../src/lib/editor-back-navigation.ts';
+import { createEditorSession } from '../src/services/editor-session.ts';
 
 // Like editor-coordinator.test.mjs, execute the production workspace with native
 // adapters. Discover the navigation owner structurally, without capturing named
@@ -115,6 +116,7 @@ function mount(t, initialProject = fixture()) {
     timing: () => ({ start() {}, stop() {} }),
   };
   const services = {
+    createEditorSession,
     checkpointEditorProject: async (project) => { calls.writes.push(project); return project; },
     saveEditorDraft: async (project) => { calls.exits.push(['save', project]); return project; },
     discardEditorSession: async () => { calls.exits.push(['discard']); },

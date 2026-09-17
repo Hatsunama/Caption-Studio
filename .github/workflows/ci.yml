@@ -39,6 +39,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - name: Test JavaScript and TypeScript contracts
         run: |
+          npm run verify:product-contract
           npm run test:logic
           npx tsc --noEmit
           npm run lint

@@ -198,6 +198,20 @@ test('native-stage cancellation still rejects before verified delivery reaches J
   assert.deepEqual(service.calls.cleanup, [outputUri]);
 });
 
+test('verified native publication wins a cancellation race at the JS boundary', async () => {
+  const native = deferred();
+  const started = deferred();
+  const service = loadService({ native: () => { started.resolve(); return native.promise; } });
+  const exporting = service.exportProjectVideo(project);
+  await started.promise;
+  await service.cancelProjectVideoExport();
+  native.resolve(published);
+  assert.deepEqual(await exporting, published);
+  assert.equal(service.calls.cancel, 1);
+  assert.equal(service.calls.share.length, 1);
+  assert.deepEqual(service.calls.cleanup, [outputUri]);
+});
+
 for (const format of ['srt', 'ass']) {
   test(`${format} sharing remains required because subtitles have no MediaStore publication`, async () => {
     const service = loadService({ isAvailable: async () => false });

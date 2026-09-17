@@ -4,8 +4,9 @@ const path = require('node:path');
 const REQUIRED_ANDROID_SDK = '36';
 const REQUIRED_MIN_ANDROID_SDK = '24';
 const REQUIRED_GRADLE_DISTRIBUTION_SHA256 = '60ea723356d81263e8002fec0fcf9e2b0eee0c0850c7a3d7ab0a63f2ccc601f3';
-const PRODUCTION_ANDROID_PACKAGE = 'com.hatsunama.captionstudio';
-const FIXED_ANDROID_PACKAGE = 'com.hatsunama.captionstudio.fixed';
+const PRODUCT_CONTRACT = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'product-contract.json'), 'utf8'));
+const PRODUCTION_ANDROID_PACKAGE = PRODUCT_CONTRACT.android.sourcePackage;
+const FIXED_ANDROID_PACKAGE = PRODUCT_CONTRACT.android.release.package;
 const APPROVED_ANDROID_PACKAGES = new Set([
   PRODUCTION_ANDROID_PACKAGE,
   FIXED_ANDROID_PACKAGE,

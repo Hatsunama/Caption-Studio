@@ -35,12 +35,13 @@ test('natural caption translation is isolated in its own offline Expo module', a
 });
 
 test('LiteRT runtime is pinned, identity-gated, serialized, and deterministically closed', async () => {
-  const [gradle, runtime, verifier, translator, environment] = await Promise.all([
+  const [gradle, runtime, verifier, translator, environment, generated] = await Promise.all([
     source('android/build.gradle'),
     source('android/src/main/java/app/captionstudio/translation/LiteRtLmTranslationRuntime.kt'),
     source('android/src/main/java/app/captionstudio/translation/OfficialQwenModelVerifier.java'),
     source('android/src/main/java/app/captionstudio/translation/NaturalCaptionTranslator.java'),
     source('android/src/main/java/app/captionstudio/translation/AndroidTranslationEnvironment.java'),
+    source('android/src/main/java/app/captionstudio/translation/GeneratedProductContract.java'),
   ]);
 
   assert.match(gradle, /litertlm-android:0\.16\.1/);
@@ -52,13 +53,17 @@ test('LiteRT runtime is pinned, identity-gated, serialized, and deterministicall
   assert.match(runtime, /currentConversation\.get\(\)\?\.cancelProcess\(\)/);
   assert.match(runtime, /conversation\.close\(\)/);
   assert.match(runtime, /engine\.close\(\)/);
-  assert.match(verifier, /EXPECTED_MODEL_BYTES = 1_597_931_520L/);
-  assert.match(verifier, /faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9/);
+  assert.match(verifier, /EXPECTED_MODEL_BYTES = GeneratedProductContract\.MODEL_BYTES/);
+  assert.match(verifier, /EXPECTED_MODEL_SHA256 = GeneratedProductContract\.MODEL_SHA256/);
+  assert.match(generated, /MODEL_BYTES = 1597931520L/);
+  assert.match(generated, /faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9/);
   assert.match(translator, /nativeLifecycleLock\.tryLock\(\)/);
   assert.match(translator, /nativeLifecycleLock\.lock\(\)/);
   assert.match(translator, /worker\.submit/);
   assert.match(translator, /future\.cancel\(true\)/);
   assert.match(environment, /MINIMUM_TOTAL_MEMORY_BYTES = 4L \* GIBIBYTE/);
+  assert.match(translator, /environment\.runtimeThreadCount\(\)/);
+  assert.match(environment, /selectRuntimeThreadCount/);
 });
 
 test('release shrinking preserves the LiteRT-LM JNI contract', async () => {
@@ -71,18 +76,22 @@ test('release shrinking preserves the LiteRT-LM JNI contract', async () => {
   assert.match(rules, /-keep class com\.google\.ai\.edge\.litertlm\.\*\* \{ \*; \}/);
 });
 
-test('one pinned local model owns every supported multilingual direction', async () => {
-  const [service, batching, languages, catalog] = await Promise.all([
+test('one generated local-model contract owns every supported multilingual direction', async () => {
+  const [service, batching, languages, catalog, generated, manifest] = await Promise.all([
     readFile(new URL('src/services/caption-translation.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/lib/translation-batching.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/lib/caption-languages.ts', repositoryRoot), 'utf8'),
     readFile(new URL('src/services/transcription.ts', repositoryRoot), 'utf8'),
+    source('src/TranslationReleaseContract.generated.ts'),
+    readFile(new URL('config/product-contract.json', repositoryRoot), 'utf8'),
   ]);
 
-  assert.equal((service.match(/downloadUrl:/g) ?? []).length, 1);
-  assert.match(service, /downloadBytes: 1_597_931_520/);
-  assert.match(service, /faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9/);
-  assert.match(service, /19edb84c69a0212f29a6ef17ba0d6f278b6a1614/);
+  assert.match(service, /const NATURAL_TRANSLATION_MODEL = TRANSLATION_RELEASE_CONTRACT/);
+  assert.equal((generated.match(/downloadUrl/g) ?? []).length, 1);
+  assert.match(generated, /1597931520/);
+  assert.match(generated, /faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9/);
+  assert.match(generated, /19edb84c69a0212f29a6ef17ba0d6f278b6a1614/);
+  assert.match(manifest, /"promptContract": "qwen2\.5-caption-json-v2"/);
   assert.match(service, /normalizeNaturalCaptionLanguage/);
   assert.match(languages, /if \(normalized === 'en'/);
   assert.match(languages, /return 'zh-Hant'/);
@@ -97,7 +106,7 @@ test('one pinned local model owns every supported multilingual direction', async
   assert.match(service, /operations: prepared\.map/);
   assert.match(service, /result\.offline !== true/);
   assert.match(service, /result\.backend !== 'cpu'/);
-  assert.match(service, /result\.promptContract !== 'qwen2\.5-caption-json-v2'/);
+  assert.match(service, /result\.promptContract !== NATURAL_TRANSLATION_MODEL\.promptContract/);
   assert.doesNotMatch(service, /com\.google\.mlkit|Google Translate|translation API/i);
   assert.match(catalog, /ggml-tiny-q5_1\.bin/);
   assert.match(catalog, /ggml-base-q5_1\.bin/);

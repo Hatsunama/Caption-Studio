@@ -61,6 +61,12 @@ test('postinstall patch succeeds before a generated Android directory exists', (
         readFileSync(new URL(`../scripts/${name}`, import.meta.url), 'utf8'),
       );
     }
+    mkdirSync(join(root, 'config'), { recursive: true });
+    writeFileSync(
+      join(root, 'config', 'product-contract.json'),
+      readFileSync(new URL('../config/product-contract.json', import.meta.url), 'utf8'),
+      { flag: 'w' },
+    );
     const result = spawnSync(process.execPath, [join(scriptDirectory, 'patch-react-native-gradle.js')], {
       cwd: root,
       encoding: 'utf8',
@@ -92,6 +98,11 @@ function withFixture(assertion) {
 }
 
 function writeFixture(root) {
+  write(
+    root,
+    'config/product-contract.json',
+    readFileSync(new URL('../config/product-contract.json', import.meta.url), 'utf8'),
+  );
   write(
     root,
     'android/app/build.gradle',

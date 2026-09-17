@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
@@ -14,18 +15,46 @@ function sourceFiles(directory) {
   });
 }
 
+function sourceModule(file) {
+  return ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+}
+
+function importsOf(file) {
+  return sourceModule(file).statements
+    .filter((statement) => ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement))
+    .map((statement) => statement.moduleSpecifier)
+    .filter((specifier) => specifier && ts.isStringLiteral(specifier))
+    .map((specifier) => specifier.text);
+}
+
 test('domain and service layers do not depend on UI orchestration', () => {
   for (const file of sourceFiles(join(root, 'src', 'lib'))) {
-    const source = readFileSync(file, 'utf8');
-    assert.doesNotMatch(source, /from ['"]@\/(?:app|components|hooks|services)\//, file);
-    assert.doesNotMatch(source, /from ['"](?:react-native|expo(?:-[^'"]*)?)['"]/, file);
-    assert.doesNotMatch(source, /modules[\\/]caption-(?:media|translation)/, file);
+    for (const dependency of importsOf(file)) {
+      assert.doesNotMatch(dependency, /^@\/(?:app|components|hooks|services)\//, file);
+      assert.doesNotMatch(dependency, /^(?:react-native|expo(?:-|$))/, file);
+      assert.doesNotMatch(dependency, /modules[\\/]caption-(?:media|translation)/, file);
+    }
   }
   for (const file of sourceFiles(join(root, 'src', 'services'))) {
     const source = readFileSync(file, 'utf8');
-    assert.doesNotMatch(source, /from ['"]@\/(?:app|components|hooks)\//, file);
+    for (const dependency of importsOf(file)) {
+      assert.doesNotMatch(dependency, /^@\/(?:app|components|hooks)\//, file);
+    }
     assert.doesNotMatch(source, /\bAlert\.alert\(/, file);
   }
+});
+
+test('editor transactions and project decoding reside outside UI and SQLite adapters', () => {
+  const editorFile = join(root, 'src', 'app', 'editor.tsx');
+  const databaseFile = join(root, 'src', 'services', 'database.ts');
+  const editor = sourceModule(editorFile);
+  const database = sourceModule(databaseFile);
+  assert.ok(importsOf(editorFile).includes('@/services/editor-session'));
+  assert.ok(importsOf(databaseFile).includes('@/lib/project-codec'));
+  assert.equal(editor.statements.some((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'createEditorSession'), false);
+  assert.equal(database.statements.some((node) => ts.isFunctionDeclaration(node)
+    && ['parseProject', 'hydrateProject', 'migrateVersionOne'].includes(node.name?.text ?? '')), false);
 });
 
 test('UI sees presentation metadata while provider and native layers own release and memory truth', () => {

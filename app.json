@@ -2,14 +2,14 @@
   "expo": {
     "name": "Caption Studio",
     "slug": "caption-studio",
-    "version": "1.4.61",
+    "version": "1.4.62",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "captionstudio",
     "userInterfaceStyle": "dark",
     "android": {
       "package": "com.hatsunama.captionstudio",
-      "versionCode": 73,
+      "versionCode": 74,
       "allowBackup": false,
       "blockedPermissions": [
         "android.permission.FOREGROUND_SERVICE",

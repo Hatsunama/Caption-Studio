@@ -10,6 +10,6 @@ const workflow = readFileSync(
 test('sidecar prebuild keeps identity selection inside the named workflow step', () => {
   assert.match(
     workflow,
-    /^      - name: Generate clean Android project\r?\n        env:\r?\n          NODE_ENV: production\r?\n          CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE: com\.hatsunama\.captionstudio\.fixed\r?\n        run: \|$/m,
+    /^      - name: Generate clean Android project\r?\n        env:\r?\n          NODE_ENV: production\r?\n          CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE: \$\{\{ env\.CAPTION_STUDIO_RELEASE_PACKAGE \}\}\r?\n        run: \|$/m,
   );
 });

@@ -1,0 +1,11 @@
+export const TRANSLATION_RELEASE_CONTRACT = {
+  "id": "qwen2.5-1.5b-q8",
+  "label": "Natural multilingual",
+  "fileName": "Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm",
+  "downloadBytes": 1597931520,
+  "sha256": "faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9",
+  "revision": "19edb84c69a0212f29a6ef17ba0d6f278b6a1614",
+  "promptVersion": 5,
+  "promptContract": "qwen2.5-caption-json-v2",
+  "downloadUrl": "https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/19edb84c69a0212f29a6ef17ba0d6f278b6a1614/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm"
+} as const;
