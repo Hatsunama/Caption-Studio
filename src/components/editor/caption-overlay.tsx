@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { View } from 'react-native';
 import { resolveCaptionStyle } from '@/lib/style-resolver';
-import { LayerTransformOverlay } from './layer-transform-overlay';
 import { CaptionPresentation } from './caption-presentation';
 import type { LayerGeometryInput } from '@/lib/layer-geometry';
 import type { CaptionBlock, CaptionStyle, WordToken } from '@/types/project';
@@ -12,6 +11,7 @@ export function CaptionOverlay(props: {
   selectionCaption?: CaptionBlock;
   selectionStyle?: CaptionStyle;
   geometry?: LayerGeometryInput;
+  geometryForCaption?: (caption: CaptionBlock) => LayerGeometryInput;
   words: WordToken[];
   projectStyle: CaptionStyle;
   currentMs: number;
@@ -29,9 +29,8 @@ export function CaptionOverlay(props: {
   return <View pointerEvents="none" collapsable={false} style={{ position: 'absolute', inset: 0 }}>
     {(props.captions ?? (props.caption ? [props.caption] : [])).map((caption) => (
       <CaptionPresentation key={caption.id} caption={caption} words={props.words} projectStyle={props.projectStyle}
-        geometry={geometry}
+        geometry={props.geometryForCaption?.(caption) ?? geometry}
         currentMs={props.currentMs} authored={Boolean(props.preserveLineBreaks)} editingPreview={props.editingPreview} />
     ))}
-    <LayerTransformOverlay geometry={geometry} selected={props.selected} deletable={props.deletable} />
   </View>;
 }

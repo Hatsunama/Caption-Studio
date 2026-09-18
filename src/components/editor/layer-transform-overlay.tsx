@@ -1,6 +1,7 @@
 import { Text, View } from 'react-native';
 import { layerExtent, type LayerGeometryInput, type LayerGestureMode } from '@/lib/layer-geometry';
 import { chrome } from '@/lib/ui-theme';
+import { PREVIEW_CHROME } from '@/lib/preview-object-hit-test';
 
 export function LayerTransformOverlay(props: {
   geometry: LayerGeometryInput; selected?: boolean; deletable?: boolean;
@@ -16,10 +17,13 @@ export function LayerTransformOverlay(props: {
       {(['left', 'right', 'top', 'bottom', 'corner'] as LayerGestureMode[]).map((mode) => {
         const horizontal = mode === 'left' || mode === 'right';
         const corner = mode === 'corner';
-        return <View key={mode} style={{ position: 'absolute', zIndex: 20,
-          ...(corner ? { right: -23, bottom: -23, width: 46, height: 46 } : horizontal
-            ? { [mode]: -18, top: '50%', marginTop: -30, width: 36, height: 60 }
-            : { [mode]: -18, left: '50%', marginLeft: -30, width: 60, height: 36 }),
+        return <View key={mode} style={{ position: 'absolute',
+          ...(corner ? { right: -PREVIEW_CHROME.cornerSize / 2, bottom: -PREVIEW_CHROME.cornerSize / 2,
+            width: PREVIEW_CHROME.cornerSize, height: PREVIEW_CHROME.cornerSize } : horizontal
+            ? { [mode]: -PREVIEW_CHROME.edgeWidth / 2, top: '50%', marginTop: -PREVIEW_CHROME.edgeLength / 2,
+              width: PREVIEW_CHROME.edgeWidth, height: PREVIEW_CHROME.edgeLength }
+            : { [mode]: -PREVIEW_CHROME.edgeWidth / 2, left: '50%', marginLeft: -PREVIEW_CHROME.edgeLength / 2,
+              width: PREVIEW_CHROME.edgeLength, height: PREVIEW_CHROME.edgeWidth }),
           alignItems: 'center', justifyContent: 'center',
         }}><View pointerEvents="none" style={{ width: corner ? 40 : horizontal ? 7 : 36, height: corner ? 40 : horizontal ? 36 : 7,
           borderRadius: corner ? 22 : 6, backgroundColor: chrome.accent, alignItems: 'center', justifyContent: 'center' }}>
@@ -27,7 +31,9 @@ export function LayerTransformOverlay(props: {
         </View></View>;
       })}
       {props.deletable ? <View
-        style={{ position: 'absolute', left: -20, top: -20, zIndex: 30, width: 40, height: 40, borderRadius: 20, backgroundColor: '#FF5267', alignItems: 'center', justifyContent: 'center' }}>
+        style={{ position: 'absolute', left: -PREVIEW_CHROME.deleteSize / 2, top: -PREVIEW_CHROME.deleteSize / 2,
+          width: PREVIEW_CHROME.deleteSize, height: PREVIEW_CHROME.deleteSize, borderRadius: PREVIEW_CHROME.deleteSize / 2,
+          backgroundColor: '#FF5267', alignItems: 'center', justifyContent: 'center' }}>
         <Text style={{ color: '#FFFFFF', fontSize: 22 }}>{'\u00d7'}</Text>
       </View> : null}
     </>

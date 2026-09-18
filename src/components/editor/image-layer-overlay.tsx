@@ -1,7 +1,6 @@
 import { Image } from 'expo-image';
 import { View } from 'react-native';
 import { resolveLayerGeometry, type LayerGeometryInput } from '@/lib/layer-geometry';
-import { LayerTransformOverlay } from './layer-transform-overlay';
 import type { ImageVisualLayer } from '@/types/project';
 
 export function ImageLayerOverlay(props: {
@@ -14,6 +13,5 @@ export function ImageLayerOverlay(props: {
       width: `${geometry.box.width * 100}%`, height: `${geometry.box.height * 100}%`,
       transform: [{ rotate: `${geometry.rotation}deg` }, { scaleX: geometry.scale * geometry.scaleX }, { scaleY: geometry.scale * geometry.scaleY }],
     }}><Image source={props.layer.uri} contentFit="contain" style={{ width: '100%', height: '100%', opacity: props.layer.opacity }} /></View>
-    <LayerTransformOverlay geometry={geometry} selected={props.selected} deletable={props.deletable} />
   </View>;
 }

@@ -48,7 +48,8 @@ test('preview layers own hit testing, authored lines, stable transform baselines
   assert.doesNotMatch(images, /ref=\{\(node\) =>/);
   assert.match(presentation, /rawText\.replace\("\\r\\n", "\\n"\)/);
   assert.match(presentation, /text\.contains\('\\n'\)/);
-  assert.match(gesture, /onStartShouldSetResponderCapture/);
+  assert.match(gesture, /onStartShouldSetResponder: \(\) => optionsRef\.current\.enabled/);
+  assert.doesNotMatch(gesture, /onStartShouldSetResponderCapture/);
   assert.match(gesture, /onResponderTerminationRequest: \(\) => false/);
   assert.doesNotMatch(images, /useLayerGesture/);
   assert.doesNotMatch(images, /function ImageCornerHandle/);

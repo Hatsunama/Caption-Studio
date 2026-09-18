@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, type MutableRefObject } from 'react';
 import { type GestureResponderEvent, PanResponder, Text, View } from 'react-native';
 
 import { chrome } from '@/lib/ui-theme';
@@ -7,6 +7,7 @@ import type { VideoTransform, VideoTransformPatch } from '@/types/project';
 type TouchPoint = { pageX: number; pageY: number };
 
 export function VideoTransformOverlay(props: {
+  id: string;
   transform: VideoTransform;
   onInteractionStart?: () => void;
   onChange: (patch: VideoTransformPatch) => void;
@@ -23,9 +24,15 @@ export function VideoTransformOverlay(props: {
     touches: [] as TouchPoint[],
     touchCount: 0,
   });
+  const owner = useRef<{
+    id: string;
+    transform: VideoTransform;
+    onChange: (patch: VideoTransformPatch) => void;
+    onEnd: () => void;
+  } | undefined>(undefined);
 
   const rebase = (touches: TouchPoint[]) => {
-    const current = propsRef.current.transform;
+    const current = owner.current?.transform ?? propsRef.current.transform;
     start.current = {
       position: { ...current.position },
       scale: current.scale,
@@ -41,7 +48,14 @@ export function VideoTransformOverlay(props: {
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
         onPanResponderGrant: (event) => {
-          propsRef.current.onInteractionStart?.();
+          const current = propsRef.current;
+          owner.current = {
+            id: current.id,
+            transform: current.transform,
+            onChange: current.onChange,
+            onEnd: current.onEnd,
+          };
+          current.onInteractionStart?.();
           rebase(readTouches(event));
         },
         onPanResponderMove: (event) => {
@@ -60,7 +74,7 @@ export function VideoTransformOverlay(props: {
             const nextDistance = distance(touches[0], touches[1]);
             const originalCenter = midpoint(origin.touches[0], origin.touches[1]);
             const nextCenter = midpoint(touches[0], touches[1]);
-            propsRef.current.onChange({
+            const patch = {
               position: {
                 x: clamp(origin.position.x + (nextCenter.pageX - originalCenter.pageX) / size.width, -0.5, 1.5),
                 y: clamp(origin.position.y + (nextCenter.pageY - originalCenter.pageY) / size.height, -0.5, 1.5),
@@ -70,20 +84,21 @@ export function VideoTransformOverlay(props: {
                 origin.rotation +
                   shortestAngleDelta(angle(origin.touches[0], origin.touches[1]), angle(touches[0], touches[1])),
               ),
-            });
+            };
+            publish(owner, patch);
             return;
           }
 
           const initial = origin.touches[0];
-          propsRef.current.onChange({
+          publish(owner, {
             position: {
               x: clamp(origin.position.x + (touches[0].pageX - initial.pageX) / size.width, -0.5, 1.5),
               y: clamp(origin.position.y + (touches[0].pageY - initial.pageY) / size.height, -0.5, 1.5),
             },
           });
         },
-        onPanResponderRelease: () => propsRef.current.onEnd(),
-        onPanResponderTerminate: () => propsRef.current.onEnd(),
+        onPanResponderRelease: () => finish(owner),
+        onPanResponderTerminate: () => finish(owner),
       }),
     [],
   );
@@ -144,6 +159,31 @@ export function VideoTransformOverlay(props: {
       <View pointerEvents="none" style={{ position: 'absolute', left: '50%', top: '50%', width: 2, height: 18, marginLeft: -1, marginTop: -9, backgroundColor: 'rgba(223,255,53,0.75)' }} />
     </View>
   );
+}
+
+function publish(
+  owner: MutableRefObject<{
+    id: string;
+    transform: VideoTransform;
+    onChange: (patch: VideoTransformPatch) => void;
+    onEnd: () => void;
+  } | undefined>,
+  patch: VideoTransformPatch,
+) {
+  const current = owner.current;
+  if (!current) return;
+  current.transform = {
+    ...current.transform,
+    ...patch,
+    position: patch.position ? { ...current.transform.position, ...patch.position } : current.transform.position,
+  };
+  current.onChange(patch);
+}
+
+function finish(owner: MutableRefObject<{ onEnd: () => void } | undefined>) {
+  const current = owner.current;
+  owner.current = undefined;
+  current?.onEnd();
 }
 
 function readTouches(event: GestureResponderEvent): TouchPoint[] {

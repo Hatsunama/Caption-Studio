@@ -31,7 +31,9 @@ test('preview interaction has one scene owner and no per-object selection pressa
   assert.match(editor, /\{\.\.\.previewSceneResponders\}/);
   assert.doesNotMatch(transform, /Select layer|selectable|onSelect/);
   assert.match(transform, /pointerEvents="none"/);
-  assert.match(gesture, /previewCanvasPoint\(touch\.pageX, touch\.pageY, origin\)/);
-  assert.match(gesture, /ownerRef\.current = \{ target, gesture/);
-  assert.doesNotMatch(gesture, /locationX|locationY/);
+  assert.match(gesture, /createPreviewSceneController/);
+  assert.match(gesture, /onStartShouldSetResponder:/);
+  assert.doesNotMatch(gesture, /ShouldSetResponderCapture|requestAnimationFrame/);
+  assert.match(editor, /testID="preview-scene-input"/);
+  assert.match(editor, /collapsable=\{false\}/);
 });
