@@ -10,7 +10,7 @@ type GestureOwner = {
   onEnd?: () => void;
 };
 type TouchPoints = ReturnType<typeof touches>;
-type PendingGrant = { mode: LayerGestureMode; points: TouchPoints; owner: GestureOwner; moves: TouchPoints[] };
+type PendingGrant = { token: number; mode: LayerGestureMode; points: TouchPoints; owner: GestureOwner; moves: TouchPoints[] };
 
 function createGestureRuntime(
   queue: ReturnType<typeof createGeometryFrameQueue<GestureDraft>>,
@@ -26,6 +26,7 @@ function createGestureRuntime(
   } : undefined;
   return {
     active: () => session?.active() ?? false,
+    located: () => origin !== undefined,
     measure(width: number, height: number) {
       if (width > 0 && height > 0) size = { width, height };
     },
@@ -67,9 +68,11 @@ export function useLayerGesture(options: {
   const runtime = useMemo(() => createGestureRuntime(queue), [queue]);
   const viewRef = useRef<View | null>(null);
   const pendingRef = useRef<PendingGrant | undefined>(undefined);
+  const grantTokenRef = useRef(0);
 
   useEffect(() => () => {
     pendingRef.current = undefined;
+    grantTokenRef.current += 1;
     runtime.finish();
     queue.clear();
   }, [options.id, queue, runtime]);
@@ -80,9 +83,9 @@ export function useLayerGesture(options: {
     (view ?? viewRef.current)?.measureInWindow(runtime.locate);
   }, [runtime]);
 
-  const flushPending = useCallback(() => {
+  const flushPending = useCallback((token: number) => {
     const pending = pendingRef.current;
-    if (!pending) return;
+    if (!pending || pending.token !== token) return;
     pendingRef.current = undefined;
     if (runtime.begin(pending.mode, pending.points, pending.owner)) {
       optionsRef.current.onStart?.();
@@ -95,12 +98,18 @@ export function useLayerGesture(options: {
     if (!current.interactive) return;
     const points = touches(event);
     const owner = { id: current.id, source: current.geometry, onChange: current.onChange, onEnd: current.onEnd };
+    if (runtime.located()) {
+      if (runtime.begin(mode, points, owner)) current.onStart?.();
+      return;
+    }
     const view = viewRef.current;
     if (view) {
-      pendingRef.current = { mode, points, owner, moves: [] };
+      const token = ++grantTokenRef.current;
+      pendingRef.current = { token, mode, points, owner, moves: [] };
       view.measureInWindow((pageX, pageY) => {
+        if (grantTokenRef.current !== token) return;
         runtime.locate(pageX, pageY);
-        flushPending();
+        flushPending(token);
       });
       return;
     }
@@ -124,6 +133,7 @@ export function useLayerGesture(options: {
   }, [runtime]);
 
   const finish = useCallback(() => {
+    grantTokenRef.current += 1;
     pendingRef.current = undefined;
     runtime.finish();
     setDraft(undefined);

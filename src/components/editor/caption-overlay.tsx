@@ -16,10 +16,8 @@ export function CaptionOverlay(props: {
   projectStyle: CaptionStyle;
   currentMs: number;
   interactive?: boolean;
-  selectable?: boolean;
   preserveLineBreaks?: boolean;
   editingPreview?: boolean;
-  onSelect?: () => void;
   onInteractionStart?: () => void;
   onTransform?: (patch: CaptionStylePatch) => void;
   onTransformEnd?: () => void;
@@ -43,6 +41,6 @@ export function CaptionOverlay(props: {
         geometry={gesture.geometry}
         currentMs={props.currentMs} authored={Boolean(props.preserveLineBreaks)} editingPreview={props.editingPreview} />
     ))}
-    <LayerTransformOverlay geometry={gesture.geometry} interactive={props.interactive} selectable={props.selectable} responders={gesture.responders} onSelect={props.onSelect} onDelete={props.onDelete} />
+    <LayerTransformOverlay geometry={gesture.geometry} interactive={props.interactive} responders={gesture.responders} onDelete={props.onDelete} />
   </View>;
 }

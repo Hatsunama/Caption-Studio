@@ -1,6 +1,7 @@
 import { projectTimelineDuration } from '@/lib/project-timeline';
 import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
+import { previewObjectAtPoint, type PreviewObjectTarget } from '@/lib/preview-object-hit-test';
 import { captionPreviewState, projectHasEditorLayer } from '@/lib/caption-preview';
 import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -699,6 +700,59 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const selectEditorLayer = (layerId: string) => {
     const selection = editorLayerSelection(editorSession.current(), layerId, selectedCaptionId);
+    if (selection) selectEditorObject(selection);
+  };
+
+  const pendingPreviewSelectionRef = useRef<EditorSelection | undefined>(undefined);
+  const previewObjectTargets = useMemo(() => {
+    const targets: PreviewObjectTarget<EditorSelection>[] = [];
+    let order = 0;
+    for (const layer of timelineLayers) {
+      if (!layer.visible) continue;
+      if (layer.kind === 'captions') {
+        if (displayCaption) targets.push({
+          key: `caption:${displayCaption.id}`,
+          selection: { kind: 'captions', captionId: displayCaption.id },
+          geometry: resolveCaptionStyle(project.projectStyle, displayCaption),
+          order: order++,
+        });
+        for (const pair of displayTranslationPairs) targets.push({
+          key: `translation:${pair.trackId}:${pair.source.id}`,
+          selection: { kind: 'translation', id: pair.trackId, captionId: pair.source.id },
+          geometry: pair.style,
+          order: order++,
+        });
+        continue;
+      }
+      if (!visualLayerVisibleAtTime(layer, currentMs)) continue;
+      targets.push({
+        key: `layer:${layer.id}`,
+        selection: { kind: layer.kind, id: layer.id },
+        geometry: layer.kind === 'text' ? layer.style : layer,
+        order: order++,
+      });
+    }
+    return targets;
+  }, [currentMs, displayCaption, displayTranslationPairs, project.projectStyle, timelineLayers]);
+  const selectedPreviewObjectKey = selectedLayerId === 'captions' && selectedCaption
+    ? `caption:${selectedCaption.id}`
+    : selectedTranslationPair
+      ? `translation:${selectedTranslationPair.trackId}:${selectedTranslationPair.source.id}`
+      : selectedTextLayer || selectedImageLayer
+        ? `layer:${selectedLayerId}`
+        : undefined;
+  const capturePreviewObject = (event: { nativeEvent: { locationX: number; locationY: number } }) => {
+    const hit = previewObjectAtPoint(previewObjectTargets, {
+      x: event.nativeEvent.locationX,
+      y: event.nativeEvent.locationY,
+    }, { width: canvasWidth, height: canvasHeight });
+    if (!hit || hit.key === selectedPreviewObjectKey) return false;
+    pendingPreviewSelectionRef.current = hit.selection;
+    return true;
+  };
+  const selectCapturedPreviewObject = () => {
+    const selection = pendingPreviewSelectionRef.current;
+    pendingPreviewSelectionRef.current = undefined;
     if (selection) selectEditorObject(selection);
   };
 
@@ -1703,6 +1757,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           style={{ transform: cropOffset.getTranslateTransform() }}>
           <View
           testID="editor-preview-layout"
+          onStartShouldSetResponderCapture={capturePreviewObject}
+          onResponderGrant={selectCapturedPreviewObject}
+          onResponderRelease={() => { pendingPreviewSelectionRef.current = undefined; }}
+          onResponderTerminate={() => { pendingPreviewSelectionRef.current = undefined; }}
           style={{
             width: canvasWidth,
             height: canvasHeight,
@@ -1774,15 +1832,16 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     caption={displayCaption}
                     captions={scriptEditorOpen ? undefined : activeCaptions}
                     interactionId="captions"
-                    selectionCaption={selectedLayerId === 'captions' ? selectedCaption : undefined}
+                    selectionCaption={selectedLayerId === 'captions' && selectedCaption
+                      && (scriptEditorOpen || activeCaptions.some((caption) => caption.id === selectedCaption.id))
+                      ? selectedCaption : undefined}
                     preserveLineBreaks={scriptEditorOpen && !isPlaying}
                     editingPreview={scriptEditorOpen && !isPlaying}
                     words={project.transcription.words}
                     projectStyle={project.projectStyle}
                     currentMs={currentMs}
-                    interactive={activeTool !== 'video' && selectedLayerId === 'captions' && Boolean(selectedCaption)}
-                    selectable={Boolean(displayCaption)}
-                    onSelect={() => selectEditorObject({ kind: 'captions', captionId: displayCaption?.id })}
+                    interactive={activeTool !== 'video' && selectedLayerId === 'captions' && Boolean(selectedCaption)
+                      && (scriptEditorOpen || activeCaptions.some((caption) => caption.id === selectedCaption?.id))}
                     onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                     onTransform={updateSelectedCaptionTransform}
                     onTransformEnd={finishHistoryInteraction}
@@ -1790,7 +1849,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   />
                   {translationTimelineTracks.filter((track) => track.visible).map((track) => {
                     const active = displayTranslationPairs.filter((pair) => pair.trackId === track.id);
-                    const selected = selectedTranslationPair?.trackId === track.id ? selectedTranslationPair : undefined;
+                    const selected = selectedTranslationPair?.trackId === track.id
+                      && active.some((pair) => pair.source.id === selectedTranslationPair.source.id)
+                      ? selectedTranslationPair : undefined;
                     if (!active.length && !selected) return null;
                     const captions = active.map((pair) => ({ id: pair.translation.id, text: pair.translation.text,
                       startMs: pair.startMs, endMs: pair.endMs, wordIds: [], styleOverride: pair.style }));
@@ -1806,8 +1867,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                       projectStyle={selected?.style ?? active[0].style}
                       currentMs={currentMs}
                       interactive={activeTool !== 'video' && Boolean(selected)}
-                      selectable={active.length > 0}
-                      onSelect={() => selectEditorObject({ kind: 'translation', id: track.id, captionId: active[0]?.source.id })}
                       onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                       onTransform={updateTranslationTransform}
                       onTransformEnd={finishHistoryInteraction}
@@ -1826,9 +1885,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   projectStyle={layer.style}
                   currentMs={currentMs}
                   interactive={activeTool !== 'video' && selectedLayerId === layer.id}
-                  selectable
                   preserveLineBreaks
-                  onSelect={() => selectEditorLayer(layer.id)}
                   onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                   onTransform={(patch) => updateTextLayerStyle(layer.id, patch)}
                   onTransformEnd={finishHistoryInteraction}
@@ -1841,8 +1898,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 key={layer.id}
                 layer={layer}
                 interactive={activeTool !== 'video' && selectedLayerId === layer.id}
-                selectable
-                onSelect={() => selectEditorLayer(layer.id)}
                 onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
                 onChange={(patch) => updateImageLayer(layer.id, patch)}
                 onEnd={finishHistoryInteraction}
