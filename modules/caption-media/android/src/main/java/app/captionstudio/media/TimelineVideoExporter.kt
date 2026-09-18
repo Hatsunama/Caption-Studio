@@ -583,7 +583,7 @@ internal class TimelineBitmapOverlay(
           TimelineTransitionSpec.RenderingPath.COMPOSITE -> drawCompositeTransition(canvas, transition, timeMs)
         }
       }
-      plan.layers.asReversed().forEach { layer ->
+      plan.layers.forEach { layer ->
         if (!layer.visible) return@forEach
         when (layer) {
           is CaptionRenderLayer -> if (plan.burnCaptions) {

@@ -23,7 +23,7 @@ export function previewObjectAtPoint<T>(
   let hit: PreviewObjectTarget<T> | undefined;
   for (const target of targets) {
     if (!previewObjectContainsPoint(target.geometry, point, size)) continue;
-    if (!hit || target.order >= hit.order) hit = target;
+    if (!hit || target.order > hit.order || (target.order === hit.order && target.key > hit.key)) hit = target;
   }
   return hit;
 }
@@ -71,34 +71,45 @@ export function previewInteractionAtPoint<T>(
   };
 }
 
+export const PREVIEW_CHROME = { edgeWidth: 36, edgeLength: 60, cornerSize: 46, deleteSize: 40 } as const;
+
 function selectedChromeMode(
   geometry: LayerGeometryInput,
   point: PreviewPoint,
   size: PreviewSize,
   deletable: boolean,
 ): LayerGestureMode | 'delete' | undefined {
-  if (!(size.width > 0) || !(size.height > 0)) return undefined;
+  if (!(size.width > 0) || !(size.height > 0) || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return undefined;
   const extent = layerExtent(geometry);
   const radians = geometry.rotation * Math.PI / 180;
   const dx = point.x - geometry.position.x * size.width;
   const dy = point.y - geometry.position.y * size.height;
   const localX = dx * Math.cos(radians) + dy * Math.sin(radians);
   const localY = -dx * Math.sin(radians) + dy * Math.cos(radians);
-  const halfWidth = Math.max(12, extent.width * size.width / 2);
-  const halfHeight = Math.max(12, extent.height * size.height / 2);
-  if (deletable && Math.hypot(localX + halfWidth, localY + halfHeight) <= 22) return 'delete';
-  const cornerRadius = Math.min(22, Math.max(7, Math.min(halfWidth, halfHeight) * 0.42));
-  if (Math.hypot(localX - halfWidth, localY - halfHeight) <= cornerRadius) return 'corner';
-  if (Math.abs(localX) > halfWidth || Math.abs(localY) > halfHeight) return undefined;
-  const horizontalThreshold = Math.min(18, Math.max(3, halfWidth * 0.42));
-  const verticalThreshold = Math.min(18, Math.max(3, halfHeight * 0.42));
-  const edges = [
-    { mode: 'left' as const, distance: Math.abs(localX + halfWidth), active: localX <= 0 },
-    { mode: 'right' as const, distance: Math.abs(localX - halfWidth), active: localX >= 0 },
-    { mode: 'top' as const, distance: Math.abs(localY + halfHeight), active: localY <= 0 },
-    { mode: 'bottom' as const, distance: Math.abs(localY - halfHeight), active: localY >= 0 },
-  ].filter((edge) => edge.active && edge.distance <= (edge.mode === 'left' || edge.mode === 'right'
-    ? horizontalThreshold : verticalThreshold));
-  edges.sort((left, right) => left.distance - right.distance);
-  return edges[0]?.mode ?? 'move';
+  const halfWidth = extent.width * size.width / 2;
+  const halfHeight = extent.height * size.height / 2;
+  // Keep the center available for dragging even on very small objects.
+  if (Math.abs(localX) < Math.min(8, halfWidth / 2) && Math.abs(localY) < Math.min(8, halfHeight / 2)) return 'move';
+  const deleteDistance = Math.hypot(localX + halfWidth, localY + halfHeight);
+  const cornerDistance = Math.hypot(localX - halfWidth, localY - halfHeight);
+  const handles: { mode: LayerGestureMode | 'delete'; distance: number; priority: number }[] = [
+    ...(deletable && deleteDistance <= PREVIEW_CHROME.deleteSize / 2
+      ? [{ mode: 'delete' as const, distance: deleteDistance, priority: 0 }] : []),
+    ...(cornerDistance <= PREVIEW_CHROME.cornerSize / 2
+      ? [{ mode: 'corner' as const, distance: cornerDistance, priority: 1 }] : []),
+    ...(localX <= 0 && Math.abs(localY) <= PREVIEW_CHROME.edgeLength / 2
+      && Math.abs(localX + halfWidth) <= PREVIEW_CHROME.edgeWidth / 2
+      ? [{ mode: 'left' as const, distance: Math.abs(localX + halfWidth), priority: 2 }] : []),
+    ...(localX >= 0 && Math.abs(localY) <= PREVIEW_CHROME.edgeLength / 2
+      && Math.abs(localX - halfWidth) <= PREVIEW_CHROME.edgeWidth / 2
+      ? [{ mode: 'right' as const, distance: Math.abs(localX - halfWidth), priority: 2 }] : []),
+    ...(localY <= 0 && Math.abs(localX) <= PREVIEW_CHROME.edgeLength / 2
+      && Math.abs(localY + halfHeight) <= PREVIEW_CHROME.edgeWidth / 2
+      ? [{ mode: 'top' as const, distance: Math.abs(localY + halfHeight), priority: 2 }] : []),
+    ...(localY >= 0 && Math.abs(localX) <= PREVIEW_CHROME.edgeLength / 2
+      && Math.abs(localY - halfHeight) <= PREVIEW_CHROME.edgeWidth / 2
+      ? [{ mode: 'bottom' as const, distance: Math.abs(localY - halfHeight), priority: 2 }] : []),
+  ];
+  handles.sort((left, right) => left.distance - right.distance || left.priority - right.priority);
+  return handles[0]?.mode ?? 'move';
 }

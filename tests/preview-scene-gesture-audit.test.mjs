@@ -37,7 +37,7 @@ function scene(initialTargets, selectedKey) {
     useRef(value) { const index = cursor++; slots[index] ??= { current: value }; return slots[index]; },
     useState(value) {
       const index = cursor++;
-      slots[index] ??= { value };
+      slots[index] ??= { value: typeof value === 'function' ? value() : value };
       return [slots[index].value, (next) => { slots[index].value = typeof next === 'function' ? next(slots[index].value) : next; }];
     },
     useMemo(factory, deps) {
@@ -55,6 +55,7 @@ function scene(initialTargets, selectedKey) {
       }
     },
   };
+  react.useLayoutEffect = react.useEffect;
   const exports = {};
   const source = readFileSync(new URL('../src/hooks/use-preview-scene-gesture.ts', import.meta.url), 'utf8');
   runInNewContext(ts.transpileModule(source, { compilerOptions: {
@@ -151,9 +152,9 @@ test('a foreign sticker finger cannot steal, scale, or continue the owning stick
   s.render({ selectedKey: 'second', targets: [...s.targets].reverse() });
   s.handlers.onResponderMove(event([touch(2, 350, 240), touch(7, 120, 150)]));
   s.frame();
-  assert.equal(s.calls.changes.length, 1);
-  near(s.calls.changes[0].geometry.position.x, 0.3);
-  near(s.calls.changes[0].geometry.scale, 1);
+  assert.equal(s.calls.changes.length, 0);
+  near(s.result.geometryFor('first', s.targets[0].geometry).position.x, 0.3);
+  near(s.result.geometryFor('first', s.targets[0].geometry).scale, 1);
   s.handlers.onResponderEnd(event([touch(2, 350, 240)], [touch(7, 120, 150)]));
   s.handlers.onResponderMove(event([touch(2, 10, 10)]));
   s.handlers.onResponderRelease();
@@ -168,8 +169,8 @@ test('same-object pinch survives reversed touch order and rebases to one finger 
   s.handlers.onResponderStart(event([touch(2, 220, 150), touch(7, 180, 150)], [touch(2, 220, 150)]));
   s.handlers.onResponderMove(event([touch(7, 160, 150), touch(2, 240, 150)]));
   s.frame();
-  near(s.calls.changes.at(-1).geometry.scale, 2);
-  near(s.calls.changes.at(-1).geometry.position.x, 0.5);
+  near(s.result.geometryFor('first', s.targets[0].geometry).scale, 2);
+  near(s.result.geometryFor('first', s.targets[0].geometry).position.x, 0.5);
   s.handlers.onResponderEnd(event([touch(7, 160, 150)], [touch(2, 240, 150)]));
   s.handlers.onResponderMove(event([touch(7, 180, 150)]));
   s.handlers.onResponderRelease();
@@ -182,8 +183,7 @@ test('second finger can join the current moved sticker bounds, not its obsolete 
   s.handlers.onResponderGrant(event([touch(7, 100, 150)]));
   s.handlers.onResponderMove(event([touch(7, 200, 150)]));
   s.frame();
-  const moved = s.calls.changes.at(-1).geometry;
-  s.render({ selectedKey: 'first', targets: [{ ...s.targets[0], geometry: moved }] });
+  s.render({ selectedKey: 'first', targets: [...s.targets] });
   s.handlers.onResponderStart(event([touch(7, 200, 150), touch(8, 220, 150)], [touch(8, 220, 150)]));
   s.handlers.onResponderMove(event([touch(8, 240, 150), touch(7, 200, 150)]));
   s.handlers.onResponderRelease();
@@ -197,7 +197,7 @@ for (const [mode, x, y] of [['delete', 120, 90], ['left', 120, 150], ['right', 2
     const hit = previewInteractionAtPoint(s.targets, 'selected', { x, y }, size, true);
     assert.equal(hit.mode, mode);
     s.handlers.onResponderGrant(event([touch(3, x, y)]));
-    s.handlers.onResponderMove(event([touch(3, x + 10, y + 10)]));
+    if (mode !== 'delete') s.handlers.onResponderMove(event([touch(3, x + 10, y + 10)]));
     s.handlers.onResponderRelease();
     s.handlers.onResponderRelease();
     assert.deepEqual(s.calls.select, ['selected']);
@@ -256,12 +256,12 @@ test('termination cancels a pending delete instead of deleting without a complet
   assert.equal(s.calls.changes.length, 0);
 });
 
-test('frame coalescing flushes only the latest geometry once before interaction end', () => {
+test('draft moves commit only the latest geometry once before interaction end', () => {
   const s = scene([target('first', geometry())]);
   s.handlers.onResponderGrant(event([touch(1, 200, 150)]));
   s.handlers.onResponderMove(event([touch(1, 210, 150)]));
   s.handlers.onResponderMove(event([touch(1, 240, 150)]));
-  assert.equal(s.pendingFrames, 1);
+  assert.equal(s.pendingFrames, 0);
   assert.equal(s.calls.changes.length, 0);
   s.handlers.onResponderRelease();
   assert.equal(s.pendingFrames, 0);
@@ -280,8 +280,8 @@ test('unmount cancels pending frame writes and disabled scene declines capture',
   assert.equal(s.pendingFrames, 0);
   assert.equal(s.calls.changes.length, 0);
   s.render({ enabled: false });
-  assert.equal(s.handlers.onStartShouldSetResponderCapture(), false);
-  assert.equal(s.handlers.onMoveShouldSetResponderCapture(), false);
+  assert.equal(s.handlers.onStartShouldSetResponder(), false);
+  assert.equal(s.handlers.onMoveShouldSetResponder(), false);
 });
 
 test('extreme axis-aligned geometry retains a 24px recovery area and bounded dimensions', () => {
