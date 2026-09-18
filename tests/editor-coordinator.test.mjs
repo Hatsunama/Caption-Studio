@@ -15,7 +15,7 @@ import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
 import { adjustTimelineTiming } from '../src/lib/timeline-gesture.ts';
 import { createEditorSession } from '../src/services/editor-session.ts';
 
-test('timeline non-active cue selection preserves fixed-playhead content, selection handles and project state', async () => {
+test('timeline non-active cue selection preserves state without off-playhead preview hit targets', async () => {
   const h = mount();
   const before = h.project;
   const timeline = () => h.all((node) => node.type === 'LayerTimeline')[0].props;
@@ -24,8 +24,8 @@ test('timeline non-active cue selection preserves fixed-playhead content, select
     timeline().onSelectCaption(before.captions[index]); h.render();
     assert.equal(h.transport.currentMs, 600);
     assert.equal(primary().caption.id, 'cue-0');
-    assert.equal(primary().selectionCaption.id, 'cue-' + index);
-    assert.equal(primary().interactive, true);
+    assert.equal(primary().selectionCaption?.id, index === 0 ? 'cue-0' : undefined);
+    assert.equal(primary().interactive, index === 0);
     assert.equal(primary().editingPreview, false);
     assert.equal(h.project, before);
   }
@@ -34,7 +34,8 @@ test('timeline non-active cue selection preserves fixed-playhead content, select
     timeline().onSelectTranslationCaption('fr', pair); h.render();
     const overlay = h.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === 'fr')[0].props;
     assert.equal(overlay.caption.id, 'fr:cue-0');
-    assert.equal(overlay.interactive, true);
+    assert.equal(overlay.selectionCaption, undefined);
+    assert.equal(overlay.interactive, false);
     assert.equal(primary().caption.id, 'cue-0');
     assert.equal(primary().interactive, false);
     assert.equal(h.transport.currentMs, 600);
@@ -42,10 +43,8 @@ test('timeline non-active cue selection preserves fixed-playhead content, select
   }
   h.transport.seek(2700); h.render();
   assert.equal(primary().caption, undefined);
-  const gap = h.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === 'fr')[0].props;
-  assert.equal(gap.caption, undefined);
-  assert.equal(gap.selectionCaption.id, 'fr:cue-1');
-  assert.equal(gap.interactive, true);
+  const gap = h.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === 'fr');
+  assert.equal(gap.length, 0);
   await h.flush();
   assert.equal(h.calls.writes.length, 0);
 });

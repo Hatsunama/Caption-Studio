@@ -4,19 +4,17 @@ import type { useLayerGesture } from '@/hooks/use-layer-gesture';
 import { chrome } from '@/lib/ui-theme';
 
 export function LayerTransformOverlay(props: {
-  geometry: LayerGeometryInput; interactive?: boolean; selectable?: boolean;
-  responders: ReturnType<typeof useLayerGesture>['responders']; onSelect?: () => void; onDelete?: () => void;
+  geometry: LayerGeometryInput; interactive?: boolean;
+  responders: ReturnType<typeof useLayerGesture>['responders']; onDelete?: () => void;
 }) {
-  if (!props.interactive && !props.selectable) return null;
+  if (!props.interactive) return null;
   const extent = layerExtent(props.geometry);
   return <View pointerEvents="box-none" style={{ position: 'absolute',
     left: `${(props.geometry.position.x - extent.width / 2) * 100}%`, top: `${(props.geometry.position.y - extent.height / 2) * 100}%`,
     width: `${extent.width * 100}%`, height: `${extent.height * 100}%`, transform: [{ rotate: `${props.geometry.rotation}deg` }],
   }}>
-    {props.interactive ? <View {...props.responders.move} collapsable={false} style={{ position: 'absolute', inset: 0 }} /> : null}
-    {!props.interactive && props.selectable ? <Pressable accessibilityRole="button" accessibilityLabel="Select layer" onPress={props.onSelect}
-      style={{ position: 'absolute', inset: 0 }} /> : null}
-    {props.interactive ? <>
+    <View {...props.responders.move} collapsable={false} style={{ position: 'absolute', inset: 0 }} />
+    <>
       <View pointerEvents="none" style={{ position: 'absolute', inset: 0, borderWidth: 2, borderColor: chrome.accent, borderRadius: 4 }} />
       {(['left', 'right', 'top', 'bottom', 'corner'] as LayerGestureMode[]).map((mode) => {
         const horizontal = mode === 'left' || mode === 'right';
@@ -35,6 +33,6 @@ export function LayerTransformOverlay(props: {
         style={{ position: 'absolute', left: -20, top: -20, zIndex: 30, width: 40, height: 40, borderRadius: 20, backgroundColor: '#FF5267', alignItems: 'center', justifyContent: 'center' }}>
         <Text style={{ color: '#FFFFFF', fontSize: 22 }}>{'\u00d7'}</Text>
       </Pressable> : null}
-    </> : null}
+    </>
   </View>;
 }
