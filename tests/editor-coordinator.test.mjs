@@ -19,25 +19,25 @@ test('timeline non-active cue selection preserves state without off-playhead pre
   const h = mount();
   const before = h.project;
   const timeline = () => h.all((node) => node.type === 'LayerTimeline')[0].props;
-  const primary = () => h.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === 'captions')[0].props;
+  const primary = () => h.all((node) => node.type === 'CaptionOverlay' && node.props.captions)[0].props;
   for (const index of [1, 2, 2, 0, 1]) {
     timeline().onSelectCaption(before.captions[index]); h.render();
     assert.equal(h.transport.currentMs, 600);
     assert.equal(primary().caption.id, 'cue-0');
     assert.equal(primary().selectionCaption?.id, index === 0 ? 'cue-0' : undefined);
-    assert.equal(primary().interactive, index === 0);
+    assert.equal(primary().selected, index === 0);
     assert.equal(primary().editingPreview, false);
     assert.equal(h.project, before);
   }
   const pair = resolveCaptionPairs(before, 'fr')[1];
   for (let i = 0; i < 3; i++) {
     timeline().onSelectTranslationCaption('fr', pair); h.render();
-    const overlay = h.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === 'fr')[0].props;
+    const overlay = h.all((node) => node.type === 'CaptionOverlay' && node.props.caption?.id?.startsWith('fr:'))[0].props;
     assert.equal(overlay.caption.id, 'fr:cue-0');
     assert.equal(overlay.selectionCaption, undefined);
-    assert.equal(overlay.interactive, false);
+    assert.equal(overlay.selected, false);
     assert.equal(primary().caption.id, 'cue-0');
-    assert.equal(primary().interactive, false);
+    assert.equal(primary().selected, false);
     assert.equal(h.transport.currentMs, 600);
     assert.equal(h.project, before);
   }
@@ -147,8 +147,8 @@ test('workspace sends every overlapping active primary and translated cue to pre
   project.captionTracks.translations[0].cues[1].startMs = 500;
   const h = mount(project);
   const plan = buildTimelineRenderPlan(project);
-  const overlays = h.all((node) => node.type === 'CaptionOverlay' && node.props.captions);
-  const previewIds = overlays.flatMap((node) => node.props.captions.map((cue) => cue.id));
+  const overlays = h.all((node) => node.type === 'CaptionOverlay' && (node.props.captions || node.props.caption));
+  const previewIds = overlays.flatMap((node) => (node.props.captions ?? [node.props.caption]).map((cue) => cue.id));
   assert.deepEqual(previewIds, plan.captions.filter((cue) => cue.startMs <= 600 && cue.endMs > 600).map((cue) => cue.id));
   assert.equal(previewIds.length, 4);
 });
@@ -157,13 +157,15 @@ for (const trackId of ['captions', 'fr']) test(`${trackId} preview gesture is on
   const h = mount();
   const before = h.project;
   const timeline = () => h.all((node) => node.type === 'LayerTimeline')[0].props;
-  if (trackId === 'captions') timeline().onSelectCaption(before.captions[1]);
-  else timeline().onSelectTranslationCaption(trackId, resolveCaptionPairs(before, trackId)[1]);
+  if (trackId === 'captions') timeline().onSelectCaption(before.captions[0]);
+  else timeline().onSelectTranslationCaption(trackId, resolveCaptionPairs(before, trackId)[0]);
   h.render();
-  const props = h.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === trackId)[0].props;
   const transform = { position: { x: 0.35, y: 0.25 }, box: { width: 0.6, height: 0.1 },
     rotation: 25, scale: 1.4, scaleX: 0.8, scaleY: 1.1 };
-  props.onInteractionStart(); props.onTransform(transform); props.onTransformEnd();
+  const targetKey = trackId === 'captions' ? 'caption:cue-0' : `${trackId}:cue-0`;
+  const target = h.previewScene.targets.find((candidate) => candidate.key.endsWith(targetKey));
+  assert.ok(target);
+  h.previewScene.onInteractionStart(); h.previewScene.onChange(target, transform); h.previewScene.onInteractionEnd();
   await h.flush();
   const edited = h.project;
   const geometries = (p) => trackId === 'captions'
@@ -176,7 +178,7 @@ for (const trackId of ['captions', 'fr']) test(`${trackId} preview gesture is on
   assert.equal(h.project, before);
   assert.equal(h.disk, before);
   assert.equal(timeline().selectedLayerId, trackId);
-  assert.equal(timeline().selectedCaptionId, 'cue-1');
+  assert.equal(timeline().selectedCaptionId, 'cue-0');
   h.actions.redo(); await h.flush();
   assert.equal(h.project, edited);
   assert.equal(h.disk, edited);
@@ -188,7 +190,7 @@ for (const trackId of ['captions', 'fr']) test(`${trackId} preview gesture is on
   assert.ok(output.length >= 2);
   for (const cue of output) assert.deepEqual(plain(captionTransform(cue.style)), transform);
   const reopenedWorkspace = mount(reopened);
-  assert.equal(reopenedWorkspace.all((node) => node.type === 'CaptionOverlay' && node.props.interactionId === 'captions')[0].props.caption.id, 'cue-0');
+  assert.equal(reopenedWorkspace.all((node) => node.type === 'CaptionOverlay' && node.props.captions)[0].props.caption.id, 'cue-0');
 });
 
 const requireLocal = createRequire(import.meta.url);
@@ -292,6 +294,7 @@ function mount(initialProject = fixture()) {
     seek(ms) { transport.currentMs = ms; dirty = true; },
     synchronizeProject(project) { calls.synchronizations.push(project); },
   };
+  let previewSceneOptions;
   const write = async (next) => {
     calls.writes.push(next);
     const gate = pendingWrites.shift();
@@ -327,6 +330,15 @@ function mount(initialProject = fixture()) {
     },
     useForegroundOperation: () => ({}),
     useEditorRuntimePolicy: (blockingUi) => resolveEditorRuntimePolicy({ appState, blockingUi }),
+    usePreviewSceneGesture: (options) => {
+      previewSceneOptions = options;
+      return {
+        canvasRef: { current: null },
+        onLayout: () => {},
+        responders: {},
+        geometryFor: (_key, geometry) => geometry,
+      };
+    },
   };
   const jsx = (type, props) => ({ type, props: props ?? {} });
   const native = Object.fromEntries(['ActivityIndicator', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View'].map((name) => [name, name]));
@@ -407,6 +419,7 @@ function mount(initialProject = fixture()) {
     get actions() { return actions; }, get project() { return actions.editorSession.current(); },
     get disk() { return disk; }, set disk(value) { disk = value; },
     get waveform() { return waveform; }, get translation() { return translationOptions; },
+    get previewScene() { return previewSceneOptions; },
     holdWrite() { const gate = deferred(); pendingWrites.push(gate); return gate; },
     async flush() { await tick(); render(); await tick(); render(); },
     appState(value) { appState = value; render(); },

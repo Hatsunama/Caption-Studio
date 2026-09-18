@@ -105,15 +105,15 @@ test('unmeasured and unlocated canvases cannot fly a layer off-screen', () => {
   assert.ok(Math.abs(next.position.x) < 2 && Math.abs(next.position.y) < 2);
 });
 
-test('a selected owner rejects competing responders and clamps only degenerate box inversion', () => {
+test('a selected owner rejects competing responders and keeps extreme resizing recoverable', () => {
   const gesture = createLayerGesture(geometry());
   assert.equal(gesture.begin('right', [point(0, 0)], size), true);
   assert.equal(gesture.begin('move', [point(0, 0)], size), false);
   const tiny = gesture.update([point(-1e5, 0)]);
-  near(layerExtent(tiny).width * size.width, 1);
+  near(layerExtent(tiny).width * size.width, 24);
   assert.ok(tiny.scaleX > 0);
   const large = gesture.update([point(1e5, 0)]);
-  assert.ok(large.scaleX > 400);
+  assert.ok(layerExtent(large).width <= 10);
 });
 
 test('frame scheduling coalesces latest geometry and cancellation prevents stale publication', () => {

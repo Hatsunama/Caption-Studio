@@ -36,6 +36,63 @@ export function layerExtent(value: LayerGeometryInput) {
   };
 }
 
+export function normalizeLayerGeometry(value: LayerGeometryInput): LayerGeometry {
+  const geometry = resolveLayerGeometry(value);
+  if (![geometry.position.x, geometry.position.y, geometry.box.width, geometry.box.height, geometry.rotation]
+    .every(Number.isFinite) || geometry.box.width <= 0 || geometry.box.height <= 0) {
+    throw new Error('Layer geometry must contain finite positions, rotation, and positive dimensions');
+  }
+  const box = {
+    width: clamp(geometry.box.width, 0.001, 10),
+    height: clamp(geometry.box.height, 0.001, 10),
+  };
+  const extent = layerExtent({ ...geometry, box });
+  return {
+    ...geometry,
+    box,
+    rotation: degrees(geometry.rotation),
+    scaleX: geometry.scaleX * Math.min(10 / Math.max(Number.EPSILON, extent.width), 1),
+    scaleY: geometry.scaleY * Math.min(10 / Math.max(Number.EPSILON, extent.height), 1),
+    position: {
+      x: clamp(geometry.position.x, -4, 4),
+      y: clamp(geometry.position.y, -4, 4),
+    },
+  };
+}
+
+export function constrainLayerGeometry(value: LayerGeometryInput, canvas: Pick<LayerCanvas, 'width' | 'height'>): LayerGeometry {
+  const geometry = normalizeLayerGeometry(value);
+  const width = Math.max(1, canvas.width);
+  const height = Math.max(1, canvas.height);
+  const minimumWidth = 24 / width;
+  const minimumHeight = 24 / height;
+  const maximumExtent = 10;
+  let extent = layerExtent(geometry);
+  const scaleX = geometry.scaleX
+    * Math.max(minimumWidth / Math.max(Number.EPSILON, extent.width), 1)
+    * Math.min(maximumExtent / Math.max(Number.EPSILON, extent.width), 1);
+  const scaleY = geometry.scaleY
+    * Math.max(minimumHeight / Math.max(Number.EPSILON, extent.height), 1)
+    * Math.min(maximumExtent / Math.max(Number.EPSILON, extent.height), 1);
+  const constrained = { ...geometry, scaleX, scaleY };
+  extent = layerExtent(constrained);
+  const radians = constrained.rotation * Math.PI / 180;
+  const cosine = Math.abs(Math.cos(radians));
+  const sine = Math.abs(Math.sin(radians));
+  const rotatedWidth = (cosine * extent.width * width + sine * extent.height * height) / width;
+  const rotatedHeight = (sine * extent.width * width + cosine * extent.height * height) / height;
+  const visibleX = Math.min(rotatedWidth / 2, 24 / width);
+  const visibleY = Math.min(rotatedHeight / 2, 24 / height);
+  return {
+    ...constrained,
+    rotation: degrees(constrained.rotation),
+    position: {
+      x: clamp(constrained.position.x, Math.max(-4, -rotatedWidth / 2 + visibleX), Math.min(4, 1 + rotatedWidth / 2 - visibleX)),
+      y: clamp(constrained.position.y, Math.max(-4, -rotatedHeight / 2 + visibleY), Math.min(4, 1 + rotatedHeight / 2 - visibleY)),
+    },
+  };
+}
+
 export function sameLayerGeometry(a: LayerGeometryInput, b: LayerGeometryInput) {
   return a.position.x === b.position.x && a.position.y === b.position.y
     && a.box.width === b.box.width && a.box.height === b.box.height && a.rotation === b.rotation
@@ -120,10 +177,15 @@ export function createLayerGesture(initial: LayerGeometryInput) {
           position: { x: baseline.position.x + shift * axisX / canvas.width, y: baseline.position.y + shift * axisY / canvas.height },
         };
       }
+      current = constrainLayerGeometry(current, canvas);
       return current;
     },
     end() { const wasActive = active; active = false; points = []; return wasActive ? current : undefined; },
   };
+}
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 export function createGeometryFrameQueue<T>(schedule: (callback: () => void) => number, cancel: (id: number) => void, publish: (value: T) => void) {

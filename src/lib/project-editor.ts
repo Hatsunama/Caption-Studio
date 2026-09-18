@@ -37,6 +37,7 @@ import {
   type VideoTransformPatch,
 } from '@/types/project';
 import { editCanvasTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
+import { normalizeLayerGeometry } from '@/lib/layer-geometry';
 
 export function setCaptionTexts(project: CaptionProject, changes: CaptionTextChanges) {
   const changed = applyCaptionTextChanges(project.captions, changes);
@@ -58,9 +59,11 @@ export function setTextLayerText(project: CaptionProject, layerId: string, text:
 
 export function setTextLayerStyle(project: CaptionProject, layerId: string, patch: CaptionStylePatch) {
   return updateProject(project, {
-    layers: project.layers.map((layer) => layer.id === layerId && layer.kind === 'text'
-      ? { ...layer, style: mergeStyle(layer.style, patch) }
-      : layer),
+    layers: project.layers.map((layer) => {
+      if (layer.id !== layerId || layer.kind !== 'text') return layer;
+      const style = mergeStyle(layer.style, patch);
+      return { ...layer, style: { ...style, ...normalizeLayerGeometry(style) } };
+    }),
   });
 }
 
@@ -186,9 +189,11 @@ export function setLayerTiming(
 
 export function setImageLayer(project: CaptionProject, layerId: string, patch: Partial<ImageVisualLayer>) {
   return updateProject(project, {
-    layers: project.layers.map((layer) => layer.id === layerId && layer.kind === 'image'
-      ? { ...layer, ...patch }
-      : layer),
+    layers: project.layers.map((layer) => {
+      if (layer.id !== layerId || layer.kind !== 'image') return layer;
+      const merged = { ...layer, ...patch };
+      return { ...merged, ...normalizeLayerGeometry(merged) };
+    }),
   });
 }
 

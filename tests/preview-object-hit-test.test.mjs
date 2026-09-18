@@ -25,12 +25,13 @@ test('preview hit testing follows rotation and rejects points outside the author
 test('preview interaction has one scene owner and no per-object selection pressables', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   const transform = readFileSync(new URL('../src/components/editor/layer-transform-overlay.tsx', import.meta.url), 'utf8');
-  const gesture = readFileSync(new URL('../src/hooks/use-layer-gesture.ts', import.meta.url), 'utf8');
-  assert.match(editor, /onStartShouldSetResponderCapture=\{capturePreviewObject\}/);
-  assert.match(editor, /previewObjectAtPoint\(previewObjectTargets/);
-  assert.match(editor, /active\.some\(\(pair\) => pair\.source\.id === selectedTranslationPair\.source\.id\)/);
+  const gesture = readFileSync(new URL('../src/hooks/use-preview-scene-gesture.ts', import.meta.url), 'utf8');
+  assert.match(editor, /usePreviewSceneGesture\(\{/);
+  assert.match(editor, /ref=\{previewCanvasRef\}/);
+  assert.match(editor, /\{\.\.\.previewSceneResponders\}/);
   assert.doesNotMatch(transform, /Select layer|selectable|onSelect/);
-  assert.match(gesture, /located: \(\) => origin !== undefined/);
-  assert.match(gesture, /grantTokenRef\.current !== token/);
-  assert.match(gesture, /grantTokenRef\.current \+= 1/);
+  assert.match(transform, /pointerEvents="none"/);
+  assert.match(gesture, /previewCanvasPoint\(touch\.pageX, touch\.pageY, origin\)/);
+  assert.match(gesture, /ownerRef\.current = \{ target, gesture/);
+  assert.doesNotMatch(gesture, /locationX|locationY/);
 });

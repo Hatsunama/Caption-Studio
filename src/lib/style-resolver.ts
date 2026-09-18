@@ -1,6 +1,7 @@
 import { mergeStyle, mergePatch, mergeFont, removePatchedKeys } from '@/lib/caption-style';
 import { migrateLegacyTranslationTransforms } from '@/lib/caption-tracks';
 import { captionTransform, hasCaptionTransform, withoutCaptionTransform } from '@/lib/caption-transform';
+import { normalizeLayerGeometry } from '@/lib/layer-geometry';
 import type {
   CaptionBlock,
   CaptionProject,
@@ -37,7 +38,7 @@ export function applyStylePatch(
     const selected = project.captions.find((caption) => caption.id === captionId)
       ?? [...project.captions].sort((a, b) => Number(b.timelineVisible !== false) - Number(a.timelineVisible !== false)
         || a.startMs - b.startMs || a.endMs - b.endMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
-    const geometry = captionTransform(mergeStyle(resolveCaptionStyle(project.projectStyle, selected), patch));
+    const geometry = normalizeLayerGeometry(captionTransform(mergeStyle(resolveCaptionStyle(project.projectStyle, selected), patch)));
     project = migrateLegacyTranslationTransforms(project, captionId);
     project = {
       ...project,
