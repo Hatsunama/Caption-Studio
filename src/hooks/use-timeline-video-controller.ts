@@ -307,7 +307,6 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       generationRef.current += 1;
       boundaryClipIdRef.current = undefined;
       cancelGapClock();
-      activePlayer().pause();
     };
   }, [activePlayer]);
 
