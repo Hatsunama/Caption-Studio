@@ -1,7 +1,7 @@
 import { editCanvasTimelineRange } from '@/lib/timeline-item-timing';
 import { mergePatch, mergeStyle, removePatchedKeys } from '@/lib/caption-style';
 import { captionTransform, hasCaptionTransform, withoutCaptionTransform } from '@/lib/caption-transform';
-import { layerExtent } from '@/lib/layer-geometry';
+import { layerExtent, normalizeLayerGeometry } from '@/lib/layer-geometry';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
 import { type TranslationTimeMapping } from '@/lib/video-timeline';
 import {
@@ -259,7 +259,7 @@ export function setTranslationTrackStyle(
     const track = translationTrack(project, trackId);
     const base = translationTransformReference(project, trackId)?.style
       ?? mergeStyle(mergeStyle(project.projectStyle, DEFAULT_TRANSLATION_TRACK_STYLE), track.styleOverride);
-    patch = { ...patch, ...captionTransform(mergeStyle(base, patch)) };
+    patch = { ...patch, ...normalizeLayerGeometry(captionTransform(mergeStyle(base, patch))) };
   }
   return mapTranslationTrack(project, trackId, (track) => ({
     ...track,
@@ -282,7 +282,7 @@ export function setTranslationCueStyle(
   const pair = resolveCaptionPairs(project, trackId).find((candidate) => candidate.source.id === sourceCaptionId);
   if (!pair) throw new Error(`Translation for caption ${sourceCaptionId} does not exist.`);
   if (hasCaptionTransform(patch)) {
-    project = setTranslationTrackStyle(project, trackId, captionTransform(mergeStyle(pair.style, patch)), updatedAt);
+    project = setTranslationTrackStyle(project, trackId, normalizeLayerGeometry(captionTransform(mergeStyle(pair.style, patch))), updatedAt);
     patch = withoutCaptionTransform(patch) ?? {};
     if (!Object.keys(patch).length) return project;
   }

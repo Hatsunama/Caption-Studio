@@ -16,7 +16,7 @@ test('new audio is waveform-ready before the project transaction publishes it', 
 
 test('empty preview and timeline surfaces clear every editor selection', () => {
   assert.match(editor, /const clearEditorSelection = \(\) => \{[\s\S]*setSelectedCaptionId\(undefined\)[\s\S]*setSelectedLayerId\(undefined\)[\s\S]*setSelectedClipId\(undefined\)[\s\S]*setSelectedAudioClipId\(undefined\)/);
-  assert.match(editor, /accessibilityLabel="Clear editor selection"[\s\S]*onPress=\{clearEditorSelection\}/);
+  assert.match(editor, /usePreviewSceneGesture\(\{[\s\S]*onClearSelection: clearEditorSelection/);
   assert.match(timeline, /onClearSelection: \(\) => void/);
   assert.match(timeline, /onPressTrack=\{\(x\) => \{ props\.onClearSelection\(\); props\.onSeek/);
   assert.match(timeline, /accessibilityLabel="Clear selection and seek timeline"/);
