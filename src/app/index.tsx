@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Image } from 'expo-image';
+import { useIsFocused } from '@react-navigation/native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Pressable,
+  StyleSheet,
   Text,
   View,
 } from 'react-native';
 
 import { MediaLoadingOverlay } from '@/components/media-loading-overlay';
+import { RefractBackground } from '@/components/refract-background';
 import type { MediaImportProgress } from '@/services/media-import';
 import { shareProjectRecoveryRecord } from '@/services/project-recovery';
 import {
@@ -24,7 +27,6 @@ import { chrome } from '@/lib/ui-theme';
 import type { ProjectLibraryProject, ProjectRecordSummary } from '@/types/project-library';
 
 const palette = {
-  background: chrome.background,
   surface: chrome.surface,
   surfaceRaised: chrome.surfaceRaised,
   text: chrome.text,
@@ -35,6 +37,7 @@ const palette = {
 
 export default function ProjectsScreen() {
   const router = useRouter();
+  const isFocused = useIsFocused();
   const [projects, setProjects] = useState<ProjectRecordSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>();
@@ -114,10 +117,11 @@ export default function ProjectsScreen() {
     );
   };
 
-  return <>
+  return <View style={{ flex: 1, backgroundColor: '#0A0B0E' }}>
+    <RefractBackground active={isFocused} style={StyleSheet.absoluteFill} />
     <FlatList
       contentInsetAdjustmentBehavior="automatic"
-      style={{ flex: 1, backgroundColor: palette.background }}
+      style={{ flex: 1, backgroundColor: 'transparent' }}
       contentContainerStyle={{ padding: 20, gap: 18, paddingBottom: 48 }}
       data={projects}
       keyExtractor={(item) => item.kind === 'project' ? item.project.id : item.id}
@@ -156,26 +160,24 @@ export default function ProjectsScreen() {
             </View>
           </Pressable>
 
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            {['Offline after model download', 'No watermark', 'Unlimited styles'].map((label) => (
-              <View
-                key={label}
-                style={{
-                  flex: 1,
-                  minHeight: 74,
-                  justifyContent: 'center',
-                  borderRadius: chrome.radius.lg,
-                  padding: 12,
-                  backgroundColor: palette.surface,
-                  borderWidth: 1,
-                  borderColor: palette.border,
-                }}>
-                <Text style={{ color: palette.text, fontSize: 12, lineHeight: 16, fontWeight: '600' }}>
-                  {label}
-                </Text>
-              </View>
-            ))}
-          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Hatsu Is Here For You"
+            onPress={() => router.push('/thank-you')}
+            style={({ pressed }) => ({
+              minHeight: 52,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 28,
+              borderWidth: 2,
+              borderColor: '#5CE1E6',
+              backgroundColor: pressed ? 'rgba(92, 225, 230, 0.15)' : 'transparent',
+              paddingHorizontal: 16,
+            })}>
+            <Text style={{ color: '#F0F2F5', fontSize: 16, fontWeight: '700' }}>
+              Hatsu Is Here For You
+            </Text>
+          </Pressable>
 
           <Text selectable style={{ color: palette.text, fontSize: 19, fontWeight: '700', marginTop: 6 }}>
             Projects
@@ -253,7 +255,7 @@ export default function ProjectsScreen() {
       )}
     />
     <MediaLoadingOverlay progress={importProgress} />
-  </>;
+  </View>;
 }
 
 function ProjectCard(props: { project: ProjectLibraryProject; onOpen: () => void; onDelete: () => void }) {

@@ -35,6 +35,7 @@ export default function RootLayout() {
         contentStyle: { backgroundColor: chrome.background },
       }}>
       <Stack.Screen name="index" options={{ title: 'Caption Studio' }} />
+      <Stack.Screen name="thank-you" options={{ headerShown: false }} />
       <Stack.Screen name="privacy" options={{ title: 'Privacy policy' }} />
       <Stack.Screen name="notices" options={{ title: 'Open-source notices' }} />
       <Stack.Screen
