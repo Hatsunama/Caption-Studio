@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Image } from 'expo-image';
-import { useIsFocused } from '@react-navigation/native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
@@ -37,7 +36,7 @@ const palette = {
 
 export default function ProjectsScreen() {
   const router = useRouter();
-  const isFocused = useIsFocused();
+  const [isFocused, setIsFocused] = useState(true);
   const [projects, setProjects] = useState<ProjectRecordSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>();
@@ -58,6 +57,11 @@ export default function ProjectsScreen() {
   useFocusEffect(useCallback(() => {
     void refresh();
   }, [refresh]));
+
+  useFocusEffect(useCallback(() => {
+    setIsFocused(true);
+    return () => setIsFocused(false);
+  }, []));
 
   const importVideo = async () => {
     setImporting(true);
