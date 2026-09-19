@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.67) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.68) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.67/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.68/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -73,7 +73,7 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.67** (`v1.4.67`, Android version code 79).
+Current Android build: **1.4.68** (`v1.4.68`, Android version code 80).
 
 ## What the current Android build includes
 
@@ -82,6 +82,7 @@ Current Android build: **1.4.67** (`v1.4.67`, Android version code 79).
 - Preview player failures stay visible with a source-specific retry path; export checks required video, audio, and image sources before starting the MP4 render
 - Expo owns native video-player lifetime; editor exit invalidates pending transport work without commanding a player after its shared native object has been released
 - Font choices open a color wheel before applying. Solid fonts start with a clean single color; two-color fonts provide independent Color 1 and Color 2 tabs, with Back to the font list or Save to commit the chosen palette.
+- The project home uses Caption Action's animated refract background, keeps **Hatsu Is Here For You** above Projects, and opens the matching thank-you note.
 - A visible loading dialog immediately after the system picker accepts the videos
 - Source-orientation-aware preview
 - Persistent first-frame thumbnails on project cards, with readable date/time names replacing UUIDs and camera-number filenames
