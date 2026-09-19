@@ -55,9 +55,10 @@ test('preview layers own hit testing, authored lines, stable transform baselines
   assert.doesNotMatch(images, /function ImageCornerHandle/);
 });
 
-test('timeline seeks retain an already owned source instead of replacing its decoder on transient status', () => {
+test('timeline seeks retain persistent slot ownership instead of replacing a decoder on transient status', () => {
   const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
-  assert.match(controller, /const loaded = loadedSourceRef\.current;/);
-  assert.match(controller, /loaded\?\.id !== source\.id[\s\S]*loaded\?\.uri !== source\.uri/);
-  assert.doesNotMatch(controller, /playerB|slotSourcesRef|canReuseVideoSource/);
+  assert.equal((controller.match(/useVideoPlayer\(null, configureTimelinePlayer\)/g) ?? []).length, 2);
+  assert.match(controller, /const sourceChanged = forceReload \|\| runtime\.playbackUri !== uri/);
+  assert.match(controller, /runtime\.preparedClipId === entry\.clip\.id && runtime\.firstFrameReady/);
+  assert.doesNotMatch(controller, /status !== 'readyToPlay'/);
 });

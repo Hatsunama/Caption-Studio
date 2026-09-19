@@ -33,6 +33,7 @@ import {
 import {
   deleteProjectFiles,
   deleteProjectOwnedFiles,
+  ensureProjectVideoPreview,
   ensureProjectThumbnail,
   generateAudioWaveformPeaks,
   reconcileOrphanedProjectDirectories,
@@ -105,9 +106,11 @@ export async function loadProjectForEditing(projectId: string, prompts: ProjectM
         videoUri: source.uri,
         thumbnailUri: source.thumbnailUri,
       });
-      sources.push({ ...source, thumbnailUri: thumbnailUri ?? source.thumbnailUri });
+      const previewUri = await ensureProjectVideoPreview({ projectId: loadedProject.id, source });
+      sources.push({ ...source, thumbnailUri: thumbnailUri ?? source.thumbnailUri, previewUri });
     }
-    if (sources.some((source, index) => source.thumbnailUri !== loadedProject.sources[index].thumbnailUri)) {
+    if (sources.some((source, index) => source.thumbnailUri !== loadedProject.sources[index].thumbnailUri
+      || source.previewUri !== loadedProject.sources[index].previewUri)) {
       project = { ...loadedProject, sources };
       await saveProject(project);
     }
@@ -143,7 +146,7 @@ export async function appendVideosToProject(
     await saveProject(next);
   } catch (error) {
     await runBestEffortCleanup('failed video append', [
-      deleteProjectOwnedFiles(project.id, sources.map((source) => source.thumbnailUri).filter((uri): uri is string => Boolean(uri))),
+      deleteProjectOwnedFiles(project.id, sources.flatMap((source) => [source.thumbnailUri, source.previewUri]).filter((uri): uri is string => Boolean(uri))),
       releaseReadPermissions(sources.map((source) => source.uri)),
     ]);
     throw error;
@@ -266,6 +269,10 @@ export async function saveEditorDraft(project: CaptionProject, ledger?: EditorMe
     .filter((source) => !referencedSourceIds.has(source.id))
     .map((source) => source.thumbnailUri)
     .filter((uri): uri is string => Boolean(uri));
+  const removedPreviewUris = project.sources
+    .filter((source) => !referencedSourceIds.has(source.id))
+    .map((source) => source.previewUri)
+    .filter((uri): uri is string => Boolean(uri));
   const sourceResults = Object.fromEntries(
     Object.entries(project.transcription.sourceResults).filter(([sourceId]) => referencedSourceIds.has(sourceId)),
   );
@@ -286,7 +293,7 @@ export async function saveEditorDraft(project: CaptionProject, ledger?: EditorMe
   const replacedUris = previous ? abandonedProjectOwnedUris(previous, saved) : [];
   const abandonedSessionUris = ledger ? abandonedLedgerAssets(ledger.owned, saved) : [];
   await runBestEffortCleanup('saved draft media reconciliation', [
-    deleteProjectOwnedFiles(project.id, [...removedThumbnailUris, ...removedAudioUris, ...replacedUris, ...abandonedSessionUris]),
+    deleteProjectOwnedFiles(project.id, [...removedThumbnailUris, ...removedPreviewUris, ...removedAudioUris, ...replacedUris, ...abandonedSessionUris]),
   ]);
   const removedLinked = previous
     ? linkedMediaUris(previous).filter((uri) => !linkedMediaUris(saved).includes(uri))

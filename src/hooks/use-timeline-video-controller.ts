@@ -1,7 +1,8 @@
 import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project-timeline';
 import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
+import { videoPlaybackUri } from '@/lib/video-playback-source';
 import { useEventListener } from 'expo';
-import { useVideoPlayer } from 'expo-video';
+import { useVideoPlayer, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -11,47 +12,71 @@ import {
   timelineTimeAt,
   type ClipTimelineEntry,
 } from '@/lib/video-timeline';
-import {
-  CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS,
-  canContinueTimelineClip,
-  shouldApplyTimelineSeek,
-} from '@/lib/video-playback-policy';
+import { CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS, shouldApplyTimelineSeek } from '@/lib/video-playback-policy';
 import { configureTimelinePlayer } from '@/services/video-player-runtime';
 import type { CaptionProject, ProjectVideoSource } from '@/types/project';
 
 type Target = { generation: number; timelineMs: number };
-type TransportPhase = 'loading' | 'ready' | 'gap' | 'ended' | 'error';
+type TransportPhase = 'loading' | 'buffering' | 'ready' | 'gap' | 'ended' | 'error';
+type SlotIndex = 0 | 1;
+
+export type TimelineVideoSlot = {
+  sourceId?: string;
+  playbackUri?: string;
+  preparedClipId?: string;
+  firstFrameReady: boolean;
+};
+
+type SlotRuntime = TimelineVideoSlot & {
+  prepareToken: number;
+  preparation?: AbortController;
+  frameWaiters: Set<() => void>;
+};
+
+function createSlotRuntime(): SlotRuntime {
+  return {
+    firstFrameReady: false,
+    prepareToken: 0,
+    frameWaiters: new Set(),
+  };
+}
 
 export function useTimelineVideoController(project: CaptionProject, _onError: (message: string) => void) {
   const entries = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
-  const initialEntry = entries[0];
-  const initialSource = project.sources.find((source) => source.id === initialEntry?.clip.sourceId);
-  const player = useVideoPlayer(initialSource?.uri ?? null, (instance) => {
-    configureTimelinePlayer(instance);
-    if (initialEntry) instance.currentTime = initialEntry.clip.sourceStartMs / 1_000;
-  });
-  const activePlayer = useCallback(() => player, [player]);
+  const playerA = useVideoPlayer(null, configureTimelinePlayer);
+  const playerB = useVideoPlayer(null, configureTimelinePlayer);
+  const players = useMemo(() => [playerA, playerB] as const, [playerA, playerB]);
 
+  const initialPhase: TransportPhase = entries.length ? 'loading' : 'ended';
   const [currentMs, setCurrentMsState] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [sourceFailure, setSourceFailure] = useState<VideoSourceFailure>();
-  const [phase, setPhaseState] = useState<TransportPhase>(initialEntry ? 'loading' : 'ended');
+  const [phase, setPhaseState] = useState<TransportPhase>(initialPhase);
+  const [activeSlot, setActiveSlotState] = useState<SlotIndex>(0);
+  const [slots, setSlots] = useState<readonly [TimelineVideoSlot, TimelineVideoSlot]>([
+    { firstFrameReady: false },
+    { firstFrameReady: false },
+  ]);
+  const [hasPresentedFrame, setHasPresentedFrameState] = useState(false);
+
   const projectRef = useRef(project);
   const entriesRef = useRef(entries);
   const currentMsRef = useRef(0);
   const playIntentRef = useRef(false);
-  const phaseRef = useRef<TransportPhase>(initialEntry ? 'loading' : 'ended');
-  const loadedSourceRef = useRef<ProjectVideoSource | undefined>(undefined);
-  const confirmedSourceRef = useRef<ProjectVideoSource | undefined>(undefined);
+  const phaseRef = useRef<TransportPhase>(initialPhase);
+  const activeSlotRef = useRef<SlotIndex>(0);
   const activeClipIdRef = useRef<string | undefined>(undefined);
+  const slotRuntimeRef = useRef<[SlotRuntime, SlotRuntime]>([createSlotRuntime(), createSlotRuntime()]);
   const desiredRef = useRef<Target | undefined>(undefined);
   const processingRef = useRef<Promise<void> | undefined>(undefined);
   const drainTargetsRef = useRef<() => Promise<void>>(async () => {});
+  const requestTargetRef = useRef<(timelineMs: number) => void>(() => {});
   const generationRef = useRef(0);
   const boundaryClipIdRef = useRef<string | undefined>(undefined);
   const gapFrameRef = useRef<number | undefined>(undefined);
-  const internalPauseGenerationRef = useRef<number | undefined>(undefined);
+  const preloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const reloadRequestedRef = useRef(false);
+  const hasPresentedFrameRef = useRef(false);
   const mountedRef = useRef(true);
 
   useLayoutEffect(() => {
@@ -59,53 +84,247 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     entriesRef.current = entries;
   }, [entries, project]);
 
+  const publishSlots = useCallback(() => {
+    if (!mountedRef.current) return;
+    const [first, second] = slotRuntimeRef.current;
+    setSlots([
+      {
+        sourceId: first.sourceId,
+        playbackUri: first.playbackUri,
+        preparedClipId: first.preparedClipId,
+        firstFrameReady: first.firstFrameReady,
+      },
+      {
+        sourceId: second.sourceId,
+        playbackUri: second.playbackUri,
+        preparedClipId: second.preparedClipId,
+        firstFrameReady: second.firstFrameReady,
+      },
+    ]);
+  }, []);
+
   const setPhase = (next: TransportPhase) => {
     phaseRef.current = next;
     if (mountedRef.current) setPhaseState(next);
   };
+
   const setCurrentMs = (value: number) => {
     const next = clamp(value, 0, projectTimelineDuration(projectRef.current));
     currentMsRef.current = next;
     if (mountedRef.current) setCurrentMsState(next);
   };
+
+  const setActiveSlot = (next: SlotIndex) => {
+    activeSlotRef.current = next;
+    if (mountedRef.current) setActiveSlotState(next);
+  };
+
+  const markPresentedFrame = () => {
+    if (hasPresentedFrameRef.current) return;
+    hasPresentedFrameRef.current = true;
+    if (mountedRef.current) setHasPresentedFrameState(true);
+  };
+
+  const playerForSlot = (slot: SlotIndex) => players[slot];
+
   const cancelGapClock = () => {
     if (gapFrameRef.current != null) cancelAnimationFrame(gapFrameRef.current);
     gapFrameRef.current = undefined;
   };
+
+  const cancelScheduledPreload = () => {
+    if (preloadTimeoutRef.current != null) clearTimeout(preloadTimeoutRef.current);
+    preloadTimeoutRef.current = undefined;
+  };
+
+  const abortPreparationsExcept = (clipId?: string) => {
+    slotRuntimeRef.current.forEach((runtime) => {
+      if (!clipId || runtime.preparedClipId !== clipId) runtime.preparation?.abort();
+    });
+  };
+
   const stopTransport = useCallback(() => {
     playIntentRef.current = false;
     boundaryClipIdRef.current = undefined;
-    internalPauseGenerationRef.current = undefined;
     cancelGapClock();
-    activePlayer().pause();
+    cancelScheduledPreload();
+    players.forEach((player) => player.pause());
     if (mountedRef.current) setIsPlaying(false);
-  }, [activePlayer]);
+  }, [players]);
+
   const sourceForEntry = (entry: ClipTimelineEntry) => {
     const source = projectRef.current.sources.find((candidate) => candidate.id === entry.clip.sourceId);
     if (!source) throw new Error('This clip has lost its source video.');
     return source;
   };
+
   const failSource = (source: Pick<ProjectVideoSource, 'id' | 'uri' | 'displayName'>, error: unknown) => {
     if (!mountedRef.current) return;
     generationRef.current += 1;
     desiredRef.current = undefined;
-    confirmedSourceRef.current = undefined;
+    abortPreparationsExcept();
     stopTransport();
     setPhase('error');
     setSourceFailure(videoSourceFailure(source, error));
   };
-  const applyClipToPlayer = (entry: ClipTimelineEntry, timelineMs: number) => {
-    const media = activePlayer();
+
+  const markFirstFrame = useCallback((slot: SlotIndex) => {
+    const runtime = slotRuntimeRef.current[slot];
+    runtime.firstFrameReady = true;
+    for (const resolve of runtime.frameWaiters) resolve();
+    runtime.frameWaiters.clear();
+    publishSlots();
+    if (slot === activeSlotRef.current) {
+      markPresentedFrame();
+      if (phaseRef.current === 'buffering') setPhase('ready');
+    }
+  }, [publishSlots]);
+
+  const waitForFirstFrame = (slot: SlotIndex, signal: AbortSignal) => {
+    const runtime = slotRuntimeRef.current[slot];
+    if (runtime.firstFrameReady) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const finish = () => {
+        signal.removeEventListener('abort', abort);
+        runtime.frameWaiters.delete(finish);
+        resolve();
+      };
+      const abort = () => {
+        runtime.frameWaiters.delete(finish);
+        reject(abortError());
+      };
+      runtime.frameWaiters.add(finish);
+      signal.addEventListener('abort', abort, { once: true });
+    });
+  };
+
+  const waitForDecodedPosition = (
+    player: VideoPlayer,
+    targetSeconds: number,
+    signal: AbortSignal,
+  ) => new Promise<void>((resolve, reject) => {
+    let timeout: ReturnType<typeof setTimeout>;
+    let subscription: { remove: () => void } | undefined;
+    const finish = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', abort);
+      subscription?.remove();
+      resolve();
+    };
+    const abort = () => {
+      clearTimeout(timeout);
+      subscription?.remove();
+      reject(abortError());
+    };
+    subscription = player.addListener('timeUpdate', ({ currentTime }) => {
+      if (currentTime + 0.04 >= targetSeconds) finish();
+    });
+    timeout = setTimeout(finish, 1_500);
+    signal.addEventListener('abort', abort, { once: true });
+  });
+
+  const prepareSlot = async (
+    slot: SlotIndex,
+    entry: ClipTimelineEntry,
+    timelineMs: number,
+    forceReload = false,
+  ) => {
+    const runtime = slotRuntimeRef.current[slot];
+    const source = sourceForEntry(entry);
+    const uri = videoPlaybackUri(source);
+    const player = playerForSlot(slot);
+
+    runtime.preparation?.abort();
+    const preparation = new AbortController();
+    runtime.preparation = preparation;
+    const token = ++runtime.prepareToken;
+    const sourceChanged = forceReload || runtime.playbackUri !== uri;
+    const surfaceWasReady = !sourceChanged && runtime.firstFrameReady;
+
+    runtime.sourceId = source.id;
+    runtime.playbackUri = uri;
+    runtime.preparedClipId = entry.clip.id;
+    runtime.firstFrameReady = surfaceWasReady;
+    publishSlots();
+
+    try {
+      if (sourceChanged) {
+        runtime.firstFrameReady = false;
+        publishSlots();
+        await loadPlayableVideoSource(player, uri, 15_000, preparation.signal);
+      }
+      if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
+
+      const targetSeconds = sourceTimeAt(entry, timelineMs) / 1_000;
+      player.pause();
+      player.muted = true;
+      player.currentTime = targetSeconds;
+      player.play();
+      await Promise.all([
+        waitForFirstFrame(slot, preparation.signal),
+        waitForDecodedPosition(player, targetSeconds, preparation.signal),
+      ]);
+      player.pause();
+
+      if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
+      return slot;
+    } finally {
+      if (runtime.preparation === preparation) runtime.preparation = undefined;
+    }
+  };
+
+  const applyClipToSlot = (slot: SlotIndex, entry: ClipTimelineEntry, timelineMs: number) => {
+    const media = playerForSlot(slot);
     media.playbackRate = entry.clip.playbackRate;
     media.muted = entry.clip.muted;
     media.volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
     const timeSeconds = sourceTimeAt(entry, timelineMs) / 1_000;
     if (shouldApplyTimelineSeek(media.currentTime, timeSeconds)) media.currentTime = timeSeconds;
   };
-  const runGap = (startMs: number, endMs: number, next: ClipTimelineEntry | undefined, generation: number) => {
+
+  const findPreparedSlot = (entry: ClipTimelineEntry): SlotIndex | undefined => {
+    const match = slotRuntimeRef.current.findIndex(
+      (runtime) => runtime.preparedClipId === entry.clip.id && runtime.firstFrameReady,
+    );
+    return match < 0 ? undefined : match as SlotIndex;
+  };
+
+  const nextEntryAfter = (entry: ClipTimelineEntry) => {
+    const index = entriesRef.current.findIndex((candidate) => candidate.clip.id === entry.clip.id);
+    return index < 0 ? undefined : entriesRef.current[index + 1];
+  };
+
+  const preloadNext = (entry: ClipTimelineEntry, occupiedSlot: SlotIndex, timelineMs: number) => {
+    cancelScheduledPreload();
+    const next = nextEntryAfter(entry);
+    if (!next || next.startMs > entry.endMs + CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS) return;
+    const standby = (occupiedSlot === 0 ? 1 : 0) as SlotIndex;
+    const entryIndex = entriesRef.current.findIndex((candidate) => candidate.clip.id === entry.clip.id);
+    const previous = entryIndex > 0 ? entriesRef.current[entryIndex - 1] : undefined;
+    const visibleTransitionEndMs = previous
+      ? entry.startMs + previous.clip.transitionAfter.durationMs / 2
+      : entry.startMs;
+    const timelineDelayMs = Math.max(0, visibleTransitionEndMs - timelineMs);
+    if (timelineDelayMs > 0 && !playIntentRef.current) return;
+    const prepare = () => {
+      preloadTimeoutRef.current = undefined;
+      void prepareSlot(standby, next, next.startMs).catch((error) => {
+        if (!isAbortError(error)) {
+          const source = sourceForEntry(next);
+          failSource(source, error);
+        }
+      });
+    };
+    if (timelineDelayMs > 0) {
+      preloadTimeoutRef.current = setTimeout(prepare, timelineDelayMs / Math.max(0.1, entry.clip.playbackRate));
+    } else {
+      prepare();
+    }
+  };
+
+  const runGap = (startMs: number, endMs: number, next: ClipTimelineEntry | undefined) => {
     cancelGapClock();
-    internalPauseGenerationRef.current = generation;
-    activePlayer().pause();
+    players.forEach((player) => player.pause());
     activeClipIdRef.current = undefined;
     boundaryClipIdRef.current = undefined;
     setPhase('gap');
@@ -117,10 +336,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       const timelineMs = Math.min(endMs, startMs + now - startedAt);
       setCurrentMs(timelineMs);
       if (timelineMs >= endMs) {
-        if (next) {
-          desiredRef.current = { generation: ++generationRef.current, timelineMs: next.startMs };
-          void drainTargetsRef.current();
-        } else {
+        if (next) requestTargetRef.current(next.startMs);
+        else {
           stopTransport();
           setCurrentMs(endMs);
           setPhase('ended');
@@ -131,39 +348,41 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     };
     gapFrameRef.current = requestAnimationFrame(tick);
   };
-  const applyClipTarget = async (entry: ClipTimelineEntry, timelineMs: number, generation: number) => {
+
+  const activateClip = async (entry: ClipTimelineEntry, timelineMs: number, generation: number) => {
     cancelGapClock();
     const source = sourceForEntry(entry);
-    const loaded = loadedSourceRef.current;
-    const confirmed = confirmedSourceRef.current;
-    const sourceChanged = reloadRequestedRef.current
-      || loaded?.id !== source.id
-      || loaded?.uri !== source.uri
-      || (confirmed?.id !== source.id && activePlayer().status !== 'readyToPlay');
-    internalPauseGenerationRef.current = generation;
-    activePlayer().pause();
-    if (sourceChanged) {
-      setPhase('loading');
-      loadedSourceRef.current = source;
+    let slot = findPreparedSlot(entry);
+
+    if (slot == null) {
+      setPhase(hasPresentedFrameRef.current ? 'buffering' : 'loading');
+      const currentSlot = activeSlotRef.current;
+      const otherSlot = (currentSlot === 0 ? 1 : 0) as SlotIndex;
+      slot = hasPresentedFrameRef.current ? otherSlot : currentSlot;
+      if (slotRuntimeRef.current[otherSlot].preparedClipId === entry.clip.id) slot = otherSlot;
       try {
-        await loadPlayableVideoSource(activePlayer(), source.uri);
+        await prepareSlot(slot, entry, timelineMs, reloadRequestedRef.current);
       } catch (error) {
-        if (generation === generationRef.current) failSource(source, error);
+        if (isAbortError(error) || generation !== generationRef.current) return;
+        failSource(source, error);
         return;
       }
-      if (!mountedRef.current || generation !== generationRef.current) return;
-      reloadRequestedRef.current = false;
     }
-    if (generation !== generationRef.current) return;
-    confirmedSourceRef.current = source;
+
+    if (!mountedRef.current || generation !== generationRef.current) return;
+    reloadRequestedRef.current = false;
+    setActiveSlot(slot);
     activeClipIdRef.current = entry.clip.id;
     boundaryClipIdRef.current = undefined;
-    applyClipToPlayer(entry, timelineMs);
+    applyClipToSlot(slot, entry, timelineMs);
     setCurrentMs(timelineMs);
-    setPhase('ready');
     setSourceFailure(undefined);
-    if (playIntentRef.current) activePlayer().play();
+    markPresentedFrame();
+    setPhase('ready');
+    if (playIntentRef.current) playerForSlot(slot).play();
+    preloadNext(entry, slot, timelineMs);
   };
+
   async function drainTargets() {
     if (processingRef.current) return processingRef.current;
     const operation = (async () => {
@@ -175,16 +394,14 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
           stopTransport();
           setCurrentMs(projectTimelineDuration(projectRef.current));
           setPhase('ended');
-          continue;
+        } else if (segment.kind === 'gap') {
+          runGap(target.timelineMs, segment.endMs, segment.next);
+        } else {
+          await activateClip(segment.entry, target.timelineMs, target.generation);
         }
-        if (segment.kind === 'gap') {
-          runGap(target.timelineMs, segment.endMs, segment.next, target.generation);
-          continue;
-        }
-        await applyClipTarget(segment.entry, target.timelineMs, target.generation);
       }
     })().catch((error) => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || isAbortError(error)) return;
       const segment = projectTimelineSegmentAt(projectRef.current, currentMsRef.current, entriesRef.current);
       const sourceId = segment?.kind === 'clip' ? segment.entry.clip.sourceId : 'unknown';
       const source = projectRef.current.sources.find((candidate) => candidate.id === sourceId);
@@ -196,44 +413,55 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     processingRef.current = operation;
     return operation;
   }
+
   useLayoutEffect(() => {
     drainTargetsRef.current = drainTargets;
   });
-  const seek = useCallback((timelineMs: number) => {
+
+  const requestTarget = (timelineMs: number) => {
+    cancelScheduledPreload();
     const targetMs = clamp(timelineMs, 0, projectTimelineDuration(projectRef.current));
+    const segment = projectTimelineSegmentAt(projectRef.current, targetMs, entriesRef.current);
+    const clipId = segment?.kind === 'clip' ? segment.entry.clip.id : undefined;
+    abortPreparationsExcept(clipId);
     setCurrentMs(targetMs);
     desiredRef.current = { generation: ++generationRef.current, timelineMs: targetMs };
     void drainTargetsRef.current();
-  }, []);
+  };
+
+  useLayoutEffect(() => {
+    requestTargetRef.current = requestTarget;
+  });
+
+  const seek = useCallback((timelineMs: number) => requestTargetRef.current(timelineMs), []);
+
   const play = useCallback(() => {
     const duration = projectTimelineDuration(projectRef.current);
     const targetMs = currentMsRef.current >= duration - 1 ? 0 : currentMsRef.current;
     playIntentRef.current = true;
     if (mountedRef.current) setIsPlaying(true);
-    desiredRef.current = { generation: ++generationRef.current, timelineMs: targetMs };
-    void drainTargetsRef.current();
+    requestTargetRef.current(targetMs);
   }, []);
+
   const pause = useCallback(() => {
     stopTransport();
     const segment = projectTimelineSegmentAt(projectRef.current, currentMsRef.current, entriesRef.current);
     if (segment?.kind === 'gap') setPhase('gap');
   }, [stopTransport]);
+
   const synchronizeProject = useCallback((nextProject: CaptionProject) => {
     projectRef.current = nextProject;
     entriesRef.current = buildClipTimeline(nextProject.clips);
-    const timelineMs = clamp(currentMsRef.current, 0, projectTimelineDuration(nextProject));
-    setCurrentMs(timelineMs);
-    desiredRef.current = { generation: ++generationRef.current, timelineMs };
-    void drainTargetsRef.current();
+    requestTargetRef.current(clamp(currentMsRef.current, 0, projectTimelineDuration(nextProject)));
   }, []);
+
   const advanceFrom = (entry: ClipTimelineEntry) => {
     if (!playIntentRef.current || boundaryClipIdRef.current === entry.clip.id) return;
     boundaryClipIdRef.current = entry.clip.id;
-    const index = entriesRef.current.findIndex((candidate) => candidate.clip.id === entry.clip.id);
-    const next = entriesRef.current[index + 1];
+    const next = nextEntryAfter(entry);
     const gapEndMs = next?.startMs ?? projectTimelineDuration(projectRef.current);
     if (gapEndMs > entry.endMs + CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS) {
-      runGap(entry.endMs, gapEndMs, next, ++generationRef.current);
+      runGap(entry.endMs, gapEndMs, next);
       return;
     }
     if (!next) {
@@ -242,76 +470,73 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       setPhase('ended');
       return;
     }
-    if (canContinueTimelineClip(entry, next)) {
-      activeClipIdRef.current = next.clip.id;
-      confirmedSourceRef.current = sourceForEntry(next);
-      boundaryClipIdRef.current = undefined;
-      const media = activePlayer();
-      media.playbackRate = next.clip.playbackRate;
-      media.muted = next.clip.muted;
-      media.volume = clipPlaybackVolume(next.clip, 0);
-      setCurrentMs(next.startMs);
-      setPhase('ready');
-      return;
-    }
-    setCurrentMs(next.startMs);
-    desiredRef.current = { generation: ++generationRef.current, timelineMs: next.startMs };
-    void drainTargetsRef.current();
+    requestTargetRef.current(next.startMs);
   };
-  const onTimeUpdate = (currentTime: number) => {
-    if (!playIntentRef.current || processingRef.current) return;
+
+  const onTimeUpdate = (slot: SlotIndex, currentTime: number) => {
+    if (slot !== activeSlotRef.current || !playIntentRef.current || processingRef.current) return;
     const entry = entriesRef.current.find((candidate) => candidate.clip.id === activeClipIdRef.current);
     if (!entry) return;
     const sourceMs = currentTime * 1_000;
     const tolerance = Math.max(4, entry.clip.playbackRate * 12);
     const timelineMs = clamp(timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
     setCurrentMs(timelineMs);
-    activePlayer().volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
+    playerForSlot(slot).volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
     if (sourceMs >= entry.clip.sourceEndMs - tolerance) advanceFrom(entry);
   };
-  const onPlayToEnd = () => {
+
+  const onPlayToEnd = (slot: SlotIndex) => {
+    if (slot !== activeSlotRef.current) return;
     const entry = entriesRef.current.find((candidate) => candidate.clip.id === activeClipIdRef.current);
     if (entry) advanceFrom(entry);
   };
-  const onActivePlayingChange = (nativePlaying: boolean) => {
-    if (nativePlaying) {
-      internalPauseGenerationRef.current = undefined;
-      return;
-    }
-    if (!playIntentRef.current || processingRef.current || phaseRef.current !== 'ready') return;
-    if (internalPauseGenerationRef.current === generationRef.current) return;
+
+  const onPlayingChange = (slot: SlotIndex, nativePlaying: boolean) => {
+    if (slot !== activeSlotRef.current || nativePlaying || !playIntentRef.current) return;
+    if (processingRef.current || phaseRef.current !== 'ready') return;
     const entry = entriesRef.current.find((candidate) => candidate.clip.id === activeClipIdRef.current);
-    if (entry && activePlayer().currentTime * 1_000 >= entry.clip.sourceEndMs - 200) {
-      advanceFrom(entry);
-      return;
-    }
-    activePlayer().play();
-  };
-  const onStatusChange = (status: string, error: unknown) => {
-    if (status === 'error' && loadedSourceRef.current) failSource(loadedSourceRef.current, error);
+    if (entry && playerForSlot(slot).currentTime * 1_000 >= entry.clip.sourceEndMs - 200) advanceFrom(entry);
+    else playerForSlot(slot).play();
   };
 
-  useEventListener(player, 'timeUpdate', ({ currentTime }) => onTimeUpdate(currentTime));
-  useEventListener(player, 'playToEnd', onPlayToEnd);
-  useEventListener(player, 'playingChange', ({ isPlaying: nativePlaying }) => onActivePlayingChange(nativePlaying));
-  useEventListener(player, 'statusChange', ({ status, error }) => onStatusChange(status, error));
+  const onStatusChange = (slot: SlotIndex, status: string, error: unknown) => {
+    if (status !== 'error') return;
+    const runtime = slotRuntimeRef.current[slot];
+    const source = projectRef.current.sources.find((candidate) => candidate.id === runtime.sourceId);
+    if (source) failSource(source, error);
+  };
+
+  useEventListener(playerA, 'timeUpdate', ({ currentTime }) => onTimeUpdate(0, currentTime));
+  useEventListener(playerA, 'playToEnd', () => onPlayToEnd(0));
+  useEventListener(playerA, 'playingChange', ({ isPlaying: nativePlaying }) => onPlayingChange(0, nativePlaying));
+  useEventListener(playerA, 'statusChange', ({ status, error }) => onStatusChange(0, status, error));
+  useEventListener(playerB, 'timeUpdate', ({ currentTime }) => onTimeUpdate(1, currentTime));
+  useEventListener(playerB, 'playToEnd', () => onPlayToEnd(1));
+  useEventListener(playerB, 'playingChange', ({ isPlaying: nativePlaying }) => onPlayingChange(1, nativePlaying));
+  useEventListener(playerB, 'statusChange', ({ status, error }) => onStatusChange(1, status, error));
 
   useEffect(() => {
     mountedRef.current = true;
-    desiredRef.current = { generation: ++generationRef.current, timelineMs: 0 };
-    void drainTargetsRef.current();
+    requestTargetRef.current(0);
     return () => {
       mountedRef.current = false;
       playIntentRef.current = false;
       desiredRef.current = undefined;
       generationRef.current += 1;
       boundaryClipIdRef.current = undefined;
+      abortPreparationsExcept();
       cancelGapClock();
+      cancelScheduledPreload();
     };
-  }, [activePlayer]);
+  }, []);
 
   return {
-    player,
+    player: players[activeSlot],
+    players,
+    slots,
+    activeSlot,
+    markFirstFrame,
+    hasPresentedFrame,
     currentMs,
     isPlaying,
     phase,
@@ -319,8 +544,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     retrySource: () => {
       stopTransport();
       reloadRequestedRef.current = true;
-      confirmedSourceRef.current = undefined;
-      seek(currentMsRef.current);
+      requestTarget(currentMsRef.current);
     },
     isGap: phase === 'gap' || entries.length === 0 || projectTimelineSegmentAt(project, currentMs, entries)?.kind === 'gap',
     seek,
@@ -328,6 +552,16 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     pause,
     synchronizeProject,
   };
+}
+
+function abortError() {
+  const error = new Error('Video preparation was superseded.');
+  error.name = 'AbortError';
+  return error;
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function clamp(value: number, minimum: number, maximum: number) {

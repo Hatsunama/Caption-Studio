@@ -261,6 +261,7 @@ export type VisualLayer = CaptionsVisualLayer | TextVisualLayer | ImageVisualLay
 export type ProjectVideoSource = {
   id: Identifier;
   uri: string;
+  previewUri?: string;
   storageMode: 'linked' | 'copied';
   sizeBytes?: number;
   mimeType?: string;

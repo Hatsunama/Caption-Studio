@@ -5,6 +5,7 @@ import { assertSupportedVideo } from '@/lib/media-validation';
 import { MINIMUM_CLIP_TIMELINE_MS } from '@/lib/video-timeline';
 import {
   deleteProjectOwnedFiles,
+  ensureProjectVideoPreview,
   generateProjectThumbnail,
   prepareExtractedAudioUri,
   storeProjectAudio,
@@ -54,11 +55,23 @@ export async function pickLinkedVideos(
       if (info.durationMs < MINIMUM_CLIP_TIMELINE_MS) {
         throw new Error(`${asset.name} is shorter than ${MINIMUM_CLIP_TIMELINE_MS / 1000} seconds and cannot be edited reliably.`);
       }
+      const thumbnailUri = await generateProjectThumbnail(projectId, sourceId, asset.uri);
+      const previewUri = await ensureProjectVideoPreview({
+        projectId,
+        source: { id: sourceId, uri: asset.uri, durationMs: info.durationMs, width: info.width, height: info.height },
+        onPreparing: () => onProgress?.({
+          stage: 'loading',
+          completed: index,
+          total: result.assets.length,
+          detail: `Optimizing video ${index + 1} of ${result.assets.length} for smooth editing`,
+        }),
+      });
       sources.push({
         id: sourceId,
         uri: asset.uri,
+        previewUri,
         storageMode: 'linked',
-        thumbnailUri: await generateProjectThumbnail(projectId, sourceId, asset.uri),
+        thumbnailUri,
         displayName: asset.name,
         mimeType: asset.mimeType ?? undefined,
         sizeBytes: asset.size ?? undefined,
@@ -79,7 +92,7 @@ export async function pickLinkedVideos(
     await Promise.allSettled([
       deleteProjectOwnedFiles(
         projectId,
-        sources.map((source) => source.thumbnailUri).filter((uri): uri is string => Boolean(uri)),
+        sources.flatMap((source) => [source.thumbnailUri, source.previewUri]).filter((uri): uri is string => Boolean(uri)),
       ),
       releaseReadPermissions(persistedUris),
     ]);

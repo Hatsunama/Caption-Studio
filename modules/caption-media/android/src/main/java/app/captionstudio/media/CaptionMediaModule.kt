@@ -41,6 +41,7 @@ import kotlin.math.roundToInt
 
 class CaptionMediaModule : Module() {
   private val timelineVideoExporter = lazy { TimelineVideoExporter(context) }
+  private val videoPreviewPreparer = lazy { VideoPreviewPreparer(context) }
   private val audioExtractionEpoch = AtomicLong(0L)
   private val videoDocuments = lazy { LinkedVideoDocuments(context) }
 
@@ -86,6 +87,14 @@ class CaptionMediaModule : Module() {
 
     AsyncFunction("getMediaInfo") { inputUri: String ->
       readMediaInfo(inputUri)
+    }
+
+    AsyncFunction("getVideoPlaybackSupport") { inputUri: String ->
+      videoPreviewPreparer.value.support(inputUri)
+    }
+
+    AsyncFunction("createVideoPreview") { inputUri: String, outputUri: String, width: Int, height: Int, frameRate: Int, promise: Promise ->
+      videoPreviewPreparer.value.prepare(inputUri, outputUri, width, height, frameRate, promise)
     }
 
     AsyncFunction("validateImageFile") { inputUri: String ->
@@ -168,6 +177,7 @@ class CaptionMediaModule : Module() {
       TimelineAudioRenderer.cancel()
       audioExtractionEpoch.incrementAndGet()
       if (timelineVideoExporter.isInitialized()) timelineVideoExporter.value.close()
+      if (videoPreviewPreparer.isInitialized()) videoPreviewPreparer.value.close()
     }
   }
 

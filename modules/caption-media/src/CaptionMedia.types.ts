@@ -21,6 +21,21 @@ export type MediaInfo = {
   videoMimeType: string;
 };
 
+export type VideoPlaybackSupport = {
+  supported: boolean;
+  decoderName?: string;
+  reason?: string;
+  width: number;
+  height: number;
+  frameRate: number;
+  mimeType: string;
+};
+
+export type VideoPreviewResult = {
+  outputUri: string;
+  sizeBytes: number;
+};
+
 export type ImageValidationResult = {
   width: number;
   height: number;

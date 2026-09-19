@@ -3,10 +3,13 @@ import * as FileSystem from 'expo-file-system/legacy';
 import CaptionMedia from 'caption-media';
 import { audioWaveformPeakCount } from '@/lib/audio-waveform';
 import { assertSupportedVideo } from '@/lib/media-validation';
+import { requireFreeSpace } from '@/services/storage-policy';
+import type { ProjectVideoSource } from '@/types/project';
 
 const MAX_STORED_IMAGE_BYTES = 50 * 1024 * 1024;
 const PROJECT_POSTER_VERSION = 3;
 const CLIP_THUMBNAIL_VERSION = 2;
+const VIDEO_PREVIEW_VERSION = 1;
 
 const ORPHAN_DIRECTORY_GRACE_SECONDS = 24 * 60 * 60;
 
@@ -34,6 +37,55 @@ export async function generateProjectThumbnail(projectId: string, sourceId: stri
     await FileSystem.deleteAsync(outputUri, { idempotent: true }).catch(() => undefined);
     return undefined;
   }
+}
+
+export async function ensureProjectVideoPreview(options: {
+  projectId: string;
+  source: Pick<ProjectVideoSource, 'id' | 'uri' | 'previewUri' | 'durationMs' | 'width' | 'height'>;
+  onPreparing?: () => void;
+}): Promise<string | undefined> {
+  if (!FileSystem.documentDirectory) throw new Error('Permanent app storage is unavailable on this device.');
+  if (options.source.previewUri) {
+    try {
+      const existing = await FileSystem.getInfoAsync(options.source.previewUri);
+      if (existing.exists && !existing.isDirectory && existing.size > 0) {
+        assertSupportedVideo(await CaptionMedia.getMediaInfo(options.source.previewUri), 'The editing preview');
+        return options.source.previewUri;
+      }
+    } catch {
+      await FileSystem.deleteAsync(options.source.previewUri, { idempotent: true }).catch(() => undefined);
+    }
+  }
+  const support = await CaptionMedia.getVideoPlaybackSupport(options.source.uri);
+  if (support.supported) return undefined;
+  options.onPreparing?.();
+  const estimatedBytes = Math.ceil(options.source.durationMs / 1_000) * 600_000;
+  await requireFreeSpace(estimatedBytes + 32 * 1024 * 1024, 'optimize this video for smooth editing');
+  const directory = `${FileSystem.documentDirectory}projects/${safePathSegment(options.projectId)}/previews/`;
+  const destinationUri = `${directory}source-${safePathSegment(options.source.id)}-v${VIDEO_PREVIEW_VERSION}.mp4`;
+  const stagingUri = `${directory}.staging-${safePathSegment(options.source.id)}-${Date.now()}.mp4`;
+  const dimensions = previewDimensions(options.source.width, options.source.height);
+  try {
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+    await CaptionMedia.createVideoPreview(options.source.uri, stagingUri, dimensions.width, dimensions.height, 30);
+    const staged = await FileSystem.getInfoAsync(stagingUri);
+    if (!staged.exists || staged.isDirectory || staged.size <= 0) throw new Error('The optimized editing preview was empty.');
+    assertSupportedVideo(await CaptionMedia.getMediaInfo(stagingUri), 'The editing preview');
+    await FileSystem.deleteAsync(destinationUri, { idempotent: true });
+    await FileSystem.moveAsync({ from: stagingUri, to: destinationUri });
+    return destinationUri;
+  } catch (error) {
+    await FileSystem.deleteAsync(destinationUri, { idempotent: true }).catch(() => undefined);
+    throw error;
+  } finally {
+    await FileSystem.deleteAsync(stagingUri, { idempotent: true }).catch(() => undefined);
+  }
+}
+
+function previewDimensions(width: number, height: number) {
+  const scale = Math.min(1, 1280 / Math.max(width, height));
+  const even = (value: number) => Math.max(2, Math.round(value * scale / 2) * 2);
+  return { width: even(width), height: even(height) };
 }
 
 export async function ensureClipFrameThumbnail(options: {

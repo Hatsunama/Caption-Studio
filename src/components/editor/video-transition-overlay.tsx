@@ -1,14 +1,13 @@
 import { VideoView, type VideoPlayer } from 'expo-video';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { useVideoTransitionPreview } from '@/hooks/use-video-transition-preview';
 import {
   buildVideoTransitionPreviewWindows,
-  videoTransitionPreloadWindow,
   videoTransitionPreviewFrameAt,
   type VideoTransitionPreviewFrame,
 } from '@/lib/video-transition-preview';
+import type { TimelineVideoSlot } from '@/hooks/use-timeline-video-controller';
 import type { ClipTimelineEntry } from '@/lib/video-timeline';
 import type { ProjectVideoSource, VideoTransform } from '@/types/project';
 import { chrome } from '@/lib/ui-theme';
@@ -23,6 +22,12 @@ type Props = {
   height: number;
   backgroundColor: string;
   admitted: boolean;
+  visible: boolean;
+  players: readonly [VideoPlayer, VideoPlayer];
+  slots: readonly [TimelineVideoSlot, TimelineVideoSlot];
+  activeSlot: 0 | 1;
+  currentTransform: VideoTransform;
+  onFirstFrameRender: (slot: 0 | 1) => void;
 };
 
 const fill: ViewStyle = { position: 'absolute', inset: 0 };
@@ -36,53 +41,138 @@ export function VideoTransitionOverlay(props: Props) {
     () => videoTransitionPreviewFrameAt(windows, props.timelineMs),
     [props.timelineMs, windows],
   );
-  const preload = videoTransitionPreloadWindow(windows, props.timelineMs);
-
-  if (!props.admitted) return null;
-  if (frame?.mode === 'cover') return <CoverTransition frame={frame} width={props.width} height={props.height} />;
-  if (frame?.unavailableReason) return <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame.unavailableReason} />;
-  if (preload?.mode !== 'composite') return null;
-
-  return <CompositeVideoTransitionOverlay {...props} windows={windows} />;
+  if (!props.admitted || !props.visible) return null;
+  if (frame?.mode === 'cover') {
+    return (
+      <>
+        <TimelineVideoPair {...props} />
+        <CoverTransition frame={frame} width={props.width} height={props.height} />
+      </>
+    );
+  }
+  if (frame?.unavailableReason) {
+    return (
+      <>
+        <TimelineVideoPair {...props} />
+        <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame.unavailableReason} />
+      </>
+    );
+  }
+  if (frame?.mode !== 'composite' || !frame.outgoing || !frame.incoming) {
+    return <TimelineVideoPair {...props} />;
+  }
+  return <CompositeVideoTransitionOverlay {...props} frame={frame} />;
 }
 
-function CompositeVideoTransitionOverlay(props: Props & { windows: ReturnType<typeof buildVideoTransitionPreviewWindows> }) {
-  const preview = useVideoTransitionPreview({
-    windows: props.windows,
-    timelineMs: props.timelineMs,
-    isPlaying: props.isPlaying && props.transportReady,
-  });
-  const frame = preview.frame;
-  const renderFrame = preview.renderFrame;
-  if (!renderFrame) return null;
-
-  if (preview.error && frame) return <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={preview.error} />;
-
-  return <FirstFrameGatedTransition key={renderFrame.key} {...props} active={Boolean(frame)} frame={renderFrame} preview={preview} />;
+function TimelineVideoPair(props: Props) {
+  return (
+    <View pointerEvents="none" style={[fill, { overflow: 'hidden' }]}>
+      {props.players.map((player, index) => {
+        const slot = index as 0 | 1;
+        return (
+          <VideoLayer
+            key={slot}
+            player={player}
+            transform={props.currentTransform}
+            width={props.width}
+            height={props.height}
+            opacity={slot === props.activeSlot ? 1 : 0.001}
+            onFirstFrameRender={() => props.onFirstFrameRender(slot)}
+          />
+        );
+      })}
+    </View>
+  );
 }
 
-function FirstFrameGatedTransition(props: Props & {
-  active: boolean;
+function CompositeVideoTransitionOverlay(props: Props & {
   frame: VideoTransitionPreviewFrame;
-  preview: ReturnType<typeof useVideoTransitionPreview>;
+}) {
+  const outgoingSlot = props.slots.findIndex((slot) => slot.preparedClipId === props.frame.outgoing?.clipId);
+  const incomingSlot = props.slots.findIndex((slot) => slot.preparedClipId === props.frame.incoming?.clipId);
+  if (
+    outgoingSlot < 0
+    || incomingSlot < 0
+    || outgoingSlot === incomingSlot
+    || !props.slots[outgoingSlot].firstFrameReady
+    || !props.slots[incomingSlot].firstFrameReady
+  ) {
+    return <TimelineVideoPair {...props} />;
+  }
+  return (
+    <SynchronizedComposite
+      key={props.frame.key}
+      {...props}
+      outgoingSlot={outgoingSlot as 0 | 1}
+      incomingSlot={incomingSlot as 0 | 1}
+    />
+  );
+}
+
+function SynchronizedComposite(props: Props & {
+  frame: VideoTransitionPreviewFrame;
+  outgoingSlot: 0 | 1;
+  incomingSlot: 0 | 1;
 }) {
   const [rendered, setRendered] = useState({ outgoing: false, incoming: false });
   const ready = rendered.outgoing && rendered.incoming;
+  const outgoingPlayer = props.players[props.outgoingSlot];
+  const incomingPlayer = props.players[props.incomingSlot];
+
+  useEffect(() => {
+    synchronizeTransitionPlayer(
+      outgoingPlayer,
+      props.frame.outgoingSourceTimeMs,
+      props.frame.outgoing?.playbackRate,
+      props.isPlaying && props.transportReady,
+    );
+    synchronizeTransitionPlayer(
+      incomingPlayer,
+      props.frame.incomingSourceTimeMs,
+      props.frame.incoming?.playbackRate,
+      props.isPlaying && props.transportReady,
+    );
+  }, [incomingPlayer, outgoingPlayer, props.frame, props.isPlaying, props.transportReady]);
+
   return (
     <View pointerEvents="none" style={[fill, { overflow: 'hidden' }]}>
-      <View key={props.frame.key} style={[fill, { opacity: props.active && ready ? 1 : 0 }]}>
+      <View style={[fill, { opacity: ready ? 1 : 0 }]}>
         <CompositeTransition
           frame={props.frame}
-          outgoingPlayer={props.preview.outgoingPlayer}
-          incomingPlayer={props.preview.incomingPlayer}
+          outgoingPlayer={outgoingPlayer}
+          incomingPlayer={incomingPlayer}
           width={props.width}
           height={props.height}
-          onOutgoingFirstFrame={() => setRendered((current) => ({ ...current, outgoing: true }))}
-          onIncomingFirstFrame={() => setRendered((current) => ({ ...current, incoming: true }))}
+          onOutgoingFirstFrame={() => {
+            props.onFirstFrameRender(props.outgoingSlot);
+            setRendered((current) => ({ ...current, outgoing: true }));
+          }}
+          onIncomingFirstFrame={() => {
+            props.onFirstFrameRender(props.incomingSlot);
+            setRendered((current) => ({ ...current, incoming: true }));
+          }}
         />
       </View>
     </View>
   );
+}
+
+function synchronizeTransitionPlayer(
+  player: VideoPlayer,
+  targetMs: number | undefined,
+  playbackRate: number | undefined,
+  playing: boolean,
+) {
+  if (targetMs == null || playbackRate == null) return;
+  const targetSeconds = targetMs / 1_000;
+  player.playbackRate = playbackRate;
+  const driftMs = Math.abs(player.currentTime - targetSeconds) * 1_000;
+  if (!playing || !player.playing || driftMs > 160) player.currentTime = targetSeconds;
+  if (playing) {
+    if (!player.playing) player.play();
+  } else {
+    player.pause();
+  }
 }
 
 function CompositeTransition(props: {

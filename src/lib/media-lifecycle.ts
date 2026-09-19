@@ -21,6 +21,7 @@ export function collectProjectOwnedUris(project: CaptionProject): string[] {
   return uniqueUris([
     ...project.sources.flatMap((source) => [
       source.storageMode === 'copied' ? source.uri : undefined,
+      source.previewUri,
       source.thumbnailUri,
     ]),
     ...project.audioSources

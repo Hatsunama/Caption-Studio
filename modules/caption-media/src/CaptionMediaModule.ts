@@ -1,7 +1,7 @@
 import { NativeModule, requireNativeModule } from 'expo';
 import type { DocumentReadStatus, VideoDocumentResult } from './CaptionMedia.types';
 
-import type { AudioExtractionResult, AudioPeaksResult, AudioTrackExtractionResult, FontValidationResult, ImageValidationResult, MediaInfo, TimelineVideoExportProgress, TimelineVideoExportResult, VideoThumbnailResult } from './CaptionMedia.types';
+import type { AudioExtractionResult, AudioPeaksResult, AudioTrackExtractionResult, FontValidationResult, ImageValidationResult, MediaInfo, TimelineVideoExportProgress, TimelineVideoExportResult, VideoPlaybackSupport, VideoPreviewResult, VideoThumbnailResult } from './CaptionMedia.types';
 
 export type { TimelineVideoExportProgress } from './CaptionMedia.types';
 
@@ -12,6 +12,8 @@ declare class CaptionMediaModule extends NativeModule<Record<never, never>> {
   releaseReadPermission(inputUri: string): Promise<boolean>;
   sha256(inputUri: string): Promise<string>;
   getMediaInfo(inputUri: string): Promise<MediaInfo>;
+  getVideoPlaybackSupport(inputUri: string): Promise<VideoPlaybackSupport>;
+  createVideoPreview(inputUri: string, outputUri: string, width: number, height: number, frameRate: number): Promise<VideoPreviewResult>;
   validateImageFile(inputUri: string): Promise<ImageValidationResult>;
   validateFontFile(inputUri: string): Promise<FontValidationResult>;
   extractAudioToWav(

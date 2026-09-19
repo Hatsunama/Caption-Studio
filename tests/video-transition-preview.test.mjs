@@ -11,7 +11,6 @@ import { buildClipTimeline } from '../src/lib/video-timeline.ts';
 import { readFileSync } from 'node:fs';
 
 const previewOverlaySource = readFileSync(new URL('../src/components/editor/video-transition-overlay.tsx', import.meta.url), 'utf8');
-const previewHookSource = readFileSync(new URL('../src/hooks/use-video-transition-preview.ts', import.meta.url), 'utf8');
 
 const transform = (rotation = 0) => ({
   fit: 'fit',
@@ -178,11 +177,12 @@ test('transition media is admitted only inside a bounded lead window', () => {
 test('composite previews never animate an ExoPlayer shutter or an unrendered surface', () => {
   assert.match(previewOverlaySource, /onFirstFrameRender=\{props\.onFirstFrameRender\}/);
   assert.match(previewOverlaySource, /rendered\.outgoing && rendered\.incoming/);
-  assert.match(previewOverlaySource, /props\.active && ready/);
+  assert.match(previewOverlaySource, /opacity: ready \? 1 : 0/);
   assert.match(previewOverlaySource, /useExoShutter=\{false\}/);
   assert.doesNotMatch(previewOverlaySource, /overflow: 'hidden', backgroundColor: props\.backgroundColor/);
   assert.doesNotMatch(previewOverlaySource, /LOADING TRANSITION PREVIEW/);
-  assert.match(previewHookSource, /renderFrame/);
-  assert.match(previewHookSource, /driftMs > 500/);
-  assert.match(previewHookSource, /replaceAsync\(null\)/);
+  assert.match(previewOverlaySource, /preparedClipId === props\.frame\.outgoing\?\.clipId/);
+  assert.match(previewOverlaySource, /preparedClipId === props\.frame\.incoming\?\.clipId/);
+  assert.match(previewOverlaySource, /driftMs > 160/);
+  assert.doesNotMatch(previewOverlaySource, /useVideoPlayer/);
 });

@@ -1052,7 +1052,7 @@ test('video and caption overlays share the cropped canvas while playback control
   assert.equal(canvas.parent, viewport);
   assert.equal(canvas.openingElement.tagName.getText(editorAst), 'Animated.View');
   const canvasSource = canvas.getText(editorAst);
-  assert.ok(canvasSource.includes('<VideoView')); assert.ok(canvasSource.includes('<CaptionOverlay'));
+  assert.ok(canvasSource.includes('<VideoTransitionOverlay')); assert.ok(canvasSource.includes('<CaptionOverlay'));
   const play = nodes.find((node) => node.openingElement.attributes.properties.some((prop) => prop.name?.text === 'accessibilityLabel'
     && prop.initializer?.expression?.getText(editorAst).includes("'Pause video'")));
   assert.equal(play.parent, viewport.parent, 'playback stays outside the moving and clipped canvas');

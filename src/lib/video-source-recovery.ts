@@ -38,7 +38,7 @@ type SourcePlayer = {
 
 // replaceAsync completing only confirms source replacement, not decoder readiness.
 // Subscribe first so a fast native failure cannot disappear between the two.
-export function loadPlayableVideoSource(player: SourcePlayer, uri: string, timeoutMs = 15_000) {
+export function loadPlayableVideoSource(player: SourcePlayer, uri: string, timeoutMs = 15_000, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     let replaced = false;
     let settled = false;
@@ -48,9 +48,20 @@ export function loadPlayableVideoSource(player: SourcePlayer, uri: string, timeo
       settled = true;
       clearTimeout(timer);
       subscription?.remove();
+      signal?.removeEventListener('abort', abort);
       if (error) reject(error); else resolve();
     };
+    const abort = () => {
+      const error = new Error('Video preparation was superseded.');
+      error.name = 'AbortError';
+      finish(error);
+    };
     const timer = setTimeout(() => finish(new Error('The video did not become ready. Check the original file and try again.')), timeoutMs);
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener('abort', abort, { once: true });
     try {
       subscription = player.addListener('statusChange', ({ status, error }) => {
         if (status === 'error') finish(new Error(error?.message ?? 'The video could not be loaded.'));

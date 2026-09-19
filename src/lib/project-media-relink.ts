@@ -23,14 +23,19 @@ export function relinkProjectVideo(
     }
   }
   if (source.uri === document.uri && matching.every((candidate) => candidate.storageMode === 'linked')) return project;
-  // Keep source IDs, timestamps (draft base revisions), metadata, thumbnails and every edit.
-  // Metadata compatibility is not proof of identity: the UI must also ask for confirmation.
   const background = project.backgroundReplacement.source;
   return {
     ...project,
-    sources: project.sources.map((candidate) => candidate.uri === source.uri
-      ? { ...candidate, uri: document.uri, storageMode: 'linked' as const }
-      : candidate),
+    sources: project.sources.map((candidate) => {
+      if (candidate.uri !== source.uri) return candidate;
+      const relinked: ProjectVideoSource = {
+        ...candidate,
+        uri: document.uri,
+        storageMode: 'linked',
+      };
+      delete relinked.previewUri;
+      return relinked;
+    }),
     ...(background?.uri === source.uri ? {
       backgroundReplacement: {
         ...project.backgroundReplacement,

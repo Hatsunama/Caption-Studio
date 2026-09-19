@@ -1,4 +1,5 @@
 import { effectiveVideoTransition, videoTransitionPreviewKind, videoTransitionUsesCompositeMedia } from '@/lib/video-transitions';
+import { videoPlaybackUri } from '@/lib/video-playback-source';
 import type { ClipTimelineEntry } from '@/lib/video-timeline';
 import type { ProjectVideoSource, VideoTransform, VideoTransitionType } from '@/types/project';
 
@@ -110,7 +111,7 @@ export function buildVideoTransitionPreviewWindows(
         outgoing: {
           clipId: entry.clip.id,
           sourceId: entry.clip.sourceId,
-          uri: outgoingSource.uri,
+          uri: videoPlaybackUri(outgoingSource),
           sourceStartMs: outgoingVisibleStartMs,
           sourceEndMs: outgoingSourceEndMs,
           playbackRate: outgoingPlaybackRate,
@@ -119,7 +120,7 @@ export function buildVideoTransitionPreviewWindows(
         incoming: {
           clipId: incomingEntry.clip.id,
           sourceId: incomingEntry.clip.sourceId,
-          uri: incomingSource.uri,
+          uri: videoPlaybackUri(incomingSource),
           sourceStartMs: incomingSourceStartMs,
           sourceEndMs: incomingVisibleEndMs,
           playbackRate: incomingPlaybackRate,

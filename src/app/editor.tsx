@@ -9,7 +9,6 @@ import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { AudioModule, RecordingPresets, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
-import { VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
@@ -35,6 +34,7 @@ import { ExtractAudioSourceSheet } from '@/components/editor/extract-audio-sourc
 import { ImageLayerOverlay } from '@/components/editor/image-layer-overlay';
 import { LayerTimeline } from '@/components/editor/layer-timeline';
 import { MediaLoadingOverlay } from '@/components/media-loading-overlay';
+import { PlaybackLoadingOverlay } from '@/components/editor/playback-loading-overlay';
 import { ScopeSheet } from '@/components/editor/scope-sheet';
 import { ScriptEditor } from '@/components/editor/script-editor';
 import { VideoTools } from '@/components/editor/video-tools';
@@ -404,7 +404,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const transport = useTimelineVideoController(project, setError);
-  const { player, currentMs, isPlaying } = transport;
+  const { currentMs, isPlaying } = transport;
   useTimelineAudioController(project, currentMs, isPlaying, runtimePolicy.mediaAdmitted, setError);
   useProjectAudioWaveforms(
     project,
@@ -1774,24 +1774,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 { rotate: `${currentVideoTransform.rotation}deg` },
               ],
             }}>
-            <VideoView
-              testID="timeline-player"
-              pointerEvents="none"
-              style={{ position: 'absolute', inset: 0 }}
-              player={player}
-              nativeControls={false}
-              contentFit={currentVideoTransform.fit === 'fill' ? 'cover' : 'contain'}
-              surfaceType="textureView"
-              useExoShutter={false}
-            />
           </View>
           {transport.isGap ? (
             <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
-            </View>
-          ) : transport.phase === 'loading' ? (
-            <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
-              <ActivityIndicator color={palette.accent} />
-              <Text style={{ marginTop: 8, color: '#A8B1BC', fontSize: 10, fontWeight: '800' }}>LOADING CLIP…</Text>
             </View>
           ) : null}
           <VideoTransitionOverlay
@@ -1804,6 +1789,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             height={canvasHeight}
             backgroundColor={project.canvas.backgroundColor}
             admitted={runtimePolicy.mediaAdmitted}
+            visible={!transport.isGap}
+            players={transport.players}
+            slots={transport.slots}
+            activeSlot={transport.activeSlot}
+            currentTransform={currentVideoTransform}
+            onFirstFrameRender={transport.markFirstFrame}
           />
           {activeTool === 'video' && currentClipEntry ? (
             <VideoTransformOverlay
@@ -2395,6 +2386,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         onCancel={() => { void cancelCaptionGeneration(); }}
       />
       <MediaLoadingOverlay progress={mediaProgress} />
+      <PlaybackLoadingOverlay phase={transport.phase} hasPresentedFrame={transport.hasPresentedFrame} />
       {exporting ? (
         <Modal visible transparent animationType="fade" onRequestClose={() => {
           if (exportKind === 'video') void cancelProjectVideoExport();
@@ -2542,7 +2534,9 @@ function ProgressOverlay(props: {
           </Text>
           <Text style={{ color: palette.muted, textAlign: 'center', fontSize: 14 }}>{props.progress.detail}</Text>
           <Text style={{ color: palette.text, textAlign: 'center', lineHeight: 20 }}>
-            Keep Caption Studio open and the phone unlocked. If Android interrupts a model download, downloaded bytes are saved for retry.
+            {props.progress.stage === 'downloading-model'
+              ? 'take a little breath — your local AI is settling onto this phone; it can take a bit, and that’s okay; you only wait through this once.'
+              : 'Keep Caption Studio open and the phone unlocked until this finishes.'}
           </Text>
           <View style={{ height: 8, overflow: 'hidden', borderRadius: chrome.radius.pill, backgroundColor: chrome.fill }}>
             <View style={{ width: `${percent}%`, height: '100%', backgroundColor: palette.accent }} />

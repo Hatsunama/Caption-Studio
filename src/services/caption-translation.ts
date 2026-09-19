@@ -368,7 +368,11 @@ async function downloadNaturalTranslationModel(
     'download the optional natural multilingual translation model',
   );
   throwIfCancelled(run);
-  onProgress?.({ stage: 'downloading-model', progress: 0, detail: 'Downloading the optional natural multilingual model once. Keep this screen open.' });
+  onProgress?.({
+    stage: 'downloading-model',
+    progress: 0,
+    detail: 'take a little breath — your local AI is settling onto this phone; it can take a bit, and that’s okay; you only wait through this once.',
+  });
   try {
     await downloadVerifiedModel({
       target,
@@ -386,7 +390,7 @@ async function downloadNaturalTranslationModel(
         onProgress?.({
           stage: 'downloading-model',
           progress: Math.min(1, bytesWritten / denominator),
-          detail: `Downloading natural translation model · ${formatModelProgress(bytesWritten, denominator)}`,
+          detail: `take a little breath — your local AI is settling onto this phone; it can take a bit, and that’s okay; you only wait through this once.\n${formatModelProgress(bytesWritten, denominator)}`,
         });
       },
       onVerifying: () => onProgress?.({ stage: 'verifying-model', progress: null, detail: 'Verifying the downloaded model' }),

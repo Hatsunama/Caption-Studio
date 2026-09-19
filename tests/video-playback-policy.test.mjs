@@ -4,18 +4,13 @@ import test from 'node:test';
 import { canContinueTimelineClip, shouldApplyTimelineSeek } from '../src/lib/video-playback-policy.ts';
 import {
   TIMELINE_PLAYER_BUFFER_OPTIONS,
-  TRANSITION_PLAYER_BUFFER_OPTIONS,
   configureTimelinePlayer,
-  configureTransitionPlayer,
 } from '../src/services/video-player-runtime.ts';
 
 test('editor playback has an explicit bounded Android buffer budget', () => {
   assert.equal(TIMELINE_PLAYER_BUFFER_OPTIONS.maxBufferBytes, 16 * 1024 * 1024);
-  assert.equal(TRANSITION_PLAYER_BUFFER_OPTIONS.maxBufferBytes, 8 * 1024 * 1024);
-  assert.ok(TRANSITION_PLAYER_BUFFER_OPTIONS.preferredForwardBufferDuration <= 1.25);
   assert.ok(
-    TIMELINE_PLAYER_BUFFER_OPTIONS.maxBufferBytes
-      + TRANSITION_PLAYER_BUFFER_OPTIONS.maxBufferBytes * 2
+    TIMELINE_PLAYER_BUFFER_OPTIONS.maxBufferBytes * 2
       <= 32 * 1024 * 1024,
   );
 });
@@ -45,17 +40,13 @@ test('explicit seeks compare with the player position rather than a stale reques
   assert.equal(shouldApplyTimelineSeek(Number.NaN, 10), true);
 });
 
-test('timeline and transition players receive distinct lifecycle settings', () => {
-  const timelinePlayer = {};
-  configureTimelinePlayer(timelinePlayer);
-  assert.deepEqual(timelinePlayer.bufferOptions, TIMELINE_PLAYER_BUFFER_OPTIONS);
-  assert.equal(timelinePlayer.timeUpdateEventInterval, 0.05);
-
-  const transitionPlayer = {};
-  configureTransitionPlayer(transitionPlayer);
-  assert.deepEqual(transitionPlayer.bufferOptions, TRANSITION_PLAYER_BUFFER_OPTIONS);
-  assert.equal(transitionPlayer.timeUpdateEventInterval, 0);
-  assert.equal(transitionPlayer.muted, true);
-  assert.equal(transitionPlayer.volume, 0);
-  assert.equal(transitionPlayer.loop, false);
+test('both persistent timeline players receive the same bounded lifecycle settings', () => {
+  const firstPlayer = {};
+  const secondPlayer = {};
+  configureTimelinePlayer(firstPlayer);
+  configureTimelinePlayer(secondPlayer);
+  assert.deepEqual(firstPlayer.bufferOptions, TIMELINE_PLAYER_BUFFER_OPTIONS);
+  assert.deepEqual(secondPlayer.bufferOptions, TIMELINE_PLAYER_BUFFER_OPTIONS);
+  assert.equal(firstPlayer.timeUpdateEventInterval, 0.05);
+  assert.equal(secondPlayer.timeUpdateEventInterval, 0.05);
 });

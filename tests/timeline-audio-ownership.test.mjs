@@ -19,9 +19,13 @@ test('caption generation consumes the audible timeline and restores real project
   assert.match(moduleSource, /TimelineAudioRenderer\.cancel\(\)/);
 });
 
-test('ordinary transport owns one decoder and never creates a hidden standby player', async () => {
-  const controller = await readFile(new URL('src/hooks/use-timeline-video-controller.ts', repositoryRoot), 'utf8');
-  assert.match(controller, /const player = useVideoPlayer/);
-  assert.doesNotMatch(controller, /playerB|standby|primeStandby|swapToStandby/);
-  assert.match(controller, /await loadPlayableVideoSource\(activePlayer\(\), source\.uri\)/);
+test('ordinary transport and transitions share exactly two bounded decoder slots', async () => {
+  const [controller, overlay] = await Promise.all([
+    readFile(new URL('src/hooks/use-timeline-video-controller.ts', repositoryRoot), 'utf8'),
+    readFile(new URL('src/components/editor/video-transition-overlay.tsx', repositoryRoot), 'utf8'),
+  ]);
+  assert.equal((controller.match(/useVideoPlayer\(null, configureTimelinePlayer\)/g) ?? []).length, 2);
+  assert.match(controller, /await loadPlayableVideoSource\(player, uri, 15_000, preparation\.signal\)/);
+  assert.match(controller, /preloadNext\(entry, slot, timelineMs\)/);
+  assert.doesNotMatch(overlay, /useVideoPlayer/);
 });

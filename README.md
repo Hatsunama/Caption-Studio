@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.68) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.69) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.68/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.69/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -73,7 +73,7 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.68** (`v1.4.68`, Android version code 80).
+Current Android build: **1.4.69** (`v1.4.69`, Android version code 81).
 
 ## What the current Android build includes
 
@@ -84,6 +84,8 @@ Current Android build: **1.4.68** (`v1.4.68`, Android version code 80).
 - Font choices open a color wheel before applying. Solid fonts start with a clean single color; two-color fonts provide independent Color 1 and Color 2 tabs, with Back to the font list or Save to commit the chosen palette.
 - The project home uses Caption Action's animated refract background, keeps **Hatsu Is Here For You** above Projects, and opens the matching thank-you note.
 - A visible loading dialog immediately after the system picker accepts the videos
+- Persistent dual-decoder timeline playback that prepares the next clip before a cut, retains both live frames through transitions, and shows a centered loading dialog until a real decoded frame is ready
+- Automatic project-owned playback proxies for video formats the phone cannot decode reliably; the original source remains untouched and is still used for final export
 - Source-orientation-aware preview
 - Persistent first-frame thumbnails on project cards, with readable date/time names replacing UUIDs and camera-number filenames
 - A dedicated `com.hatsunama.captionstudio` Android identity so Caption Studio installs as its own app
@@ -95,7 +97,7 @@ Current Android build: **1.4.68** (`v1.4.68`, Android version code 80).
 - Safe **Generate again** control for replacing caption text/timing while preserving the project style and added layers
 - Downloadable Fast, Balanced, and Accurate Whisper model tiers
 - Optional second-language subtitle tracks for every language in the in-app language picker, generated entirely on-device after one approximately 1.6 GB Qwen model download
-- A centered model-download and translation dialog that clearly tells users to keep Caption Studio visible and the phone unlocked; leaving the app cancels safely and produces a plain-English retry message instead of exposing a native error
+- A centered model-download and translation dialog that explains the one-time local-AI setup clearly; leaving the app cancels safely and produces a plain-English retry message instead of exposing a native error
 - Independently owned language tracks: editing, moving, or trimming one translated cue does not rewrite or reposition its primary cue or neighboring translated cues; explicit AI Refresh replaces only the requested translated lines
 - Caption grouping from word timestamps
 - A fixed-scale layered timeline: trimming either video edge visibly replaces removed source time with playable black space instead of rescaling the ruler or snapping the clip back to zero

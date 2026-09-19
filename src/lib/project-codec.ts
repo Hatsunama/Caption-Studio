@@ -238,6 +238,7 @@ function migrateVersionOne(candidate: Record<string, unknown>): Record<string, u
   const source: ProjectVideoSource = {
     id: sourceId,
     uri: legacy.source.uri,
+    previewUri: legacy.source.previewUri,
     storageMode: legacy.source.storageMode ?? (legacy.source.uri.startsWith('content:') ? 'linked' : 'copied'),
     sizeBytes: legacy.source.sizeBytes,
     mimeType: legacy.source.mimeType,

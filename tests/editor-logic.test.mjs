@@ -273,20 +273,12 @@ test('Expo owns video-player release and editor teardown never commands a releas
   const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
   const lifecycleStart = controller.lastIndexOf('useEffect(() => {');
   const teardownStart = controller.indexOf('return () => {', lifecycleStart);
-  const teardown = controller.slice(teardownStart, controller.indexOf('}, [activePlayer]);', teardownStart));
+  const teardown = controller.slice(teardownStart, controller.indexOf('}, []);', teardownStart));
   assert.match(teardown, /mountedRef\.current = false/);
   assert.match(teardown, /desiredRef\.current = undefined/);
   assert.doesNotMatch(teardown, /(?:player|activePlayer\(\))\.(?:pause|play|replace|release)/);
-
-  const transitionPreview = readFileSync(new URL('../src/hooks/use-video-transition-preview.ts', import.meta.url), 'utf8');
-  const transitionTeardownStart = transitionPreview.lastIndexOf('useEffect(() => () => {');
-  const transitionTeardown = transitionPreview.slice(
-    transitionTeardownStart,
-    transitionPreview.indexOf('}, []);', transitionTeardownStart),
-  );
-  assert.match(transitionTeardown, /mountedRef\.current = false/);
-  assert.match(transitionTeardown, /desiredRef\.current = undefined/);
-  assert.doesNotMatch(transitionTeardown, /(?:outgoingPlayer|incomingPlayer)\.(?:pause|play|replace|release)/);
+  assert.equal((controller.match(/useVideoPlayer\(null, configureTimelinePlayer\)/g) ?? []).length, 2);
+  assert.match(controller, /preparedClipId === entry\.clip\.id/);
 });
 
 test('production builds cannot use the debug signing config', () => {
@@ -1420,19 +1412,19 @@ test('timeline keeps a fixed playhead, scrubs its content, renders a ruler, and 
   assert.match(timeline, /onAddVideos/);
 });
 
-test('video transport has one ordinary decoder and reserves extra decoders for transition preview only', () => {
+test('video transport owns two persistent decoder slots shared by ordinary playback and transitions', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
-  assert.match(editor, /testID="timeline-player"/);
-  assert.doesNotMatch(editor, /timeline-player-a|timeline-player-b|players\.map/);
-  assert.match(editor, /surfaceType="textureView"/);
-  assert.match(editor, /useExoShutter=\{false\}/);
-  assert.match(controller, /const player = useVideoPlayer/);
-  assert.doesNotMatch(controller, /playerB|primeStandby|swapToStandby|clipHandoffPrimeAt/);
+  const overlay = readFileSync(new URL('../src/components/editor/video-transition-overlay.tsx', import.meta.url), 'utf8');
+  assert.match(editor, /<VideoTransitionOverlay/);
+  assert.equal((controller.match(/useVideoPlayer\(null, configureTimelinePlayer\)/g) ?? []).length, 2);
+  assert.match(overlay, /surfaceType="textureView"/);
+  assert.match(overlay, /useExoShutter=\{false\}/);
+  assert.doesNotMatch(overlay, /useVideoPlayer/);
   assert.match(controller, /playIntentRef/);
   assert.match(controller, /desiredRef/);
   assert.match(controller, /processingRef/);
-  assert.match(controller, /const initialSource =/);
+  assert.doesNotMatch(controller, /const initialSource =/);
   assert.match(controller, /generation !== generationRef\.current/);
   assert.match(controller, /if \(!mountedRef\.current\) return/);
   assert.match(controller, /synchronizeProject[\s\S]*desiredRef\.current/);
@@ -1472,11 +1464,11 @@ test('emoji reactions change with the spoken word', () => {
 test('an unexpected native pause while playback is intended resumes instead of killing the timeline', () => {
   const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
   const playingChange = controller.slice(
-    controller.indexOf('const onActivePlayingChange'),
+    controller.indexOf('const onPlayingChange'),
     controller.indexOf('const onStatusChange'),
   );
-  assert.match(playingChange, /if \(!playIntentRef\.current/);
-  assert.match(playingChange, /activePlayer\(\)\.play\(\)/);
+  assert.match(playingChange, /!playIntentRef\.current/);
+  assert.match(playingChange, /playerForSlot\(slot\)\.play\(\)/);
   assert.doesNotMatch(playingChange, /stopTransport\(/);
 });
 

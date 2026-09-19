@@ -141,6 +141,7 @@ function decodeVideoSource(value: unknown, index: number): ProjectVideoSource {
   return {
     id: identifierValue(source.id, `video source ${index + 1} identifier`),
     uri,
+    previewUri: optionalLocalFileUri(source.previewUri, `video source ${index + 1} preview URI`),
     storageMode,
     sizeBytes: optionalFiniteNumber(source.sizeBytes, `video source ${index + 1} size`, 0, Number.MAX_SAFE_INTEGER),
     mimeType: optionalNonEmptyString(source.mimeType, `video source ${index + 1} MIME type`),

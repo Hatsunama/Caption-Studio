@@ -109,6 +109,7 @@ function harness(options = {}) {
       async reconcileProjectOwnedFiles() {},
       async reconcileOrphanedProjectDirectories() {},
       async ensureProjectThumbnail() { return 'file:///thumbnail.jpg'; },
+      async ensureProjectVideoPreview(project, source) { return source; },
     },
     '@/services/project-persistence': {
       async persistProjectCheckpoint(project) { await modules['@/services/database'].saveProject(project); return project; },
