@@ -75,7 +75,7 @@ import {
   trackLinkedMediaPermissions,
   trackProjectOwnedAssets,
 } from '@/lib/media-lifecycle';
-import { fontChoicePatch, type FontChoice } from '@/lib/font-catalog';
+import { fontChoicePatch, type FontChoice, type FontColors } from '@/lib/font-style-choice';
 import { canApplyVideoTransition, VIDEO_TRANSITION_PRESETS } from '@/lib/video-transitions';
 import {
   addImageLayer as addImageLayerToProject,
@@ -256,6 +256,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const dualCaptionBackRequestRef = useRef<(() => void) | undefined>(undefined);
   const textLayerBackRequestRef = useRef<(() => void) | undefined>(undefined);
   const languagePickerBackRequestRef = useRef<(() => void) | undefined>(undefined);
+  const fontBrowserBackRequestRef = useRef<(() => void) | undefined>(undefined);
+  const registerFontBrowserBackRequest = useCallback((request: (() => void) | undefined) => {
+    fontBrowserBackRequestRef.current = request;
+  }, []);
   const registerScriptBackRequest = useCallback((request: (() => void) | undefined) => {
     scriptBackRequestRef.current = request;
   }, []);
@@ -466,7 +470,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         setEditingLayerId(undefined);
         setEditingText(undefined);
       }))();
-      else if (backStep === 'close-font-browser') setFontBrowserOpen(false);
+      else if (backStep === 'close-font-browser') (fontBrowserBackRequestRef.current ?? (() => setFontBrowserOpen(false)))();
       else if (backStep === 'close-style-scope') setPendingChange(undefined);
       else if (backStep === 'close-transition-timing') setTransitionTimingOpen(false);
       else if (backStep === 'close-voiceover') (voiceoverBackRequestRef.current ?? (() => setVoiceoverOpen(false)))();
@@ -862,13 +866,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
   };
 
-  const chooseFont = (choice: FontChoice) => {
+  const chooseFont = (choice: FontChoice, colors?: FontColors) => {
     setFontBrowserOpen(false);
     if (activeTool === 'stickers' && selectedTextLayer) {
-      updateTextLayerStyle(selectedTextLayer.id, fontChoicePatch(choice), true);
+      updateTextLayerStyle(selectedTextLayer.id, fontChoicePatch(choice, colors), true);
       return;
     }
-    queueCaptionStyleChange(`Font: ${choice.name}`, fontChoicePatch(choice));
+    queueCaptionStyleChange(`Font: ${choice.name}`, fontChoicePatch(choice, colors));
   };
 
   const queueCaptionStyleChange = (label: string, patch: CaptionStylePatch) => {
@@ -2162,6 +2166,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               <PersistedHorizontalScroll id="tool:stickers:text" contentContainerStyle={{ gap: 8 }}>
                 <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
                 <Action label="Edit text" onPress={() => { setEditingLayerId(selectedTextLayer.id); setEditingText(selectedTextLayer.text); }} />
+                <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
                 <Action label="Delete text layer" danger onPress={() => deleteLayer(selectedTextLayer.id)} />
                 <Action label="Add text layer" onPress={addTextLayer} />
                 <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
@@ -2306,6 +2311,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         previewText={selectedTextLayer?.text ?? selectedTranslationPair?.translation.text ?? selectedCaption?.text ?? activeCaption?.text ?? 'Make every word count'}
         onClose={() => setFontBrowserOpen(false)}
         onSelect={chooseFont}
+        onBackRequestChange={registerFontBrowserBackRequest}
       />
       <ScriptEditor
         visible={scriptEditorOpen}

@@ -1,14 +1,9 @@
-import type { CaptionStylePatch, FontReference, TextTreatment } from '@/types/project';
+import type { TextTreatment } from '@/types/project';
+import type { FontChoice } from './font-style-choice';
+export { fontChoicePatch, type FontChoice } from './font-style-choice';
 
 type FontAsset = number;
 
-export type FontChoice = {
-  font: FontReference;
-  name: string;
-  mood: string;
-  treatment: TextTreatment;
-  colors?: { primary: string; secondary: string };
-};
 
 export const FONT_ASSETS: Record<string, FontAsset> = {
   'Caption-Anton': require('../../assets/fonts/anton.ttf'),
@@ -177,13 +172,3 @@ export const BUILT_IN_FONT_CHOICES: FontChoice[] = [
 
 export const BUNDLED_FONT_COUNT = Object.keys(FONT_ASSETS).length;
 export const TWO_COLOR_FONT_COUNT = BUILT_IN_FONT_CHOICES.filter((choice) => choice.treatment !== 'solid').length;
-
-export function fontChoicePatch(choice: FontChoice): CaptionStylePatch {
-  return {
-    font: choice.font,
-    textTreatment: choice.treatment,
-    ...(choice.colors
-      ? { textColor: choice.colors.primary, secondaryTextColor: choice.colors.secondary }
-      : { textTreatment: 'solid' as const }),
-  };
-}

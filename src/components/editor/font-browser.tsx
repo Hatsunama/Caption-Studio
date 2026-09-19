@@ -3,6 +3,8 @@ import { Alert, FlatList, Modal, Pressable, Text, TextInput, View } from 'react-
 
 import { chrome } from '@/lib/ui-theme';
 import { BUILT_IN_FONT_CHOICES, TWO_COLOR_FONT_COUNT, type FontChoice } from '@/lib/font-catalog';
+import { type FontColors } from '@/lib/font-style-choice';
+import { FontColorPicker } from './font-color-picker';
 import {
   importFontFromDevice,
   loadFontLibrary,
@@ -16,8 +18,10 @@ export function FontBrowser(props: {
   visible: boolean;
   previewText: string;
   onClose: () => void;
-  onSelect: (choice: FontChoice) => void;
+  onSelect: (choice: FontChoice, colors: FontColors) => void;
+  onBackRequestChange?: (request: (() => void) | undefined) => void;
 }) {
+  const [draftChoice, setDraftChoice] = useState<FontChoice>();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [imported, setImported] = useState<FontChoice[]>([]);
@@ -51,13 +55,26 @@ export function FontBrowser(props: {
     return () => { active = false; };
   }, [libraryLoaded, props.visible]);
 
-  const selectFont = (choice: FontChoice) => {
+  const closeBrowser = () => {
+    setDraftChoice(undefined);
+    props.onClose();
+  };
+  const goBack = () => {
+    if (draftChoice) setDraftChoice(undefined);
+    else closeBrowser();
+  };
+  useEffect(() => {
+    props.onBackRequestChange?.(props.visible ? goBack : undefined);
+    return () => props.onBackRequestChange?.(undefined);
+  });
+  const saveFont = (choice: FontChoice, colors: FontColors) => {
     setRecent((current) => {
       const next = [choice.font.id, ...current.filter((id) => id !== choice.font.id)].slice(0, 8);
       void saveRecentFonts(next);
       return next;
     });
-    props.onSelect(choice);
+    setDraftChoice(undefined);
+    props.onSelect(choice, colors);
   };
 
   const importFont = async () => {
@@ -72,15 +89,16 @@ export function FontBrowser(props: {
   };
 
   return (
-    <Modal visible={props.visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={props.onClose}>
+    <Modal visible={props.visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={goBack}>
       <View style={{ flex: 1, backgroundColor: chrome.background, paddingTop: 20 }}>
+        <View style={{ flex: 1 }} pointerEvents={draftChoice ? 'none' : 'auto'} accessibilityElementsHidden={Boolean(draftChoice)} importantForAccessibility={draftChoice ? 'no-hide-descendants' : 'auto'}>
         <View style={{ paddingHorizontal: 20, gap: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flex: 1 }}>
               <Text style={{ color: chrome.text, fontSize: 26, fontWeight: '700' }}>All Fonts</Text>
               <Text style={{ color: chrome.muted, fontSize: 13 }}>{BUILT_IN_FONT_CHOICES.length} built-in choices. Only {TWO_COLOR_FONT_COUNT} use optional two-color styling.</Text>
             </View>
-            <Pressable onPress={props.onClose} hitSlop={12}>
+            <Pressable onPress={closeBrowser} hitSlop={12}>
               <Text style={{ color: chrome.accent, fontSize: 16, fontWeight: '700' }}>Done</Text>
             </Pressable>
           </View>
@@ -113,7 +131,7 @@ export function FontBrowser(props: {
           ListEmptyComponent={<Text style={{ color: chrome.muted, textAlign: 'center', padding: 30 }}>No fonts match this view.</Text>}
           renderItem={({ item }) => (
             <Pressable
-              onPress={() => selectFont(item)}
+              onPress={() => setDraftChoice(item)}
               style={{ minHeight: 94, justifyContent: 'center', gap: 7, paddingHorizontal: 16, borderRadius: chrome.radius.lg, backgroundColor: chrome.surface }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <View style={{ flex: 1, flexDirection: 'row', gap: 7, alignItems: 'center' }}>
@@ -142,6 +160,15 @@ export function FontBrowser(props: {
             </Pressable>
           )}
         />
+        </View>
+        {draftChoice ? (
+          <FontColorPicker
+            choice={draftChoice}
+            previewText={props.previewText}
+            onBack={() => setDraftChoice(undefined)}
+            onSave={(colors) => saveFont(draftChoice, colors)}
+          />
+        ) : null}
       </View>
     </Modal>
   );
