@@ -70,8 +70,8 @@ function surfaceFor(props) {
 
 for (const kind of ['caption', 'translation', 'text', 'image', 'audio']) {
   test(`${kind} has only direct timeline box interactions`, () => {
-    const { block, surface, grips } = surfaceFor(item({ label: kind }));
-    assert.equal(surface.props.width, 96, 'selected short items expose a usable box without changing stored timing');
+    const { block, surface, grips } = surfaceFor(item({ label: kind, endMs: 2000 }));
+    assert.equal(surface.props.width, 200, 'selected blocks retain their actual timeline width');
     assert.equal(grips.length, 3);
     assert.deepEqual(grips.map((grip) => grip.props.edge).sort(), ['end', 'move', 'start']);
     assert.equal(block.all((node) => node.props?.accessibilityLabel?.startsWith('Timing controls')).length, 0);
@@ -80,13 +80,21 @@ for (const kind of ['caption', 'translation', 'text', 'image', 'audio']) {
 }
 
 test('direct box edges partition the selected item without overlap', () => {
-  const { grips, surface } = surfaceFor(item({ startMs: 0, endMs: 0 }));
+  const { grips, surface } = surfaceFor(item({ startMs: 0, endMs: 1000 }));
   const ordered = grips.map((grip) => grip.props).sort((left, right) => left.left - right.left);
   assert.equal(ordered[0].left, 0);
   assert.equal(ordered.at(-1).left + ordered.at(-1).width, surface.props.width);
-  assert.ok(ordered.every((grip) => grip.width >= 32));
+  assert.ok(ordered.filter((grip) => grip.edge !== 'move').every((grip) => grip.width >= 8 && grip.width <= 16));
   assert.equal(ordered[0].left + ordered[0].width, ordered[1].left);
   assert.equal(ordered[1].left + ordered[1].width, ordered[2].left);
+});
+
+test('unselected blocks keep a tap surface without visible trim grips', () => {
+  const { grips, surface } = surfaceFor(item({ selected: false, endMs: 2000 }));
+  assert.equal(surface.props.width, 200);
+  assert.deepEqual(grips.map((grip) => grip.props.edge), ['move']);
+  assert.equal(grips[0].props.left, 0);
+  assert.equal(grips[0].props.width, 200);
 });
 
 test('a tap selects without mutating timing, while a body drag moves the same item', () => {
@@ -114,5 +122,5 @@ test('the timeline source contains no attached timing buttons, rails, or alterna
     assert.equal(source.includes(forbidden), false, forbidden + ' must not return');
   }
   assert.match(source, /<DirectTimelineGestureSurface/);
-  assert.match(source, /const interactionWidth = props\.selected \? Math\.max\(width, 3 \* DIRECT_TIMELINE_GRIP\) : width/);
+  assert.match(source, /timelineHandleLayout\(props\.selected, props\.width\)/);
 });

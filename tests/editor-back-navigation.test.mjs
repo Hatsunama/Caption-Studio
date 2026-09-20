@@ -363,7 +363,7 @@ test('cancellable work and non-cancellable work have explicit Back ownership', (
   const root = {
     interactionLocked: false, captionGenerationActive: false, videoExportActive: false,
     textEditorOpen: false, fontBrowserOpen: false, styleScopeOpen: false,
-    transitionTimingOpen: false, audioSourceOpen: false, languagePickerOpen: false,
+    transitionTimingOpen: false, audioSourceOpen: false, watermarkOpen: false, languagePickerOpen: false,
     dualCaptionEditorOpen: false, scriptEditorOpen: false, selectionActive: false,
     timelineRooted: true,
   };
@@ -378,3 +378,10 @@ test('dirty child editors own route Back instead of parent state deletion', () =
   assert.match(source, /onBackRequestChange=\{registerTextLayerBackRequest\}/);
   assert.match(source, /onBackRequestChange=\{registerLanguagePickerBackRequest\}/);
 });
+
+
+test('watermark editor closes before navigating away from the timeline', () => {
+  const state = { interactionLocked: false, captionGenerationActive: false, videoExportActive: false, textEditorOpen: false, fontBrowserOpen: false, styleScopeOpen: false, transitionTimingOpen: false, voiceoverOpen: false, audioSourceOpen: false, watermarkOpen: true, languagePickerOpen: false, dualCaptionEditorOpen: false, scriptEditorOpen: false, selectionActive: false, timelineRooted: true };
+  assert.equal(resolveEditorBackStep(state), 'close-watermark');
+});
+

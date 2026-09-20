@@ -31,6 +31,7 @@ import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
 import { DualLanguagePicker } from '@/components/editor/dual-language-picker';
 import { FontBrowser } from '@/components/editor/font-browser';
 import { ExtractAudioSourceSheet } from '@/components/editor/extract-audio-source-sheet';
+import { WatermarkSheet } from '@/components/editor/watermark-sheet';
 import { ImageLayerOverlay } from '@/components/editor/image-layer-overlay';
 import { LayerTimeline } from '@/components/editor/layer-timeline';
 import { MediaLoadingOverlay } from '@/components/media-loading-overlay';
@@ -80,10 +81,12 @@ import { canApplyVideoTransition, VIDEO_TRANSITION_PRESETS } from '@/lib/video-t
 import {
   addImageLayer as addImageLayerToProject,
   createTextLayer,
+  createWatermarkLayer,
   deleteCaptionBlock,
   deleteVideoClip,
   deleteVisualLayer,
   moveVisualLayer,
+  MAX_PROJECT_WATERMARKS,
   setCanvasPreset as applyCanvasPreset,
   replaceVisibleCaptionScript,
   splitVisualLayer,
@@ -108,6 +111,7 @@ import {
   visibleTimelineCaptions,
 } from '@/lib/video-timeline';
 import { pickAndStoreImage, type MediaImportProgress } from '@/services/media-import';
+import type { TextVisualLayer } from '@/types/project';
 import {
   cancelProjectVideoExport,
   exportProjectVideo,
@@ -293,6 +297,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [exportProgress, setExportProgress] = useState<ProjectVideoExportProgress>();
   const [animationScope, setAnimationScope] = useState<StyleScope>('caption');
   const [extractAudioOpen, setExtractAudioOpen] = useState(false);
+  const [watermarkOpen, setWatermarkOpen] = useState(false);
   const [extractAudioBusy, setExtractAudioBusy] = useState(false);
   const [voiceoverOpen, setVoiceoverOpen] = useState(false);
   const [voiceoverSaving, setVoiceoverSaving] = useState(false);
@@ -329,6 +334,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     || mediaProgress
     || exporting
     || extractAudioOpen
+    || watermarkOpen
     || extractAudioBusy
     || finishingSession,
   );
@@ -454,6 +460,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       transitionTimingOpen,
       voiceoverOpen,
       audioSourceOpen: extractAudioOpen,
+      watermarkOpen,
       languagePickerOpen: dualLanguagePickerOpen,
       dualCaptionEditorOpen,
       scriptEditorOpen,
@@ -617,6 +624,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     : selectedCaption
       ? resolveCaptionStyle(project.projectStyle, selectedCaption).animation.id
       : project.projectStyle.animation.id;
+  const selectedLineHeight = activeTool === 'stickers' && selectedTextLayer
+    ? selectedTextLayer.style.lineHeight
+    : selectedTranslationPair
+      ? selectedTranslationPair.style.lineHeight
+      : selectedCaption
+        ? resolveCaptionStyle(project.projectStyle, selectedCaption).lineHeight
+        : project.projectStyle.lineHeight;
   const scriptEditingCaption = scriptEditorOpen && scriptKeyboardOpen
     ? previewCaptions.find((caption) => caption.id === scriptEditingCaptionId)
     : undefined;
@@ -923,6 +937,29 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
+  const beginLineHeightChange = () => {
+    if (activeTool !== 'stickers' && animationScope === 'caption' && !selectedCaptionId) return;
+    pushUndo();
+  };
+
+  const changeLineHeight = (lineHeight: number) => {
+    const scope = animationScope === 'caption' && selectedCaptionId ? 'caption' : 'all';
+    setProject((current) => {
+      const patch = { lineHeight };
+      if (activeTool === 'stickers' && selectedTextLayer) return setTextLayerStyle(current, selectedTextLayer.id, patch);
+      if (translationTrackSelected && selectedTranslationTrack) {
+        return scope === 'caption' && selectedCaptionId
+          ? setTranslationCueStyle(current, selectedTranslationTrack.id, selectedCaptionId, patch, new Date().toISOString())
+          : setTranslationTrackStyle(current, selectedTranslationTrack.id, patch, new Date().toISOString());
+      }
+      return applyStylePatch(current, selectedCaptionId, scope, patch);
+    });
+  };
+
+  const finishLineHeightChange = () => {
+    persistProjectInBackground();
+  };
+
   const beginEditCaption = () => {
     if (timelineCaptions.length === 0) return;
     transport.pause();
@@ -1216,6 +1253,26 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     selectEditorObject({ kind: 'text', id });
     setEditingLayerId(id);
     setEditingText(result.layer.text);
+  };
+
+  const addWatermark = (text: string) => {
+    const id = uniqueId('watermark');
+    const result = createWatermarkLayer(editorSession.current(), id, Math.max(500, timelineDurationMs), text);
+    if (!result) {
+      Alert.alert('Watermark limit reached', `A project can have up to ${MAX_PROJECT_WATERMARKS} watermarks.`);
+      return;
+    }
+    pushUndo();
+    setProject(result.project);
+    persistProjectInBackground();
+    setWatermarkOpen(false);
+    selectEditorObject({ kind: 'text', id });
+  };
+
+  const removeWatermark = (layerId: string) => {
+    pushUndo();
+    setProject((current) => deleteVisualLayer(current, layerId));
+    persistProjectInBackground();
   };
 
   const addImageLayer = async () => {
@@ -2178,7 +2235,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             {selectedTextLayer ? (
               <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: chrome.hairline, paddingTop: 12 }}>
                 <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>TEXT ANIMATION</Text>
-                <AnimationBrowser selected={selectedAnimationId} textLayerSelected scope={animationScope} hasSelectedCaption={false} onScopeChange={setAnimationScope} onSelect={chooseAnimation} />
+                <AnimationBrowser selected={selectedAnimationId} textLayerSelected scope={animationScope} hasSelectedCaption={false} lineHeight={selectedLineHeight} onScopeChange={setAnimationScope} onSelect={chooseAnimation} onLineHeightStart={beginLineHeightChange} onLineHeightChange={changeLineHeight} onLineHeightEnd={finishLineHeightChange} />
               </View>
             ) : null}
           </View>
@@ -2238,8 +2295,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 selected={selectedAnimationId}
                 scope={animationScope}
                 hasSelectedCaption={Boolean(selectedCaptionId)}
+                lineHeight={selectedLineHeight}
                 onScopeChange={setAnimationScope}
                 onSelect={chooseAnimation}
+                onLineHeightStart={beginLineHeightChange}
+                onLineHeightChange={changeLineHeight}
+                onLineHeightEnd={finishLineHeightChange}
               />
             </View>
           </View>
@@ -2268,6 +2329,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           <ToolbarItem label="Captions" active={activeTool === 'captions'} onPress={() => openEditorTool('captions')} />
           <ToolbarItem label="Video" active={activeTool === 'video'} onPress={() => openEditorTool('video')} />
           <ToolbarItem label="Audio" active={activeTool === 'audio'} onPress={() => openEditorTool('audio')} />
+          <ToolbarItem label="Watermark" active={watermarkOpen} onPress={() => setWatermarkOpen(true)} />
           <ToolbarItem label="Export" disabled={exporting} onPress={showExportMenu} />
         </View>
       </View>
@@ -2286,6 +2348,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         onChoose={(sourceId) => { void addProjectVideoAudio(sourceId); }}
         onChooseAnother={() => { void addProjectVideoAudio(); }}
         onClose={() => { if (!extractAudioBusy) setExtractAudioOpen(false); }}
+      />
+      <WatermarkSheet
+        visible={watermarkOpen}
+        watermarks={project.layers.filter((layer): layer is TextVisualLayer => layer.kind === 'text' && Boolean(layer.watermark))}
+        maxWatermarks={MAX_PROJECT_WATERMARKS}
+        onAdd={addWatermark}
+        onSelect={(layerId) => { setWatermarkOpen(false); selectEditorObject({ kind: 'text', id: layerId }); }}
+        onRemove={removeWatermark}
+        onClose={() => setWatermarkOpen(false)}
       />
       <TransitionTimingSheet
         visible={transitionTimingOpen}

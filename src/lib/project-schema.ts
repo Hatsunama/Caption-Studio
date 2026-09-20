@@ -524,6 +524,7 @@ function decodeTextLayer(layer: Record<string, unknown>, index: number, projectS
     name: nonEmptyString(layer.name, `text layer ${index + 1} name`),
     visible: booleanValue(layer.visible, `text layer ${index + 1} visibility`),
     text: boundedString(layer.text, `text layer ${index + 1} text`, 1_000_000),
+    ...(layer.watermark === undefined ? {} : { watermark: booleanValue(layer.watermark, `text layer ${index + 1} watermark`) }),
     startMs,
     endMs: finiteNumber(layer.endMs, `text layer ${index + 1} end`, startMs, Number.MAX_SAFE_INTEGER),
     style: decodeCaptionStyle(layer.style, projectStyle, `text layer ${index + 1} style`),

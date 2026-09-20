@@ -8,6 +8,7 @@ export type EditorBackStep =
   | 'close-transition-timing'
   | 'close-voiceover'
   | 'close-audio-source'
+  | 'close-watermark'
   | 'close-language-picker'
   | 'close-dual-caption-editor'
   | 'close-script-editor'
@@ -25,6 +26,7 @@ export interface EditorBackState {
   transitionTimingOpen: boolean;
   voiceoverOpen: boolean;
   audioSourceOpen: boolean;
+  watermarkOpen: boolean;
   languagePickerOpen: boolean;
   dualCaptionEditorOpen: boolean;
   scriptEditorOpen: boolean;
@@ -42,6 +44,7 @@ export function resolveEditorBackStep(state: EditorBackState): EditorBackStep {
   if (state.transitionTimingOpen) return 'close-transition-timing';
   if (state.voiceoverOpen) return 'close-voiceover';
   if (state.audioSourceOpen) return 'close-audio-source';
+  if (state.watermarkOpen) return 'close-watermark';
   if (state.languagePickerOpen) return 'close-language-picker';
   if (state.dualCaptionEditorOpen) return 'close-dual-caption-editor';
   if (state.scriptEditorOpen) return 'close-script-editor';

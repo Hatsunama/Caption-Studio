@@ -229,6 +229,7 @@ export type TextVisualLayer = {
   name: string;
   visible: boolean;
   text: string;
+  watermark?: boolean;
   startMs: number;
   endMs: number;
   style: CaptionStyle;

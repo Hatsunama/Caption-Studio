@@ -22,6 +22,7 @@ import { buildClipTimeline, remapCaptionsToTimeline } from '@/lib/video-timeline
 import { audioClipEnd } from '@/lib/audio-timeline';
 import { audioWaveformWindow } from '@/lib/audio-waveform';
 import { adjustTimelineTiming, TIMELINE_ACCESSIBILITY_ACTIONS, timelineTimingLabel, createTimelineTimingGesture, timelineVisibleTrackBounds } from '@/lib/timeline-gesture';
+import { timelineHandleLayout } from '@/lib/timeline-handle-layout';
 import { ensureClipFrameThumbnail } from '@/services/project-media';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import type { TimelineItemReference, TimelineTimingEdge } from '@/lib/timeline-item-editor';
@@ -493,7 +494,7 @@ export function LayerTimeline(props: {
                 <View key={layer.id}>
                 <TimelineRow
                   label={layer.name.toUpperCase()}
-                  labelColor={isCaptions ? '#FF4FD8' : layer.kind === 'text' ? '#A985F8' : '#64E8FF'}
+                  labelColor={isCaptions ? '#FF4FD8' : layer.kind === 'text' ? layer.watermark ? '#FF8FC4' : '#A985F8' : '#64E8FF'}
                   selected={props.selectedLayerId === layer.id && !props.selectedClipId}
                   onPressLabel={() => selectTimelineItem(() => props.onSelectLayer(layer.id))}
                   onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }}
@@ -510,7 +511,7 @@ export function LayerTimeline(props: {
                   {isCaptions ? captionPage.bodies.map((caption) => (
                     <TimedBlock key={caption.id} onTouchLock={timelineTouchLock} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} lane={captionLayout.laneById.get(caption.id) ?? 0} color={NEON_CAPTION_COLORS[captionIndex.byId.get(caption.id)! % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )) : (
-                    <TimedBlock onTouchLock={timelineTouchLock} label={layer.kind === 'text' ? layer.text : 'IMAGE'} thumbnailUri={layer.kind === 'image' ? layer.uri : undefined} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} color={layer.kind === 'text' ? '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
+                    <TimedBlock onTouchLock={timelineTouchLock} label={layer.kind === 'text' ? layer.text : 'IMAGE'} thumbnailUri={layer.kind === 'image' ? layer.uri : undefined} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} color={layer.kind === 'text' ? layer.watermark ? '#E8579C88' : '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )}
                   {isCaptions ? captionPage.density.map((bin) => (
                     <TimelineDensityBin key={bin.left} {...bin} onPress={() => {
@@ -962,8 +963,8 @@ function TimedBlock(props: {
 }) {
   const width = Math.max(0, (props.endMs - props.startMs) * (props.trackWidth / props.durationMs));
   const bodyLeft = props.startMs / props.durationMs * props.trackWidth;
-  const interactionWidth = props.selected ? Math.max(width, 3 * DIRECT_TIMELINE_GRIP) : width;
-  const interactionLeft = clamp(bodyLeft - (interactionWidth - width) / 2, 0, Math.max(0, props.trackWidth - interactionWidth));
+  const interactionWidth = width;
+  const interactionLeft = bodyLeft;
   const visualLeft = bodyLeft - interactionLeft;
   return (
     <View style={{ position: 'absolute', left: interactionLeft, width: interactionWidth, top: props.lane * LANE_HEIGHT, height: LANE_HEIGHT, zIndex: props.selected ? 6 : 1, justifyContent: 'center' }}>
@@ -1001,16 +1002,14 @@ function LiveRecordingBlock(props: { startMs: number; endMs: number; meterLevel:
   </View>;
 }
 
-const DIRECT_TIMELINE_GRIP = 32;
 type TimelineTimingOwner = Parameters<typeof TimedBlock>[0];
 
 function DirectTimelineGestureSurface(props: TimelineTimingOwner & { width: number }) {
-  const trim = props.width >= 3 * DIRECT_TIMELINE_GRIP;
-  const grip = DIRECT_TIMELINE_GRIP;
+  const layout = timelineHandleLayout(props.selected, props.width);
   return <View testID="timeline-direct-surface" style={{ position: 'absolute', left: 0, top: 0, width: props.width, height: LANE_HEIGHT, borderRadius: 6 }}>
-    <TimelineTimingGrip {...props} edge="move" left={trim ? grip : 0} width={props.width - (trim ? 2 * grip : 0)} height={LANE_HEIGHT} />
-    {trim ? <TimelineTimingGrip {...props} edge="start" left={0} width={grip} height={LANE_HEIGHT} /> : null}
-    {trim ? <TimelineTimingGrip {...props} edge="end" left={props.width - grip} width={grip} height={LANE_HEIGHT} /> : null}
+    <TimelineTimingGrip {...props} edge="move" left={layout.moveLeft} width={layout.moveWidth} height={LANE_HEIGHT} />
+    {layout.showTrimGrips ? <TimelineTimingGrip {...props} edge="start" left={0} width={layout.gripWidth} height={LANE_HEIGHT} /> : null}
+    {layout.showTrimGrips ? <TimelineTimingGrip {...props} edge="end" left={props.width - layout.gripWidth} width={layout.gripWidth} height={LANE_HEIGHT} /> : null}
   </View>;
 }
 
