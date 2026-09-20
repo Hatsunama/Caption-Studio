@@ -2,7 +2,7 @@ package app.captionstudio.media
 
 import java.util.Locale
 
-private const val MIN_CAPTION_LINE_HEIGHT = 0.72f
+private const val MIN_CAPTION_LINE_HEIGHT = 0.55f
 private const val MAX_CAPTION_LINE_HEIGHT = 1.12f
 
 internal data class TimelineRenderPlan(

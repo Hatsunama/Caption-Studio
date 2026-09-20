@@ -1,13 +1,13 @@
-import { useCallback, useMemo, useState } from 'react';
-import { PanResponder, Pressable, Text, View } from 'react-native';
+import Slider from '@react-native-community/slider';
+import { useMemo, useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
 
 import { PersistedHorizontalScroll } from '@/components/editor/persisted-horizontal-scroll';
 import { ANIMATION_PRESETS, CAPTION_ANIMATION_COUNT, type AnimationPreset } from '@/lib/animation-presets';
 import {
   CAPTION_LINE_HEIGHT_MAX,
   CAPTION_LINE_HEIGHT_MIN,
-  captionLineHeightAtProgress,
-  captionLineHeightProgress,
+  normalizeCaptionLineHeight,
 } from '@/lib/caption-line-spacing';
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionAnimationId } from '@/types/project';
@@ -95,40 +95,27 @@ export function AnimationBrowser(props: {
 
 function LineSpacingControl(props: { value: number; onStart: () => void; onChange: (value: number) => void; onEnd: () => void }) {
   const { onChange, onEnd, onStart, value } = props;
-  const [trackWidth, setTrackWidth] = useState(1);
-  const valueForX = useCallback((x: number) => {
-    return captionLineHeightAtProgress(x / trackWidth);
-  }, [trackWidth]);
-  const responder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderGrant: (event) => {
-      onStart();
-      onChange(valueForX(event.nativeEvent.locationX));
-    },
-    onPanResponderMove: (event) => onChange(valueForX(event.nativeEvent.locationX)),
-    onPanResponderRelease: onEnd,
-    onPanResponderTerminate: onEnd,
-  }), [onChange, onEnd, onStart, valueForX]);
-  const progress = captionLineHeightProgress(value);
+  const normalizedValue = normalizeCaptionLineHeight(value);
   return (
     <View style={{ gap: 7, paddingTop: 3 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <Text style={{ color: chrome.text, fontSize: 11, fontWeight: '800' }}>LINE SPACING</Text>
-        <Text style={{ color: chrome.accent, fontSize: 11, fontVariant: ['tabular-nums'], fontWeight: '800' }}>{value.toFixed(2)}x</Text>
+        <Text style={{ color: chrome.accent, fontSize: 11, fontVariant: ['tabular-nums'], fontWeight: '800' }}>{normalizedValue.toFixed(2)}x</Text>
       </View>
-      <View
-        {...responder.panHandlers}
-        accessibilityRole="adjustable"
+      <Slider
         accessibilityLabel="Line spacing"
-        accessibilityValue={{ min: CAPTION_LINE_HEIGHT_MIN, max: CAPTION_LINE_HEIGHT_MAX, now: value }}
-        onLayout={(event) => setTrackWidth(Math.max(1, event.nativeEvent.layout.width))}
-        style={{ height: 34, justifyContent: 'center' }}>
-        <View pointerEvents="none" style={{ height: 5, borderRadius: 3, backgroundColor: chrome.fill }}>
-          <View style={{ width: `${progress * 100}%`, height: '100%', borderRadius: 3, backgroundColor: chrome.accent }} />
-        </View>
-        <View pointerEvents="none" style={{ position: 'absolute', left: `${progress * 100}%`, marginLeft: -11, width: 22, height: 22, borderRadius: 11, borderWidth: 3, borderColor: chrome.accent, backgroundColor: chrome.surface }} />
-      </View>
+        value={normalizedValue}
+        minimumValue={CAPTION_LINE_HEIGHT_MIN}
+        maximumValue={CAPTION_LINE_HEIGHT_MAX}
+        step={0.01}
+        minimumTrackTintColor={chrome.accent}
+        maximumTrackTintColor={chrome.fill}
+        thumbTintColor={chrome.accent}
+        onSlidingStart={onStart}
+        onValueChange={(next) => onChange(normalizeCaptionLineHeight(next))}
+        onSlidingComplete={onEnd}
+        style={{ width: '100%', height: 34 }}
+      />
       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
         <Text style={{ color: chrome.muted, fontSize: 9, fontWeight: '700' }}>CLOSER</Text>
         <Text style={{ color: chrome.muted, fontSize: 9, fontWeight: '700' }}>FARTHER</Text>
