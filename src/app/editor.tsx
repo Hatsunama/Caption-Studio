@@ -111,7 +111,6 @@ import {
   visibleTimelineCaptions,
 } from '@/lib/video-timeline';
 import { pickAndStoreImage, type MediaImportProgress } from '@/services/media-import';
-import type { TextVisualLayer } from '@/types/project';
 import {
   cancelProjectVideoExport,
   exportProjectVideo,
@@ -157,6 +156,7 @@ import {
 import {
   type CaptionAnimationId,
   type CaptionProject,
+  type TextVisualLayer,
   type CaptionStylePatch,
   type CaptionBlock,
   type VideoClip,
@@ -549,6 +549,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     selectedTranslationTrackId,
     transcriptionCancelling,
     transitionTimingOpen,
+    watermarkOpen,
     voiceoverOpen,
     voiceoverSaving,
   ]);
