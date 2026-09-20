@@ -46,7 +46,10 @@ test('native export keeps the local MP4 until JS delivery and never covers the v
   assert.match(delivery, /put\(MediaStore\.Video\.Media\.DURATION, verified\.durationMs\)/);
   assert.match(delivery, /put\(MediaStore\.Video\.Media\.SIZE, verified\.sizeBytes\)/);
   assert.match(exporter, /if \(!resolve\(task, result\)\)/);
-  assert.match(exporter, /if \(current == null \|\| current\.publishedVerified\.get\(\)\)/);
+  assert.match(
+    exporter,
+    /if \(current == null \|\| current\.publishedVerified\.get\(\)[\s\S]*expectedTask != null && current !== expectedTask\)/,
+  );
   assert.match(exporter, /task\.promise\.reject\("E_EXPORT_CANCELLED"/);
 });
 

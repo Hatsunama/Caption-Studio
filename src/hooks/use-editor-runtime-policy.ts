@@ -12,7 +12,7 @@ export function useEditorRuntimePolicy(blockingUi: boolean) {
   }, []);
 
   return useMemo(
-    () => resolveEditorRuntimePolicy({ appState, blockingUi }),
+    () => resolveEditorRuntimePolicy({ appState: appState ?? 'unknown', blockingUi }),
     [appState, blockingUi],
   );
 }

@@ -123,8 +123,8 @@ export async function synchronizeProjectDualCaptionEdits(options: {
   project: CaptionProject;
   trackId: string;
   edits: readonly DualCaptionTextEdit[];
-  onProgress?: (progress: CaptionTranslationProgress) => void;
 }) {
+  // Typed edits are a project mutation; only an explicit refresh invokes the model.
   const track = requiredTrack(options.project, options.trackId);
   const sourceLanguage = projectPrimaryCaptionLanguage(options.project);
   assertTrackMatchesSource(track, sourceLanguage);

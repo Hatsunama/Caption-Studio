@@ -1,5 +1,5 @@
 import { VideoView, type VideoPlayer } from 'expo-video';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import {
@@ -27,12 +27,13 @@ type Props = {
   slots: readonly [TimelineVideoSlot, TimelineVideoSlot];
   activeSlot: 0 | 1;
   currentTransform: VideoTransform;
-  onFirstFrameRender: (slot: 0 | 1) => void;
+  onFirstFrameRender: (slot: 0 | 1, token: number) => void;
 };
 
 const fill: ViewStyle = { position: 'absolute', inset: 0 };
 
 export function VideoTransitionOverlay(props: Props) {
+  const [failedPreviewKey, setFailedPreviewKey] = useState<string>();
   const windows = useMemo(
     () => buildVideoTransitionPreviewWindows(props.entries, props.sources),
     [props.entries, props.sources],
@@ -41,7 +42,11 @@ export function VideoTransitionOverlay(props: Props) {
     () => videoTransitionPreviewFrameAt(windows, props.timelineMs),
     [props.timelineMs, windows],
   );
-  if (!props.admitted || !props.visible) return null;
+  if (!props.admitted) return null;
+  if (!props.visible) {
+    return <View pointerEvents="none" style={[fill, { opacity: 0.001 }]}><TimelineVideoPair {...props} /></View>;
+  }
+  if (!props.transportReady || frame?.key === failedPreviewKey) return <TimelineVideoPair {...props} />;
   if (frame?.mode === 'cover') {
     return (
       <>
@@ -61,7 +66,7 @@ export function VideoTransitionOverlay(props: Props) {
   if (frame?.mode !== 'composite' || !frame.outgoing || !frame.incoming) {
     return <TimelineVideoPair {...props} />;
   }
-  return <CompositeVideoTransitionOverlay {...props} frame={frame} />;
+  return <CompositeVideoTransitionOverlay {...props} frame={frame} onUnavailable={() => setFailedPreviewKey(frame.key)} />;
 }
 
 function TimelineVideoPair(props: Props) {
@@ -71,13 +76,13 @@ function TimelineVideoPair(props: Props) {
         const slot = index as 0 | 1;
         return (
           <VideoLayer
-            key={slot}
+            key={`${slot}:${props.slots[slot].prepareToken}`}
             player={player}
             transform={props.currentTransform}
             width={props.width}
             height={props.height}
             opacity={slot === props.activeSlot ? 1 : 0.001}
-            onFirstFrameRender={() => props.onFirstFrameRender(slot)}
+            onFirstFrameRender={() => props.onFirstFrameRender(slot, props.slots[slot].prepareToken)}
           />
         );
       })}
@@ -87,6 +92,7 @@ function TimelineVideoPair(props: Props) {
 
 function CompositeVideoTransitionOverlay(props: Props & {
   frame: VideoTransitionPreviewFrame;
+  onUnavailable: () => void;
 }) {
   const outgoingSlot = props.slots.findIndex((slot) => slot.preparedClipId === props.frame.outgoing?.clipId);
   const incomingSlot = props.slots.findIndex((slot) => slot.preparedClipId === props.frame.incoming?.clipId);
@@ -96,16 +102,21 @@ function CompositeVideoTransitionOverlay(props: Props & {
     || outgoingSlot === incomingSlot
     || !props.slots[outgoingSlot].firstFrameReady
     || !props.slots[incomingSlot].firstFrameReady
+    || props.slots[outgoingSlot].readiness !== 'ready'
+    || props.slots[incomingSlot].readiness !== 'ready'
   ) {
     return <TimelineVideoPair {...props} />;
   }
   return (
-    <SynchronizedComposite
-      key={props.frame.key}
-      {...props}
-      outgoingSlot={outgoingSlot as 0 | 1}
-      incomingSlot={incomingSlot as 0 | 1}
-    />
+    <>
+      <TimelineVideoPair {...props} />
+      <SynchronizedComposite
+        key={`${props.frame.key}:${props.slots[outgoingSlot].prepareToken}:${props.slots[incomingSlot].prepareToken}`}
+        {...props}
+        outgoingSlot={outgoingSlot as 0 | 1}
+        incomingSlot={incomingSlot as 0 | 1}
+      />
+    </>
   );
 }
 
@@ -113,30 +124,52 @@ function SynchronizedComposite(props: Props & {
   frame: VideoTransitionPreviewFrame;
   outgoingSlot: 0 | 1;
   incomingSlot: 0 | 1;
+  onUnavailable: () => void;
 }) {
   const [rendered, setRendered] = useState({ outgoing: false, incoming: false });
   const ready = rendered.outgoing && rendered.incoming;
   const outgoingPlayer = props.players[props.outgoingSlot];
   const incomingPlayer = props.players[props.incomingSlot];
+  const latest = useRef(props);
+  latest.current = props;
 
   useEffect(() => {
-    synchronizeTransitionPlayer(
-      outgoingPlayer,
-      props.frame.outgoingSourceTimeMs,
-      props.frame.outgoing?.playbackRate,
-      props.isPlaying && props.transportReady,
-    );
-    synchronizeTransitionPlayer(
-      incomingPlayer,
-      props.frame.incomingSourceTimeMs,
-      props.frame.incoming?.playbackRate,
-      props.isPlaying && props.transportReady,
-    );
-  }, [incomingPlayer, outgoingPlayer, props.frame, props.isPlaying, props.transportReady]);
+    if (ready) return;
+    const timeout = setTimeout(() => latest.current.onUnavailable(), 1_500);
+    return () => clearTimeout(timeout);
+  }, [ready]);
+
+  useEffect(() => () => {
+    const current = latest.current;
+    current.players.forEach((player, slot) => {
+      if (slot !== current.activeSlot) {
+        player.muted = true;
+        player.pause();
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    // The controller owns the active player's clock and audio. Only the
+    // decorative standby follows the transition's source-time mapping.
+    try {
+      const standbyIsOutgoing = props.outgoingSlot !== props.activeSlot;
+      const standby = standbyIsOutgoing ? outgoingPlayer : incomingPlayer;
+      standby.muted = true;
+      synchronizeTransitionPlayer(
+        standby,
+        standbyIsOutgoing ? props.frame.outgoingSourceTimeMs : props.frame.incomingSourceTimeMs,
+        standbyIsOutgoing ? props.frame.outgoing?.playbackRate : props.frame.incoming?.playbackRate,
+        props.isPlaying && props.transportReady,
+      );
+    } catch {
+      latest.current.onUnavailable();
+    }
+  }, [incomingPlayer, outgoingPlayer, props.activeSlot, props.outgoingSlot, props.frame, props.isPlaying, props.transportReady]);
 
   return (
-    <View pointerEvents="none" style={[fill, { overflow: 'hidden' }]}>
-      <View style={[fill, { opacity: ready ? 1 : 0 }]}>
+    <View pointerEvents="none" style={[fill, { overflow: 'hidden', opacity: ready ? 1 : 0 }]}>
+      <View style={fill}>
         <CompositeTransition
           frame={props.frame}
           outgoingPlayer={outgoingPlayer}
@@ -144,11 +177,11 @@ function SynchronizedComposite(props: Props & {
           width={props.width}
           height={props.height}
           onOutgoingFirstFrame={() => {
-            props.onFirstFrameRender(props.outgoingSlot);
+            props.onFirstFrameRender(props.outgoingSlot, props.slots[props.outgoingSlot].prepareToken);
             setRendered((current) => ({ ...current, outgoing: true }));
           }}
           onIncomingFirstFrame={() => {
-            props.onFirstFrameRender(props.incomingSlot);
+            props.onFirstFrameRender(props.incomingSlot, props.slots[props.incomingSlot].prepareToken);
             setRendered((current) => ({ ...current, incoming: true }));
           }}
         />

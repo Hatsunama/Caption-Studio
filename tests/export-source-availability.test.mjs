@@ -46,6 +46,15 @@ test('missing video track, invalid duration, audio and image failure block expor
   await assert.rejects(assertExportSourcesAvailable(plan({ layers: [{ id: 'i', kind: 'image', visible: true, uri: 'image' }] }), probe({ image: async () => { throw new Error('missing'); } })), /image source/);
 });
 
+test('fresh media duration rejects an explicitly trimmed clip outside its readable source', async () => {
+  await assert.rejects(
+    assertExportSourcesAvailable(plan({ clips: [{
+      id: 'trimmed', uri: 'video', sourceStartMs: 100, sourceEndMs: 1_200,
+    }] }), probe()),
+    /trim outside its source duration/,
+  );
+});
+
 test('empty URI fails closed and source checks are fresh on every export attempt', async () => {
   await assert.rejects(assertExportSourcesAvailable(plan({ clips: [{ id: 'a', uri: '' }] }), probe()), /cannot be read/);
   let available = true;

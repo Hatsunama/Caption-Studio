@@ -6,6 +6,7 @@ import { buildClipTimeline } from '@/lib/video-timeline';
 import { effectiveVideoTransition } from '@/lib/video-transitions';
 import { resolveVideoTransform } from '@/lib/video-transform';
 import { selectExportFrameRate } from '@/lib/video-source-metadata';
+import { assertExportSourceRange } from '@/lib/export-source-availability';
 import type { CaptionProject, CaptionStyle, VideoTransform } from '@/types/project';
 
 export type ResolvedFontUris = ReadonlyMap<string, string>;
@@ -85,13 +86,29 @@ export function buildTimelineRenderPlan(
   resolvedFontUris: ResolvedFontUris = new Map(),
   allowIncompleteTranslations = false,
 ): TimelineRenderPlan {
+  const sourceById = new Map(project.sources.map((source) => [source.id, source]));
+  const audioSourceById = new Map(project.audioSources.map((source) => [source.id, source]));
+  // Validate raw persisted trims before timeline helpers can normalize them.
+  // Keep this out of project decoding so existing drafts remain recoverable.
+  for (const clip of project.clips) {
+    const source = sourceById.get(clip.sourceId);
+    if (!source) throw new Error(`A video source used by clip ${clip.id} is unavailable.`);
+    assertExportSourceRange(clip.sourceStartMs, clip.sourceEndMs, source.durationMs,
+      `the video clip "${clip.id}"`);
+  }
+  for (const clip of project.audioClips) {
+    if (clip.muted || clip.volume <= 0) continue;
+    const source = audioSourceById.get(clip.sourceId);
+    if (!source) throw new Error(`An audio source used by clip ${clip.id} is unavailable.`);
+    assertExportSourceRange(clip.sourceStartMs, clip.sourceEndMs, source.durationMs,
+      `the audio clip "${clip.id}"`);
+  }
   const durationMs = projectTimelineDuration(project);
   if (durationMs <= 0) throw new Error('Add timed content before exporting.');
   const captionsEnabled = project.export.burnCaptions && project.layers.some((layer) => layer.kind === 'captions' && layer.visible);
   const activeSources = activeProjectVideoSources(project);
   const { width, height } = outputDimensions(project, activeSources);
   const frameRate = selectExportFrameRate(activeSources);
-  const sourceById = new Map(project.sources.map((source) => [source.id, source]));
   const entries = buildClipTimeline(project.clips);
   const compatibilityVideoTransform = resolveVideoTransform(
     entries[0]?.clip.transform,
@@ -213,7 +230,7 @@ export function buildTimelineRenderPlan(
     captions,
     layers,
     audioClips: project.audioClips.map((clip) => {
-      const source = project.audioSources.find((candidate) => candidate.id === clip.sourceId);
+      const source = audioSourceById.get(clip.sourceId);
       if (!source) throw new Error(`An audio source used by clip ${clip.id} is unavailable.`);
       return {
         id: clip.id,
@@ -228,7 +245,8 @@ export function buildTimelineRenderPlan(
       };
     }),
   };
-  return omitUndefinedDeep(plan);
+  // Sanitize once, at the native bridge boundary in toNativeRenderPlan.
+  return plan;
 }
 
 export function collectUnresolvedFontFamilies(plan: TimelineRenderPlan) {

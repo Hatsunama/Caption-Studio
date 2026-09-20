@@ -116,7 +116,7 @@ export function LayerTimeline(props: {
   const zoomTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrubEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrubbingRef = useRef(false);
-  const selectionOwnsViewportRef = useRef(Boolean(props.selectedCaptionId));
+  const selectionOwnsViewportRef = useRef(false);
   const scrollXRef = useRef(0);
   const [viewportScrollX, setViewportScrollX] = useState(0);
   const [visibleCenterX, setVisibleCenterX] = useState(0);
@@ -179,16 +179,9 @@ export function LayerTimeline(props: {
     }
     return 0;
   })();
-  const revealCue = useCallback((startMs: number) => {
-    scrubbingRef.current = false;
-    selectionOwnsViewportRef.current = true;
-    const x = timelineScrollOffset(startMs, duration, trackWidth);
-    scrollXRef.current = x;
-    setViewportScrollX(x);
-    setVisibleCenterX(x);
-    horizontalRef.current?.scrollTo({ x, animated: false });
+  const revealCue = useCallback((_startMs: number) => {
     verticalRef.current?.scrollTo({ y: selectedRowTop, animated: false });
-  }, [duration, selectedRowTop, trackWidth]);
+  }, [selectedRowTop]);
   const lastRevealRef = useRef<{ id: string; trackWidth: number; viewportWidth: number } | undefined>(undefined);
   const hasSelectedCue = selectedCue !== undefined;
   useEffect(() => {
@@ -272,7 +265,7 @@ export function LayerTimeline(props: {
     if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
     scrubEndTimer.current = null;
     scrubbingRef.current = false;
-    selectionOwnsViewportRef.current = true;
+    selectionOwnsViewportRef.current = false;
     select();
   };
 
@@ -287,6 +280,7 @@ export function LayerTimeline(props: {
 
   const endBlockGesture = () => {
     setItemGestureLock(false);
+    selectionOwnsViewportRef.current = false;
     props.onTimingChangeEnd();
   };
 

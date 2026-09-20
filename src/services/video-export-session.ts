@@ -15,6 +15,8 @@ type Attempt = {
   token: number;
   cancelled: boolean;
   nativeStarted: boolean;
+  nativeSettled: boolean;
+  nativeCancellationOutcome?: Promise<boolean>;
   signalCancellation: () => void;
 };
 
@@ -35,6 +37,7 @@ export function createVideoExportSession(cancelNative: () => Promise<void>) {
         token: nextToken++,
         cancelled: false,
         nativeStarted: false,
+        nativeSettled: false,
         signalCancellation,
       };
       active = attempt;
@@ -62,12 +65,23 @@ export function createVideoExportSession(cancelNative: () => Promise<void>) {
         startNative: async <TValue>(start: () => Promise<TValue>) => {
           throwIfCancelled();
           attempt.nativeStarted = true;
+          let settleCancellationOutcome!: (cancelled: boolean) => void;
+          attempt.nativeCancellationOutcome = new Promise<boolean>((resolve) => {
+            settleCancellationOutcome = resolve;
+          });
           try {
             const value = await start();
+            // A verified native publication wins over a late cancel request.
+            settleCancellationOutcome(false);
             return value;
           } catch (error) {
-            throwIfCancelled();
+            const cancelled = error !== null && typeof error === 'object'
+              && 'code' in error && error.code === 'E_EXPORT_CANCELLED';
+            settleCancellationOutcome(cancelled);
+            if (cancelled) throw new VideoExportCancelledError();
             throw error;
+          } finally {
+            attempt.nativeSettled = true;
           }
         },
       };
@@ -81,10 +95,18 @@ export function createVideoExportSession(cancelNative: () => Promise<void>) {
 
     async cancel(): Promise<boolean> {
       const attempt = active;
-      if (!attempt || attempt.cancelled) return false;
+      if (!attempt || attempt.cancelled || attempt.nativeSettled) return false;
       attempt.cancelled = true;
+      if (attempt.nativeStarted) {
+        try {
+          await cancelNative();
+        } catch {
+          // Dispatch failure cannot tell us whether native published or stopped.
+          // The export promise remains the authority for both outcomes.
+        }
+        return await attempt.nativeCancellationOutcome!;
+      }
       attempt.signalCancellation();
-      if (attempt.nativeStarted) await cancelNative();
       return true;
     },
   };

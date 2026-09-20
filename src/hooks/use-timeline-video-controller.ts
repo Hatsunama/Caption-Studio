@@ -17,19 +17,23 @@ import { configureTimelinePlayer } from '@/services/video-player-runtime';
 import type { CaptionProject, ProjectVideoSource } from '@/types/project';
 
 type Target = { generation: number; timelineMs: number };
-type TransportPhase = 'loading' | 'buffering' | 'ready' | 'gap' | 'ended' | 'error';
+type TransportPhase = 'loading' | 'buffering' | 'ready' | 'gap' | 'ended' | 'error' | 'suspended';
 type SlotIndex = 0 | 1;
+const FIRST_FRAME_TIMEOUT_MS = 5_000;
 
 export type TimelineVideoSlot = {
   sourceId?: string;
   playbackUri?: string;
   preparedClipId?: string;
   firstFrameReady: boolean;
+  prepareToken: number;
+  readiness: 'idle' | 'preparing' | 'ready' | 'error' | 'cancelled';
 };
 
 type SlotRuntime = TimelineVideoSlot & {
   prepareToken: number;
   preparation?: AbortController;
+  preparationError?: Error;
   frameWaiters: Set<() => void>;
 };
 
@@ -37,11 +41,12 @@ function createSlotRuntime(): SlotRuntime {
   return {
     firstFrameReady: false,
     prepareToken: 0,
+    readiness: 'idle',
     frameWaiters: new Set(),
   };
 }
 
-export function useTimelineVideoController(project: CaptionProject, _onError: (message: string) => void) {
+export function useTimelineVideoController(project: CaptionProject, _onError: (message: string) => void, surfacesAdmitted = true) {
   const entries = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
   const playerA = useVideoPlayer(null, configureTimelinePlayer);
   const playerB = useVideoPlayer(null, configureTimelinePlayer);
@@ -54,8 +59,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const [phase, setPhaseState] = useState<TransportPhase>(initialPhase);
   const [activeSlot, setActiveSlotState] = useState<SlotIndex>(0);
   const [slots, setSlots] = useState<readonly [TimelineVideoSlot, TimelineVideoSlot]>([
-    { firstFrameReady: false },
-    { firstFrameReady: false },
+    { firstFrameReady: false, prepareToken: 0, readiness: 'idle' },
+    { firstFrameReady: false, prepareToken: 0, readiness: 'idle' },
   ]);
   const [hasPresentedFrame, setHasPresentedFrameState] = useState(false);
 
@@ -78,11 +83,13 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const reloadRequestedRef = useRef(false);
   const hasPresentedFrameRef = useRef(false);
   const mountedRef = useRef(true);
+  const surfacesAdmittedRef = useRef(surfacesAdmitted);
 
   useLayoutEffect(() => {
     projectRef.current = project;
     entriesRef.current = entries;
-  }, [entries, project]);
+    surfacesAdmittedRef.current = surfacesAdmitted;
+  }, [entries, project, surfacesAdmitted]);
 
   const publishSlots = useCallback(() => {
     if (!mountedRef.current) return;
@@ -93,12 +100,16 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         playbackUri: first.playbackUri,
         preparedClipId: first.preparedClipId,
         firstFrameReady: first.firstFrameReady,
+        prepareToken: first.prepareToken,
+        readiness: first.readiness,
       },
       {
         sourceId: second.sourceId,
         playbackUri: second.playbackUri,
         preparedClipId: second.preparedClipId,
         firstFrameReady: second.firstFrameReady,
+        prepareToken: second.prepareToken,
+        readiness: second.readiness,
       },
     ]);
   }, []);
@@ -168,32 +179,34 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     setSourceFailure(videoSourceFailure(source, error));
   };
 
-  const markFirstFrame = useCallback((slot: SlotIndex) => {
+  const markFirstFrame = useCallback((slot: SlotIndex, token: number) => {
     const runtime = slotRuntimeRef.current[slot];
+    if (!mountedRef.current || token !== runtime.prepareToken
+      || (runtime.readiness !== 'preparing' && runtime.readiness !== 'ready')) return;
     runtime.firstFrameReady = true;
     for (const resolve of runtime.frameWaiters) resolve();
     runtime.frameWaiters.clear();
     publishSlots();
-    if (slot === activeSlotRef.current) {
-      markPresentedFrame();
-      if (phaseRef.current === 'buffering') setPhase('ready');
-    }
   }, [publishSlots]);
 
   const waitForFirstFrame = (slot: SlotIndex, signal: AbortSignal) => {
     const runtime = slotRuntimeRef.current[slot];
+    if (signal.aborted) return Promise.reject(abortError());
     if (runtime.firstFrameReady) return Promise.resolve();
     return new Promise<void>((resolve, reject) => {
-      const finish = () => {
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
         signal.removeEventListener('abort', abort);
-        runtime.frameWaiters.delete(finish);
-        resolve();
+        runtime.frameWaiters.delete(ready);
+        if (error) reject(error); else resolve();
       };
-      const abort = () => {
-        runtime.frameWaiters.delete(finish);
-        reject(abortError());
-      };
-      runtime.frameWaiters.add(finish);
+      const ready = () => finish();
+      const abort = () => finish(abortError());
+      const timeout = setTimeout(() => finish(new Error('The video did not render a frame in time. Try loading it again.')), FIRST_FRAME_TIMEOUT_MS);
+      runtime.frameWaiters.add(ready);
       signal.addEventListener('abort', abort, { once: true });
     });
   };
@@ -203,23 +216,23 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     targetSeconds: number,
     signal: AbortSignal,
   ) => new Promise<void>((resolve, reject) => {
+    if (signal.aborted) { reject(abortError()); return; }
     let timeout: ReturnType<typeof setTimeout>;
     let subscription: { remove: () => void } | undefined;
-    const finish = () => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       signal.removeEventListener('abort', abort);
       subscription?.remove();
-      resolve();
+      if (error) reject(error); else resolve();
     };
-    const abort = () => {
-      clearTimeout(timeout);
-      subscription?.remove();
-      reject(abortError());
-    };
+    const abort = () => finish(abortError());
     subscription = player.addListener('timeUpdate', ({ currentTime }) => {
-      if (currentTime + 0.04 >= targetSeconds) finish();
+      if (Math.abs(currentTime - targetSeconds) <= 0.25) finish();
     });
-    timeout = setTimeout(finish, 1_500);
+    timeout = setTimeout(() => finish(new Error('The video did not reach the requested frame in time. Try loading it again.')), FIRST_FRAME_TIMEOUT_MS);
     signal.addEventListener('abort', abort, { once: true });
   });
 
@@ -230,6 +243,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     forceReload = false,
   ) => {
     const runtime = slotRuntimeRef.current[slot];
+    if (!surfacesAdmittedRef.current) throw abortError();
     const source = sourceForEntry(entry);
     const uri = videoPlaybackUri(source);
     const player = playerForSlot(slot);
@@ -237,14 +251,15 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.preparation?.abort();
     const preparation = new AbortController();
     runtime.preparation = preparation;
+    runtime.preparationError = undefined;
     const token = ++runtime.prepareToken;
     const sourceChanged = forceReload || runtime.playbackUri !== uri;
-    const surfaceWasReady = !sourceChanged && runtime.firstFrameReady;
 
     runtime.sourceId = source.id;
     runtime.playbackUri = uri;
     runtime.preparedClipId = entry.clip.id;
-    runtime.firstFrameReady = surfaceWasReady;
+    runtime.firstFrameReady = false;
+    runtime.readiness = 'preparing';
     publishSlots();
 
     try {
@@ -258,17 +273,39 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       const targetSeconds = sourceTimeAt(entry, timelineMs) / 1_000;
       player.pause();
       player.muted = true;
+      player.playbackRate = 1;
       player.currentTime = targetSeconds;
-      player.play();
-      await Promise.all([
+      const ready = Promise.all([
         waitForFirstFrame(slot, preparation.signal),
         waitForDecodedPosition(player, targetSeconds, preparation.signal),
       ]);
-      player.pause();
-
+      try {
+        player.play();
+      } catch (error) {
+        preparation.abort();
+        await ready.catch(() => {});
+        throw error;
+      }
+      await ready;
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
+      player.pause();
+      runtime.readiness = 'ready';
+      publishSlots();
       return slot;
+    } catch (caught) {
+      const error = token === runtime.prepareToken ? runtime.preparationError ?? caught : abortError();
+      if (token === runtime.prepareToken) {
+        runtime.firstFrameReady = false;
+        runtime.readiness = isAbortError(error) ? 'cancelled' : 'error';
+        // A failed or cancelled replacement must not be reused by URI alone.
+        runtime.playbackUri = undefined;
+        player.pause();
+        player.muted = true;
+        publishSlots();
+      }
+      throw error;
     } finally {
+      preparation.abort();
       if (runtime.preparation === preparation) runtime.preparation = undefined;
     }
   };
@@ -284,7 +321,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const findPreparedSlot = (entry: ClipTimelineEntry): SlotIndex | undefined => {
     const match = slotRuntimeRef.current.findIndex(
-      (runtime) => runtime.preparedClipId === entry.clip.id && runtime.firstFrameReady,
+      (runtime) => runtime.preparedClipId === entry.clip.id && runtime.firstFrameReady
+        && runtime.readiness === 'ready' && !runtime.preparation
+        && runtime.playbackUri === videoPlaybackUri(sourceForEntry(entry)),
     );
     return match < 0 ? undefined : match as SlotIndex;
   };
@@ -299,6 +338,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const next = nextEntryAfter(entry);
     if (!next || next.startMs > entry.endMs + CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS) return;
     const standby = (occupiedSlot === 0 ? 1 : 0) as SlotIndex;
+    const generation = generationRef.current;
     const entryIndex = entriesRef.current.findIndex((candidate) => candidate.clip.id === entry.clip.id);
     const previous = entryIndex > 0 ? entriesRef.current[entryIndex - 1] : undefined;
     const visibleTransitionEndMs = previous
@@ -308,12 +348,14 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     if (timelineDelayMs > 0 && !playIntentRef.current) return;
     const prepare = () => {
       preloadTimeoutRef.current = undefined;
-      void prepareSlot(standby, next, next.startMs).catch((error) => {
-        if (!isAbortError(error)) {
-          const source = sourceForEntry(next);
-          failSource(source, error);
-        }
-      });
+      if (!mountedRef.current || !surfacesAdmittedRef.current || generation !== generationRef.current
+        || activeSlotRef.current !== occupiedSlot || activeClipIdRef.current !== entry.clip.id) return;
+      const runtime = slotRuntimeRef.current[standby];
+      if (runtime.preparedClipId === next.clip.id
+        && (runtime.readiness === 'preparing' || runtime.readiness === 'ready' || runtime.readiness === 'error')) return;
+      // Preparation records its own failure. Only an explicit activation may
+      // promote it to a transport failure; the current clip keeps playing.
+      void prepareSlot(standby, next, next.startMs).catch(() => {});
     };
     if (timelineDelayMs > 0) {
       preloadTimeoutRef.current = setTimeout(prepare, timelineDelayMs / Math.max(0.1, entry.clip.playbackRate));
@@ -324,6 +366,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const runGap = (startMs: number, endMs: number, next: ClipTimelineEntry | undefined) => {
     cancelGapClock();
+    cancelScheduledPreload();
     players.forEach((player) => player.pause());
     activeClipIdRef.current = undefined;
     boundaryClipIdRef.current = undefined;
@@ -352,7 +395,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const activateClip = async (entry: ClipTimelineEntry, timelineMs: number, generation: number) => {
     cancelGapClock();
     const source = sourceForEntry(entry);
-    let slot = findPreparedSlot(entry);
+    let slot = reloadRequestedRef.current ? undefined : findPreparedSlot(entry);
 
     if (slot == null) {
       setPhase(hasPresentedFrameRef.current ? 'buffering' : 'loading');
@@ -371,7 +414,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
     if (!mountedRef.current || generation !== generationRef.current) return;
     reloadRequestedRef.current = false;
+    const previousSlot = activeSlotRef.current;
     setActiveSlot(slot);
+    if (previousSlot !== slot) {
+      playerForSlot(previousSlot).muted = true;
+      playerForSlot(previousSlot).pause();
+    }
     activeClipIdRef.current = entry.clip.id;
     boundaryClipIdRef.current = undefined;
     applyClipToSlot(slot, entry, timelineMs);
@@ -425,6 +473,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const clipId = segment?.kind === 'clip' ? segment.entry.clip.id : undefined;
     abortPreparationsExcept(clipId);
     setCurrentMs(targetMs);
+    if (!surfacesAdmittedRef.current) {
+      generationRef.current += 1;
+      desiredRef.current = undefined;
+      setPhase('suspended');
+      return;
+    }
     desiredRef.current = { generation: ++generationRef.current, timelineMs: targetMs };
     void drainTargetsRef.current();
   };
@@ -436,6 +490,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const seek = useCallback((timelineMs: number) => requestTargetRef.current(timelineMs), []);
 
   const play = useCallback(() => {
+    if (!surfacesAdmittedRef.current) return;
     const duration = projectTimelineDuration(projectRef.current);
     const targetMs = currentMsRef.current >= duration - 1 ? 0 : currentMsRef.current;
     playIntentRef.current = true;
@@ -486,7 +541,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   };
 
   const onPlayToEnd = (slot: SlotIndex) => {
-    if (slot !== activeSlotRef.current) return;
+    if (slot !== activeSlotRef.current || processingRef.current || phaseRef.current !== 'ready') return;
     const entry = entriesRef.current.find((candidate) => candidate.clip.id === activeClipIdRef.current);
     if (entry) advanceFrom(entry);
   };
@@ -502,6 +557,22 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const onStatusChange = (slot: SlotIndex, status: string, error: unknown) => {
     if (status !== 'error') return;
     const runtime = slotRuntimeRef.current[slot];
+    if (runtime.preparation) {
+      runtime.preparationError = error instanceof Error ? error : new Error(
+        typeof error === 'object' && error && 'message' in error ? String(error.message) : 'The video could not be loaded.',
+      );
+      runtime.preparation.abort();
+      return;
+    }
+    if (runtime.readiness !== 'ready') return;
+    const ownsPlayback = slot === activeSlotRef.current && runtime.preparedClipId === activeClipIdRef.current;
+    runtime.readiness = 'error';
+    runtime.firstFrameReady = false;
+    runtime.playbackUri = undefined;
+    playerForSlot(slot).pause();
+    playerForSlot(slot).muted = true;
+    publishSlots();
+    if (!ownsPlayback) return;
     const source = projectRef.current.sources.find((candidate) => candidate.id === runtime.sourceId);
     if (source) failSource(source, error);
   };
@@ -529,6 +600,18 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       cancelScheduledPreload();
     };
   }, []);
+
+  useEffect(() => {
+    if (!surfacesAdmitted) {
+      generationRef.current += 1;
+      desiredRef.current = undefined;
+      abortPreparationsExcept();
+      stopTransport();
+      setPhase('suspended');
+    } else if (phaseRef.current === 'suspended') {
+      requestTargetRef.current(currentMsRef.current);
+    }
+  }, [surfacesAdmitted, stopTransport]);
 
   return {
     player: players[activeSlot],

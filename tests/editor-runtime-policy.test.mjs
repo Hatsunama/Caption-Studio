@@ -6,9 +6,11 @@ import { resolveEditorRuntimePolicy } from '../src/lib/editor-runtime-policy.ts'
 test('editor admits media only while active with no blocking interface', () => {
   assert.deepEqual(
     resolveEditorRuntimePolicy({ appState: 'active', blockingUi: false }),
-    { mediaAdmitted: true },
+    { mediaAdmitted: true, videoSurfacesAdmitted: true },
   );
   assert.equal(resolveEditorRuntimePolicy({ appState: 'active', blockingUi: true }).mediaAdmitted, false);
+  assert.equal(resolveEditorRuntimePolicy({ appState: 'active', blockingUi: true }).videoSurfacesAdmitted, true);
   assert.equal(resolveEditorRuntimePolicy({ appState: 'background', blockingUi: false }).mediaAdmitted, false);
+  assert.equal(resolveEditorRuntimePolicy({ appState: 'background', blockingUi: false }).videoSurfacesAdmitted, false);
   assert.equal(resolveEditorRuntimePolicy({ appState: 'inactive', blockingUi: false }).mediaAdmitted, false);
 });

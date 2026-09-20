@@ -403,7 +403,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
   };
 
-  const transport = useTimelineVideoController(project, setError);
+  const transport = useTimelineVideoController(project, setError, runtimePolicy.videoSurfacesAdmitted);
   const { currentMs, isPlaying } = transport;
   useTimelineAudioController(project, currentMs, isPlaying, runtimePolicy.mediaAdmitted, setError);
   useProjectAudioWaveforms(
@@ -1788,7 +1788,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             width={canvasWidth}
             height={canvasHeight}
             backgroundColor={project.canvas.backgroundColor}
-            admitted={runtimePolicy.mediaAdmitted}
+            admitted={runtimePolicy.videoSurfacesAdmitted}
             visible={!transport.isGap}
             players={transport.players}
             slots={transport.slots}
@@ -2386,7 +2386,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         onCancel={() => { void cancelCaptionGeneration(); }}
       />
       <MediaLoadingOverlay progress={mediaProgress} />
-      <PlaybackLoadingOverlay phase={transport.phase} hasPresentedFrame={transport.hasPresentedFrame} />
+      <PlaybackLoadingOverlay phase={transport.phase} hasPresentedFrame={transport.hasPresentedFrame} admitted={runtimePolicy.mediaAdmitted} />
       {exporting ? (
         <Modal visible transparent animationType="fade" onRequestClose={() => {
           if (exportKind === 'video') void cancelProjectVideoExport();

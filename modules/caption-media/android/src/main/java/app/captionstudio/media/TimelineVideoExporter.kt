@@ -121,7 +121,12 @@ internal class TimelineVideoExporter(private val context: Context) {
                     val verified = inspectRenderedVideo(context, Uri.fromFile(task.output), sizeBytes)
                     val mediaUri = publishToMediaLibrary(task, verified)
                     inspectRenderedVideo(context, mediaUri, verified.sizeBytes)
-                    task.publishedVerified.set(true)
+                    synchronized(stateLock) {
+                      // Commit verification under the same lock as cancellation.
+                      // Whichever wins decides the promise and artifact lifetime.
+                      ensureActive(task)
+                      task.publishedVerified.set(true)
+                    }
                     val result = mapOf(
                       "outputUri" to Uri.fromFile(task.output).toString(),
                       "durationMs" to verified.durationMs,
@@ -181,7 +186,8 @@ internal class TimelineVideoExporter(private val context: Context) {
   }
 
   fun cancel() {
-    mainHandler.post { cancelActive() }
+    val task = synchronized(stateLock) { activeExport } ?: return
+    mainHandler.post { cancelActive(task) }
   }
 
   fun getProgress(callback: (TimelineExportProgress) -> Unit) {
@@ -427,17 +433,24 @@ internal class TimelineVideoExporter(private val context: Context) {
     return candidate
   }
 
-  private fun cancelActive() {
+  private fun cancelActive(expectedTask: ActiveExport? = null) {
     val task = synchronized(stateLock) {
       val current = activeExport
-      if (current == null || current.publishedVerified.get()) {
+      if (current == null || current.publishedVerified.get()
+        || (expectedTask != null && current !== expectedTask)) {
+        null
+      } else if (current.stage == ExportStage.PUBLISHING) {
+        // The publisher owns cleanup while it can still write or verify media.
+        // Keep the task active until it rejects, so JS cannot report cancellation
+        // or begin another export before publication has actually stopped.
+        current.cancelled.set(true)
         null
       } else {
+        current.cancelled.set(true)
         activeExport = null
         current
       }
     } ?: return
-    task.cancelled.set(true)
     task.transformer?.cancel()
     val cleanupError = runCatching { releaseTaskResources(task) }.exceptionOrNull()
     deletePublishedOutput(task)

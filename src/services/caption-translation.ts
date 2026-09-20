@@ -232,14 +232,6 @@ export async function translateNaturalCaptionOperations(options: {
   activeTranslation = run;
 
   try {
-    const model = await ensureNaturalTranslationModel(run, options.onProgress);
-    throwIfCancelled(run);
-    options.onProgress?.({
-      stage: 'loading-model',
-      progress: 0,
-      detail: 'Loading the local natural-language model once',
-    });
-    const nativeProgress = pollNativeProgress(run, options.onProgress);
     try {
       const nativeRequest = { operations: prepared.map((operation) => ({
         id: operation.id,
@@ -247,7 +239,7 @@ export async function translateNaturalCaptionOperations(options: {
         targetLanguage: operation.targetLanguage,
         batches: operation.batches,
       })) };
-      const result = await translateWithNative(model.uri, nativeRequest.operations);
+      const result = await translateWithModelRecovery(run, nativeRequest.operations, options.onProgress);
       throwIfCancelled(run);
       if (
         result.offline !== true
@@ -317,8 +309,6 @@ export async function translateNaturalCaptionOperations(options: {
     } catch (error) {
       if (run.cancelled || translationCancelled(error)) throw new CaptionTranslationCancelledError();
       throw error;
-    } finally {
-      clearInterval(nativeProgress);
     }
   } finally {
     if (activeTranslation?.id === run.id) activeTranslation = undefined;
@@ -512,16 +502,57 @@ async function translateWithNative(
   return result;
 }
 
+function isNativeModelIntegrityFailure(error: unknown) {
+  return typeof error === 'object' && error !== null
+    && 'code' in error && error.code === 'E_TRANSLATION_MODEL_INTEGRITY';
+}
+
+async function translateWithModelRecovery(
+  run: ActiveTranslation,
+  operations: Parameters<typeof translateWithNative>[1],
+  onProgress?: (progress: CaptionTranslationProgress) => void,
+) {
+  let recoveryAttempted = false;
+  while (true) {
+    throwIfCancelled(run);
+    const model = await ensureNaturalTranslationModel(run, onProgress);
+    throwIfCancelled(run);
+    onProgress?.({
+      stage: 'loading-model',
+      progress: 0,
+      detail: 'Loading the local natural-language model',
+    });
+    const stopProgress = pollNativeProgress(run, onProgress);
+    try {
+      // Recovery changes only the model file; successful cue checkpoints remain reusable.
+      return await translateWithNative(model.uri, operations);
+    } catch (error) {
+      if (!isNativeModelIntegrityFailure(error)) throw error;
+      // Remove the trust marker first, including after a failed recovery attempt.
+      // Keep independent download/resume artifacts for the verified downloader.
+      const marker = new File(model.parentDirectory, `${model.name}.sha256`);
+      if (marker.exists) marker.delete();
+      if (model.exists) model.delete();
+      throwIfCancelled(run);
+      if (recoveryAttempted) throw error;
+      recoveryAttempted = true;
+    } finally {
+      stopProgress();
+    }
+  }
+}
+
 function pollNativeProgress(
   run: ActiveTranslation,
   onProgress?: (progress: CaptionTranslationProgress) => void,
 ) {
   let polling = false;
-  return setInterval(() => {
-    if (run.cancelled || polling) return;
+  let stopped = false;
+  const interval = setInterval(() => {
+    if (stopped || run.cancelled || polling) return;
     polling = true;
     void CaptionTranslation.getNaturalCaptionTranslationProgress().then((native) => {
-      if (run.cancelled || activeTranslation?.id !== run.id) return;
+      if (stopped || run.cancelled || activeTranslation?.id !== run.id) return;
       const stage = native.stage === 'verifying-model' ? 'verifying-model'
         : native.stage === 'loading-model' ? 'loading-model' : 'translating';
       const detail = native.stage === 'validating-output' ? 'Checking and retrying individual translations'
@@ -538,6 +569,10 @@ function pollNativeProgress(
       });
     }).catch(() => undefined).finally(() => { polling = false; });
   }, 500);
+  return () => {
+    stopped = true;
+    clearInterval(interval);
+  };
 }
 
 function translationModelDirectory() {

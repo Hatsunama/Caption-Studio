@@ -1,13 +1,19 @@
 $ErrorActionPreference = 'Stop'
 
+# Trust boundary: the installer and certificate pin both come from this mutable
+# repository. This checks APK consistency, not authenticity after full repository
+# compromise. Fresh installs require an independently authenticated distribution
+# or certificate pin to address that threat; no same-repo pin can provide it.
 $ContractUri = 'https://raw.githubusercontent.com/Hatsunama/Caption-Studio/main/config/product-contract.json'
 $Contract = Invoke-RestMethod -Uri $ContractUri -Headers @{ Accept = 'application/vnd.github+json' }
 $Repository = [string]$Contract.repository
-$MinimumVersion = [Version]([string]$Contract.android.release.minimumVersion)
+$VersionPattern = '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+$MinimumVersion = [string]$Contract.android.release.minimumVersion
 $Package = [string]$Contract.android.release.package
 $AssetName = [string]$Contract.android.release.assetName
 $ExpectedCertificate = ([string]$Contract.android.release.signingCertificateSha256).ToUpperInvariant()
 if ($Repository -ne 'Hatsunama/Caption-Studio' -or
+    $MinimumVersion -cnotmatch $VersionPattern -or
     $Package -notmatch '^[a-zA-Z][a-zA-Z0-9_.]+$' -or
     $AssetName -notmatch '^[a-zA-Z0-9._-]+\.apk$' -or
     $ExpectedCertificate -notmatch '^[A-F0-9]{64}$') {
@@ -16,6 +22,22 @@ if ($Repository -ne 'Hatsunama/Caption-Studio' -or
 $TempDir = Join-Path $env:TEMP ("CaptionStudioInstaller-" + [Guid]::NewGuid().ToString('N'))
 $Apk = Join-Path $TempDir $AssetName
 $OwnsTempDir = $false
+
+function Compare-ReleaseVersion {
+    param([string]$Left, [string]$Right)
+    $LeftParts = $Left.Split('.')
+    $RightParts = $Right.Split('.')
+    for ($Index = 0; $Index -lt 3; $Index++) {
+        # Canonical decimal components compare by length then ordinal text,
+        # avoiding System.Version's Int32 limit and lexicographic 9 > 10 bugs.
+        if ($LeftParts[$Index].Length -ne $RightParts[$Index].Length) {
+            return $LeftParts[$Index].Length.CompareTo($RightParts[$Index].Length)
+        }
+        $Order = [string]::CompareOrdinal($LeftParts[$Index], $RightParts[$Index])
+        if ($Order -ne 0) { return $Order }
+    }
+    return 0
+}
 
 function Invoke-Adb {
     param([Parameter(Mandatory)][string[]]$Arguments)
@@ -129,31 +151,34 @@ try {
     }
 
     $Headers = @{ Accept = 'application/vnd.github+json' }
-    $ReleasePayload = Invoke-RestMethod `
-        -Uri "https://api.github.com/repos/$Repository/releases?per_page=100" `
-        -Headers $Headers
-    # PowerShell 7 can preserve a JSON top-level array as one pipeline object.
-    # Force element enumeration before filtering individual releases.
-    $Releases = @($ReleasePayload | ForEach-Object { $_ })
-    $Release = @($Releases | Where-Object {
-        -not $_.draft -and
-        $_.prerelease -and
-        $_.tag_name -match '^v\d+\.\d+\.\d+$' -and
-        @($_.assets | Where-Object name -eq $AssetName).Count -eq 1
-    } | Select-Object -First 1)
-    if ($Release.Count -ne 1) {
-        throw 'No published Caption Studio Android release was found.'
-    }
-    $Release = $Release[0]
-    $ReleaseVersionText = ([string]$Release.tag_name).TrimStart('v')
-    try {
-        $ReleaseVersion = [Version]$ReleaseVersionText
-    }
-    catch {
-        throw "Release $($Release.tag_name) has an invalid version."
-    }
-    if ($ReleaseVersion -lt $MinimumVersion) {
-        throw "Latest release $($Release.tag_name) is older than required version $MinimumVersion."
+    $Release = $null
+    $ReleaseVersionText = $null
+    $Page = 1
+    do {
+        $ReleasePayload = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/$Repository/releases?per_page=100&page=$Page" `
+            -Headers $Headers
+        # Explicit enumeration also handles PowerShell 7 top-level JSON arrays.
+        $Releases = @($ReleasePayload | ForEach-Object { $_ })
+        foreach ($Candidate in $Releases) {
+            $Tag = [string]$Candidate.tag_name
+            if ($Candidate.draft -or -not $Tag.StartsWith('v')) { continue }
+            $CandidateVersion = $Tag.Substring(1)
+            if ($CandidateVersion -cnotmatch $VersionPattern -or
+                @($Candidate.assets | Where-Object name -eq $AssetName).Count -ne 1) { continue }
+            if ((Compare-ReleaseVersion $CandidateVersion $MinimumVersion) -lt 0) { continue }
+            # Both published prereleases and promoted stable releases can carry
+            # the compatible APK; API ordering is not semantic version ordering.
+            if ($null -eq $Release -or
+                (Compare-ReleaseVersion $CandidateVersion $ReleaseVersionText) -gt 0) {
+                $Release = $Candidate
+                $ReleaseVersionText = $CandidateVersion
+            }
+        }
+        $Page++
+    } while ($Releases.Count -eq 100)
+    if ($null -eq $Release) {
+        throw "No published compatible Caption Studio Android release at or above $MinimumVersion was found."
     }
 
     $Asset = @($Release.assets | Where-Object name -eq $AssetName)[0]

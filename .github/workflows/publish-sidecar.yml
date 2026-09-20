@@ -49,6 +49,7 @@ jobs:
           set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$VERSION_CODE" =~ ^[1-9][0-9]*$ ]]
+          node ./scripts/configure-sidecar-release.mjs --check-published "$VERSION" "$VERSION_CODE"
           tag="v${VERSION}"
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists; refusing replacement." >&2
@@ -79,6 +80,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           VERSION_CODE: ${{ inputs.version_code }}
+          GH_TOKEN: ${{ github.token }}
         run: node ./scripts/configure-sidecar-release.mjs "$VERSION" "$VERSION_CODE"
 
       - name: Generate clean Android project
@@ -148,6 +150,8 @@ jobs:
           bash ./scripts/check-elf-16k-alignment.sh "$source_apk" "$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
           certificate="$($build_tools/apksigner verify --verbose --print-certs "$source_apk")"
           printf '%s\n' "$certificate"
+          # This contract pin detects signing mistakes; a mutable same-repo pin
+          # is not an independent trust anchor against repository compromise.
           actual_certificate="$(sed -nE 's/^.*certificate SHA-256 digest: ([0-9a-fA-F]+).*$/\1/p' <<< "$certificate" | head -n 1 | tr '[:upper:]' '[:lower:]')"
           test "$actual_certificate" = "$CAPTION_STUDIO_RELEASE_CERT_SHA256"
           if grep -Eqi "Android Debug|androiddebugkey|Caption Studio CI" <<< "$certificate"; then
@@ -158,14 +162,18 @@ jobs:
           cp "$source_apk" "dist/$CAPTION_STUDIO_RELEASE_ASSET"
           (cd dist && sha256sum "$CAPTION_STUDIO_RELEASE_ASSET" > "$CAPTION_STUDIO_RELEASE_ASSET.sha256")
 
-      - name: Publish immutable prerelease
+      - name: Publish prerelease without replacement
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
+          VERSION_CODE: ${{ inputs.version_code }}
         run: |
           set -euo pipefail
           tag="v${VERSION}"
+          # Recheck after building. Concurrency serializes this workflow only;
+          # repository rules must restrict other release writers separately.
+          node ./scripts/configure-sidecar-release.mjs --check-published "$VERSION" "$VERSION_CODE"
           gh release create "$tag" \
             "dist/$CAPTION_STUDIO_RELEASE_ASSET" \
             "dist/$CAPTION_STUDIO_RELEASE_ASSET.sha256" \

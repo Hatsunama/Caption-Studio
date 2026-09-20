@@ -237,9 +237,10 @@ test('native publication acknowledgement wins a cancellation race and the sessio
   const session = createVideoExportSession(async () => { nativeCancellations += 1; });
   const exporting = session.run((context) => context.startNative(() => native.promise));
   await Promise.resolve();
-  assert.equal(await session.cancel(), true);
-  assert.equal(await session.cancel(), false);
+  const cancellation = session.cancel();
   native.resolve('published');
+  assert.equal(await cancellation, false);
+  assert.equal(await session.cancel(), false);
   assert.equal(await exporting, 'published');
   assert.equal(nativeCancellations, 1);
   assert.equal(await session.run(async () => 'next export'), 'next export');

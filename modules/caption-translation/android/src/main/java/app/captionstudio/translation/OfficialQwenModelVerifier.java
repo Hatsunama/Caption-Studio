@@ -23,7 +23,7 @@ final class OfficialQwenModelVerifier implements TranslationModelVerifier {
       IntConsumer progress
   ) throws NaturalCaptionTranslator.TranslationFailure {
     if (model.length() != EXPECTED_MODEL_BYTES) {
-      throw unsupported();
+      throw integrityFailure();
     }
     String canonicalPath = model.getAbsolutePath();
     long modifiedAt = model.lastModified();
@@ -74,14 +74,14 @@ final class OfficialQwenModelVerifier implements TranslationModelVerifier {
     }
 
     String actualHash = toHex(digest.digest());
-    if (!EXPECTED_MODEL_SHA256.equals(actualHash)) throw unsupported();
+    if (!EXPECTED_MODEL_SHA256.equals(actualHash)) throw integrityFailure();
     verifiedModel = new VerifiedModel(canonicalPath, model.length(), modifiedAt);
     progress.accept(100);
   }
 
-  private static NaturalCaptionTranslator.TranslationFailure unsupported() {
+  private static NaturalCaptionTranslator.TranslationFailure integrityFailure() {
     return new NaturalCaptionTranslator.TranslationFailure(
-        NaturalCaptionTranslator.UNSUPPORTED,
+        "E_TRANSLATION_MODEL_INTEGRITY",
         "The selected file is not the supported local Qwen translation model."
     );
   }

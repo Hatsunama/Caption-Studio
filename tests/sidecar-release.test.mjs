@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { configureSidecarApp } from '../scripts/configure-sidecar-release.mjs';
 
 const root = new URL('../', import.meta.url);
 const productContract = JSON.parse(readFileSync(fileURLToPath(new URL('config/product-contract.json', root)), 'utf8'));
@@ -23,14 +23,12 @@ test('side-by-side release derives an isolated Android identity', async () => {
         android: { package: 'com.hatsunama.captionstudio', versionCode: 14 },
       },
     }));
-    const scriptPath = fileURLToPath(new URL('scripts/configure-sidecar-release.mjs', root));
-    const result = spawnSync(process.execPath, [scriptPath, '1.4.3', '15', configPath], { encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr);
-    const configured = JSON.parse(readFileSync(configPath, 'utf8'));
+    const source = JSON.parse(readFileSync(configPath, 'utf8'));
+    const configured = configureSidecarApp(source, '1.4.70', 81);
     assert.equal(configured.expo.name, 'Caption Studio');
     assert.equal(configured.expo.android.package, productContract.android.release.package);
-    assert.equal(configured.expo.android.versionCode, 15);
-    assert.equal(configured.expo.version, '1.4.3');
+    assert.equal(configured.expo.android.versionCode, 81);
+    assert.equal(configured.expo.version, '1.4.70');
     assert.equal(configured.expo.scheme, productContract.android.release.scheme);
   } finally {
     rmSync(directory, { recursive: true, force: true });
