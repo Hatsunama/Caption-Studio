@@ -152,16 +152,16 @@ function harness(options = {}) {
   return { files, directories, events, warnings, journal, workflows, seed, get stored() { return stored; } };
 }
 
-const destructiveCases = [
+const cleanupCases = [
   ['saved discard', 'save', (h) => h.workflows.discardEditorSession(fixture(), { ...fixture(), name: 'Unsaved edit' })],
-  ['draft discard', 'deleteRecord', (h) => h.workflows.discardEditorSession(fixture('draft'), fixture('draft'), {
+  ['draft discard', 'save', (h) => h.workflows.discardEditorSession(fixture('draft'), { ...fixture('draft'), name: 'Unsaved edit' }, {
     owned: { uris: [] }, linked: { uris: ['content://video/new'] },
   })],
   ['delete project', 'deleteRecord', (h) => h.workflows.deleteProjectCompletely('project-1')],
   ['delete unreadable project', 'deleteUnreadableRecord', (h) => h.workflows.deleteUnreadableProjectCompletely('project-1')],
 ];
 
-for (const [name, transaction, action] of destructiveCases) {
+for (const [name, transaction, action] of cleanupCases) {
   test(`${name} removes every recovery kind only after the database transaction succeeds`, async () => {
     const h = harness(); await h.seed(); await h.seed('project-10');
     const otherFiles = [...h.files].filter(([uri]) => uri.includes('project-10-'));
@@ -170,7 +170,7 @@ for (const [name, transaction, action] of destructiveCases) {
     const transactionIndex = h.events.findIndex(([event]) => event === transaction);
     assert.ok(transactionIndex >= 0);
     assert.ok(h.events.findIndex(([event]) => event === 'deleteJournal') > transactionIndex);
-    assert.equal(h.stored?.name ?? null, name === 'saved discard' ? 'Test project' : null);
+    assert.equal(h.stored?.name ?? null, name === 'saved discard' || name === 'draft discard' ? 'Test project' : null);
     if (name === 'draft discard') assert.ok(h.events.some(([event, uri]) => event === 'release' && uri === 'content://video/new'));
     for (const kind of kinds) assert.equal(await h.journal.readEditorDraftJournal('project-1', kind), null);
   });

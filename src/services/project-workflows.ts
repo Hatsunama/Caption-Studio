@@ -310,11 +310,6 @@ export async function discardEditorSession(
   currentProject: CaptionProject,
   ledger?: EditorMediaLedger,
 ) {
-  if (initialProject.lifecycle.status === 'draft') {
-    await deleteProjectCompletely(initialProject.id);
-    if (ledger) await releaseUnreferencedReadPermissions(ledger.linked.uris);
-    return;
-  }
   await saveProject(initialProject);
   const discardedUris = abandonedProjectOwnedUris(currentProject, initialProject);
   const abandonedSessionUris = ledger ? abandonedLedgerAssets(ledger.owned, initialProject) : [];
