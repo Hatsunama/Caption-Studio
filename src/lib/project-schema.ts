@@ -1,4 +1,5 @@
 import { ANIMATION_PRESETS } from '@/lib/animation-presets';
+import { normalizeCaptionLineHeight } from '@/lib/caption-line-spacing';
 import { positiveLayerScale } from '@/lib/layer-geometry';
 import { captionTransform } from '@/lib/caption-transform';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
@@ -593,7 +594,7 @@ function decodeCaptionStyle(value: unknown, fallback: CaptionStyle, label: strin
     background: decodeTextBackground(style.background, fallback.background, `${label} background`),
     alignment: optionalEnum(style.alignment, ['left', 'center', 'right'] as const, `${label} alignment`) ?? fallback.alignment,
     letterSpacing: optionalNumber(style.letterSpacing, fallback.letterSpacing, `${label} letter spacing`, -20, 100),
-    lineHeight: optionalNumber(style.lineHeight, fallback.lineHeight, `${label} line height`, 0.5, 5),
+    lineHeight: normalizeCaptionLineHeight(optionalNumber(style.lineHeight, fallback.lineHeight, `${label} line height`, 0.5, 5)),
     textTransform: optionalEnum(style.textTransform, ['none', 'uppercase', 'lowercase'] as const, `${label} transform`) ?? fallback.textTransform,
     position: style.position === undefined ? { ...fallback.position } : decodePoint(style.position, `${label} position`, -4, 4),
     box: style.box === undefined ? { ...fallback.box } : decodeBox(style.box, `${label} box`),
@@ -624,7 +625,7 @@ function decodeCaptionStylePatch(value: unknown, label: string): CaptionStylePat
   if (patch.background !== undefined) decoded.background = decodeBackgroundPatch(patch.background, `${label} background`);
   if (patch.alignment !== undefined) decoded.alignment = enumValue(patch.alignment, ['left', 'center', 'right'] as const, `${label} alignment`);
   if (patch.letterSpacing !== undefined) decoded.letterSpacing = finiteNumber(patch.letterSpacing, `${label} letter spacing`, -20, 100);
-  if (patch.lineHeight !== undefined) decoded.lineHeight = finiteNumber(patch.lineHeight, `${label} line height`, 0.5, 5);
+  if (patch.lineHeight !== undefined) decoded.lineHeight = normalizeCaptionLineHeight(finiteNumber(patch.lineHeight, `${label} line height`, 0.5, 5));
   if (patch.textTransform !== undefined) decoded.textTransform = enumValue(patch.textTransform, ['none', 'uppercase', 'lowercase'] as const, `${label} transform`);
   if (patch.position !== undefined) decoded.position = decodePointPatch(patch.position, `${label} position`, -4, 4);
   if (patch.box !== undefined) decoded.box = decodeBoxPatch(patch.box, `${label} box`);

@@ -2,6 +2,9 @@ package app.captionstudio.media
 
 import java.util.Locale
 
+private const val MIN_CAPTION_LINE_HEIGHT = 0.72f
+private const val MAX_CAPTION_LINE_HEIGHT = 1.12f
+
 internal data class TimelineRenderPlan(
   val durationMs: Long,
   val width: Int,
@@ -292,7 +295,7 @@ internal fun parseTextStyle(value: Map<String, Any>): RenderTextStyle {
     backgroundPaddingY = background.numberOr("paddingY", 10).toFloat().coerceAtLeast(0f),
     alignment = value.stringOr("alignment", "center"),
     letterSpacing = value.numberOr("letterSpacing", 0).toFloat(),
-    lineHeight = value.numberOr("lineHeight", 1.05).toFloat().coerceIn(0.5f, 3f),
+    lineHeight = value.numberOr("lineHeight", 1.05).toFloat().coerceIn(MIN_CAPTION_LINE_HEIGHT, MAX_CAPTION_LINE_HEIGHT),
     textTransform = value.stringOr("textTransform", "none"),
     positionX = position.numberOr("x", 0.5).toFloat(),
     positionY = position.numberOr("y", 0.78).toFloat(),

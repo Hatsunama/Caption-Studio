@@ -89,6 +89,7 @@ internal class TextPresentation private constructor(
       fun layout(width: Float): StaticLayout {
         val builder = StaticLayout.Builder.obtain(content, 0, content.length, basePaint, ceil(width.toDouble()).toInt().coerceAtLeast(1))
           .setIncludePad(true)
+          .setLineSpacing(0f, style.lineHeight)
           .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
           .setAlignment(when (style.alignment) { "left" -> Layout.Alignment.ALIGN_NORMAL; "right" -> Layout.Alignment.ALIGN_OPPOSITE; else -> Layout.Alignment.ALIGN_CENTER })
           .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
@@ -134,12 +135,11 @@ private class InkSpan(
   private val advance = measure.measureText(run.text)
   private val ink = Rect().also { measure.getTextBounds(run.text, 0, run.text.length, it) }
   private val metrics = measure.fontMetrics
-  private val leading = max(0f, run.style.fontSize * run.style.lineHeight - (metrics.bottom - metrics.top)) / 2f
   private val shadow = if (run.style.shadowOpacity > 0f) run.style.shadowBlur * 3f + max(kotlin.math.abs(run.style.shadowOffsetX), kotlin.math.abs(run.style.shadowOffsetY)) else 0f
   private val treatment = when (run.style.textTreatment) { "duotone-neon" -> 34f; "duotone-shadow" -> 12f; "duotone-offset" -> 4f; else -> 0f }
   private val decoration = max(run.style.strokeWidth, max(shadow, treatment)) + if (run.style.animationId == "glow-pulse") 45f else 0f
-  private val original = RectF(min(0f, ink.left.toFloat()) - decoration, min(metrics.top, ink.top.toFloat()) - leading - decoration,
-    max(advance, ink.right.toFloat()) + decoration, max(metrics.bottom, ink.bottom.toFloat()) + leading + decoration)
+  private val original = RectF(min(0f, ink.left.toFloat()) - decoration, min(metrics.top, ink.top.toFloat()) - decoration,
+    max(advance, ink.right.toFloat()) + decoration, max(metrics.bottom, ink.bottom.toFloat()) + decoration)
   private val bounds = animationBounds(original, states)
   private val baselineCenter = (original.top + original.bottom) / 2f
 

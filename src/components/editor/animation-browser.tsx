@@ -3,6 +3,12 @@ import { PanResponder, Pressable, Text, View } from 'react-native';
 
 import { PersistedHorizontalScroll } from '@/components/editor/persisted-horizontal-scroll';
 import { ANIMATION_PRESETS, CAPTION_ANIMATION_COUNT, type AnimationPreset } from '@/lib/animation-presets';
+import {
+  CAPTION_LINE_HEIGHT_MAX,
+  CAPTION_LINE_HEIGHT_MIN,
+  captionLineHeightAtProgress,
+  captionLineHeightProgress,
+} from '@/lib/caption-line-spacing';
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionAnimationId } from '@/types/project';
 
@@ -87,15 +93,11 @@ export function AnimationBrowser(props: {
   );
 }
 
-const MIN_LINE_HEIGHT = 0.72;
-const MAX_LINE_HEIGHT = 2.2;
-
 function LineSpacingControl(props: { value: number; onStart: () => void; onChange: (value: number) => void; onEnd: () => void }) {
   const { onChange, onEnd, onStart, value } = props;
   const [trackWidth, setTrackWidth] = useState(1);
   const valueForX = useCallback((x: number) => {
-    const progress = Math.max(0, Math.min(1, x / trackWidth));
-    return Number((MIN_LINE_HEIGHT + (MAX_LINE_HEIGHT - MIN_LINE_HEIGHT) * progress).toFixed(2));
+    return captionLineHeightAtProgress(x / trackWidth);
   }, [trackWidth]);
   const responder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
@@ -108,7 +110,7 @@ function LineSpacingControl(props: { value: number; onStart: () => void; onChang
     onPanResponderRelease: onEnd,
     onPanResponderTerminate: onEnd,
   }), [onChange, onEnd, onStart, valueForX]);
-  const progress = Math.max(0, Math.min(1, (value - MIN_LINE_HEIGHT) / (MAX_LINE_HEIGHT - MIN_LINE_HEIGHT)));
+  const progress = captionLineHeightProgress(value);
   return (
     <View style={{ gap: 7, paddingTop: 3 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -119,7 +121,7 @@ function LineSpacingControl(props: { value: number; onStart: () => void; onChang
         {...responder.panHandlers}
         accessibilityRole="adjustable"
         accessibilityLabel="Line spacing"
-        accessibilityValue={{ min: MIN_LINE_HEIGHT, max: MAX_LINE_HEIGHT, now: value }}
+        accessibilityValue={{ min: CAPTION_LINE_HEIGHT_MIN, max: CAPTION_LINE_HEIGHT_MAX, now: value }}
         onLayout={(event) => setTrackWidth(Math.max(1, event.nativeEvent.layout.width))}
         style={{ height: 34, justifyContent: 'center' }}>
         <View pointerEvents="none" style={{ height: 5, borderRadius: 3, backgroundColor: chrome.fill }}>
