@@ -24,11 +24,11 @@ test('side-by-side release derives an isolated Android identity', async () => {
       },
     }));
     const source = JSON.parse(readFileSync(configPath, 'utf8'));
-    const configured = configureSidecarApp(source, '1.4.70', 81);
+    const configured = configureSidecarApp(source, '1.4.71', 83);
     assert.equal(configured.expo.name, 'Caption Studio');
     assert.equal(configured.expo.android.package, productContract.android.release.package);
-    assert.equal(configured.expo.android.versionCode, 81);
-    assert.equal(configured.expo.version, '1.4.70');
+    assert.equal(configured.expo.android.versionCode, 83);
+    assert.equal(configured.expo.version, '1.4.71');
     assert.equal(configured.expo.scheme, productContract.android.release.scheme);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -52,6 +52,13 @@ test('release workflow uses stable secrets and publishes a verified immutable AP
   assert.doesNotMatch(workflow, /v\$\{VERSION\}-fixed/);
   assert.doesNotMatch(workflow, /caption-studio-fixed-android/);
   assert.doesNotMatch(workflow, /keytool -genkeypair/);
+});
+
+test('published release version-code verification uses release metadata, not APK downloads', async () => {
+  const releaseScript = await readFile(new URL('scripts/configure-sidecar-release.mjs', root), 'utf8');
+  assert.match(releaseScript, /contents\/app\.json\?ref=/);
+  assert.doesNotMatch(releaseScript, /gh', \['release', 'download'/);
+  assert.match(releaseScript, /if \(android\?\.package !== productContract\.android\.sourcePackage\) return null/);
 });
 
 test('verification workflow runs Android lint before retaining release artifacts', async () => {

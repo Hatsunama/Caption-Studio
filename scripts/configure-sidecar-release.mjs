@@ -1,6 +1,5 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,42 +56,29 @@ async function checkPublishedRelease(version, versionCode) {
       throw new Error(`Release ${release.tag_name} has no valid publication date.`);
     }
   }
-  if (published.length === 0) return;
-  const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
-  if (!sdk) throw new Error('Android SDK is required to inspect published versionCode.');
-  const buildToolsRoot = path.join(sdk, 'build-tools');
-  const buildTools = (await readdir(buildToolsRoot, { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory() && versionPattern.test(entry.name))
-    .sort((a, b) => compareVersions(b.name, a.name));
-  if (!buildTools.length) throw new Error('Stable Android build tools with aapt are required.');
-  const aapt = path.join(buildToolsRoot, buildTools[0].name,
-    process.platform === 'win32' ? 'aapt.exe' : 'aapt');
-  let maximumPublishedCode = 0;
-  let maximumCodeTag = '';
-  for (const release of published) {
-    const directory = await mkdtemp(path.join(tmpdir(), 'caption-release-policy-'));
-    try {
-      await run('gh', ['release', 'download', release.tag_name, '--repo', repository,
-        '--pattern', releaseContract.assetName, '--dir', directory]);
-      const { stdout: badging } = await run(aapt,
-        ['dump', 'badging', path.join(directory, releaseContract.assetName)]);
-      const identity = /^package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']+)'/m.exec(badging);
-      if (!identity || identity[1] !== releaseContract.package ||
-          identity[3] !== release.tag_name.slice(1)) {
-        throw new Error(`Published APK identity does not match ${release.tag_name}.`);
-      }
-      const priorCode = Number(identity[2]);
-      validateVersion(identity[3], priorCode, false);
-      if (priorCode > maximumPublishedCode) {
-        maximumPublishedCode = priorCode;
-        maximumCodeTag = release.tag_name;
-      }
-    } finally {
-      await rm(directory, { recursive: true, force: true });
+  const publishedCodes = await Promise.all(published.map(async (release) => {
+    const { stdout } = await run('gh', [
+      'api',
+      '-H', 'Accept: application/vnd.github.raw+json',
+      `repos/${repository}/contents/app.json?ref=${release.tag_name}`,
+    ]);
+    const appConfig = JSON.parse(stdout);
+    const android = appConfig?.expo?.android;
+    if (android?.package !== productContract.android.sourcePackage) return null;
+    const priorVersion = appConfig?.expo?.version;
+    const priorCode = android?.versionCode;
+    if (priorVersion !== release.tag_name.slice(1)) {
+      throw new Error(`Published release metadata does not match ${release.tag_name}.`);
     }
-  }
-  if (versionCode <= maximumPublishedCode) {
-    throw new Error(`versionCode ${versionCode} must exceed ${maximumCodeTag} (${maximumPublishedCode}).`);
+    validateVersion(priorVersion, priorCode, false);
+    return { tag: release.tag_name, versionCode: priorCode };
+  })).then((entries) => entries.filter((entry) => entry !== null));
+  const maximumPublished = publishedCodes.reduce(
+    (maximum, current) => current.versionCode > maximum.versionCode ? current : maximum,
+    { tag: '', versionCode: 0 },
+  );
+  if (versionCode <= maximumPublished.versionCode) {
+    throw new Error(`versionCode ${versionCode} must exceed ${maximumPublished.tag} (${maximumPublished.versionCode}).`);
   }
 }
 
