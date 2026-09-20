@@ -459,7 +459,7 @@ public final class NaturalCaptionTranslatorTest {
         () -> verifier.verify(model, () -> false, ignored -> {})
     );
 
-    assertEquals("E_TRANSLATION_UNSUPPORTED", failure.code);
+    assertEquals("E_TRANSLATION_MODEL_INTEGRITY", failure.code);
     assertTrue(model.delete());
   }
 
