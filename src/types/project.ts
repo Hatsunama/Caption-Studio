@@ -85,6 +85,7 @@ export type CaptionStyle = NormalizedTransform & {
   fontWeight: '400' | '500' | '600' | '700' | '800' | '900';
   italic: boolean;
   textColor: string;
+  opacity?: number;
   secondaryTextColor: string;
   textTreatment: TextTreatment;
   activeWordColor: string;

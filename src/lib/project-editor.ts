@@ -230,7 +230,7 @@ export function createWatermarkLayer(project: CaptionProject, id: string, durati
   const layer = attachLayerToTimeline<TextVisualLayer>({
     id, kind: 'text', name: watermarkText.slice(0, 24) || 'Watermark', visible: true, text: watermarkText, watermark: true,
     startMs: 0, endMs: Math.max(80, Math.floor(Number.isFinite(durationMs) ? durationMs : 0)), timingMode: 'timeline',
-    style: mergeStyle(DEFAULT_CAPTION_STYLE, { fontSize: 30, position: { x: 0.5, y: 0.9 }, box: { width: 0.7, height: 0.14 }, animation: { id: 'none' } }),
+    style: mergeStyle(DEFAULT_CAPTION_STYLE, { fontSize: 30, opacity: 0.3, position: { x: 0.5, y: 0.9 }, box: { width: 0.7, height: 0.14 }, shadow: { opacity: 0, blur: 0 }, animation: { id: 'none' } }),
   }, buildClipTimeline(project.clips));
   const firstImage = project.layers.findIndex((item) => item.kind === 'image');
   const layers = [...project.layers];

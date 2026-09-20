@@ -19,9 +19,12 @@ test('watermarks are persistent timeline-owned text layers with a five-item limi
     assert.equal(result.layer.startMs, 0);
     assert.equal(result.layer.endMs, 12_000);
     assert.equal(result.layer.timingMode, 'timeline');
+    assert.equal(result.layer.style.opacity, 0.3);
+    assert.equal(result.layer.style.shadow.opacity, 0);
   }
   assert.equal(createWatermarkLayer(next, 'too-many', 12_000, 'Too many'), undefined);
   const restored = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(next)));
   assert.equal(restored.layers.filter((layer) => layer.kind === 'text' && layer.watermark).length, MAX_PROJECT_WATERMARKS);
   assert.match(readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8'), /layer\.watermark \? '#E8579C88'/);
+  assert.match(readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8'), /adjustsFontSizeToFit/);
 });

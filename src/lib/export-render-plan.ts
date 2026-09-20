@@ -279,6 +279,7 @@ export function serializeStyle(style: CaptionStyle, resolvedFontUris: ResolvedFo
     fontWeight: style.fontWeight,
     italic: style.italic,
     textColor: style.textColor,
+    ...(style.opacity === undefined ? {} : { opacity: style.opacity }),
     secondaryTextColor: style.secondaryTextColor,
     textTreatment: style.textTreatment,
     activeWordColor: style.activeWordColor,

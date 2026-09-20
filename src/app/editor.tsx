@@ -2584,7 +2584,7 @@ function ToolbarItem(props: { label: string; active?: boolean; disabled?: boolea
       onPress={props.onPress}
       style={{ flex: 1, alignItems: 'center', gap: 4, opacity: props.disabled ? 0.35 : 1 }}>
       <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: props.active ? palette.accent : 'transparent' }} />
-      <Text style={{ color: props.active ? palette.accent : palette.text, fontSize: 10, fontWeight: '600' }}>{props.label}</Text>
+      <Text adjustsFontSizeToFit minimumFontScale={0.68} numberOfLines={1} style={{ flexShrink: 1, color: props.active ? palette.accent : palette.text, fontSize: 10, fontWeight: '600' }}>{props.label}</Text>
     </Pressable>
   );
 }

@@ -584,6 +584,7 @@ function decodeCaptionStyle(value: unknown, fallback: CaptionStyle, label: strin
     fontWeight: optionalEnum(style.fontWeight, ['400', '500', '600', '700', '800', '900'] as const, `${label} font weight`) ?? fallback.fontWeight,
     italic: optionalBoolean(style.italic, fallback.italic, `${label} italic state`),
     textColor: optionalColor(style.textColor, fallback.textColor, `${label} text color`),
+    ...(style.opacity === undefined && fallback.opacity === undefined ? {} : { opacity: optionalNumber(style.opacity, fallback.opacity ?? 1, `${label} opacity`, 0, 1) }),
     secondaryTextColor: optionalColor(style.secondaryTextColor, fallback.secondaryTextColor, `${label} secondary text color`),
     textTreatment: optionalEnum(style.textTreatment, ['solid', 'duotone-offset', 'duotone-shadow', 'duotone-neon'] as const, `${label} treatment`) ?? fallback.textTreatment,
     activeWordColor: optionalColor(style.activeWordColor, fallback.activeWordColor, `${label} active-word color`),
@@ -614,6 +615,7 @@ function decodeCaptionStylePatch(value: unknown, label: string): CaptionStylePat
   if (patch.fontWeight !== undefined) decoded.fontWeight = enumValue(patch.fontWeight, ['400', '500', '600', '700', '800', '900'] as const, `${label} font weight`);
   if (patch.italic !== undefined) decoded.italic = booleanValue(patch.italic, `${label} italic state`);
   if (patch.textColor !== undefined) decoded.textColor = colorValue(patch.textColor, `${label} text color`);
+  if (patch.opacity !== undefined) decoded.opacity = finiteNumber(patch.opacity, `${label} opacity`, 0, 1);
   if (patch.secondaryTextColor !== undefined) decoded.secondaryTextColor = colorValue(patch.secondaryTextColor, `${label} secondary text color`);
   if (patch.textTreatment !== undefined) decoded.textTreatment = enumValue(patch.textTreatment, ['solid', 'duotone-offset', 'duotone-shadow', 'duotone-neon'] as const, `${label} treatment`);
   if (patch.activeWordColor !== undefined) decoded.activeWordColor = colorValue(patch.activeWordColor, `${label} active-word color`);

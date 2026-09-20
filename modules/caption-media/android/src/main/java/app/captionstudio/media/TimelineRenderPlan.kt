@@ -100,6 +100,7 @@ internal data class RenderTextStyle(
   val scale: Float = 1f,
   val scaleX: Float = 1f,
   val scaleY: Float = 1f,
+  val opacity: Float = 1f,
 )
 
 internal sealed interface RenderLayer {
@@ -273,6 +274,7 @@ internal fun parseTextStyle(value: Map<String, Any>): RenderTextStyle {
     fontWeight = value.stringOr("fontWeight", "800").toIntOrNull()?.coerceIn(100, 900) ?: 800,
     italic = value.booleanOr("italic", false),
     textColor = value.colorOr("textColor", "#FFFFFF", "textColor"),
+    opacity = value.numberOr("opacity", 1).toFloat().coerceIn(0f, 1f),
     secondaryTextColor = value.colorOr("secondaryTextColor", "#FF4FD8", "secondaryTextColor"),
     textTreatment = value.stringOr("textTreatment", "solid"),
     activeWordColor = value.colorOr("activeWordColor", "#64D2FF", "activeWordColor"),

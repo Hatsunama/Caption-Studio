@@ -353,7 +353,7 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
         canvas.rotate(state.rotation, x + width / 2f, y + baselineCenter)
         canvas.scale(state.scaleX, state.scaleY, x + width / 2f, y + baselineCenter)
         drawWord(canvas, run.text, x, y, wordStyle, 1f, if (highlighted) wordStyle.activeWordColor else wordStyle.textColor,
-          animation.alpha * state.alpha, !editing && style.animationId == "glow-pulse", animation.glow)
+          animation.alpha * state.alpha * wordStyle.opacity, !editing && style.animationId == "glow-pulse", animation.glow)
         canvas.restore()
       }
     }
