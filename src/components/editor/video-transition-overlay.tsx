@@ -128,21 +128,26 @@ function SynchronizedComposite(props: Props & {
 }) {
   const [rendered, setRendered] = useState({ outgoing: false, incoming: false });
   const ready = rendered.outgoing && rendered.incoming;
+  const { activeSlot, frame, isPlaying, onUnavailable, outgoingSlot, transportReady } = props;
   const outgoingPlayer = props.players[props.outgoingSlot];
   const incomingPlayer = props.players[props.incomingSlot];
-  const latest = useRef(props);
-  latest.current = props;
+  const latestPlayersRef = useRef(props.players);
+  const latestActiveSlotRef = useRef(props.activeSlot);
+
+  useEffect(() => {
+    latestPlayersRef.current = props.players;
+    latestActiveSlotRef.current = props.activeSlot;
+  }, [props.players, props.activeSlot]);
 
   useEffect(() => {
     if (ready) return;
-    const timeout = setTimeout(() => latest.current.onUnavailable(), 1_500);
+    const timeout = setTimeout(onUnavailable, 1_500);
     return () => clearTimeout(timeout);
-  }, [ready]);
+  }, [onUnavailable, ready]);
 
   useEffect(() => () => {
-    const current = latest.current;
-    current.players.forEach((player, slot) => {
-      if (slot !== current.activeSlot) {
+    latestPlayersRef.current.forEach((player, slot) => {
+      if (slot !== latestActiveSlotRef.current) {
         player.muted = true;
         player.pause();
       }
@@ -151,21 +156,20 @@ function SynchronizedComposite(props: Props & {
 
   useEffect(() => {
     // The controller owns the active player's clock and audio. Only the
-    // decorative standby follows the transition's source-time mapping.
+      // decorative standby follows the transition's source-time mapping.
     try {
-      const standbyIsOutgoing = props.outgoingSlot !== props.activeSlot;
+      const standbyIsOutgoing = outgoingSlot !== activeSlot;
       const standby = standbyIsOutgoing ? outgoingPlayer : incomingPlayer;
-      standby.muted = true;
       synchronizeTransitionPlayer(
         standby,
-        standbyIsOutgoing ? props.frame.outgoingSourceTimeMs : props.frame.incomingSourceTimeMs,
-        standbyIsOutgoing ? props.frame.outgoing?.playbackRate : props.frame.incoming?.playbackRate,
-        props.isPlaying && props.transportReady,
+        standbyIsOutgoing ? frame.outgoingSourceTimeMs : frame.incomingSourceTimeMs,
+        standbyIsOutgoing ? frame.outgoing?.playbackRate : frame.incoming?.playbackRate,
+        isPlaying && transportReady,
       );
     } catch {
-      latest.current.onUnavailable();
+      onUnavailable();
     }
-  }, [incomingPlayer, outgoingPlayer, props.activeSlot, props.outgoingSlot, props.frame, props.isPlaying, props.transportReady]);
+  }, [activeSlot, frame, incomingPlayer, isPlaying, onUnavailable, outgoingPlayer, outgoingSlot, transportReady]);
 
   return (
     <View pointerEvents="none" style={[fill, { overflow: 'hidden', opacity: ready ? 1 : 0 }]}>
@@ -197,6 +201,7 @@ function synchronizeTransitionPlayer(
   playing: boolean,
 ) {
   if (targetMs == null || playbackRate == null) return;
+  player.muted = true;
   const targetSeconds = targetMs / 1_000;
   player.playbackRate = playbackRate;
   const driftMs = Math.abs(player.currentTime - targetSeconds) * 1_000;

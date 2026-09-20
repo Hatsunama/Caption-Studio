@@ -271,9 +271,9 @@ test('caption quality is chosen explicitly and the requested model owns generati
 
 test('Expo owns video-player release and editor teardown never commands a released player', () => {
   const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
-  const lifecycleStart = controller.lastIndexOf('useEffect(() => {');
+  const lifecycleStart = controller.indexOf('useEffect(() => {\n    mountedRef.current = true;');
   const teardownStart = controller.indexOf('return () => {', lifecycleStart);
-  const teardown = controller.slice(teardownStart, controller.indexOf('}, []);', teardownStart));
+  const teardown = controller.slice(teardownStart, controller.indexOf('\n  }, [', teardownStart));
   assert.match(teardown, /mountedRef\.current = false/);
   assert.match(teardown, /desiredRef\.current = undefined/);
   assert.doesNotMatch(teardown, /(?:player|activePlayer\(\))\.(?:pause|play|replace|release)/);

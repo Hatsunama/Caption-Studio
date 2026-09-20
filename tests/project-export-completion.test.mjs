@@ -141,7 +141,7 @@ test('cancellation while sharing cannot undo publication or remove the in-use ca
   await opened.promise;
   assert.deepEqual(service.calls.cleanup, []);
   assert.equal(service.calls.released, 0);
-  assert.equal(await service.cancelProjectVideoExport(), true);
+  assert.equal(await service.cancelProjectVideoExport(), false);
   sharing.reject(Error('Share cancelled'));
   assert.deepEqual(await exporting, published);
   assert.equal(service.calls.native, 1);
@@ -190,8 +190,9 @@ test('native-stage cancellation still rejects before verified delivery reaches J
   const service = loadService({ native: () => { started.resolve(); return native.promise; } });
   const exporting = service.exportProjectVideo(project);
   await started.promise;
-  await service.cancelProjectVideoExport();
-  native.reject(Error('Native export cancelled'));
+  const cancelling = service.cancelProjectVideoExport();
+  native.reject(Object.assign(Error('Native export cancelled'), { code: 'E_EXPORT_CANCELLED' }));
+  assert.equal(await cancelling, true);
   await assert.rejects(exporting, VideoExportCancelledError);
   assert.equal(service.calls.cancel, 1);
   assert.equal(service.calls.available, 0);
@@ -204,8 +205,9 @@ test('verified native publication wins a cancellation race at the JS boundary', 
   const service = loadService({ native: () => { started.resolve(); return native.promise; } });
   const exporting = service.exportProjectVideo(project);
   await started.promise;
-  await service.cancelProjectVideoExport();
+  const cancelling = service.cancelProjectVideoExport();
   native.resolve(published);
+  assert.equal(await cancelling, false);
   assert.deepEqual(await exporting, published);
   assert.equal(service.calls.cancel, 1);
   assert.equal(service.calls.share.length, 1);
