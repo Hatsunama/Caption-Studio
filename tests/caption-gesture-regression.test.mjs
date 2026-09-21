@@ -7,7 +7,7 @@ import ts from 'typescript';
 
 const requireLocal = createRequire(import.meta.url);
 const componentPath = 'components/editor/layer-timeline.tsx';
-const exportsSuffix = '\nexports.TimedBlock = TimedBlock; exports.DirectTimelineGestureSurface = DirectTimelineGestureSurface; exports.TimelineTimingGrip = TimelineTimingGrip;';
+const exportsSuffix = '\nexports.TimedBlock = TimedBlock; exports.DirectTimelineGestureSurface = DirectTimelineGestureSurface; exports.TimelineTimingGrip = TimelineTimingGrip; exports.TimelineEdgeHandleMarker = TimelineEdgeHandleMarker;';
 
 function harness() {
   const slots = [];
@@ -89,9 +89,9 @@ test('direct box edges partition the selected item without overlap', () => {
   assert.ok(ordered.find((grip) => grip.edge === 'move').width >= 8);
   assert.equal(ordered[0].left + ordered[0].width, ordered[1].left);
   assert.equal(ordered[1].left + ordered[1].width, ordered[2].left);
-  const markers = direct.all((node) => node.props?.pointerEvents === 'none' && node.props?.style?.backgroundColor === '#E8FDFF');
+  const markers = direct.all((node) => node.type?.name === 'TimelineEdgeHandleMarker');
   assert.equal(markers.length, 2);
-  assert.ok(markers.every((marker) => marker.props.style.width >= 2 && marker.props.style.width <= 8));
+  assert.ok(markers.every((marker) => marker.props.width === 24));
 });
 
 test('unselected blocks keep a tap surface without visible trim grips', () => {

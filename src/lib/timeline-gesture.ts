@@ -3,6 +3,9 @@ import type { TimelineTimingEdge } from '@/lib/timeline-item-editor';
 export const TIMELINE_DRAG_ACTIVATION_PX = 8;
 export const TIMELINE_GRIP_WIDTH = 40;
 export const TIMELINE_CONTROL_HEIGHT = 36;
+export const TIMELINE_PLAYHEAD_SNAP_PX = 10;
+export const TIMELINE_PLAYHEAD_RELEASE_PX = 12;
+export const TIMELINE_PLAYHEAD_HOLD_MS = 350;
 
 /** Time-interval hit bounds never expand on selection. Editing controls occupy
  * a separate row below every content lane, with their own responder bounds. */
@@ -30,6 +33,7 @@ type TimingGestureOwner = {
   endMs: number;
   durationMs: number;
   trackWidth: number;
+  playheadMs?: number;
   onPress: () => void;
   onChangeStart: () => void;
   onChange: (edge: TimelineTimingEdge, startMs: number, endMs: number) => void;
@@ -58,15 +62,20 @@ export function timelineTimingLabel(label: string, startMs: number, endMs: numbe
 }
 
 /** A touch owns selection immediately, and timing only after deliberate drag. */
-export function createTimelineTimingGesture() {
+export function createTimelineTimingGesture(options: { now?: () => number } = {}) {
   let owner: TimingGestureOwner | undefined;
   let edge: TimelineTimingEdge = 'move';
   let activated = false;
+  let snapEnteredAt: number | undefined;
+  let snapReleased = false;
+  const now = options.now ?? Date.now;
   return {
     begin(next: TimingGestureOwner, nextEdge: TimelineTimingEdge) {
       owner = { ...next };
       edge = nextEdge;
       activated = false;
+      snapEnteredAt = undefined;
+      snapReleased = false;
       owner.onPress();
     },
     move(dx: number, dy: number) {
@@ -77,14 +86,47 @@ export function createTimelineTimingGesture() {
         owner.onChangeStart();
       }
       const delta = dx / Math.max(1, owner.trackWidth) * owner.durationMs;
-      owner.onChange(edge, owner.startMs + (edge === 'end' ? 0 : delta),
-        owner.endMs + (edge === 'start' ? 0 : delta));
+      let startMs = owner.startMs + (edge === 'end' ? 0 : delta);
+      let endMs = owner.endMs + (edge === 'start' ? 0 : delta);
+      const playheadMs = owner.playheadMs;
+      if (edge !== 'move' && Number.isFinite(playheadMs) && !snapReleased) {
+        const playhead = playheadMs as number;
+        const originalBoundary = edge === 'start' ? owner.startMs : owner.endMs;
+        const requestedBoundary = edge === 'start' ? startMs : endMs;
+        const originalSide = Math.sign(originalBoundary - playhead);
+        const requestedSide = Math.sign(requestedBoundary - playhead);
+        const snapThresholdMs = TIMELINE_PLAYHEAD_SNAP_PX / Math.max(1, owner.trackWidth) * owner.durationMs;
+        const releaseThresholdMs = TIMELINE_PLAYHEAD_RELEASE_PX / Math.max(1, owner.trackWidth) * owner.durationMs;
+        const reachedPlayhead = originalSide !== 0 && (
+          Math.abs(requestedBoundary - playhead) <= snapThresholdMs
+          || (requestedSide !== 0 && requestedSide !== originalSide)
+        );
+        if (snapEnteredAt === undefined && reachedPlayhead) snapEnteredAt = now();
+        if (snapEnteredAt !== undefined) {
+          const returnedToOriginalSide = requestedSide === originalSide
+            && Math.abs(requestedBoundary - playhead) > snapThresholdMs;
+          const continuedPastPlayhead = requestedSide !== 0
+            && requestedSide !== originalSide
+            && Math.abs(requestedBoundary - playhead) >= releaseThresholdMs;
+          if (returnedToOriginalSide) {
+            snapEnteredAt = undefined;
+          } else if (continuedPastPlayhead && now() - snapEnteredAt >= TIMELINE_PLAYHEAD_HOLD_MS) {
+            snapReleased = true;
+          } else {
+            if (edge === 'start') startMs = playhead;
+            else endMs = playhead;
+          }
+        }
+      }
+      owner.onChange(edge, startMs, endMs);
     },
     finish() {
       const ended = owner;
       owner = undefined;
       if (activated) ended?.onEnd();
       activated = false;
+      snapEnteredAt = undefined;
+      snapReleased = false;
     },
   };
 }

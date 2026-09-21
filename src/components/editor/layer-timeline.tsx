@@ -30,6 +30,9 @@ import type { AudioClip, CaptionBlock, ProjectAudioSource, ProjectVideoSource, V
 
 const LABEL_WIDTH = 82;
 const RULER_HEIGHT = 28;
+const TIMELINE_EDGE_HANDLE_WIDTH = 24;
+const TIMELINE_EDGE_HANDLE_COLOR = '#64D2FF';
+const TIMELINE_EDGE_HANDLE_BAR_COLOR = '#172007';
 const LANE_HEIGHT = 32;
 const REORDER_TILE = 72;
 const REORDER_GAP = 8;
@@ -481,6 +484,7 @@ export function LayerTimeline(props: {
                     onPress={() => props.onSelectAudioClip(clip.id)}
                     onTouchLock={timelineTouchLock}
                     onChangeStart={beginBlockGesture}
+                    playheadMs={props.currentMs}
                     onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'audio', clipId: clip.id }, edge, startMs, endMs)}
                     onEnd={endBlockGesture}
                   />
@@ -509,9 +513,9 @@ export function LayerTimeline(props: {
                     </View>
                   </View>}>
                   {isCaptions ? captionPage.bodies.map((caption) => (
-                    <TimedBlock key={caption.id} onTouchLock={timelineTouchLock} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} lane={captionLayout.laneById.get(caption.id) ?? 0} color={NEON_CAPTION_COLORS[captionIndex.byId.get(caption.id)! % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
+                    <TimedBlock key={caption.id} onTouchLock={timelineTouchLock} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} playheadMs={props.currentMs} lane={captionLayout.laneById.get(caption.id) ?? 0} color={NEON_CAPTION_COLORS[captionIndex.byId.get(caption.id)! % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )) : (
-                    <TimedBlock onTouchLock={timelineTouchLock} label={layer.kind === 'text' ? layer.text : 'IMAGE'} thumbnailUri={layer.kind === 'image' ? layer.uri : undefined} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} lane={0} color={layer.kind === 'text' ? layer.watermark ? '#E8579C88' : '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
+                    <TimedBlock onTouchLock={timelineTouchLock} label={layer.kind === 'text' ? layer.text : 'IMAGE'} thumbnailUri={layer.kind === 'image' ? layer.uri : undefined} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} playheadMs={props.currentMs} lane={0} color={layer.kind === 'text' ? layer.watermark ? '#E8579C88' : '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
                   )}
                   {isCaptions ? captionPage.density.map((bin) => (
                     <TimelineDensityBin key={bin.left} {...bin} onPress={() => {
@@ -550,6 +554,7 @@ export function LayerTimeline(props: {
                         selected={props.selectedLayerId === track.id && props.selectedCaptionId === pair.source.id}
                         onPress={() => selectTimelineItem(() => props.onSelectTranslationCaption(track.id, pair))}
                         onChangeStart={beginBlockGesture}
+                        playheadMs={props.currentMs}
                         onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'translation', trackId: track.id, sourceCaptionId: pair.source.id }, edge, startMs, endMs)}
                         onEnd={endBlockGesture}
                       />
@@ -754,8 +759,8 @@ function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'st
       {...responder.panHandlers}
       accessibilityRole="adjustable"
       accessibilityLabel={`${props.side === 'start' ? 'Start' : 'End'} trim handle`}
-      style={{ position: 'absolute', [props.side === 'start' ? 'left' : 'right']: 0, top: -3, bottom: -3, width: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#64D2FF' }}>
-      <View pointerEvents="none" style={{ width: 3, height: 18, borderRadius: 2, backgroundColor: '#172007' }} />
+      style={{ position: 'absolute', [props.side === 'start' ? 'left' : 'right']: 0, top: -3, bottom: -3, width: TIMELINE_EDGE_HANDLE_WIDTH, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: TIMELINE_EDGE_HANDLE_COLOR }}>
+      <View pointerEvents="none" style={{ width: 3, height: 18, borderRadius: 2, backgroundColor: TIMELINE_EDGE_HANDLE_BAR_COLOR }} />
     </View>
   );
 }
@@ -946,6 +951,7 @@ function TimedBlock(props: {
   endMs: number;
   durationMs: number;
   trackWidth: number;
+  playheadMs: number;
   lane: number;
   color: string;
   selected: boolean;
@@ -1021,11 +1027,16 @@ function DirectTimelineGestureSurface(props: TimelineTimingOwner & { width: numb
     <TimelineTimingGrip {...props} edge="move" left={moveLeft} width={Math.max(0, moveRight - moveLeft)} height={LANE_HEIGHT} />
     {layout.showTrimGrips ? <TimelineTimingGrip {...props} edge="end" left={moveRight} width={Math.max(0, props.width - moveRight)} height={LANE_HEIGHT} /> : null}
     {layout.showTrimGrips ? <>
-      <View pointerEvents="none" style={{ position: 'absolute', left: props.blockLeft - layout.gripWidth / 2, top: 3,
-        width: layout.gripWidth, height: LANE_HEIGHT - 6, borderRadius: 2, backgroundColor: '#E8FDFF' }} />
-      <View pointerEvents="none" style={{ position: 'absolute', left: props.blockLeft + props.blockWidth - layout.gripWidth / 2, top: 3,
-        width: layout.gripWidth, height: LANE_HEIGHT - 6, borderRadius: 2, backgroundColor: '#E8FDFF' }} />
+      <TimelineEdgeHandleMarker left={props.blockLeft - layout.gripWidth / 2} width={layout.gripWidth} />
+      <TimelineEdgeHandleMarker left={props.blockLeft + props.blockWidth - layout.gripWidth / 2} width={layout.gripWidth} />
     </> : null}
+  </View>;
+}
+
+function TimelineEdgeHandleMarker(props: { left: number; width: number }) {
+  return <View pointerEvents="none" style={{ position: 'absolute', left: props.left, top: -3, bottom: -3,
+    width: props.width, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: TIMELINE_EDGE_HANDLE_COLOR }}>
+    <View pointerEvents="none" style={{ width: 3, height: 18, borderRadius: 2, backgroundColor: TIMELINE_EDGE_HANDLE_BAR_COLOR }} />
   </View>;
 }
 

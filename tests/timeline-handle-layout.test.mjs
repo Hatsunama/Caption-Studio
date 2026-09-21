@@ -17,14 +17,14 @@ test('timeline trim grips are selected-only and remain visible at every positive
   for (const width of [0.5, 2, 8, 30]) {
     const compact = timelineHandleLayout(true, width);
     assert.equal(compact.showTrimGrips, true);
-    assert.ok(compact.gripWidth >= 2 && compact.gripWidth <= 8);
+    assert.equal(compact.gripWidth, 24);
     assert.equal(compact.moveLeft, 0);
     assert.equal(compact.moveWidth, width);
   }
 
   const wide = timelineHandleLayout(true, 240);
   assert.equal(wide.showTrimGrips, true);
-  assert.ok(wide.gripWidth >= 2 && wide.gripWidth <= 8);
+  assert.equal(wide.gripWidth, 24);
   assert.equal(wide.moveLeft, 0);
   assert.equal(wide.moveWidth, 240);
 });
