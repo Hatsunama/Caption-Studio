@@ -211,10 +211,11 @@ test('provider URIs stay in persistence and never cross the navigation URL', () 
 
 test('selected timeline items expose direct edges without an attached control rail', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
-  assert.match(timeline, /timelineHandleLayout\(props\.selected, props\.width\)/);
+  assert.match(timeline, /timelineHandleLayout\(props\.selected, props\.blockWidth\)/);
   assert.match(timeline, /<TimelineTimingGrip \{\.\.\.props\} edge="start"/);
   assert.match(timeline, /<TimelineTimingGrip \{\.\.\.props\} edge="end"/);
-  assert.match(timeline, /const interactionWidth = width/);
+  assert.match(timeline, /bodyLeft - handleLayout\.interactionInset/);
+  assert.match(timeline, /bodyLeft \+ width \+ handleLayout\.interactionInset/);
   assert.doesNotMatch(timeline, /timelineBlockControls|timelineControlRail|Magnified cue timing/);
 });
 
@@ -1388,7 +1389,7 @@ test('timeline selection does not move or snap the playhead', () => {
 test('every timed content type uses the same direct edge and body gesture surface', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   const block = timeline.slice(timeline.indexOf('function TimedBlock'), timeline.indexOf('function AudioWaveform'));
-  assert.match(block, /<DirectTimelineGestureSurface \{\.\.\.props\} width=\{interactionWidth\} \/>/);
+  assert.match(block, /<DirectTimelineGestureSurface \{\.\.\.props\} width=\{interactionWidth\} blockLeft=\{visualLeft\} blockWidth=\{width\} \/>/);
   assert.doesNotMatch(block, /captionGesture|Timing controls|controlTop|visibleTrackBounds/);
   assert.doesNotMatch(timeline, /caption-timing-dock|Magnified cue timing|TimelineMoveGrip|function TimingGrip/);
   assert.match(timeline, /onPanResponderTerminationRequest: \(\) => !state\.current\.active/);

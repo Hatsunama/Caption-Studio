@@ -963,8 +963,10 @@ function TimedBlock(props: {
 }) {
   const width = Math.max(0, (props.endMs - props.startMs) * (props.trackWidth / props.durationMs));
   const bodyLeft = props.startMs / props.durationMs * props.trackWidth;
-  const interactionWidth = width;
-  const interactionLeft = bodyLeft;
+  const handleLayout = timelineHandleLayout(props.selected, width);
+  const interactionLeft = Math.max(0, bodyLeft - handleLayout.interactionInset);
+  const interactionRight = Math.min(props.trackWidth, bodyLeft + width + handleLayout.interactionInset);
+  const interactionWidth = Math.max(0, interactionRight - interactionLeft);
   const visualLeft = bodyLeft - interactionLeft;
   return (
     <View style={{ position: 'absolute', left: interactionLeft, width: interactionWidth, top: props.lane * LANE_HEIGHT, height: LANE_HEIGHT, zIndex: props.selected ? 6 : 1, justifyContent: 'center' }}>
@@ -986,7 +988,7 @@ function TimedBlock(props: {
       </View>
       {props.thumbnailUri ? <View pointerEvents="none" style={{ position: 'absolute', left: visualLeft + 3, top: 3, width: 24, height: 24, borderRadius: 3, overflow: 'hidden', zIndex: 2, backgroundColor: '#172027' }}><Image source={{ uri: props.thumbnailUri }} contentFit="cover" style={{ width: '100%', height: '100%' }} /></View> : null}
       <Text pointerEvents="none" numberOfLines={1} style={{ position: 'absolute', left: visualLeft + (props.selected ? 38 : props.thumbnailUri ? 32 : 10), right: props.selected ? 38 : 7, top: 1, color: '#FFFFFF', fontSize: 7, fontWeight: '900', zIndex: 2, textShadowColor: '#00161A', textShadowRadius: 2 }}>{props.label}</Text>
-      <DirectTimelineGestureSurface {...props} width={interactionWidth} />
+      <DirectTimelineGestureSurface {...props} width={interactionWidth} blockLeft={visualLeft} blockWidth={width} />
     </View>
   );
 }
@@ -1004,12 +1006,26 @@ function LiveRecordingBlock(props: { startMs: number; endMs: number; meterLevel:
 
 type TimelineTimingOwner = Parameters<typeof TimedBlock>[0];
 
-function DirectTimelineGestureSurface(props: TimelineTimingOwner & { width: number }) {
-  const layout = timelineHandleLayout(props.selected, props.width);
+function DirectTimelineGestureSurface(props: TimelineTimingOwner & { width: number; blockLeft: number; blockWidth: number }) {
+  const layout = timelineHandleLayout(props.selected, props.blockWidth);
+  const blockCenter = props.blockLeft + props.blockWidth / 2;
+  const innerEdgeWidth = Math.min(layout.interactionInset, Math.max(0, (props.blockWidth - layout.minimumMoveWidth) / 2));
+  let moveLeft = props.selected ? props.blockLeft + innerEdgeWidth : 0;
+  let moveRight = props.selected ? props.blockLeft + props.blockWidth - innerEdgeWidth : props.width;
+  if (props.selected && moveRight - moveLeft < layout.minimumMoveWidth) {
+    moveLeft = Math.max(0, blockCenter - layout.minimumMoveWidth / 2);
+    moveRight = Math.min(props.width, blockCenter + layout.minimumMoveWidth / 2);
+  }
   return <View testID="timeline-direct-surface" style={{ position: 'absolute', left: 0, top: 0, width: props.width, height: LANE_HEIGHT, borderRadius: 6 }}>
-    <TimelineTimingGrip {...props} edge="move" left={layout.moveLeft} width={layout.moveWidth} height={LANE_HEIGHT} />
-    {layout.showTrimGrips ? <TimelineTimingGrip {...props} edge="start" left={0} width={layout.gripWidth} height={LANE_HEIGHT} /> : null}
-    {layout.showTrimGrips ? <TimelineTimingGrip {...props} edge="end" left={props.width - layout.gripWidth} width={layout.gripWidth} height={LANE_HEIGHT} /> : null}
+    {layout.showTrimGrips ? <TimelineTimingGrip {...props} edge="start" left={0} width={moveLeft} height={LANE_HEIGHT} /> : null}
+    <TimelineTimingGrip {...props} edge="move" left={moveLeft} width={Math.max(0, moveRight - moveLeft)} height={LANE_HEIGHT} />
+    {layout.showTrimGrips ? <TimelineTimingGrip {...props} edge="end" left={moveRight} width={Math.max(0, props.width - moveRight)} height={LANE_HEIGHT} /> : null}
+    {layout.showTrimGrips ? <>
+      <View pointerEvents="none" style={{ position: 'absolute', left: props.blockLeft - layout.gripWidth / 2, top: 3,
+        width: layout.gripWidth, height: LANE_HEIGHT - 6, borderRadius: 2, backgroundColor: '#E8FDFF' }} />
+      <View pointerEvents="none" style={{ position: 'absolute', left: props.blockLeft + props.blockWidth - layout.gripWidth / 2, top: 3,
+        width: layout.gripWidth, height: LANE_HEIGHT - 6, borderRadius: 2, backgroundColor: '#E8FDFF' }} />
+    </> : null}
   </View>;
 }
 
@@ -1060,10 +1076,7 @@ function TimelineTimingGrip(props: TimelineTimingOwner & {
     accessibilityActions={TIMELINE_ACCESSIBILITY_ACTIONS}
     onAccessibilityAction={(event) => adjustTimelineTiming(props, props.edge, event.nativeEvent.actionName)}
     style={{ position: 'absolute', left: props.left, top: 0, width: props.width, height: props.height,
-      alignItems: 'center', justifyContent: 'center', borderRadius: 6,
-      backgroundColor: props.edge === 'move' ? 'transparent' : '#E8FDFF' }}>
-    {props.edge === 'move' ? null : <View pointerEvents="none" style={{ width: 3, height: 20, borderRadius: 2, backgroundColor: '#007FA8' }} />}
-  </View>;
+      alignItems: 'center', justifyContent: 'center', borderRadius: 6 }} />;
 }
 
 function AudioWaveform(props: {

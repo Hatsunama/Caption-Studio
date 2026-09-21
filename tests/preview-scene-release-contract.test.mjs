@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
 const videoOverlay = readFileSync(new URL('../src/components/editor/video-transform-overlay.tsx', import.meta.url), 'utf8');
+const previewGesture = readFileSync(new URL('../src/hooks/use-preview-scene-gesture.ts', import.meta.url), 'utf8');
 const nativeExporter = readFileSync(new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineVideoExporter.kt', import.meta.url), 'utf8');
 
 test('the permanent preview input plane sits above the render tree and owns non-video touches', () => {
@@ -21,6 +22,15 @@ test('video transform pauses playback and pins changes to the granting clip iden
   assert.match(editor, /updateVideoTransform\(patch, currentClipEntry\.clip\.id\)/);
   assert.match(videoOverlay, /owner\.current = \{[\s\S]*id: current\.id,[\s\S]*onChange: current\.onChange/);
   assert.doesNotMatch(videoOverlay, /onPanResponderMove:[\s\S]*propsRef\.current\.onChange/);
+});
+
+test('one event-local canvas frame owns a complete text, image, or caption gesture', () => {
+  const dispatchStart = previewGesture.indexOf("const dispatch =");
+  const grantStart = previewGesture.indexOf('onResponderGrant:', dispatchStart);
+  const startHandler = previewGesture.indexOf('onResponderStart:', grantStart);
+  assert.ok(dispatchStart >= 0 && grantStart > dispatchStart && startHandler > grantStart);
+  assert.doesNotMatch(previewGesture.slice(dispatchStart, grantStart), /locate\(event\)/);
+  assert.doesNotMatch(previewGesture.slice(grantStart, startHandler), /measureInWindow/);
 });
 
 test('native export paints layers in the same forward order used by preview and hit testing', () => {

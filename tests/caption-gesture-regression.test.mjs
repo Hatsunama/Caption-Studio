@@ -71,7 +71,8 @@ function surfaceFor(props) {
 for (const kind of ['caption', 'translation', 'text', 'image', 'audio']) {
   test(`${kind} has only direct timeline box interactions`, () => {
     const { block, surface, grips } = surfaceFor(item({ label: kind, endMs: 2000 }));
-    assert.equal(surface.props.width, 200, 'selected blocks retain their actual timeline width');
+    assert.equal(surface.props.blockWidth, 200, 'selected blocks retain their actual timeline width');
+    assert.equal(surface.props.width, 236, 'selected blocks expose edge hit space without changing their timing width');
     assert.equal(grips.length, 3);
     assert.deepEqual(grips.map((grip) => grip.props.edge).sort(), ['end', 'move', 'start']);
     assert.equal(block.all((node) => node.props?.accessibilityLabel?.startsWith('Timing controls')).length, 0);
@@ -80,13 +81,17 @@ for (const kind of ['caption', 'translation', 'text', 'image', 'audio']) {
 }
 
 test('direct box edges partition the selected item without overlap', () => {
-  const { grips, surface } = surfaceFor(item({ startMs: 0, endMs: 1000 }));
+  const { direct, grips, surface } = surfaceFor(item({ startMs: 1000, endMs: 2000 }));
   const ordered = grips.map((grip) => grip.props).sort((left, right) => left.left - right.left);
   assert.equal(ordered[0].left, 0);
   assert.equal(ordered.at(-1).left + ordered.at(-1).width, surface.props.width);
-  assert.ok(ordered.filter((grip) => grip.edge !== 'move').every((grip) => grip.width >= 8 && grip.width <= 16));
+  assert.ok(ordered.filter((grip) => grip.edge !== 'move').every((grip) => grip.width >= 18));
+  assert.ok(ordered.find((grip) => grip.edge === 'move').width >= 8);
   assert.equal(ordered[0].left + ordered[0].width, ordered[1].left);
   assert.equal(ordered[1].left + ordered[1].width, ordered[2].left);
+  const markers = direct.all((node) => node.props?.pointerEvents === 'none' && node.props?.style?.backgroundColor === '#E8FDFF');
+  assert.equal(markers.length, 2);
+  assert.ok(markers.every((marker) => marker.props.style.width >= 2 && marker.props.style.width <= 8));
 });
 
 test('unselected blocks keep a tap surface without visible trim grips', () => {
@@ -122,5 +127,5 @@ test('the timeline source contains no attached timing buttons, rails, or alterna
     assert.equal(source.includes(forbidden), false, forbidden + ' must not return');
   }
   assert.match(source, /<DirectTimelineGestureSurface/);
-  assert.match(source, /timelineHandleLayout\(props\.selected, props\.width\)/);
+  assert.match(source, /timelineHandleLayout\(props\.selected, props\.blockWidth\)/);
 });

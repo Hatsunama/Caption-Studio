@@ -1,5 +1,7 @@
-const MIN_GRIP_WIDTH = 8;
-const MAX_GRIP_WIDTH = 16;
+const MIN_GRIP_WIDTH = 2;
+const MAX_GRIP_WIDTH = 8;
+const EDGE_INTERACTION_INSET = 18;
+const MINIMUM_MOVE_WIDTH = 8;
 
 export function timelineHandleLayout(selected: boolean, width: number) {
   const blockWidth = Math.max(0, width);
@@ -7,17 +9,20 @@ export function timelineHandleLayout(selected: boolean, width: number) {
     return {
       showTrimGrips: false,
       gripWidth: 0,
+      interactionInset: 0,
+      minimumMoveWidth: 0,
       moveLeft: 0,
       moveWidth: blockWidth,
     };
   }
 
-  const gripWidth = Math.min(MAX_GRIP_WIDTH, Math.max(MIN_GRIP_WIDTH, blockWidth * 0.1));
-  const showTrimGrips = blockWidth >= gripWidth * 4;
+  const gripWidth = Math.min(MAX_GRIP_WIDTH, Math.max(MIN_GRIP_WIDTH, blockWidth * 0.08));
   return {
-    showTrimGrips,
-    gripWidth: showTrimGrips ? gripWidth : 0,
-    moveLeft: showTrimGrips ? gripWidth : 0,
-    moveWidth: showTrimGrips ? blockWidth - 2 * gripWidth : blockWidth,
+    showTrimGrips: blockWidth > 0,
+    gripWidth,
+    interactionInset: EDGE_INTERACTION_INSET,
+    minimumMoveWidth: MINIMUM_MOVE_WIDTH,
+    moveLeft: 0,
+    moveWidth: blockWidth,
   };
 }
