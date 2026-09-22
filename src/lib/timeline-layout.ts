@@ -66,6 +66,7 @@ export function timelineCuePage<T extends TimelineInterval>(
   trackWidth: number,
   bounds: { left: number; right: number },
   selectedId?: string,
+  pinSelected = false,
 ) {
   const startMs = bounds.left / trackWidth * durationMs;
   const endMs = bounds.right / trackWidth * durationMs;
@@ -74,7 +75,10 @@ export function timelineCuePage<T extends TimelineInterval>(
   const selected = selectedIndex === undefined ? undefined : index.ordered[selectedIndex];
   const selectedIntersects = Boolean(selected && selected.startMs <= endMs && selected.endMs >= startMs);
   const dense = query.cues.length > MAX_TIMELINE_BODY_CUES;
-  const bodies = dense ? (selected && selectedIntersects ? [selected] : []) : query.cues;
+  const visibleBodies = dense ? (selected && selectedIntersects ? [selected] : []) : query.cues;
+  const bodies = pinSelected && selected && !visibleBodies.some((cue) => cue.id === selected.id)
+    ? [...visibleBodies, selected]
+    : visibleBodies;
   const layout = packTimelineLanes(bodies);
   const density: { left: number; width: number; startMs: number; endMs: number; count: number }[] = [];
   if (dense) {

@@ -24,3 +24,16 @@ export function timelineHandleLayout(selected: boolean, width: number) {
     moveWidth: blockWidth,
   };
 }
+
+export function timelineHandleMarkerLayout(blockLeft: number, blockWidth: number, gripWidth: number) {
+  if (blockWidth >= gripWidth * 2) {
+    return {
+      startLeft: blockLeft - gripWidth / 2,
+      endLeft: blockLeft + blockWidth - gripWidth / 2,
+    };
+  }
+  return {
+    startLeft: blockLeft - gripWidth,
+    endLeft: blockLeft + blockWidth,
+  };
+}

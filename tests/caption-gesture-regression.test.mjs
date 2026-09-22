@@ -94,6 +94,16 @@ test('direct box edges partition the selected item without overlap', () => {
   assert.ok(markers.every((marker) => marker.props.width === 24));
 });
 
+test('compact timeline items keep visually separate start and end handles', () => {
+  const { direct } = surfaceFor(item({ endMs: 1020 }));
+  const markers = direct.all((node) => node.type?.name === 'TimelineEdgeHandleMarker')
+    .map((node) => node.props)
+    .sort((left, right) => left.left - right.left);
+  assert.equal(markers.length, 2);
+  assert.ok(markers[0].left + markers[0].width <= markers[1].left,
+    'the two visible handles must never overlap');
+});
+
 test('unselected blocks keep a tap surface without visible trim grips', () => {
   const { grips, surface } = surfaceFor(item({ selected: false, endMs: 2000 }));
   assert.equal(surface.props.width, 200);
@@ -119,6 +129,29 @@ test('a tap selects without mutating timing, while a body drag moves the same it
   assert.equal(calls[2], 'begin');
   assert.equal(calls[3][0], 'move');
   assert.equal(calls[4], 'end');
+});
+
+test('vertical micro-jitter cannot kill a later horizontal timeline drag', () => {
+  const calls = [];
+  const gripHarness = harness();
+  const props = item({ edge: 'end', left: 32, width: 32, height: 32,
+    onPress() { calls.push('select'); }, onChangeStart() { calls.push('begin'); }, onChange(...change) { calls.push(change); }, onEnd() { calls.push('end'); } });
+  gripHarness.render(gripHarness.ui.TimelineTimingGrip, props);
+  const handlers = gripHarness.result.props;
+  handlers.onPanResponderGrant();
+  handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 2, dy: 12 });
+  handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 20, dy: 12 });
+  handlers.onPanResponderRelease();
+  assert.equal(calls.filter((call) => call === 'begin').length, 1);
+  assert.ok(calls.some((call) => Array.isArray(call) && call[0] === 'end'));
+  assert.equal(calls.at(-1), 'end');
+});
+
+test('video trim handles use the same timing gesture controller as every other edge', () => {
+  const source = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
+  const videoGrip = source.slice(source.indexOf('function VideoTrimGrip'), source.indexOf('function VideoMoveGrip'));
+  assert.match(videoGrip, /useTimelineTimingPanHandlers/);
+  assert.doesNotMatch(videoGrip, /PanResponder\.create/);
 });
 
 test('the timeline source contains no attached timing buttons, rails, or alternate cue editor', () => {

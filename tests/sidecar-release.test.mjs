@@ -24,11 +24,11 @@ test('side-by-side release derives an isolated Android identity', async () => {
       },
     }));
     const source = JSON.parse(readFileSync(configPath, 'utf8'));
-    const configured = configureSidecarApp(source, '1.4.81', 86);
+    const configured = configureSidecarApp(source, '1.4.82', 86);
     assert.equal(configured.expo.name, 'Caption Studio');
     assert.equal(configured.expo.android.package, productContract.android.release.package);
     assert.equal(configured.expo.android.versionCode, 86);
-    assert.equal(configured.expo.version, '1.4.81');
+    assert.equal(configured.expo.version, '1.4.82');
     assert.equal(configured.expo.scheme, productContract.android.release.scheme);
   } finally {
     rmSync(directory, { recursive: true, force: true });

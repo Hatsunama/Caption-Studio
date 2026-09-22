@@ -1392,8 +1392,9 @@ test('every timed content type uses the same direct edge and body gesture surfac
   assert.match(block, /<DirectTimelineGestureSurface \{\.\.\.props\} width=\{interactionWidth\} blockLeft=\{visualLeft\} blockWidth=\{width\} \/>/);
   assert.doesNotMatch(block, /captionGesture|Timing controls|controlTop|visibleTrackBounds/);
   assert.doesNotMatch(timeline, /caption-timing-dock|Magnified cue timing|TimelineMoveGrip|function TimingGrip/);
-  assert.match(timeline, /onPanResponderTerminationRequest: \(\) => !state\.current\.active/);
-  assert.match(timeline, /gesture\.begin\(current\.current, current\.current\.edge\)/);
+  assert.match(timeline, /function useTimelineTimingPanHandlers/);
+  assert.match(timeline, /onPanResponderTerminationRequest: \(\) => false/);
+  assert.match(timeline, /gesture\.begin\(active\.owner, active\.edge\)/);
 });
 
 test('the add-video button stays in the timeline header instead of covering clip gestures', () => {
