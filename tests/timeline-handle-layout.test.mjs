@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { timelineHandleLayout } from '../src/lib/timeline-handle-layout.ts';
+import { timelineHandleLayout, timelineHandleMarkerLayout } from '../src/lib/timeline-handle-layout.ts';
 
 test('timeline trim grips are selected-only and remain visible at every positive width', () => {
   assert.deepEqual(timelineHandleLayout(false, 240), {
@@ -27,6 +27,14 @@ test('timeline trim grips are selected-only and remain visible at every positive
   assert.equal(wide.gripWidth, 24);
   assert.equal(wide.moveLeft, 0);
   assert.equal(wide.moveWidth, 240);
+});
+
+test('timeline trim markers remain outside the item at every zoom width', () => {
+  for (const width of [0.5, 8, 24, 240]) {
+    const markers = timelineHandleMarkerLayout(100, width, 24);
+    assert.equal(markers.startLeft, 76);
+    assert.equal(markers.endLeft, 100 + width);
+  }
 });
 
 test('animation browser exposes one live line-spacing control through the existing caption scopes', () => {

@@ -99,6 +99,25 @@ function Invoke-AssetDownload {
     }
 }
 
+function Get-FileSha256 {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+        return ([string](Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash).ToUpperInvariant()
+    }
+
+    $Algorithm = [Security.Cryptography.SHA256]::Create()
+    $Stream = $null
+    try {
+        $Stream = [IO.File]::OpenRead($Path)
+        return ([BitConverter]::ToString($Algorithm.ComputeHash($Stream))).Replace('-', '')
+    }
+    finally {
+        if ($null -ne $Stream) { $Stream.Dispose() }
+        $Algorithm.Dispose()
+    }
+}
+
 function Resolve-ApkSigner {
     foreach ($Name in @('apksigner.bat', 'apksigner')) {
         $Command = Get-Command $Name -ErrorAction SilentlyContinue
@@ -216,7 +235,7 @@ try {
     Write-Host "Device: $Serial. Downloading $($Release.tag_name)..."
     Invoke-AssetDownload -Uri $Asset.browser_download_url -Destination $Apk
 
-    $ActualHash = (Get-FileHash -LiteralPath $Apk -Algorithm SHA256).Hash
+    $ActualHash = Get-FileSha256 -Path $Apk
     if ($ActualHash -ne $ExpectedHash) {
         throw 'APK checksum mismatch. Refusing installation.'
     }

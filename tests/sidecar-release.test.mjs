@@ -24,11 +24,11 @@ test('side-by-side release derives an isolated Android identity', async () => {
       },
     }));
     const source = JSON.parse(readFileSync(configPath, 'utf8'));
-    const configured = configureSidecarApp(source, '1.4.82', 86);
+    const configured = configureSidecarApp(source, '1.4.83', 86);
     assert.equal(configured.expo.name, 'Caption Studio');
     assert.equal(configured.expo.android.package, productContract.android.release.package);
     assert.equal(configured.expo.android.versionCode, 86);
-    assert.equal(configured.expo.version, '1.4.82');
+    assert.equal(configured.expo.version, '1.4.83');
     assert.equal(configured.expo.scheme, productContract.android.release.scheme);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -77,7 +77,9 @@ test('installer is fail-closed and cannot delete the production app', async () =
   assert.match(installer, /apksigner/);
   assert.match(installer, /Multiple Android devices are connected/);
   assert.match(installer, /device\|unauthorized\|offline/);
-  assert.match(installer, /Get-FileHash -LiteralPath \$Apk -Algorithm SHA256/);
+  assert.match(installer, /function Get-FileSha256/);
+  assert.match(installer, /Get-Command Get-FileHash/);
+  assert.match(installer, /\[Security\.Cryptography\.SHA256\]::Create\(\)/);
   assert.match(installer, /'install', '-r', '--no-streaming'/);
   assert.match(installer, /\$Package = \[string\]\$Contract\.android\.release\.package/);
   assert.doesNotMatch(installer, /['"](?:uninstall|clear)['"]/);
