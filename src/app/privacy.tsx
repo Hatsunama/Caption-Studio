@@ -96,7 +96,7 @@ export default function PrivacyScreen() {
       style={{ flex: 1, backgroundColor: chrome.background }}
       contentContainerStyle={{ padding: 20, paddingBottom: 48, gap: 18 }}>
       <PolicySection title="Caption Studio privacy policy">
-        Effective August 27, 2026. Caption Studio is provided by Hatsunama. The app is a local-first
+        Effective September 22, 2026. Caption Studio is provided by Hatsunama. The app is a local-first
         video and caption editor and does not require an account.
       </PolicySection>
       <PolicySection title="What stays on your phone">

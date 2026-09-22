@@ -1,6 +1,6 @@
 # Caption Studio Privacy Policy
 
-Effective August 27, 2026
+Effective September 22, 2026
 
 Caption Studio is provided by Hatsunama. It is a local-first Android video and caption editor and does not require an account.
 
@@ -32,4 +32,4 @@ Caption Studio is a general-purpose creator tool and is not designed for childre
 
 ## Changes and contact
 
-Material changes will be published at this URL with a revised effective date. Submit a confidential privacy or security concern through [GitHub's private security-advisory form](https://github.com/Hatsunama/Caption-Studio/security/advisories/new), which requires a GitHub account. General questions can use the [public Caption Studio issue tracker](https://github.com/Hatsunama/Caption-Studio/issues/new), but users must not post personal information, private media, transcripts, project files, or device logs there.
+Material changes will be published with a revised effective date. For privacy questions, security reports, copyright or DMCA notices, legal takedown requests, or reports about generated output, contact xmilo_at_your_side@proton.me. Do not include private media, transcripts, project files, device logs, or passwords in your first message.
