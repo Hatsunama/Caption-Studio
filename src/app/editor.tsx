@@ -136,6 +136,7 @@ import { createEditorSession, type EditorProjectOperation } from '@/services/edi
 import { CaptionGenerationCancelledError } from '@/services/caption-generation-session';
 import {
   NATURAL_TRANSLATION_MODEL_LABEL,
+  registerCaptionTranslationResources,
   type CaptionTranslationProgress,
 } from '@/services/caption-translation';
 import {
@@ -411,6 +412,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const transport = useTimelineVideoController(project, setError, runtimePolicy.videoSurfacesAdmitted);
   const { currentMs, isPlaying } = transport;
+  useEffect(
+    () => registerCaptionTranslationResources(transport.suspendForTranslation),
+    [transport.suspendForTranslation],
+  );
   useTimelineAudioController(project, currentMs, isPlaying, runtimePolicy.mediaAdmitted, setError);
   useProjectAudioWaveforms(
     project,

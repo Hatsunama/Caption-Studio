@@ -31,3 +31,7 @@ export function timelineHandleMarkerLayout(blockLeft: number, blockWidth: number
     endLeft: blockLeft + blockWidth,
   };
 }
+
+export function timelineOutsideHandleOffset(side: 'start' | 'end', gripWidth: number) {
+  return side === 'start' ? { left: -gripWidth } : { right: -gripWidth };
+}

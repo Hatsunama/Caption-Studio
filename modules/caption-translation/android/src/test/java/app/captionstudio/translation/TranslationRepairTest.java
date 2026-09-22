@@ -1,6 +1,8 @@
 package app.captionstudio.translation;
 
 import static org.junit.Assert.*;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.File;
 import java.nio.file.Files;
@@ -33,9 +35,15 @@ public final class TranslationRepairTest {
       return new TranslationRuntime() {
         public String translate(String prompt) {
           prompts.add(prompt);
-          return prompts.size() == 1
-              ? "[{\"id\":\"c1\",\"text\":\"\u4f60\u597d\"}]"
-              : "[{\"id\":\"c2\",\"text\":\"\u597d\"}]";
+          JsonArray output = new JsonArray();
+          for (var element : JsonParser.parseString(prompt).getAsJsonObject().getAsJsonArray("captions")) {
+            JsonObject item = new JsonObject();
+            String id = element.getAsJsonObject().get("id").getAsString();
+            item.addProperty("id", id);
+            item.addProperty("text", id.equals("c1") ? "\u4f60\u597d" : "\u597d");
+            output.add(item);
+          }
+          return output.toString();
         }
         public void cancel() {}
         public void close() { closed.incrementAndGet(); }
@@ -44,16 +52,14 @@ public final class TranslationRepairTest {
     try (NaturalCaptionTranslator translator = translator(cache, checkpoints, factory)) {
       Map<String, Object> request = request(List.of(Map.of("id", "c1", "text", "Hello"), Map.of("id", "c2", "text", "okay")));
       Map<String, Object> first = run(translator, model, request);
-      assertEquals(1, opened.get()); assertEquals(1, closed.get()); assertEquals(2, prompts.size());
-      var retry = JsonParser.parseString(prompts.get(1)).getAsJsonObject();
-      assertEquals(1, retry.getAsJsonArray("captions").size());
-      assertEquals("", retry.get("contextBefore").getAsString());
-      assertEquals("", retry.get("contextAfter").getAsString());
+      assertEquals(1, opened.get()); assertEquals(1, closed.get()); assertEquals(1, prompts.size());
+      var batch = JsonParser.parseString(prompts.get(0)).getAsJsonObject();
+      assertEquals(2, batch.getAsJsonArray("captions").size());
       assertEquals(Boolean.TRUE, cue(first, 1).get("valid"));
       assertEquals("\u597d", cue(first, 1).get("text"));
       Map<String, Object> restored = run(translator, model, request);
       assertEquals(first.get("captions"), restored.get("captions"));
-      assertEquals(1, opened.get()); assertEquals(2, prompts.size());
+      assertEquals(1, opened.get()); assertEquals(1, prompts.size());
     }
   }
 

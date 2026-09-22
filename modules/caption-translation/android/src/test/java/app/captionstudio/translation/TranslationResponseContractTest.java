@@ -133,7 +133,7 @@ public final class TranslationResponseContractTest {
     assertEquals(legacy, store.read(key));
   }
 
-  @Test public void retryUsesBatchSchemaWithOnlyTheRequestedIdAndNoOtherCueContext() throws Exception {
+  @Test public void retryUsesBatchSchemaWithOnlyTheRequestedIdAndReadOnlyNeighborContext() throws Exception {
     var request = new NaturalCaptionTranslator.ValidatedRequest("en", "es",
         List.of(new NaturalCaptionTranslator.Caption("c1", "First cue"),
             new NaturalCaptionTranslator.Caption("c2", "Close the door"),
@@ -144,8 +144,8 @@ public final class TranslationResponseContractTest {
     assertTrue(prompt.get("retry").getAsBoolean());
     assertEquals(1, prompt.getAsJsonArray("captions").size());
     assertEquals("c2", prompt.getAsJsonArray("captions").get(0).getAsJsonObject().get("id").getAsString());
-    assertEquals("", prompt.get("contextBefore").getAsString());
-    assertEquals("", prompt.get("contextAfter").getAsString());
+    assertEquals("Before", prompt.get("contextBefore").getAsString());
+    assertEquals("After", prompt.get("contextAfter").getAsString());
     assertFalse(NaturalCaptionTranslator.parseSingleCaptionRetryResponse(response("c1", "Cierra la puerta"), request.captions.get(1)).valid);
     assertTrue(NaturalCaptionTranslator.parseSingleCaptionRetryResponse(response("c2", "Cierra\nla puerta"), request.captions.get(1)).valid);
   }

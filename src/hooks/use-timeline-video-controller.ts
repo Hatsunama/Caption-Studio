@@ -57,6 +57,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const [isPlaying, setIsPlaying] = useState(false);
   const [sourceFailure, setSourceFailure] = useState<VideoSourceFailure>();
   const [phase, setPhaseState] = useState<TransportPhase>(initialPhase);
+  const [previewResourcesSuspended, setPreviewResourcesSuspended] = useState(false);
   const [activeSlot, setActiveSlotState] = useState<SlotIndex>(0);
   const [slots, setSlots] = useState<readonly [TimelineVideoSlot, TimelineVideoSlot]>([
     { firstFrameReady: false, prepareToken: 0, readiness: 'idle' },
@@ -84,6 +85,16 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const hasPresentedFrameRef = useRef(false);
   const mountedRef = useRef(true);
   const surfacesAdmittedRef = useRef(surfacesAdmitted);
+  const translationSuspensionRef = useRef<{
+    generation: number;
+    savedMs: number;
+    restored: boolean;
+    unloadStarted: boolean;
+    ready: Promise<void>;
+    resolveReady: () => void;
+    rejectReady: (error: unknown) => void;
+  } | null>(null);
+  const translationSuspensionGenerationRef = useRef(0);
 
   useLayoutEffect(() => {
     projectRef.current = project;
@@ -162,6 +173,79 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     players.forEach((player) => player.pause());
     if (mountedRef.current) setIsPlaying(false);
   }, [players]);
+
+  const suspendForTranslation = useCallback(() => {
+    if (translationSuspensionRef.current && !translationSuspensionRef.current.restored) {
+      throw new Error('Preview resources are already suspended for translation.');
+    }
+
+    let resolveReady = () => {};
+    let rejectReady = (_error: unknown) => {};
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    const suspension = {
+      generation: ++translationSuspensionGenerationRef.current,
+      savedMs: currentMsRef.current,
+      restored: false,
+      unloadStarted: false,
+      ready,
+      resolveReady,
+      rejectReady,
+    };
+    translationSuspensionRef.current = suspension;
+    generationRef.current += 1;
+    desiredRef.current = undefined;
+    abortPreparationsExcept();
+    stopTransport();
+    setPreviewResourcesSuspended(true);
+    setPhase('suspended');
+
+    return {
+      ready: suspension.ready,
+      restore: async () => {
+        if (suspension.restored) return;
+        suspension.restored = true;
+        if (!mountedRef.current || translationSuspensionRef.current !== suspension) return;
+        translationSuspensionRef.current = null;
+        setCurrentMs(suspension.savedMs);
+        setPreviewResourcesSuspended(false);
+        setIsPlaying(false);
+        if (surfacesAdmittedRef.current) requestTargetRef.current(suspension.savedMs);
+        else setPhase('suspended');
+      },
+    };
+  }, [stopTransport]);
+
+  useEffect(() => {
+    const suspension = translationSuspensionRef.current;
+    if (!previewResourcesSuspended || !suspension || suspension.unloadStarted) return;
+    suspension.unloadStarted = true;
+    void (async () => {
+      try {
+        const processing = processingRef.current;
+        if (processing) await processing;
+        if (!mountedRef.current || translationSuspensionRef.current !== suspension) {
+          suspension.resolveReady();
+          return;
+        }
+        await Promise.all(players.map((slotPlayer) => slotPlayer.replaceAsync(null)));
+        if (!mountedRef.current || translationSuspensionRef.current !== suspension) {
+          suspension.resolveReady();
+          return;
+        }
+        slotRuntimeRef.current = [createSlotRuntime(), createSlotRuntime()];
+        activeClipIdRef.current = undefined;
+        hasPresentedFrameRef.current = false;
+        setHasPresentedFrameState(false);
+        publishSlots();
+        suspension.resolveReady();
+      } catch (error) {
+        suspension.rejectReady(error);
+      }
+    })();
+  }, [players, previewResourcesSuspended, publishSlots]);
 
   const sourceForEntry = (entry: ClipTimelineEntry) => {
     const source = projectRef.current.sources.find((candidate) => candidate.id === entry.clip.sourceId);
@@ -473,7 +557,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const clipId = segment?.kind === 'clip' ? segment.entry.clip.id : undefined;
     abortPreparationsExcept(clipId);
     setCurrentMs(targetMs);
-    if (!surfacesAdmittedRef.current) {
+    if (!surfacesAdmittedRef.current || translationSuspensionRef.current) {
       generationRef.current += 1;
       desiredRef.current = undefined;
       setPhase('suspended');
@@ -490,7 +574,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const seek = useCallback((timelineMs: number) => requestTargetRef.current(timelineMs), []);
 
   const play = useCallback(() => {
-    if (!surfacesAdmittedRef.current) return;
+    if (!surfacesAdmittedRef.current || translationSuspensionRef.current) return;
     const duration = projectTimelineDuration(projectRef.current);
     const targetMs = currentMsRef.current >= duration - 1 ? 0 : currentMsRef.current;
     playIntentRef.current = true;
@@ -591,6 +675,11 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     requestTargetRef.current(0);
     return () => {
       mountedRef.current = false;
+      if (translationSuspensionRef.current) {
+        translationSuspensionRef.current.restored = true;
+        translationSuspensionRef.current.resolveReady();
+      }
+      translationSuspensionRef.current = null;
       playIntentRef.current = false;
       desiredRef.current = undefined;
       generationRef.current += 1;
@@ -602,7 +691,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   }, []);
 
   useEffect(() => {
-    if (!surfacesAdmitted) {
+    if (!surfacesAdmitted || translationSuspensionRef.current) {
       generationRef.current += 1;
       desiredRef.current = undefined;
       abortPreparationsExcept();
@@ -634,6 +723,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     play,
     pause,
     synchronizeProject,
+    previewResourcesSuspended,
+    suspendForTranslation,
   };
 }
 
