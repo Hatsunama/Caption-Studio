@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { chrome } from '@/lib/ui-theme';
 import {
@@ -14,10 +14,6 @@ import {
   type DownloadedNaturalTranslationModel,
 } from '@/services/caption-translation';
 import { shareLocalProcessExits } from '@/services/local-diagnostics';
-
-const POLICY_URL = 'https://hatsunama.github.io/Caption-Studio/privacy/';
-const PRIVATE_CONTACT_URL = 'https://github.com/Hatsunama/Caption-Studio/security/advisories/new';
-const PUBLIC_SUPPORT_URL = 'https://github.com/Hatsunama/Caption-Studio/issues/new';
 
 export default function PrivacyScreen() {
   const router = useRouter();
@@ -139,9 +135,14 @@ export default function PrivacyScreen() {
         a general-purpose creator tool and is not designed for children under 13.
       </PolicySection>
       <PolicySection title="Contact">
-        Confidential privacy and security reports use GitHub&apos;s private security-advisory form and
-        require a GitHub account. Public support issues must never contain personal information, private
-        media, transcripts, project files, or device logs.
+        For privacy questions, security reports, copyright or DMCA notices, legal takedown requests, or
+        reports about generated output, contact xmilo_at_your_side@proton.me. Do not include private
+        media, transcripts, project files, device logs, or passwords in your first message.
+      </PolicySection>
+      <PolicySection title="Generated captions and translations">
+        AI captions and translations may be inaccurate or unsuitable. Review them before exporting. You
+        can edit, hide, or delete generated text at any time; Caption Studio does not silently alter your
+        original media.
       </PolicySection>
       <View style={{ gap: 10 }}>
         {downloadedModels.length > 0 ? (
@@ -166,9 +167,6 @@ export default function PrivacyScreen() {
         )}
         <PolicyAction label="View bundled software, model, and font notices" onPress={() => router.push('/notices')} />
         <PolicyAction label="Share sanitized local crash diagnostics" onPress={shareDiagnostics} />
-        <PolicyLink label="Open the public privacy policy" url={POLICY_URL} />
-        <PolicyLink label="Send a confidential privacy or security report" url={PRIVATE_CONTACT_URL} />
-        <PolicyLink label="Open public support · never post private data" url={PUBLIC_SUPPORT_URL} />
       </View>
     </ScrollView>
   );
@@ -195,16 +193,5 @@ function PolicySection(props: { title: string; children: string }) {
       <Text selectable style={{ color: chrome.text, fontSize: 18, fontWeight: '700' }}>{props.title}</Text>
       <Text selectable style={{ color: chrome.muted, fontSize: 14, lineHeight: 21 }}>{props.children}</Text>
     </View>
-  );
-}
-
-function PolicyLink(props: { label: string; url: string }) {
-  return (
-    <Pressable
-      accessibilityRole="link"
-      onPress={() => void Linking.openURL(props.url)}
-      style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: chrome.radius.lg, backgroundColor: chrome.surface }}>
-      <Text style={{ color: chrome.accent, fontSize: 15, fontWeight: '600' }}>{props.label}</Text>
-    </Pressable>
   );
 }

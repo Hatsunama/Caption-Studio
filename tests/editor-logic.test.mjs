@@ -325,6 +325,9 @@ test('Play releases use a signed app bundle and expose an in-app privacy policy'
   assert.equal(appConfig.expo.android.allowBackup, false);
   assert.match(homeScreen, /router\.push\('\/privacy'\)/);
   assert.match(privacyScreen, /Caption Studio privacy policy/);
+  assert.match(privacyScreen, /xmilo_at_your_side@proton\.me/);
+  assert.match(privacyScreen, /AI captions and translations may be inaccurate or unsuitable/);
+  assert.doesNotMatch(privacyScreen, /Linking\.openURL|https:\/\//);
   assert.match(privacyPolicy, /does not include advertising, first-party analytics, tracking, or cloud-transcription SDKs/);
   assert.doesNotMatch(privacyPolicy, /MediaPipe|ML Kit|background removal/);
 });
