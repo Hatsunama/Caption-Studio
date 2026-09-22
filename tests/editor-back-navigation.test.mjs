@@ -124,6 +124,7 @@ function mount(t, initialProject = fixture()) {
     cancelProjectVideoExport: async () => {},
     validateProjectSources: async () => {},
     TRANSCRIPTION_MODEL_OPTIONS: [], NATURAL_TRANSLATION_MODEL_LABEL: 'Test',
+    registerCaptionTranslationResources: () => () => {},
     ProjectPersistenceError: class extends Error {},
   };
   const hooks = {

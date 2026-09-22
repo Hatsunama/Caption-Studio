@@ -6,7 +6,7 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.85) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.86) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -25,7 +25,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.85/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.86/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -73,7 +73,7 @@ Never uninstall or clear either app to bypass an installation failure. Keep the 
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.85** (`v1.4.85`, Android version code 95).
+Current Android build: **1.4.86** (`v1.4.86`, Android version code 98).
 
 ## What the current Android build includes
 
@@ -106,7 +106,7 @@ Current Android build: **1.4.85** (`v1.4.85`, Android version code 95).
 - A floating timeline add button for appending one or many videos to the end
 - Neon pink/blue/green subtitle blocks that stay end-to-end on one lane; genuine overlaps automatically move to additional visible lanes so no subtitle can hide underneath another
 - TikTok-style script boundaries: press Enter between words to split one subtitle at its spoken-word timing, or Backspace at the beginning to merge with the block above
-- Time-aligned caption blocks on the timeline: wide cues move and trim directly on the tile; hold a tiny cue or use **Edit cue timing** in the timeline header for a separate magnified timing surface with large touch targets. No Start / Move / End strip sits under captions; selection and timing edits do not seek the fixed playhead. The cyan preview box and caption text share one live track transform
+- Time-aligned video, audio, caption, translated-caption, screen-text, and image/sticker blocks use the same direct body-drag and outside-edge trim handles at every zoom level. No Start / Move / End strip sits under captions; selection and timing edits do not seek the fixed playhead. The cyan preview box and caption text share one live track transform
 - Clear **Undo** and **Redo** controls directly below the video for timeline, transform, style, layer, and video-edit changes
 - Font-metric-driven caption and screen-text fitting across every bundled or imported font, with hard line breaks preserved and no artificial minimum type-size floor
 - One childless, topmost preview interaction plane for captions, translated cues, screen text, and images, isolated from Android video and renderer event routing: touch any visible object to select and move it immediately, pinch to resize, twist to rotate, stretch either axis from four large edge bars, or scale uniformly from the corner. Each contact sequence pins one object identity, overlapping objects follow the same saved layer order in preview and export, and a release commits one atomic project change

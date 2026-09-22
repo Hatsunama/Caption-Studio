@@ -154,6 +154,13 @@ test('video trim handles use the same timing gesture controller as every other e
   assert.doesNotMatch(videoGrip, /PanResponder\.create/);
 });
 
+test('video trim markers live outside the clip just like every other timeline item', () => {
+  const source = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
+  const videoGrip = source.slice(source.indexOf('function VideoTrimGrip'), source.indexOf('function VideoMoveGrip'));
+  assert.match(videoGrip, /timelineOutsideHandleOffset\(props\.side, TIMELINE_EDGE_HANDLE_WIDTH\)/);
+  assert.doesNotMatch(videoGrip, /\[props\.side === 'start' \? 'left' : 'right'\]: 0/);
+});
+
 test('the timeline source contains no attached timing buttons, rails, or alternate cue editor', () => {
   const source = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   for (const forbidden of ['Magnified cue timing', 'Edit cue timing', 'CaptionMagnifier', 'timelineControlRail', 'timelineBlockControls', 'TimelineMoveGrip', 'TimingGrip side']) {

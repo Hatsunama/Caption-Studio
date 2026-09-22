@@ -99,6 +99,21 @@ type ActiveTranslation = {
 let activeTranslation: ActiveTranslation | undefined;
 let modelDownload: Promise<File> | undefined;
 
+export type CaptionTranslationResourceLease = {
+  ready: Promise<void>;
+  restore: () => Promise<void>;
+};
+
+type CaptionTranslationResourceOwner = () => CaptionTranslationResourceLease;
+let translationResourceOwner: CaptionTranslationResourceOwner | undefined;
+
+export function registerCaptionTranslationResources(owner: CaptionTranslationResourceOwner) {
+  translationResourceOwner = owner;
+  return () => {
+    if (translationResourceOwner === owner) translationResourceOwner = undefined;
+  };
+}
+
 export function normalizeNaturalCaptionLanguage(languageTag: string): CaptionLanguageTag {
   const canonical = canonicalCaptionLanguageTag(languageTag);
   const resolved = resolveCaptionLanguage(canonical);
@@ -230,8 +245,12 @@ export async function translateNaturalCaptionOperations(options: {
   }
   const run: ActiveTranslation = { id: Symbol('caption-translation'), cancelled: false };
   activeTranslation = run;
+  let resourceLease: CaptionTranslationResourceLease | undefined;
 
   try {
+    resourceLease = translationResourceOwner?.();
+    if (resourceLease) await resourceLease.ready;
+    throwIfCancelled(run);
     try {
       const nativeRequest = { operations: prepared.map((operation) => ({
         id: operation.id,
@@ -311,7 +330,11 @@ export async function translateNaturalCaptionOperations(options: {
       throw error;
     }
   } finally {
-    if (activeTranslation?.id === run.id) activeTranslation = undefined;
+    try {
+      if (resourceLease) await resourceLease.restore();
+    } finally {
+      if (activeTranslation?.id === run.id) activeTranslation = undefined;
+    }
   }
 }
 
@@ -553,26 +576,40 @@ function pollNativeProgress(
     polling = true;
     void CaptionTranslation.getNaturalCaptionTranslationProgress().then((native) => {
       if (stopped || run.cancelled || activeTranslation?.id !== run.id) return;
-      const stage = native.stage === 'verifying-model' ? 'verifying-model'
-        : native.stage === 'loading-model' ? 'loading-model' : 'translating';
-      const detail = native.stage === 'validating-output' ? 'Checking and retrying individual translations'
-        : native.stage === 'restoring' ? 'Restoring saved translations'
-        : stage === 'verifying-model' ? 'Verifying the local natural-language model'
-          : stage === 'loading-model' ? 'Loading the local natural-language model' : 'Translating locally';
-      const batchDetail = stage === 'translating' && native.totalBatches > 1
-        ? ' - batch ' + Math.min(native.completedBatches + 1, native.totalBatches) + ' of ' + native.totalBatches : '';
-      onProgress?.({
-        stage,
-        // Model verification reaching 100% must not make translation appear complete.
-        progress: native.percent == null ? null : Math.min(0.99, Math.max(0, native.percent / 100)),
-        detail: detail + batchDetail,
-      });
+      onProgress?.(captionTranslationProgress(native));
     }).catch(() => undefined).finally(() => { polling = false; });
   }, 500);
   return () => {
     stopped = true;
     clearInterval(interval);
   };
+}
+
+export function captionTranslationProgress(native: {
+  stage: string;
+  percent?: number | null;
+  processedItems?: number;
+  totalItems?: number;
+}) : CaptionTranslationProgress {
+  const stage = native.stage === 'verifying-model' ? 'verifying-model'
+    : native.stage === 'loading-model' ? 'loading-model' : 'translating';
+  const processed = Number.isFinite(native.processedItems) ? Math.max(0, Math.floor(native.processedItems!)) : 0;
+  const total = Number.isFinite(native.totalItems) ? Math.max(0, Math.floor(native.totalItems!)) : 0;
+  const count = total > 0 ? ` · ${Math.min(processed, total)} of ${total} cues completed` : '';
+  const label = native.stage === 'validating-output' ? 'Validating and retrying translations'
+    : native.stage === 'restoring' ? 'Restoring saved translations'
+      : native.stage === 'cancelling' ? 'Cancelling local translation'
+        : native.stage === 'failed' ? 'Local translation failed'
+          : native.stage === 'completed' ? 'Local translation completed'
+            : stage === 'verifying-model' ? 'Verifying the local natural-language model'
+              : stage === 'loading-model' ? 'Loading the local natural-language model' : 'Translating locally';
+  const terminalComplete = native.stage === 'completed' && total > 0 && processed >= total;
+  const cueProgress = total > 0 ? processed / total : undefined;
+  const reportedProgress = Number.isFinite(native.percent) ? Math.max(0, native.percent! / 100) : undefined;
+  const progress = terminalComplete ? 1
+    : cueProgress != null ? Math.min(0.99, cueProgress)
+      : reportedProgress != null ? Math.min(0.99, reportedProgress) : null;
+  return { stage, progress, detail: label + count };
 }
 
 function translationModelDirectory() {

@@ -281,7 +281,7 @@ test('native translation boundary is exact-ID, empty-reject, and checkpoint-atom
   assert.match(translator, /emptyFallback/);
   assert.match(translator, /usable\(candidate, part, request\.targetLanguage\)/);
   assert.doesNotMatch(translator, /sourceFallback/);
-  assert.match(translator, /writeCheckpoint\(checkpoints, checkpointKey,\s*checkpointResponse\(List\.of\(new Caption\("fragment", candidate\.text\)\)\)\)/);
+  assert.match(translator, /writeCheckpoint\(\s*checkpoints,\s*fragment\.checkpointKey,\s*checkpointResponse\(List\.of\(new Caption\("fragment", candidate\.text\)\)\)\s*\)/);
   assert.doesNotMatch(translator, /writeCheckpoint\(checkpoints, checkpointKey, modelResponse\)/);
   assert.match(quality, /isPlausibleCueTranslation/);
   assert.doesNotMatch(quality, /codePointCount\(0, text\.length\) > 500/);

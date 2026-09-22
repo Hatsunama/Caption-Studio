@@ -310,6 +310,7 @@ function mount(initialProject = fixture()) {
     cancelProjectCaptionGeneration: async () => true, cancelProjectVideoExport: async () => {},
     validateProjectSources: async () => {},
     TRANSCRIPTION_MODEL_OPTIONS: [], NATURAL_TRANSLATION_MODEL_LABEL: 'Test',
+    registerCaptionTranslationResources: () => () => {},
     ProjectPersistenceError: class ProjectPersistenceError extends Error {},
     CaptionGenerationCancelledError: class CaptionGenerationCancelledError extends Error {},
     VideoExportCancelledError: class VideoExportCancelledError extends Error {},
