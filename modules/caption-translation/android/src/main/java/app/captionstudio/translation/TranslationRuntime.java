@@ -12,6 +12,11 @@ interface TranslationRuntime extends AutoCloseable {
     return translate(prompt);
   }
 
+  default String translate(String prompt, int maxOutputTokens, boolean requireStructuredOutput)
+      throws Exception {
+    return translate(prompt, maxOutputTokens);
+  }
+
   void cancel();
 
   @Override

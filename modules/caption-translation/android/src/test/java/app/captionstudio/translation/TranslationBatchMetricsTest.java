@@ -4,6 +4,7 @@ import static org.junit.Assert.*;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -126,6 +127,28 @@ public final class TranslationBatchMetricsTest {
       assertEquals(1, metrics.get("repairAttempts"));
       assertEquals(1, metrics.get("invalidOutputs"));
       assertEquals(List.of(Map.of("id", "cue", "text", "Bonjour", "valid", true)), result.value.get("captions"));
+    }
+  }
+
+  @Test public void rejectedCueUsesConstrainedRepairWithoutChangingNormalGeneration() throws Exception {
+    List<Boolean> structured = new ArrayList<>();
+    try (NaturalCaptionTranslator translator = translator((file, cache, threads, instruction) ->
+        new TranslationRuntime() {
+          public String translate(String prompt) { throw new AssertionError("Expected per-request settings"); }
+          public String translate(String prompt, int tokens, boolean requireStructuredOutput) {
+            structured.add(requireStructuredOutput);
+            return requireStructuredOutput ? "[{\"id\":\"cue\",\"text\":\"Bonjour\"}]" : "[";
+          }
+          public void cancel() {}
+          public void close() {}
+        })) {
+      Map<String, Object> request = new java.util.LinkedHashMap<>(request("en", "fr"));
+      request.put("repairUnusableOutputs", true);
+      Result result = run(translator, request);
+      assertNull(result.error);
+      assertEquals(List.of(false, true), structured);
+      assertEquals(List.of(Map.of("id", "cue", "text", "Bonjour", "valid", true)),
+          result.value.get("captions"));
     }
   }
 

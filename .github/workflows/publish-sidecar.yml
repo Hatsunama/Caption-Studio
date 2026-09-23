@@ -11,6 +11,11 @@ on:
         description: Monotonically increasing Android versionCode
         required: true
         type: string
+      publish:
+        description: Publish the tagged release; false retains a signed private test artifact only
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -51,26 +56,29 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           VERSION_CODE: ${{ inputs.version_code }}
+          PUBLISH: ${{ inputs.publish }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$VERSION_CODE" =~ ^[1-9][0-9]*$ ]]
           node ./scripts/configure-sidecar-release.mjs --check-published "$VERSION" "$VERSION_CODE"
-          tag="v${VERSION}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag already exists; refusing replacement." >&2
-            exit 1
-          fi
-          if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-            echo "Protected release tag $tag must exist before dispatch." >&2
-            exit 1
-          fi
-          git fetch --no-tags --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
-          tag_commit="$(git rev-parse "$tag^{commit}")"
-          if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
-            echo "Protected release tag $tag points to $tag_commit, expected $GITHUB_SHA." >&2
-            exit 1
+          if [[ "$PUBLISH" == "true" ]]; then
+            tag="v${VERSION}"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Release $tag already exists; refusing replacement." >&2
+              exit 1
+            fi
+            if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+              echo "Protected release tag $tag must exist before dispatch." >&2
+              exit 1
+            fi
+            git fetch --no-tags --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
+            tag_commit="$(git rev-parse "$tag^{commit}")"
+            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "Protected release tag $tag points to $tag_commit, expected $GITHUB_SHA." >&2
+              exit 1
+            fi
           fi
       - name: Install and verify locked project
         run: |
@@ -143,6 +151,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           VERSION_CODE: ${{ inputs.version_code }}
+          PUBLISH: ${{ inputs.publish }}
         run: |
           set -euo pipefail
           source_apk="android/app/build/outputs/apk/release/app-release.apk"
@@ -168,11 +177,14 @@ jobs:
           mkdir -p dist
           cp "$source_apk" "dist/$CAPTION_STUDIO_RELEASE_ASSET"
           (cd dist && sha256sum "$CAPTION_STUDIO_RELEASE_ASSET" > "$CAPTION_STUDIO_RELEASE_ASSET.sha256")
-          node ./scripts/configure-sidecar-release.mjs --write-metadata \
-            "$VERSION" "$VERSION_CODE" "dist/$CAPTION_STUDIO_RELEASE_ASSET" \
-            dist/caption-studio-release.json
+          if [[ "$PUBLISH" == "true" ]]; then
+            node ./scripts/configure-sidecar-release.mjs --write-metadata \
+              "$VERSION" "$VERSION_CODE" "dist/$CAPTION_STUDIO_RELEASE_ASSET" \
+              dist/caption-studio-release.json
+          fi
 
       - name: Publish prerelease without replacement
+        if: inputs.publish
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

@@ -6,6 +6,7 @@ import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.ResponseFormat
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ThinkingConfig
 import java.io.File
@@ -90,12 +91,19 @@ internal class LiteRtLmTranslationRuntime(
   override fun translate(prompt: String): String = translate(prompt, 1_536)
 
   @Throws(Exception::class)
-  override fun translate(prompt: String, maxOutputTokens: Int): String {
+  override fun translate(prompt: String, maxOutputTokens: Int): String =
+    translate(prompt, maxOutputTokens, false)
+
+  @Throws(Exception::class)
+  override fun translate(prompt: String, maxOutputTokens: Int, requireStructuredOutput: Boolean): String {
     check(!closed.get()) { "The translation runtime is closed" }
     if (cancelled.get()) throw CancellationException("Caption translation was cancelled")
 
     require(maxOutputTokens in 1..1_536)
-    val conversation = engine.createConversation(conversationConfig.copy(maxOutputToken = maxOutputTokens))
+    val conversation = engine.createConversation(conversationConfig.copy(
+      maxOutputToken = maxOutputTokens,
+      enableResponseFormat = requireStructuredOutput,
+    ))
     lifecycleLock.withLock {
       if (closed.get() || cancelled.get()) {
         val cleanupFailure = closeConversation(conversation)
@@ -116,7 +124,11 @@ internal class LiteRtLmTranslationRuntime(
     var response: String? = null
     var operationFailure: Throwable? = null
     try {
-      response = conversation.sendMessage(prompt).toString()
+      response = if (requireStructuredOutput) {
+        conversation.sendMessage(prompt, responseFormat = ResponseFormat.json(REPAIR_JSON_SCHEMA)).toString()
+      } else {
+        conversation.sendMessage(prompt).toString()
+      }
     } catch (failure: Throwable) {
       operationFailure = failure
     }
@@ -168,6 +180,10 @@ internal class LiteRtLmTranslationRuntime(
 
   private fun closeConversation(conversation: Conversation): Throwable? =
     runCatching { conversation.close() }.exceptionOrNull()
+
+  private companion object {
+    const val REPAIR_JSON_SCHEMA = """{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}"""
+  }
 }
 
 private fun rethrow(failure: Throwable): Nothing = when (failure) {

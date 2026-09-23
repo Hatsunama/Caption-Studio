@@ -33,7 +33,7 @@ final class TranslationBatchMetrics {
     if (repair) repairAttempts++;
     long start = System.nanoTime();
     try {
-      return runtime.translate(prompt, tokens);
+      return runtime.translate(prompt, tokens, repair);
     } catch (Exception | Error failure) {
       generationFailures++;
       cancelled = failure instanceof CancellationException || failure instanceof InterruptedException;
