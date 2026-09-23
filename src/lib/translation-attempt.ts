@@ -46,5 +46,5 @@ export function translationAttemptMessage(project: CaptionProject, trackId: stri
   const selected = new Set(ids);
   const track = project.captionTracks.translations.find((candidate) => candidate.id === trackId);
   const failed = track?.cues.filter((cue) => selected.has(cue.sourceCaptionId) && cue.status === 'failed').length ?? 0;
-  return failed ? `${failed} subtitle translation attempts failed. Successful translations were saved; existing text was kept. See each failed line for its reason. Refresh any or all failed lines, skip them, or export available text anyway.` : undefined;
+  return failed ? `${failed} subtitle translation attempt${failed === 1 ? '' : 's'} failed. Successful translations were saved; existing text was kept. See each failed line for its reason. Refresh any or all failed lines, skip them, or export available text anyway.` : undefined;
 }

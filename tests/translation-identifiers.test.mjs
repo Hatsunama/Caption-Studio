@@ -84,7 +84,7 @@ test('partial automatic translation commits keep success and failure ownership w
   assert.equal(changed.captionTracks.translations[0].cues[1].text, 'Hasta luego');
   assert.equal(changed.captionTracks.translations[0].cues[1].status, 'failed');
   assert.deepEqual(changed.captionTracks.translations[1], project.captionTracks.translations[1]);
-  assert.match(translationAttemptMessage(changed, 'translation', ['part:cue', 'cue']), /^1 subtitles/);
+  assert.match(translationAttemptMessage(changed, 'translation', ['part:cue', 'cue']), /^1 subtitle translation attempt failed/);
   assert.equal(translationAttemptMessage(changed, 'translation:part', ['part:cue', 'cue']), undefined);
 });
 

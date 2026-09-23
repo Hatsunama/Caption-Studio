@@ -241,7 +241,7 @@ test('dual-subtitle refresh commits translated text instead of leaving a pending
   assert.doesNotMatch(editor, /position: _ignoredPosition/);
   assert.match(sceneProject, /setTranslationCueStyle\(project, selection\.id, pair\.source\.id, geometry/);
   assert.doesNotMatch(editor, /onSelectTranslationCaption[\s\S]{0,280}setDualCaptionEditorOpen\(true\)/);
-  assert.match(workflow, /commitTranslationAttempt\(providerProject, track.id, captions, writes\)/);
+  assert.match(workflow, /commitTranslationAttempt\(providerProject, track.id, captions, writes, translated.failureReasons\)/);
   assert.match(commit, /second language is still empty/);
   assert.match(controller, /setError\(caught instanceof Error \? caught\.message/);
 });

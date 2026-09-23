@@ -9,20 +9,22 @@ const root = new URL('../', import.meta.url);
 const expectedPackage = 'com.xmilo_at_your_side.caption_studio';
 const contract = JSON.parse(readFileSync(new URL('config/product-contract.json', root), 'utf8'));
 const app = JSON.parse(readFileSync(new URL('app.json', root), 'utf8'));
-const gradle = readFileSync(new URL('android/app/build.gradle', root), 'utf8');
+const releaseWorkflow = readFileSync(new URL('.github/workflows/publish-sidecar.yml', root), 'utf8');
+const androidVerifier = readFileSync(new URL('scripts/verify-android-release-config.js', root), 'utf8');
 const generator = readFileSync(new URL('scripts/generate-product-contract.mjs', root), 'utf8');
 
-test('source, release, Expo, and native application IDs agree exactly', () => {
+test('source, release, Expo, and generated Android checks agree on the application ID', () => {
   assert.equal(contract.android.sourcePackage, expectedPackage);
   assert.equal(contract.android.release.package, expectedPackage);
   assert.equal(app.expo.android.package, expectedPackage);
-  assert.equal(gradle.match(/\bapplicationId\s*(?:=\s*)?["']([^"']+)["']/)?.[1], expectedPackage);
-  assert.doesNotMatch(gradle, /\bapplicationIdSuffix\b/);
+  assert.ok(androidVerifier.includes(expectedPackage));
+  assert.match(releaseWorkflow, /npx expo prebuild --platform android --clean --no-install/);
+  assert.match(releaseWorkflow, /npm run verify:android-config/);
 });
 
-test('checked-in native version agrees with Expo release configuration', () => {
-  assert.equal(Number(gradle.match(/\bversionCode\s*(?:=\s*)?(\d+)/)?.[1]), app.expo.android.versionCode);
-  assert.equal(gradle.match(/\bversionName\s*(?:=\s*)?["']([^"']+)["']/)?.[1], app.expo.version);
+test('source version starts the installable package lineage', () => {
+  assert.equal(app.expo.version, contract.android.release.minimumVersion);
+  assert.ok(Number.isSafeInteger(app.expo.android.versionCode) && app.expo.android.versionCode > 0);
 });
 
 test('contract generation rejects legacy or arbitrary package IDs before generating files', () => {

@@ -81,7 +81,7 @@ test('durable media and font imports validate staging before atomic promotion', 
   assert.match(projectMedia, /copyAsync\(\{ from: options\.sourceUri, to: stagingUri \}\)[\s\S]*validateImageFile\(stagingUri\)[\s\S]*moveAsync/);
   assert.match(fontStorage, /copyAsync\(\{ from: asset\.uri, to: stagingUri \}\)[\s\S]*validateFontFile\(stagingUri\)[\s\S]*moveAsync/);
   assert.match(transcription, /modelVerificationMarkerMatches/);
-  assert.match(transcription, /resumableModelDownloadReservation\(modelFile, model\)/);
+  assert.match(transcription, /resumableModelDownloadReservation\(modelFile, model, \(uri\) => CaptionMedia\.sha256\(uri\)\)/);
   assert.match(modelDownload, /remainingModelDownloadBytes/);
   assert.match(modelDownload, /verifySha256[\s\S]*replaceTarget/);
   assert.match(transcription, /planOverlappingPcmChunks[\s\S]*session\?\.throwIfCancelled\(\)/);
