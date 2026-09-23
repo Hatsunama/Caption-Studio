@@ -146,6 +146,8 @@ public final class TranslationResponseContractTest {
     assertEquals("c2", prompt.getAsJsonArray("captions").get(0).getAsJsonObject().get("id").getAsString());
     assertEquals("Before", prompt.get("contextBefore").getAsString());
     assertEquals("After", prompt.get("contextAfter").getAsString());
+    assertEquals("First cue", prompt.getAsJsonObject("sourceNeighbors").get("before").getAsString());
+    assertEquals("Last cue", prompt.getAsJsonObject("sourceNeighbors").get("after").getAsString());
     assertFalse(NaturalCaptionTranslator.parseSingleCaptionRetryResponse(response("c1", "Cierra la puerta"), request.captions.get(1)).valid);
     assertTrue(NaturalCaptionTranslator.parseSingleCaptionRetryResponse(response("c2", "Cierra\nla puerta"), request.captions.get(1)).valid);
   }

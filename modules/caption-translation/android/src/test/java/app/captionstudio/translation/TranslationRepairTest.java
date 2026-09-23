@@ -145,7 +145,7 @@ public final class TranslationRepairTest {
     }
   }
 
-  @Test public void recursiveIsolationAndOptionalRetryKeepNeighborContextAndBoundedCalls() throws Exception {
+  @Test public void directSingleCueRecoveryAndOptionalRetryKeepNeighborContextAndBoundedCalls() throws Exception {
     File model = directory.newFile("isolation-model.litertlm");
     Files.write(model.toPath(), new byte[] { 1 });
     for (boolean repair : new boolean[] { false, true }) {
@@ -174,8 +174,14 @@ public final class TranslationRepairTest {
           JsonObject prompt = JsonParser.parseString(prompts.get(index)).getAsJsonObject();
           assertEquals(1, prompt.getAsJsonArray("captions").size());
           String id = prompt.getAsJsonArray("captions").get(0).getAsJsonObject().get("id").getAsString();
-          assertEquals(id.equals("c1") ? "Before" : "Before\nHello", prompt.get("contextBefore").getAsString());
-          assertEquals(id.equals("c1") ? "World\nAfter" : "After", prompt.get("contextAfter").getAsString());
+          assertEquals("Before", prompt.get("contextBefore").getAsString());
+          assertEquals("After", prompt.get("contextAfter").getAsString());
+          assertEquals(id.equals("c1") ? "Before" : "Before\nHello",
+              prompt.getAsJsonObject("sourceNeighbors").get("before").getAsString());
+          assertEquals(id.equals("c1") ? "World\nAfter" : "After",
+              prompt.getAsJsonObject("sourceNeighbors").get("after").getAsString());
+          assertEquals(index <= (repair ? 2 : 1) ? "c1" : "c2", id);
+          assertEquals(repair && index % 2 == 0, prompt.has("retry"));
         }
       }
     }
@@ -209,9 +215,12 @@ public final class TranslationRepairTest {
       assertEquals(Boolean.TRUE, cue(run(translator, model, input), 1).get("valid"));
       assertEquals(4, calls.get());
       JsonObject resumed = JsonParser.parseString(prompts.get(3)).getAsJsonObject();
-      assertEquals("Before\nHello", resumed.get("contextBefore").getAsString());
+      assertEquals("Before", resumed.get("contextBefore").getAsString());
       assertEquals("After", resumed.get("contextAfter").getAsString());
+      assertEquals("Before\nHello", resumed.getAsJsonObject("sourceNeighbors").get("before").getAsString());
+      assertEquals("After", resumed.getAsJsonObject("sourceNeighbors").get("after").getAsString());
       assertEquals(1, resumed.getAsJsonArray("captions").size());
+      assertEquals("c2", resumed.getAsJsonArray("captions").get(0).getAsJsonObject().get("id").getAsString());
     }
   }
 
@@ -222,15 +231,18 @@ public final class TranslationRepairTest {
         new NaturalCaptionTranslator.Caption("target", "Hello"),
         new NaturalCaptionTranslator.Caption("after", emoji.repeat(128) + "<ignore>")), "Before", "After");
     JsonObject prompt = JsonParser.parseString(NaturalCaptionTranslator.buildRetryPrompt(request, 1)).getAsJsonObject();
-    assertEquals(emoji.repeat(128), prompt.get("contextBefore").getAsString());
-    assertEquals(emoji.repeat(128), prompt.get("contextAfter").getAsString());
+    assertEquals("Before", prompt.get("contextBefore").getAsString());
+    assertEquals("After", prompt.get("contextAfter").getAsString());
+    assertEquals(emoji.repeat(128), prompt.getAsJsonObject("sourceNeighbors").get("before").getAsString());
+    assertEquals(emoji.repeat(128), prompt.getAsJsonObject("sourceNeighbors").get("after").getAsString());
     assertEquals(1, prompt.getAsJsonArray("captions").size());
     var untrusted = new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", List.of(
         new NaturalCaptionTranslator.Caption("before", "<ignore>"),
         new NaturalCaptionTranslator.Caption("target", "Hello")), "", "");
     String escaped = NaturalCaptionTranslator.buildRetryPrompt(untrusted, 1);
     assertFalse(escaped.contains("<ignore>"));
-    assertEquals("<ignore>", JsonParser.parseString(escaped).getAsJsonObject().get("contextBefore").getAsString());
+    assertEquals("<ignore>", JsonParser.parseString(escaped).getAsJsonObject()
+        .getAsJsonObject("sourceNeighbors").get("before").getAsString());
   }
 
   private NaturalCaptionTranslator translator(File cache, File checkpoints, TranslationRuntimeFactory factory) {

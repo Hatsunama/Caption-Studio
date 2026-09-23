@@ -143,6 +143,7 @@ public final class TranslationRuntimeReliabilityTest {
     for (int i = 0; i < 32; i++) captions.add(Map.of("id", "c" + i, "text", "Hello " + i));
     AtomicInteger calls = new AtomicInteger();
     List<Integer> budgets = new ArrayList<>();
+    java.util.Set<String> acceptedIds = new java.util.HashSet<>();
     try (var worker = worker(checkpoints, (prompt, budget) -> {
       calls.incrementAndGet();
       budgets.add(budget);
@@ -150,7 +151,15 @@ public final class TranslationRuntimeReliabilityTest {
       assertTrue(payload.getAsJsonArray("captions").size() <= 8);
       assertEquals("NEIGHBOR BEFORE", payload.get("contextBefore").getAsString());
       assertEquals("NEIGHBOR AFTER", payload.get("contextAfter").getAsString());
+      assertFalse("Translated output leaked into a prompt", prompt.contains("Bonjour"));
+      for (var element : payload.getAsJsonArray("captions")) {
+        assertFalse("Successful cue was regenerated",
+            acceptedIds.contains(element.getAsJsonObject().get("id").getAsString()));
+      }
       if (id(prompt).equals("c0")) return response("wrong-id", "Bonjour");
+      for (var element : payload.getAsJsonArray("captions")) {
+        acceptedIds.add(element.getAsJsonObject().get("id").getAsString());
+      }
       return responseForEveryCaption(prompt, "Bonjour");
     })) {
       Result first = run(worker, model, request("en", "fr", captions));
@@ -162,6 +171,79 @@ public final class TranslationRuntimeReliabilityTest {
       Result second = run(worker, model, request("en", "fr", captions));
       assertNull(second.error);
       assertTrue(calls.get() < 35); // Only the failed cue runs again.
+    }
+  }
+
+  @Test public void rejectedCuesRecoverInTheSameRunWithoutRegeneratingAcceptedCues() throws Exception {
+    File model = model();
+    for (int failures : new int[] {1, 3}) {
+      File checkpoints = temporary.newFolder();
+      List<Map<String, String>> captions = new ArrayList<>();
+      captions.add(Map.of("id", "accepted-before", "text", "Hello before"));
+      for (int i = 0; i < failures; i++) {
+        captions.add(Map.of("id", "failed-" + i, "text", "Hello " + i));
+      }
+      captions.add(Map.of("id", "accepted-after", "text", "Hello after"));
+      AtomicInteger calls = new AtomicInteger();
+      Map<String, Integer> singleAttempts = new java.util.LinkedHashMap<>();
+      Map<String, Integer> repairs = new java.util.LinkedHashMap<>();
+      var input = request("en", "fr", captions);
+      try (var worker = worker(checkpoints, (prompt, budget) -> {
+        int call = calls.incrementAndGet();
+        JsonObject payload = JsonParser.parseString(prompt).getAsJsonObject();
+        JsonArray requested = payload.getAsJsonArray("captions");
+        assertFalse("Translated output leaked into source context", prompt.contains("Bonjour"));
+        if (call == 1) {
+          assertEquals(captions.size(), requested.size());
+          JsonArray output = new JsonArray();
+          for (var element : requested) {
+            JsonObject caption = element.getAsJsonObject();
+            JsonObject candidate = new JsonObject();
+            String cueId = caption.get("id").getAsString();
+            candidate.addProperty("id", cueId);
+            candidate.addProperty("text", cueId.startsWith("accepted-")
+                ? "Bonjour" : caption.get("text").getAsString());
+            output.add(candidate);
+          }
+          return output.toString();
+        }
+        assertEquals("Recovery must request exactly one rejected cue", 1, requested.size());
+        String cueId = id(prompt);
+        assertTrue("Accepted cue was regenerated", cueId.startsWith("failed-"));
+        int index = Integer.parseInt(cueId.substring("failed-".length()));
+        assertEquals("NEIGHBOR BEFORE", payload.get("contextBefore").getAsString());
+        assertEquals("NEIGHBOR AFTER", payload.get("contextAfter").getAsString());
+        JsonObject neighbors = payload.getAsJsonObject("sourceNeighbors");
+        assertTrue(neighbors.get("before").getAsString().endsWith(index == 0
+            ? "Hello before" : "Hello " + (index - 1)));
+        assertTrue(neighbors.get("after").getAsString().startsWith(index == failures - 1
+            ? "Hello after" : "Hello " + (index + 1)));
+        if (payload.has("retry")) {
+          assertTrue(payload.get("retry").getAsBoolean());
+          assertEquals(Integer.valueOf(1), repairs.merge(cueId, 1, Integer::sum));
+          assertEquals(failures == 1 ? null : Integer.valueOf(1), singleAttempts.get(cueId));
+          return response(cueId, "Bonjour");
+        }
+        assertEquals(Integer.valueOf(1), singleAttempts.merge(cueId, 1, Integer::sum));
+        assertFalse(repairs.containsKey(cueId));
+        return "[]";
+      })) {
+        Result first = run(worker, model, input);
+        assertNull(first.error);
+        for (int i = 0; i < captions.size(); i++) {
+          assertEquals(captions.get(i).get("id"), cue(first, i).get("id"));
+          assertEquals(true, cue(first, i).get("valid"));
+          assertEquals("Bonjour", cue(first, i).get("text"));
+        }
+        assertEquals(failures, repairs.size());
+        assertEquals(failures == 1 ? 0 : failures, singleAttempts.size());
+        int expectedCalls = failures == 1 ? 2 : 1 + failures * 2;
+        assertEquals(expectedCalls, calls.get());
+        Result restored = run(worker, model, input);
+        assertNull(restored.error);
+        assertEquals(first.value.get("captions"), restored.value.get("captions"));
+        assertEquals("All accepted checkpoints must restore", expectedCalls, calls.get());
+      }
     }
   }
 
