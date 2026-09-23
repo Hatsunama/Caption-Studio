@@ -9,6 +9,7 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ThinkingConfig
 import java.io.File
+import java.util.function.BooleanSupplier
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -22,21 +23,21 @@ internal class LiteRtLmTranslationRuntimeFactory : TranslationRuntimeFactory {
     cacheDirectory: File,
     threadCount: Int,
     systemInstruction: String,
-  ): TranslationRuntime {
-    val engine = Engine(
-      EngineConfig(
-        modelPath = model.absolutePath,
-        backend = Backend.CPU(threadCount, null),
-        maxNumTokens = ENGINE_TOKEN_LIMIT,
-        cacheDir = cacheDirectory.absolutePath,
-      ),
-    )
+  ): TranslationRuntime = open(
+    model, cacheDirectory, threadCount, systemInstruction,
+    TranslationBackendSelection.Preference.AUTO, BooleanSupplier { false },
+  )
 
-    try {
-      engine.initialize()
-      return LiteRtLmTranslationRuntime(
-        engine,
-        ConversationConfig(
+  @Throws(Exception::class)
+  override fun open(
+    model: File,
+    cacheDirectory: File,
+    threadCount: Int,
+    systemInstruction: String,
+    preference: TranslationBackendSelection.Preference,
+    cancelled: BooleanSupplier,
+  ): TranslationRuntime {
+    val conversationConfig = ConversationConfig(
           Contents.of(systemInstruction),
           emptyList(),
           emptyList(),
@@ -49,23 +50,25 @@ internal class LiteRtLmTranslationRuntimeFactory : TranslationRuntimeFactory {
           OUTPUT_TOKEN_LIMIT,
           ThinkingConfig(false, -1),
           false,
+    )
+    return TranslationBackendSelection.open(preference, { selected ->
+      val engine = Engine(
+        EngineConfig(
+          modelPath = model.absolutePath,
+          backend = if (selected == "gpu") Backend.GPU() else Backend.CPU(threadCount, null),
+          maxNumTokens = ENGINE_TOKEN_LIMIT,
+          cacheDir = cacheDirectory.absolutePath,
         ),
       )
-    } catch (failure: Throwable) {
-      val cleanupFailure = closeEngine(engine)
-      if (cleanupFailure != null) {
-        cleanupFailure.addSuppressed(failure)
-        throw TranslationRuntimeCleanupException(
-          "LiteRT-LM initialization cleanup failed",
-          cleanupFailure,
-        )
-      }
-      rethrow(failure)
-    }
-  }
+      object : TranslationBackendSelection.Candidate {
+        override fun initialize(): TranslationRuntime {
+          engine.initialize()
+          return LiteRtLmTranslationRuntime(engine, conversationConfig)
+        }
 
-  private fun closeEngine(engine: Engine): Throwable? {
-    return runCatching { engine.close() }.exceptionOrNull()
+        override fun close() { engine.close() }
+      }
+    }, cancelled)
   }
 
   private companion object {

@@ -12,6 +12,9 @@ import {
 
 const root = new URL('../', import.meta.url);
 const productContract = JSON.parse(readFileSync(fileURLToPath(new URL('config/product-contract.json', root)), 'utf8'));
+const appConfig = JSON.parse(readFileSync(fileURLToPath(new URL('app.json', root)), 'utf8'));
+const currentVersion = appConfig.expo.version;
+const currentVersionCode = appConfig.expo.android.versionCode;
 
 test('APK signer parser accepts verified v2 and legacy output but rejects ambiguous identity', () => {
   const pinned = productContract.android.release.signingCertificateSha256;
@@ -40,12 +43,12 @@ test('release keeps the expected Android identity', async () => {
       },
     }));
     const source = JSON.parse(readFileSync(configPath, 'utf8'));
-    const configured = configureSidecarApp(source, '1.4.88', 100);
+    const configured = configureSidecarApp(source, currentVersion, currentVersionCode);
     assert.equal(configured.expo.name, 'Caption Studio');
     assert.equal(configured.expo.android.package, productContract.android.release.package);
     assert.equal(configured.expo.android.package, 'com.xmilo_at_your_side.caption_studio');
-    assert.equal(configured.expo.android.versionCode, 100);
-    assert.equal(configured.expo.version, '1.4.88');
+    assert.equal(configured.expo.android.versionCode, currentVersionCode);
+    assert.equal(configured.expo.version, currentVersion);
     assert.equal(configured.expo.scheme, productContract.android.release.scheme);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -54,7 +57,7 @@ test('release keeps the expected Android identity', async () => {
 
 test('release rejects legacy package IDs', () => {
   for (const packageId of ['com.hatsunama.captionstudio', 'com.hatsunama.captionstudio.fixed']) {
-    assert.throws(() => configureSidecarApp({ expo: { android: { package: packageId } } }, '1.4.88', 100),
+    assert.throws(() => configureSidecarApp({ expo: { android: { package: packageId } } }, currentVersion, currentVersionCode),
       /unexpected Android package/);
   }
 });
@@ -149,7 +152,9 @@ test('historical releases use actual APK identity and exclude only known old pac
 });
 
 test('ordering includes this package lineage, prereleases, and draft tag collisions', async () => {
-  const releases = [{ ...published(), tag_name: 'v1.4.88' },
+  const nextVersion = currentVersion.replace(/\d+$/, (patch) => String(Number(patch) + 1));
+  const laterVersion = currentVersion.replace(/\d+$/, (patch) => String(Number(patch) + 2));
+  const releases = [{ ...published(), tag_name: `v${currentVersion}` },
     { ...published(false), tag_name: 'v1.4.86' }];
   const resolvedTags = [];
   const options = {
@@ -159,14 +164,14 @@ test('ordering includes this package lineage, prereleases, and draft tag collisi
       return { tag: release.tag_name, versionCode: 150 };
     },
   };
-  await assert.rejects(checkPublishedRelease('1.4.89', 150, options), /must exceed.*150/);
-  await checkPublishedRelease('1.4.89', 151, options);
-  assert.deepEqual([...new Set(resolvedTags)], ['v1.4.88']);
-  await assert.rejects(checkPublishedRelease('1.4.87', 151, options), /must be at least/);
-  await assert.rejects(checkPublishedRelease('1.4.88', 151, options), /already exists/);
-  releases.push({ ...published(), tag_name: 'v1.4.89', draft: true });
-  await assert.rejects(checkPublishedRelease('1.4.89', 151, options), /already exists/);
-  await assert.rejects(checkPublishedRelease('1.4.90', 151, {
+  await assert.rejects(checkPublishedRelease(nextVersion, 150, options), /must exceed.*150/);
+  await checkPublishedRelease(nextVersion, 151, options);
+  assert.deepEqual([...new Set(resolvedTags)], [`v${currentVersion}`]);
+  await assert.rejects(checkPublishedRelease('1.4.2', 151, options), /must be at least/);
+  await assert.rejects(checkPublishedRelease(currentVersion, 151, options), /already exists/);
+  releases.push({ ...published(), tag_name: `v${nextVersion}`, draft: true });
+  await assert.rejects(checkPublishedRelease(nextVersion, 151, options), /already exists/);
+  await assert.rejects(checkPublishedRelease(laterVersion, 151, {
     listReleases: async () => { throw new Error('API failure'); },
   }), /API failure/);
 });

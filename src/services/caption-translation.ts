@@ -4,6 +4,8 @@ import CaptionTranslation, {
   TRANSLATION_RELEASE_CONTRACT,
   type NaturalCaptionTranslationLimits,
   type NaturalCaptionTranslationInput,
+  type NaturalCaptionTranslationBackend,
+  type NaturalCaptionTranslationResult,
 } from 'caption-translation';
 
 import {
@@ -32,6 +34,13 @@ import {
 } from '@/services/verified-model-download';
 
 const NATURAL_TRANSLATION_MODEL = TRANSLATION_RELEASE_CONTRACT;
+
+// Expo inlines this literal environment access at bundle time. Only exact opt-ins
+// enable benchmarking; ordinary builds explicitly use CPU and checkpoints.
+const benchmarkBackendSetting = typeof process === 'undefined'
+  ? undefined : process.env.EXPO_PUBLIC_TRANSLATION_BENCHMARK_BACKEND;
+const TRANSLATION_BENCHMARK_BACKEND = benchmarkBackendSetting === 'cpu' || benchmarkBackendSetting === 'gpu'
+  ? benchmarkBackendSetting : undefined;
 
 export const NATURAL_TRANSLATION_MODEL_LABEL = NATURAL_TRANSLATION_MODEL.label;
 
@@ -264,7 +273,7 @@ export async function translateNaturalCaptionOperations(options: {
       throwIfCancelled(run);
       if (
         result.offline !== true
-        || result.backend !== 'cpu'
+        || !isNaturalTranslationBackend(result.backend)
         || result.modelId !== NATURAL_TRANSLATION_MODEL.id
         || result.promptContract !== NATURAL_TRANSLATION_MODEL.promptContract
         || result.batchCount !== totalBatches
@@ -516,18 +525,75 @@ async function translateWithNative(
     targetLanguage: CaptionLanguageTag;
     batches: { captions: NaturalCaptionTranslationInput[]; contextBefore?: string; contextAfter?: string; }[];
   }[],
-  reuseCheckpoints = true,
 ) {
-  const result = await CaptionTranslation.translateNaturalCaptions(modelUri, { operations, reuseCheckpoints, repairUnusableOutputs: true });
+  const benchmarkNoCheckpoints = TRANSLATION_BENCHMARK_BACKEND !== undefined;
+  const runtimeBackend = TRANSLATION_BENCHMARK_BACKEND ?? 'cpu';
+  const result = await CaptionTranslation.translateNaturalCaptions(modelUri, {
+    operations,
+    runtimeBackend,
+    benchmarkNoCheckpoints,
+    reuseCheckpoints: !benchmarkNoCheckpoints,
+    repairUnusableOutputs: true,
+  });
+  if (benchmarkNoCheckpoints) {
+    const backendMatchesRequest = result.backend === runtimeBackend
+      && result.initializationFallback === false
+      && result.benchmarkNoCheckpoints === true;
+    logTranslationBenchmark(result, runtimeBackend, backendMatchesRequest);
+    if (!backendMatchesRequest) {
+      throw new Error('The translation benchmark did not use the requested backend without checkpoints. No captions were changed.');
+    }
+  }
   if (
     result.offline !== true
-    || result.backend !== 'cpu'
+    || !isNaturalTranslationBackend(result.backend)
     || result.modelId !== NATURAL_TRANSLATION_MODEL.id
     || result.promptContract !== NATURAL_TRANSLATION_MODEL.promptContract
   ) {
     throw new Error('The local model returned an incomplete translation. No captions were changed.');
   }
   return result;
+}
+
+function isNaturalTranslationBackend(value: unknown): value is NaturalCaptionTranslationBackend {
+  return value === 'cpu' || value === 'gpu' || value === 'none' || value === 'unknown';
+}
+
+function logTranslationBenchmark(
+  result: NaturalCaptionTranslationResult,
+  requestedBackend: 'cpu' | 'gpu',
+  backendMatchesRequest: boolean,
+) {
+  const counter = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value : null;
+  const backend = (value: unknown) => isNaturalTranslationBackend(value) ? value : 'unknown';
+  // Never spread native objects or log errors: even malformed values must not
+  // turn a timing/counter field into a caption, identifier, path, or prompt log.
+  console.info('[translation-benchmark]', {
+    requestedBackend,
+    backend: backend(result.backend),
+    backendMatchesRequest,
+    initializationFallback: result.initializationFallback === true,
+    benchmarkNoCheckpoints: result.benchmarkNoCheckpoints === true,
+    durationMs: counter(result.durationMs),
+    batchCount: counter(result.batchCount),
+    batchMetrics: Array.isArray(result.batchMetrics) ? result.batchMetrics.map((metric) => ({
+      batchIndex: counter(metric?.batchIndex),
+      captionCount: counter(metric?.captionCount),
+      backend: backend(metric?.backend),
+      initializationFallback: metric?.initializationFallback === true,
+      durationMs: counter(metric?.durationMs),
+      initializationMs: counter(metric?.initializationMs),
+      generationMs: counter(metric?.generationMs),
+      attempts: counter(metric?.attempts),
+      repairAttempts: counter(metric?.repairAttempts),
+      generationFailures: counter(metric?.generationFailures),
+      invalidOutputs: counter(metric?.invalidOutputs),
+      qualityRejections: counter(metric?.qualityRejections),
+      outcome: metric?.outcome === 'completed' || metric?.outcome === 'cancelled' || metric?.outcome === 'failed'
+        ? metric.outcome : 'unknown',
+    })) : [],
+  });
 }
 
 function isNativeModelIntegrityFailure(error: unknown) {

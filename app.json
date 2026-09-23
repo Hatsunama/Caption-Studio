@@ -2,14 +2,14 @@
   "expo": {
     "name": "Caption Studio",
     "slug": "caption-studio",
-    "version": "1.4.88",
+    "version": "1.4.92",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "captionstudio",
     "userInterfaceStyle": "dark",
     "android": {
       "package": "com.xmilo_at_your_side.caption_studio",
-      "versionCode": 100,
+      "versionCode": 104,
       "allowBackup": false,
       "blockedPermissions": [
         "android.permission.FOREGROUND_SERVICE",
@@ -62,6 +62,7 @@
       "expo-sharing",
       "./plugins/with-legacy-export-permission",
       "./plugins/with-soloader-metadata",
+      "./plugins/with-litert-gpu-libraries",
       "expo-font",
       "expo-image",
       "./plugins/with-android-lint-contract"

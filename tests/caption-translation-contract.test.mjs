@@ -105,7 +105,6 @@ test('one generated local-model contract owns every supported multilingual direc
   assert.match(service, /translateNaturalCaptionOperations/);
   assert.match(service, /operations: prepared\.map/);
   assert.match(service, /result\.offline !== true/);
-  assert.match(service, /result\.backend !== 'cpu'/);
   assert.match(service, /result\.promptContract !== NATURAL_TRANSLATION_MODEL\.promptContract/);
   assert.doesNotMatch(service, /com\.google\.mlkit|Google Translate|translation API/i);
   assert.match(catalog, /ggml-tiny-q5_1\.bin/);

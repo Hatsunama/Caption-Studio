@@ -31,6 +31,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 public final class NaturalCaptionTranslator implements AutoCloseable {
@@ -53,7 +54,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final int MAX_OUTPUT_TEXT_CHARACTERS = 2_000;
   static final int MAX_TOTAL_OUTPUT_CHARACTERS = 16_000;
   static final String PROMPT_CONTRACT = GeneratedProductContract.PROMPT_CONTRACT;
-  // Bump when runtime settings or response acceptance change; old accepted text is not evidence of validity.
+  // Preserve this legacy identity (including its cpu label) across backend selection:
+  // accepted text still passes the same prompt/output contract and must remain resumable.
   static final String CHECKPOINT_PROFILE = "v8;litertlm-0.16.1;cpu;4096;128-1024;topk1;topp1;temperature0;seed0;microbatch8-bounded-isolation;strict-boundary;separate-source-neighbors";
 
   static final String INVALID_REQUEST = "E_TRANSLATION_INVALID_REQUEST";
@@ -70,6 +72,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   private static final Pattern CAPTION_ID = Pattern.compile("[A-Za-z0-9._:-]{1,64}");
   private static final Pattern URI_SCHEME = Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*:.*");
   private static final String LOG_TAG = "CaptionTranslation";
+  static final String DIAGNOSTIC_TAG = "CaptionTranslationDiag";
 
   private static final String SYSTEM_INSTRUCTION =
       "Translate every caption from sourceLanguage to targetLanguage. "
@@ -86,6 +89,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   private final TranslationRuntimeFactory runtimeFactory;
   private final TranslationModelVerifier modelVerifier;
   private final ExecutorService worker;
+  private final Consumer<String> diagnosticSink;
   private final Object stateLock = new Object();
   private ProgressSnapshot progress = ProgressSnapshot.idle();
   private ActiveRun activeRun;
@@ -107,10 +111,22 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       TranslationModelVerifier modelVerifier,
       ExecutorService worker
   ) {
+    this(environment, runtimeFactory, modelVerifier, worker,
+        line -> Log.i(DIAGNOSTIC_TAG, line));
+  }
+
+  NaturalCaptionTranslator(
+      TranslationEnvironment environment,
+      TranslationRuntimeFactory runtimeFactory,
+      TranslationModelVerifier modelVerifier,
+      ExecutorService worker,
+      Consumer<String> diagnosticSink
+  ) {
     this.environment = Objects.requireNonNull(environment, "environment");
     this.runtimeFactory = Objects.requireNonNull(runtimeFactory, "runtimeFactory");
     this.modelVerifier = Objects.requireNonNull(modelVerifier, "modelVerifier");
     this.worker = Objects.requireNonNull(worker, "worker");
+    this.diagnosticSink = Objects.requireNonNull(diagnosticSink, "diagnosticSink");
   }
 
   public void start(String modelLocation, Map<String, ?> rawRequest, Callback callback) {
@@ -261,6 +277,12 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     try {
       checkCancelled(run);
       ValidatedSession session = validateSessionRequest(run.rawRequest);
+      run.backendPreference = TranslationBackendSelection.parse(run.rawRequest.get("runtimeBackend"));
+      Object benchmarkFlag = run.rawRequest.get("benchmarkNoCheckpoints");
+      if (benchmarkFlag != null && !(benchmarkFlag instanceof Boolean)) {
+        throw invalidRequest("benchmarkNoCheckpoints must be a boolean.");
+      }
+      run.benchmarkNoCheckpoints = Boolean.TRUE.equals(benchmarkFlag);
       boolean repairOutputs = Boolean.TRUE.equals(run.rawRequest.get("repairUnusableOutputs"));
       TranslationCheckpointStore checkpoints = openCheckpoints(run);
       File model = resolveModelFile(run.modelLocation);
@@ -302,6 +324,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       for (int batchIndex = 0; batchIndex < session.batches.size(); batchIndex += 1) {
         checkCancelled(run);
         ValidatedRequest request = session.batches.get(batchIndex);
+        run.batchMetrics = new TranslationBatchMetrics(batchIndex, request.captions.size());
+        boolean batchCompleted = false;
+        try {
         updateProgress(
             run,
             "translating",
@@ -375,7 +400,11 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         }
         boolean restored = pendingFragments.isEmpty();
         if (!pendingFragments.isEmpty()) {
-          if (runtime == null) runtime = openRuntime(run, model);
+          if (runtime == null) {
+            long initializationStart = System.nanoTime();
+            try { runtime = openRuntime(run, model); }
+            finally { run.batchMetrics.initializationNanos += System.nanoTime() - initializationStart; }
+          }
           String contextBefore = boundedContext(request.contextBefore, true);
           String contextAfter = boundedContext(request.contextAfter, false);
           for (int offset = 0; offset < pendingFragments.size(); offset += MICRO_BATCH_SIZE) {
@@ -414,9 +443,20 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
             batchIndex + 1,
             session.batches.size()
         );
+        batchCompleted = true;
+        } finally {
+          Map<String, Object> metrics = run.batchMetrics.finish(
+              batchCompleted, run.cancelled.get() || Thread.currentThread().isInterrupted());
+          run.metrics.add(metrics);
+          logBatchMetrics(metrics);
+        }
       }
       checkCancelled(run);
       result = resultMap(session, translated, elapsedMilliseconds(startedAtNanos));
+      result.put("backend", runtime == null ? "none" : TranslationBatchMetrics.safeBackend(runtime.backendName()));
+      result.put("initializationFallback", runtime != null && runtime.initializationFallback());
+      result.put("batchMetrics", run.metrics);
+      result.put("benchmarkNoCheckpoints", run.benchmarkNoCheckpoints);
     } catch (Throwable caught) {
       cleanupPoison = caught instanceof TranslationRuntimeCleanupException;
       error = classify(caught, run, currentStage(run));
@@ -454,7 +494,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   private TranslationRuntime openRuntime(ActiveRun run, File model) throws Exception {
     checkCancelled(run);
     int threadCount = environment.runtimeThreadCount();
-    TranslationRuntime opened = runtimeFactory.open(model, environment.prepareCacheDirectory(), threadCount, SYSTEM_INSTRUCTION);
+    TranslationRuntime opened = runtimeFactory.open(model, environment.prepareCacheDirectory(),
+        threadCount, SYSTEM_INSTRUCTION, run.backendPreference,
+        () -> run.cancelled.get() || Thread.currentThread().isInterrupted());
     run.nativeLifecycleLock.lock();
     try { run.runtime.set(opened); }
     finally { run.nativeLifecycleLock.unlock(); }
@@ -517,7 +559,12 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         batchIndex,
         totalBatches
     );
-    List<Caption> candidates = parseStrictResponse(runtime.translate(prompt, outputTokens), requestCaptions);
+    AttemptDiagnostic diagnostic = new AttemptDiagnostic(diagnosticSink, batchIndex,
+        ++run.diagnosticAttempt, fragments.get(0).failureReason == null
+            ? AttemptStage.INITIAL : AttemptStage.SINGLETON,
+        requestCaptions.size(), prompt.length(), outputTokens);
+    List<Caption> candidates = generateAndParse(run, runtime, prompt, outputTokens,
+        requestCaptions, diagnostic);
     List<FragmentWork> rejected = new ArrayList<>();
     for (int index = 0; index < fragments.size(); index++) {
       FragmentWork fragment = fragments.get(index);
@@ -530,6 +577,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
             checkpointResponse(List.of(new Caption("fragment", candidate.text)))
         );
       } else {
+        if (candidate.valid) diagnostic.emit(FailurePhase.QUALITY, FailureClass.QUALITY_REVIEW,
+            index, candidate.text.length());
+        run.batchMetrics.reject(candidate.valid);
         fragment.failureReason = candidate.valid ? "output-needs-review" : "invalid-output";
         rejected.add(fragment);
       }
@@ -582,10 +632,10 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       retryPrompt = buildRetryPrompt(retry, 0);
     }
     requirePromptCapacity(retryPrompt, retryTokens);
-    Caption candidate = parseSingleCaptionRetryResponse(
-        runtime.translate(retryPrompt, retryTokens),
-        fragment.requestCaption
-    );
+    AttemptDiagnostic repairDiagnostic = new AttemptDiagnostic(diagnosticSink, batchIndex,
+        ++run.diagnosticAttempt, AttemptStage.REPAIR, 1, retryPrompt.length(), retryTokens);
+    Caption candidate = generateAndParse(run, runtime, retryPrompt, retryTokens,
+        List.of(fragment.requestCaption), repairDiagnostic).get(0);
     if (usable(candidate, fragment.requestCaption.text, targetLanguage)) {
       fragment.accept(candidate.text);
       writeCheckpoint(
@@ -594,13 +644,127 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           checkpointResponse(List.of(new Caption("fragment", candidate.text)))
       );
     } else {
+      if (candidate.valid) repairDiagnostic.emit(FailurePhase.QUALITY, FailureClass.QUALITY_REVIEW,
+          0, candidate.text.length());
+      run.batchMetrics.reject(candidate.valid);
       fragment.failureReason = candidate.valid ? "output-needs-review" : "invalid-output";
+    }
+  }
+
+  private static List<Caption> generateAndParse(ActiveRun run, TranslationRuntime runtime,
+      String prompt, int tokens, List<Caption> expected, AttemptDiagnostic diagnostic)
+      throws Exception {
+    String response;
+    try {
+      response = run.batchMetrics.generate(runtime, prompt, tokens,
+          diagnostic.stage == AttemptStage.REPAIR);
+    } catch (Exception | Error failure) {
+      FailureClass kind = failure instanceof CancellationException || failure instanceof InterruptedException
+          ? FailureClass.GENERATION_CANCELLED : failure instanceof OutOfMemoryError
+          ? FailureClass.GENERATION_MEMORY : failure instanceof LinkageError
+          ? FailureClass.GENERATION_LINKAGE : failure instanceof Error
+          ? FailureClass.GENERATION_ERROR : FailureClass.GENERATION_EXCEPTION;
+      diagnostic.emit(FailurePhase.GENERATION, kind, -1, -1);
+      throw failure;
+    }
+    diagnostic.outputBucket = lengthBucket(response == null ? -1 : response.length());
+    List<Caption> captions = parseStrictResponse(response, expected, diagnostic);
+    diagnostic.flushParseFailures();
+    return captions;
+  }
+
+  enum AttemptStage { INITIAL, SINGLETON, REPAIR }
+  enum FailurePhase { GENERATION, PARSE, QUALITY }
+  enum FailureClass {
+    GENERATION_CANCELLED, GENERATION_MEMORY, GENERATION_LINKAGE, GENERATION_ERROR, GENERATION_EXCEPTION,
+    NULL_RESPONSE, EMPTY_RESPONSE, RESPONSE_TOO_LONG, ROOT_NOT_ARRAY, ITEM_NOT_OBJECT,
+    FIELD_NOT_STRING, DUPLICATE_FIELD, UNKNOWN_FIELD, MISSING_FIELD, UNKNOWN_ID,
+    TOO_MANY_ITEMS, ID_ORDER, DUPLICATE_ID, ITEM_COUNT, MALFORMED_JSON, TRAILING_CONTENT,
+    BLANK_TEXT, TEXT_TOO_LONG, INVALID_UNICODE, CHAT_DELIMITER, CONTROL_CHARACTER,
+    IMPLAUSIBLE_LENGTH, TOTAL_TEXT_TOO_LONG, QUALITY_REVIEW
+  }
+
+  // UTF-16 length buckets: -1 unknown, 0 empty, then upper bounds; 65537 means >65536.
+  // Constant work, no copies or scans of prompts/responses for diagnostics.
+  static int lengthBucket(int length) {
+    if (length <= 0) return length < 0 ? -1 : 0;
+    if (length <= 32) return 32;
+    if (length <= 128) return 128;
+    if (length <= 512) return 512;
+    if (length <= 2048) return 2048;
+    if (length <= 8192) return 8192;
+    if (length <= 65536) return 65536;
+    return 65537;
+  }
+
+  /** One generation's bounded metadata only; no caption identities or text are retained. */
+  static final class AttemptDiagnostic {
+    final Consumer<String> sink;
+    final int batch, ordinal, group, promptBucket, tokens;
+    final AttemptStage stage;
+    // At most one per-item rejection plus one envelope failure. Allocated only on failure.
+    FailureClass[] parseFailures;
+    int[] textBuckets;
+    int outputBucket = -1;
+    int actual = -1; // Unknown until the complete array has been read; never a partial count.
+
+    AttemptDiagnostic(Consumer<String> sink, int batch, int ordinal, AttemptStage stage,
+        int group, int promptLength, int tokens) {
+      this.sink = sink;
+      this.batch = batch;
+      this.ordinal = ordinal;
+      this.stage = stage;
+      this.group = group;
+      this.promptBucket = lengthBucket(promptLength);
+      this.tokens = tokens;
+    }
+
+    void reject(FailureClass failure, int item, int textLength) {
+      if (parseFailures == null) {
+        parseFailures = new FailureClass[group + 1];
+        textBuckets = new int[group + 1];
+      }
+      int slot = item < 0 ? group : item;
+      parseFailures[slot] = failure;
+      textBuckets[slot] = lengthBucket(textLength);
+    }
+
+    void flushParseFailures() {
+      if (parseFailures == null) return;
+      for (int slot = 0; slot <= group; slot++) {
+        if (parseFailures[slot] != null) emitBucket(FailurePhase.PARSE, parseFailures[slot],
+            slot == group ? -1 : slot, textBuckets[slot]);
+      }
+    }
+
+    void emit(FailurePhase phase, FailureClass failure, int item, int textLength) {
+      emitBucket(phase, failure, item, lengthBucket(textLength));
+    }
+
+    private void emitBucket(FailurePhase phase, FailureClass failure, int item, int textBucket) {
+      try {
+        sink.accept("batch=" + batch + " attempt=" + ordinal + " stage=" + stage
+            + " phase=" + phase + " failure=" + failure + " group=" + group + " item=" + item
+            + " promptBucket=" + promptBucket + " outputBucket=" + outputBucket
+            + " textBucket=" + textBucket + " tokens=" + tokens
+            + " expected=" + group + " actual=" + actual);
+      } catch (RuntimeException | OutOfMemoryError unavailableLogger) {
+        // Best effort even on memory failure; never replace the original outcome.
+      }
     }
   }
 
   private static void requirePromptCapacity(String prompt, int outputTokens) throws TranslationFailure {
     if (!fitsPromptCapacity(prompt, outputTokens)) {
       throw invalidRequest("A translation group exceeds the model context budget.");
+    }
+  }
+
+  private static void logBatchMetrics(Map<String, Object> metrics) {
+    try {
+      Log.i(LOG_TAG, "Translation batch metrics: " + metrics);
+    } catch (RuntimeException unavailableLogger) {
+      // Diagnostics must not alter acceptance, checkpoints, or terminal delivery.
     }
   }
 
@@ -748,6 +912,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   }
 
   private TranslationCheckpointStore openCheckpoints(ActiveRun run) throws TranslationFailure {
+    // A diagnostic run must neither restore accepted text nor replace normal checkpoints.
+    // Returning no store disables every read and write, including fragment repairs.
+    if (run.benchmarkNoCheckpoints) return null;
     if (!Boolean.TRUE.equals(run.rawRequest.get("reuseCheckpoints"))) return null;
     File directory = environment.prepareCheckpointDirectory();
     if (directory == null) return null;
@@ -1121,20 +1288,29 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       String response,
       List<Caption> expectedCaptions
   ) throws TranslationFailure {
+    return parseStrictResponse(response, expectedCaptions, null);
+  }
+
+  private static List<Caption> parseStrictResponse(String response, List<Caption> expectedCaptions,
+      AttemptDiagnostic diagnostic) throws TranslationFailure {
     if (response == null || response.isEmpty() || response.length() > MAX_OUTPUT_CHARACTERS) {
-      return emptyFallback(expectedCaptions);
+      return diagnosticFallback(expectedCaptions, diagnostic, response == null ? FailureClass.NULL_RESPONSE
+          : response.isEmpty() ? FailureClass.EMPTY_RESPONSE : FailureClass.RESPONSE_TOO_LONG);
     }
     LinkedHashMap<String, Caption> expectedById = new LinkedHashMap<>();
     for (Caption expected : expectedCaptions) expectedById.put(expected.id, expected);
     LinkedHashMap<String, Caption> accepted = new LinkedHashMap<>();
     int totalCharacters = 0;
     int itemCount = 0;
+    boolean arrayEnded = false;
     try (JsonReader reader = new JsonReader(new StringReader(response))) {
       reader.setStrictness(Strictness.STRICT);
-      if (reader.peek() != JsonToken.BEGIN_ARRAY) return emptyFallback(expectedCaptions);
+      if (reader.peek() != JsonToken.BEGIN_ARRAY)
+        return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.ROOT_NOT_ARRAY);
       reader.beginArray();
       while (reader.hasNext()) {
-        if (reader.peek() != JsonToken.BEGIN_OBJECT) return emptyFallback(expectedCaptions);
+        if (reader.peek() != JsonToken.BEGIN_OBJECT)
+          return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.ITEM_NOT_OBJECT);
         reader.beginObject();
         String id = null;
         String text = null;
@@ -1144,48 +1320,70 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           fields += 1;
           if ("id".equals(field) && id == null) {
             if (reader.peek() == JsonToken.STRING) id = reader.nextString();
-            else return emptyFallback(expectedCaptions);
+            else return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.FIELD_NOT_STRING);
           } else if ("text".equals(field) && text == null) {
             if (reader.peek() == JsonToken.STRING) text = reader.nextString();
-            else return emptyFallback(expectedCaptions);
+            else return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.FIELD_NOT_STRING);
           } else {
-            return emptyFallback(expectedCaptions);
+            return diagnosticFallback(expectedCaptions, diagnostic,
+                "id".equals(field) || "text".equals(field)
+                    ? FailureClass.DUPLICATE_FIELD : FailureClass.UNKNOWN_FIELD);
           }
         }
         reader.endObject();
         itemCount += 1;
-        if (fields != 2 || id == null || text == null || !expectedById.containsKey(id)
-            || itemCount > expectedCaptions.size() || !expectedCaptions.get(itemCount - 1).id.equals(id)
-            || accepted.containsKey(id)) {
-          return emptyFallback(expectedCaptions);
-        }
+        if (fields != 2 || id == null || text == null)
+          return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.MISSING_FIELD);
+        if (!expectedById.containsKey(id))
+          return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.UNKNOWN_ID);
+        if (itemCount > expectedCaptions.size())
+          return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.TOO_MANY_ITEMS);
+        if (accepted.containsKey(id))
+          return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.DUPLICATE_ID);
+        if (!expectedCaptions.get(itemCount - 1).id.equals(id))
+          return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.ID_ORDER);
         String normalized = text.trim();
         Caption expected = expectedById.get(id);
-        if (isBlankText(normalized)
-            || textCharacterCount(normalized) > MAX_OUTPUT_TEXT_CHARACTERS
-            || !TranslationText.wellFormed(normalized)
-            || normalized.contains("<|") || containsDisallowedControlCharacter(normalized)
-            || !TranslationOutputQuality.isPlausibleCueTranslation(expected.text, normalized)) {
+        FailureClass textFailure = isBlankText(normalized) ? FailureClass.BLANK_TEXT
+            : textCharacterCount(normalized) > MAX_OUTPUT_TEXT_CHARACTERS ? FailureClass.TEXT_TOO_LONG
+            : !TranslationText.wellFormed(normalized) ? FailureClass.INVALID_UNICODE
+            : normalized.contains("<|") ? FailureClass.CHAT_DELIMITER
+            : containsDisallowedControlCharacter(normalized) ? FailureClass.CONTROL_CHARACTER
+            : !TranslationOutputQuality.isPlausibleCueTranslation(expected.text, normalized)
+                ? FailureClass.IMPLAUSIBLE_LENGTH : null;
+        if (textFailure != null) {
+          if (diagnostic != null) diagnostic.reject(textFailure, itemCount - 1, normalized.length());
           accepted.put(id, new Caption(id, "", false));
           continue;
         }
         totalCharacters += textCharacterCount(normalized);
-        if (totalCharacters > MAX_TOTAL_OUTPUT_CHARACTERS) return emptyFallback(expectedCaptions);
+        if (totalCharacters > MAX_TOTAL_OUTPUT_CHARACTERS)
+          return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.TOTAL_TEXT_TOO_LONG);
         accepted.put(id, new Caption(id, normalized, true));
       }
       reader.endArray();
-      if (reader.peek() != JsonToken.END_DOCUMENT) return emptyFallback(expectedCaptions);
+      arrayEnded = true;
+      if (diagnostic != null) diagnostic.actual = itemCount;
+      if (reader.peek() != JsonToken.END_DOCUMENT)
+        return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.TRAILING_CONTENT);
     } catch (IOException | IllegalStateException error) {
-      return emptyFallback(expectedCaptions);
+      return diagnosticFallback(expectedCaptions, diagnostic,
+          arrayEnded ? FailureClass.TRAILING_CONTENT : FailureClass.MALFORMED_JSON);
     }
     if (itemCount != expectedCaptions.size() || accepted.size() != expectedCaptions.size()) {
-      return emptyFallback(expectedCaptions);
+      return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.ITEM_COUNT);
     }
     List<Caption> resolved = new ArrayList<>(expectedCaptions.size());
     for (Caption expected : expectedCaptions) {
       resolved.add(accepted.get(expected.id));
     }
     return resolved;
+  }
+
+  private static List<Caption> diagnosticFallback(List<Caption> expected,
+      AttemptDiagnostic diagnostic, FailureClass failure) {
+    if (diagnostic != null) diagnostic.reject(failure, -1, -1);
+    return emptyFallback(expected);
   }
 
   static Caption parseSingleCaptionRetryResponse(String response, Caption expected)
@@ -1239,7 +1437,6 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     }
     result.put("operations", operations);
     result.put("durationMs", durationMs);
-    result.put("backend", "cpu");
     result.put("offline", true);
     result.put("modelId", OfficialQwenModelVerifier.MODEL_ID);
     result.put("promptContract", PROMPT_CONTRACT);
@@ -1592,6 +1789,11 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   }
 
   private static final class ActiveRun {
+    int diagnosticAttempt;
+    boolean benchmarkNoCheckpoints;
+    TranslationBackendSelection.Preference backendPreference;
+    TranslationBatchMetrics batchMetrics;
+    final List<Map<String, Object>> metrics = new ArrayList<>();
     final String modelLocation;
     final Map<String, ?> rawRequest;
     final Callback callback;

@@ -32,6 +32,8 @@ export type NaturalCaptionTranslationOperation = {
 
 export type NaturalCaptionTranslationRequest = {
   operations: NaturalCaptionTranslationOperation[];
+  runtimeBackend?: 'auto' | 'cpu' | 'gpu';
+  benchmarkNoCheckpoints?: boolean;
   reuseCheckpoints?: boolean;
   repairUnusableOutputs?: boolean;
 };
@@ -51,11 +53,32 @@ export type NaturalCaptionTranslationOperationResult = {
   batchCount: number;
 };
 
+export type NaturalCaptionTranslationBackend = 'cpu' | 'gpu' | 'none' | 'unknown';
+
+export type NaturalCaptionTranslationBatchMetrics = {
+  batchIndex: number;
+  captionCount: number;
+  backend: NaturalCaptionTranslationBackend;
+  initializationFallback: boolean;
+  durationMs: number;
+  initializationMs: number;
+  generationMs: number;
+  attempts: number;
+  repairAttempts: number;
+  generationFailures: number;
+  invalidOutputs: number;
+  qualityRejections: number;
+  outcome: 'completed' | 'cancelled' | 'failed';
+};
+
 export type NaturalCaptionTranslationResult = {
   captions: NaturalCaptionTranslationOutput[];
   operations: NaturalCaptionTranslationOperationResult[];
   durationMs: number;
-  backend: 'cpu';
+  backend: NaturalCaptionTranslationBackend;
+  initializationFallback: boolean;
+  benchmarkNoCheckpoints: boolean;
+  batchMetrics: NaturalCaptionTranslationBatchMetrics[];
   offline: true;
   modelId: typeof TRANSLATION_RELEASE_CONTRACT.id;
   promptContract: typeof TRANSLATION_RELEASE_CONTRACT.promptContract;
