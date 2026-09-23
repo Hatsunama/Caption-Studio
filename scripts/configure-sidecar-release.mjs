@@ -156,9 +156,11 @@ export async function checkPublishedRelease(version, versionCode, {
       throw new Error(`Release ${release.tag_name} has no valid publication date.`);
     }
   }
+  const compatiblePublished = published.filter((release) =>
+    compareVersions(release.tag_name.slice(1), releaseContract.minimumVersion) >= 0);
   const publishedCodes = [];
-  // Bound RAM and disk usage to one historical APK at a time.
-  for (const release of published) {
+  // The minimum version starts this package lineage; older APKs belong to a different app.
+  for (const release of compatiblePublished) {
     const entry = await resolveRelease(release);
     if (entry !== null) publishedCodes.push(entry);
   }

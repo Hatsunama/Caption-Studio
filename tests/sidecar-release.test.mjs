@@ -27,12 +27,12 @@ test('release keeps the expected Android identity', async () => {
       },
     }));
     const source = JSON.parse(readFileSync(configPath, 'utf8'));
-    const configured = configureSidecarApp(source, '1.4.86', 98);
+    const configured = configureSidecarApp(source, '1.4.88', 100);
     assert.equal(configured.expo.name, 'Caption Studio');
     assert.equal(configured.expo.android.package, productContract.android.release.package);
     assert.equal(configured.expo.android.package, 'com.xmilo_at_your_side.caption_studio');
-    assert.equal(configured.expo.android.versionCode, 98);
-    assert.equal(configured.expo.version, '1.4.86');
+    assert.equal(configured.expo.android.versionCode, 100);
+    assert.equal(configured.expo.version, '1.4.88');
     assert.equal(configured.expo.scheme, productContract.android.release.scheme);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -41,7 +41,7 @@ test('release keeps the expected Android identity', async () => {
 
 test('release rejects legacy package IDs', () => {
   for (const packageId of ['com.hatsunama.captionstudio', 'com.hatsunama.captionstudio.fixed']) {
-    assert.throws(() => configureSidecarApp({ expo: { android: { package: packageId } } }, '1.4.86', 98),
+    assert.throws(() => configureSidecarApp({ expo: { android: { package: packageId } } }, '1.4.88', 100),
       /unexpected Android package/);
   }
 });
@@ -135,20 +135,25 @@ test('historical releases use actual APK identity and exclude only known old pac
   }), /APK unavailable/);
 });
 
-test('ordering includes prereleases, all historical codes, and draft tag collisions', async () => {
-  const releases = [published(), { ...published(false), tag_name: 'v1.4.85' }];
+test('ordering includes this package lineage, prereleases, and draft tag collisions', async () => {
+  const releases = [{ ...published(), tag_name: 'v1.4.88' },
+    { ...published(false), tag_name: 'v1.4.86' }];
+  const resolvedTags = [];
   const options = {
     listReleases: async () => releases,
-    resolveRelease: async (release) => ({ tag: release.tag_name,
-      versionCode: release.tag_name === 'v1.4.85' ? 150 : 98 }),
+    resolveRelease: async (release) => {
+      resolvedTags.push(release.tag_name);
+      return { tag: release.tag_name, versionCode: 150 };
+    },
   };
-  await assert.rejects(checkPublishedRelease('1.4.87', 150, options), /must exceed.*150/);
-  await checkPublishedRelease('1.4.87', 151, options);
-  await assert.rejects(checkPublishedRelease('1.4.84', 151, options));
-  await assert.rejects(checkPublishedRelease('1.4.86', 151, options), /already exists/);
-  releases.push({ ...published(), tag_name: 'v1.4.87', draft: true });
-  await assert.rejects(checkPublishedRelease('1.4.87', 151, options), /already exists/);
-  await assert.rejects(checkPublishedRelease('1.4.88', 151, {
+  await assert.rejects(checkPublishedRelease('1.4.89', 150, options), /must exceed.*150/);
+  await checkPublishedRelease('1.4.89', 151, options);
+  assert.deepEqual([...new Set(resolvedTags)], ['v1.4.88']);
+  await assert.rejects(checkPublishedRelease('1.4.87', 151, options), /must be at least/);
+  await assert.rejects(checkPublishedRelease('1.4.88', 151, options), /already exists/);
+  releases.push({ ...published(), tag_name: 'v1.4.89', draft: true });
+  await assert.rejects(checkPublishedRelease('1.4.89', 151, options), /already exists/);
+  await assert.rejects(checkPublishedRelease('1.4.90', 151, {
     listReleases: async () => { throw new Error('API failure'); },
   }), /API failure/);
 });
