@@ -191,7 +191,7 @@ async function downloadModel(
   if (await verifyModelFile(modelFile, model.downloadBytes, model.sha256)) {
     return modelFile;
   }
-  const reservation = await resumableModelDownloadReservation(modelFile, model);
+  const reservation = await resumableModelDownloadReservation(modelFile, model, (uri) => CaptionMedia.sha256(uri));
   await requireFreeSpace(
     reservation + MODEL_REPLACEMENT_HEADROOM_BYTES,
     `replace the ${model.label} transcription model safely`,
@@ -244,7 +244,7 @@ async function ensureVadModel(
   modelDirectory.create({ idempotent: true, intermediates: true });
   const modelFile = new File(modelDirectory, VAD_MODEL.fileName);
   if (await verifyModelFile(modelFile, VAD_MODEL.downloadBytes, VAD_MODEL.sha256)) return modelFile;
-  const reservation = await resumableModelDownloadReservation(modelFile, VAD_MODEL);
+  const reservation = await resumableModelDownloadReservation(modelFile, VAD_MODEL, (uri) => CaptionMedia.sha256(uri));
   await requireFreeSpace(
     reservation + MODEL_REPLACEMENT_HEADROOM_BYTES,
     'replace the offline silence-detector model safely',
@@ -334,11 +334,11 @@ async function modelReplacementReservation(
 ) {
   const { downloadBytes: expectedBytes, sha256: expectedSha256 } = descriptor;
   if (!file.exists || file.size !== expectedBytes) {
-    return resumableModelDownloadReservation(file, descriptor);
+    return resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri));
   }
   const marker = new File(file.parentDirectory, `${file.name}.sha256`);
   if (marker.exists && modelVerificationMarkerMatches(await marker.text(), modelFileIdentity(file), expectedSha256)) return 0;
-  return resumableModelDownloadReservation(file, descriptor);
+  return resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri));
 }
 
 export async function transcribeVideoLocally(options: {

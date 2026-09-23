@@ -7,6 +7,10 @@ const REQUIRED_GRADLE_DISTRIBUTION_SHA256 = '60ea723356d81263e8002fec0fcf9e2b0ee
 const PRODUCT_CONTRACT = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'product-contract.json'), 'utf8'));
 const PRODUCTION_ANDROID_PACKAGE = PRODUCT_CONTRACT.android.sourcePackage;
 const FIXED_ANDROID_PACKAGE = PRODUCT_CONTRACT.android.release.package;
+const EXPECTED_ANDROID_PACKAGE = 'com.xmilo_at_your_side.caption_studio';
+if (PRODUCTION_ANDROID_PACKAGE !== EXPECTED_ANDROID_PACKAGE || FIXED_ANDROID_PACKAGE !== EXPECTED_ANDROID_PACKAGE) {
+  throw new Error(`Product contract Android application id must be ${EXPECTED_ANDROID_PACKAGE}.`);
+}
 const APPROVED_ANDROID_PACKAGES = new Set([
   PRODUCTION_ANDROID_PACKAGE,
   FIXED_ANDROID_PACKAGE,
@@ -34,6 +38,11 @@ function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.
   );
   const appConfig = JSON.parse(readRequired(path.join(projectRoot, 'app.json')));
   const expectedAndroidPackage = resolveExpectedAndroidPackage();
+  const defaultConfig = findNamedBlock(appBuild, 'defaultConfig', 'Android default configuration');
+  const applicationId = defaultConfig.match(/\bapplicationId\s*(?:=\s*)?["']([^"']+)["']/)?.[1];
+  if (applicationId !== expectedAndroidPackage || /\bapplicationIdSuffix\b/.test(appBuild)) {
+    throw new Error(`Generated Android application id must be ${expectedAndroidPackage} without a suffix.`);
+  }
 
   requireText(appBuild, "findProperty('CAPTION_STUDIO_RELEASE_STORE_FILE')", 'release keystore property');
   requireText(appBuild, "findProperty('CAPTION_STUDIO_RELEASE_STORE_PASSWORD')", 'release keystore password property');

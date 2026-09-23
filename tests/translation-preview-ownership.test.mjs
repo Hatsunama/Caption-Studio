@@ -75,6 +75,8 @@ test('validation, retry, checkpoint restore and terminal stages retain truthful 
   assert.equal(service.captionTranslationProgress({ stage: 'validating-output', processedItems: 8, totalItems: 8 }).progress, 0.99);
   assert.equal(service.captionTranslationProgress({ stage: 'translating', processedItems: NaN, totalItems: 0 }).progress, null);
   assert.ok(service.captionTranslationProgress({ stage: 'verifying-model', percent: 100 }).progress < 1);
+  assert.equal(service.captionTranslationProgress({ stage: 'verifying-model', processedItems: 0, totalItems: 55, percent: 58 }).progress, 0.58);
+  assert.equal(service.captionTranslationProgress({ stage: 'loading-model', processedItems: 0, totalItems: 55 }).progress, null);
 });
 
 test('model waits for decoder release and failure restores exactly once', async () => {

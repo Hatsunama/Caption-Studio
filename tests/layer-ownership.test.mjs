@@ -106,7 +106,7 @@ test('model transfer, lifecycle, and provider release truth stay in their owning
   const transfer = readFileSync(join(root, 'src', 'services', 'verified-model-download.ts'), 'utf8');
   const lifecycle = readFileSync(join(root, 'src', 'hooks', 'use-foreground-operation.ts'), 'utf8');
   const editor = readFileSync(join(root, 'src', 'app', 'editor.tsx'), 'utf8');
-  assert.match(transfer, /DownloadTask\.fromSavable/);
+  assert.match(transfer, /matchesModelContentRange/);
   assert.match(transfer, /verifySha256/);
   assert.doesNotMatch(transfer, /\bAppState\b|\bAlert\.alert\(/);
   assert.match(lifecycle, /AppState\.addEventListener/);

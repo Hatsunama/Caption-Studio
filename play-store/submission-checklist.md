@@ -6,7 +6,8 @@ Verified against Google Play requirements on August 27, 2026.
 
 - Upload `android/app/build/outputs/bundle/release/app-release.aab`, not the universal APK.
 - Enroll in Play App Signing. To keep Play and GitHub APK installs update-compatible, securely provide the existing Caption Studio production key as the Play app-signing key, then create and protect a separate upload key. If Play creates a different app-signing key instead, distribute Play-signed off-store APKs thereafter.
-- Keep package name `com.hatsunama.captionstudio` and use a new monotonically increasing version code for every upload.
+- Use package name `com.xmilo_at_your_side.caption_studio` and a new monotonically increasing version code for every upload of that package. This package requires its own Play listing; it cannot update a listing for `com.hatsunama.captionstudio` or `com.hatsunama.captionstudio.fixed`.
+- Keep existing apps installed and retain their data. Their private drafts do not migrate to the new package, even when the same signing key is used. Do not uninstall, clear app data, or rotate signing keys to work around the package change.
 - A successful current `Android commercial release gate` workflow proves the generated APK targets API 36, passes 16 KB ZIP alignment, and has no 64-bit ELF `LOAD` segment aligned below `2**14`. Do not claim a local or uploaded bundle is 16 KB compatible unless that exact source revision passes this workflow and Play Console's native-library report.
 - Review Play Console's automated pre-launch, native-library, permission, and device-compatibility reports before rollout.
 

@@ -54,7 +54,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final int MAX_TOTAL_OUTPUT_CHARACTERS = 16_000;
   static final String PROMPT_CONTRACT = GeneratedProductContract.PROMPT_CONTRACT;
   // Bump when runtime settings or response acceptance change; old accepted text is not evidence of validity.
-  static final String CHECKPOINT_PROFILE = "v6;litertlm-0.16.1;cpu;4096;128-1024;topk1;topp1;temperature0;seed0;microbatch8-recursive-isolation;strict-boundary";
+  static final String CHECKPOINT_PROFILE = "v7;litertlm-0.16.1;cpu;4096;128-1024;topk1;topp1;temperature0;seed0;microbatch8-recursive-isolation;strict-boundary;bounded-neighbor-context";
 
   static final String INVALID_REQUEST = "E_TRANSLATION_INVALID_REQUEST";
   static final String BUSY = "E_TRANSLATION_BUSY";
@@ -312,7 +312,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         );
         List<PreparedCue> preparedCues = new ArrayList<>();
         List<FragmentWork> pendingFragments = new ArrayList<>();
-        for (Caption source : request.captions) {
+        String batchKey = checkpointBatchKey(request, batchIndex);
+        for (int cueIndex = 0; cueIndex < request.captions.size(); cueIndex++) {
+          Caption source = request.captions.get(cueIndex);
           checkCancelled(run);
           String inputFailure = sourceFailure(source.text);
           if (inputFailure != null) {
@@ -332,10 +334,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           }
           PreparedCue preparedCue = new PreparedCue(source, parts);
           preparedCues.add(preparedCue);
-          String cueKey = TranslationCheckpointStore.key(
-              OfficialQwenModelVerifier.EXPECTED_MODEL_SHA256 + "\n" + CHECKPOINT_PROFILE
-                  + "\n" + SYSTEM_INSTRUCTION + "\n" + request.sourceLanguage
-                  + "\n" + request.targetLanguage + "\n" + source.text);
+          String cueKey = TranslationCheckpointStore.key(batchKey + "\n" + cueIndex);
+          String cueBefore = neighboringContext(request.captions, cueIndex, request.contextBefore, true);
+          String cueAfter = neighboringContext(request.captions, cueIndex, request.contextAfter, false);
           for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
             checkCancelled(run);
             String part = parts.get(partIndex);
@@ -352,11 +353,21 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
               String inferenceId = parts.size() == 1
                   ? source.id
                   : "f" + (pendingFragments.size() + 1);
+              String partBefore = cueBefore;
+              for (int index = 0; index < partIndex; index++) {
+                partBefore = extendContext(partBefore, parts.get(index), true);
+              }
+              String partAfter = cueAfter;
+              for (int index = parts.size() - 1; index > partIndex; index--) {
+                partAfter = extendContext(partAfter, parts.get(index), false);
+              }
               pendingFragments.add(new FragmentWork(
                   preparedCue,
                   partIndex,
                   new Caption(inferenceId, part),
-                  checkpointKey
+                  checkpointKey,
+                  partBefore,
+                  partAfter
               ));
             }
           }
@@ -374,6 +385,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
                 runtime,
                 checkpoints,
                 pendingFragments.subList(offset, end),
+                preparedCues,
                 request.sourceLanguage,
                 request.targetLanguage,
                 contextBefore,
@@ -454,6 +466,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       TranslationRuntime runtime,
       TranslationCheckpointStore checkpoints,
       List<FragmentWork> fragments,
+      List<PreparedCue> batchCues,
       String sourceLanguage,
       String targetLanguage,
       String contextBefore,
@@ -473,22 +486,24 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         sourceLanguage,
         targetLanguage,
         requestCaptions,
-        contextBefore,
-        contextAfter
+        fragments.get(0).contextBefore,
+        fragments.get(fragments.size() - 1).contextAfter
     );
     String prompt = buildUserPrompt(request);
     int outputTokens = outputTokenLimit(requestCaptions, false);
     if (!fitsPromptCapacity(prompt, outputTokens) && fragments.size() > 1) {
       int midpoint = fragments.size() / 2;
       translateFragmentGroup(run, runtime, checkpoints, fragments.subList(0, midpoint),
+          batchCues,
           sourceLanguage, targetLanguage, contextBefore, contextAfter, repairOutputs, failureIsolation,
           completedBeforeBatch, totalCaptions, batchIndex, totalBatches);
       translateFragmentGroup(run, runtime, checkpoints, fragments.subList(midpoint, fragments.size()),
+          batchCues,
           sourceLanguage, targetLanguage, contextBefore, contextAfter, repairOutputs, failureIsolation,
           completedBeforeBatch, totalCaptions, batchIndex, totalBatches);
       return;
     }
-    if (!fitsPromptCapacity(prompt, outputTokens) && (!contextBefore.isEmpty() || !contextAfter.isEmpty())) {
+    if (!fitsPromptCapacity(prompt, outputTokens) && (!request.contextBefore.isEmpty() || !request.contextAfter.isEmpty())) {
       request = new ValidatedRequest(sourceLanguage, targetLanguage, requestCaptions, "", "");
       prompt = buildUserPrompt(request);
     }
@@ -496,8 +511,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     updateProgress(
         run,
         "translating",
-        sessionPercent(completedBeforeBatch + resolvedCueCount(fragments), totalCaptions),
-        completedBeforeBatch + resolvedCueCount(fragments),
+        sessionPercent(completedBeforeBatch + resolvedCueCount(batchCues), totalCaptions),
+        completedBeforeBatch + resolvedCueCount(batchCues),
         totalCaptions,
         batchIndex,
         totalBatches
@@ -519,25 +534,36 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         rejected.add(fragment);
       }
     }
+    updateProgress(
+        run,
+        "translating",
+        sessionPercent(completedBeforeBatch + resolvedCueCount(batchCues), totalCaptions),
+        completedBeforeBatch + resolvedCueCount(batchCues),
+        totalCaptions,
+        batchIndex,
+        totalBatches
+    );
     if (rejected.isEmpty()) return;
     checkCancelled(run);
     if (rejected.size() > 1) {
       int midpoint = rejected.size() / 2;
       translateFragmentGroup(run, runtime, checkpoints, rejected.subList(0, midpoint),
+          batchCues,
           sourceLanguage, targetLanguage, contextBefore, contextAfter, repairOutputs, true,
           completedBeforeBatch, totalCaptions, batchIndex, totalBatches);
       translateFragmentGroup(run, runtime, checkpoints, rejected.subList(midpoint, rejected.size()),
+          batchCues,
           sourceLanguage, targetLanguage, contextBefore, contextAfter, repairOutputs, true,
           completedBeforeBatch, totalCaptions, batchIndex, totalBatches);
       return;
     }
     FragmentWork fragment = rejected.get(0);
-    if (!repairOutputs || failureIsolation) return;
+    if (!repairOutputs) return;
     updateProgress(
         run,
         "validating-output",
-        sessionPercent(completedBeforeBatch + resolvedCueCount(fragments), totalCaptions),
-        completedBeforeBatch + resolvedCueCount(fragments),
+        sessionPercent(completedBeforeBatch + resolvedCueCount(batchCues), totalCaptions),
+        completedBeforeBatch + resolvedCueCount(batchCues),
         totalCaptions,
         batchIndex,
         totalBatches
@@ -546,11 +572,15 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         sourceLanguage,
         targetLanguage,
         List.of(fragment.requestCaption),
-        contextBefore,
-        contextAfter
+        fragment.contextBefore,
+        fragment.contextAfter
     );
     String retryPrompt = buildRetryPrompt(retry, 0);
     int retryTokens = outputTokenLimit(List.of(fragment.requestCaption), true);
+    if (!fitsPromptCapacity(retryPrompt, retryTokens)) {
+      retry = new ValidatedRequest(sourceLanguage, targetLanguage, List.of(fragment.requestCaption), "", "");
+      retryPrompt = buildRetryPrompt(retry, 0);
+    }
     requirePromptCapacity(retryPrompt, retryTokens);
     Caption candidate = parseSingleCaptionRetryResponse(
         runtime.translate(retryPrompt, retryTokens),
@@ -579,12 +609,12 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         + outputTokens + 128 <= MAX_ESTIMATED_REQUEST_TOKENS;
   }
 
-  private static int resolvedCueCount(List<FragmentWork> fragments) {
-    Map<PreparedCue, Boolean> resolved = new LinkedHashMap<>();
-    for (FragmentWork fragment : fragments) {
-      if (fragment.preparedCue.isResolved()) resolved.put(fragment.preparedCue, Boolean.TRUE);
+  private static int resolvedCueCount(List<PreparedCue> cues) {
+    int resolved = 0;
+    for (PreparedCue cue : cues) {
+      if (cue.isProgressComplete()) resolved++;
     }
-    return resolved.size();
+    return resolved;
   }
 
   private static String boundedContext(String context, boolean keepTail) {
@@ -596,9 +626,52 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     return keepTail ? context.substring(boundary) : context.substring(0, boundary);
   }
 
+  static String checkpointBatchKey(ValidatedRequest request, int batchIndex) {
+    // Structured fields avoid delimiter collisions. IDs are transport labels, not context.
+    // Only the digest is persisted; never log this identity or its source material.
+    JsonArray identity = new JsonArray();
+    identity.add(OfficialQwenModelVerifier.EXPECTED_MODEL_SHA256);
+    identity.add(CHECKPOINT_PROFILE);
+    identity.add(SYSTEM_INSTRUCTION);
+    identity.add(request.sourceLanguage);
+    identity.add(request.targetLanguage);
+    identity.add(batchIndex);
+    identity.add(boundedContext(request.contextBefore, true));
+    identity.add(boundedContext(request.contextAfter, false));
+    JsonArray sources = new JsonArray();
+    for (Caption caption : request.captions) {
+      sources.add(TranslationCheckpointStore.key(caption.text));
+    }
+    identity.add(sources);
+    return TranslationCheckpointStore.key(identity.toString());
+  }
+
+  private static String extendContext(String context, String neighbor, boolean before) {
+    String bounded = boundedContext(neighbor, before);
+    if (bounded.isEmpty()) return context;
+    if (context.isEmpty()) return bounded;
+    return boundedContext(before ? context + "\n" + bounded : bounded + "\n" + context, before);
+  }
+
+  private static String neighboringContext(List<Caption> captions, int index, String outer, boolean before) {
+    String context = boundedContext(outer, before);
+    if (before) {
+      for (int neighbor = 0; neighbor < index; neighbor++) {
+        context = extendContext(context, captions.get(neighbor).text, true);
+      }
+    } else {
+      for (int neighbor = captions.size() - 1; neighbor > index; neighbor--) {
+        context = extendContext(context, captions.get(neighbor).text, false);
+      }
+    }
+    return context;
+  }
+
   static String buildRetryPrompt(ValidatedRequest request, int index) {
     ValidatedRequest single = new ValidatedRequest(request.sourceLanguage, request.targetLanguage,
-        List.of(request.captions.get(index)), request.contextBefore, request.contextAfter);
+        List.of(request.captions.get(index)),
+        neighboringContext(request.captions, index, request.contextBefore, true),
+        neighboringContext(request.captions, index, request.contextAfter, false));
     JsonObject payload = com.google.gson.JsonParser.parseString(buildUserPrompt(single)).getAsJsonObject();
     payload.addProperty("retry", true);
     return escapePrompt(payload.toString());
@@ -1377,19 +1450,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       return new PreparedCue(caption);
     }
 
-    boolean isResolved() {
+    boolean isProgressComplete() {
       if (completed != null) return true;
-      for (int index = 0; index < outputs.size(); index++) {
-        if (outputs.get(index) != null) continue;
-        boolean terminal = false;
-        for (FragmentWork fragment : fragments) {
-          if (fragment.partIndex == index && fragment.failureReason != null) {
-            terminal = true;
-            break;
-          }
-        }
-        if (!terminal) return false;
-      }
+      for (String output : outputs) if (output == null) return false;
       return true;
     }
 
@@ -1419,18 +1482,24 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     final int partIndex;
     final Caption requestCaption;
     final String checkpointKey;
+    final String contextBefore;
+    final String contextAfter;
     String failureReason;
 
     FragmentWork(
         PreparedCue preparedCue,
         int partIndex,
         Caption requestCaption,
-        String checkpointKey
+        String checkpointKey,
+        String contextBefore,
+        String contextAfter
     ) {
       this.preparedCue = preparedCue;
       this.partIndex = partIndex;
       this.requestCaption = requestCaption;
       this.checkpointKey = checkpointKey;
+      this.contextBefore = contextBefore;
+      this.contextAfter = contextAfter;
       preparedCue.fragments.add(this);
     }
 

@@ -44,10 +44,11 @@ public final class TranslationCheckpointResumeTest {
     FakeFactory resumed = new FakeFactory(false);
     try (NaturalCaptionTranslator worker = worker(environment, resumed)) {
       Result result = new Result();
-      worker.start(model.getAbsolutePath(), request(true), result);
+      worker.start(model.getAbsolutePath(), request(true, "renamed-one", "renamed-two"), result);
       result.await();
       assertNull(result.error);
       assertEquals(2, ((List<?>) result.value.get("captions")).size());
+      assertEquals("renamed-one", ((Map<?, ?>) ((List<?>) result.value.get("captions")).get(0)).get("id"));
       assertEquals(1, resumed.generated.get());
       assertEquals(1, resumed.opened.get());
     }
@@ -75,13 +76,46 @@ public final class TranslationCheckpointResumeTest {
   }
 
   private Map<String, Object> request(boolean reuse) {
+    return request(reuse, "one", "two");
+  }
+
+  private Map<String, Object> request(boolean reuse, String firstId, String secondId) {
     Map<String, Object> request = new LinkedHashMap<>();
     request.put("reuseCheckpoints", reuse);
     request.put("operations", List.of(Map.of("id", "translate", "sourceLanguage", "en", "targetLanguage", "zh-Hans",
         "batches", List.of(
-            Map.of("captions", List.of(Map.of("id", "one", "text", "Hello")), "contextAfter", "World"),
-            Map.of("captions", List.of(Map.of("id", "two", "text", "World")), "contextBefore", "Hello")))));
+            Map.of("captions", List.of(Map.of("id", firstId, "text", "Hello")), "contextAfter", "World"),
+            Map.of("captions", List.of(Map.of("id", secondId, "text", "World")), "contextBefore", "Hello")))));
     return request;
+  }
+
+  @Test public void checkpointIdentityIncludesBoundedContextOrderedNeighborsAndBatchPosition() {
+    var captions = List.of(new NaturalCaptionTranslator.Caption("one", "Hello"),
+        new NaturalCaptionTranslator.Caption("two", "World"));
+    var original = new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", captions, "Before", "After");
+    String key = NaturalCaptionTranslator.checkpointBatchKey(original, 0);
+    assertNotEquals(key, NaturalCaptionTranslator.checkpointBatchKey(original, 1));
+    assertNotEquals(key, NaturalCaptionTranslator.checkpointBatchKey(
+        new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", captions, "Changed", "After"), 0));
+    assertNotEquals(key, NaturalCaptionTranslator.checkpointBatchKey(
+        new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", captions, "Before", "Changed"), 0));
+    assertNotEquals(key, NaturalCaptionTranslator.checkpointBatchKey(
+        new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans",
+            List.of(captions.get(0), new NaturalCaptionTranslator.Caption("two", "Changed")), "Before", "After"), 0));
+    assertNotEquals(key, NaturalCaptionTranslator.checkpointBatchKey(
+        new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans",
+            List.of(captions.get(1), captions.get(0)), "Before", "After"), 0));
+    assertEquals(key, NaturalCaptionTranslator.checkpointBatchKey(
+        new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans",
+            List.of(new NaturalCaptionTranslator.Caption("new-one", "Hello"),
+                new NaturalCaptionTranslator.Caption("new-two", "World")), "Before", "After"), 0));
+    String bounded = "\uD83D\uDE00".repeat(128);
+    assertEquals(NaturalCaptionTranslator.checkpointBatchKey(
+        new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", captions, bounded, bounded), 0),
+        NaturalCaptionTranslator.checkpointBatchKey(
+            new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", captions,
+                "discarded prefix" + bounded, bounded + "discarded suffix"), 0));
+    assertTrue(NaturalCaptionTranslator.CHECKPOINT_PROFILE.startsWith("v7;"));
   }
 
   private static final class Result implements NaturalCaptionTranslator.Callback {

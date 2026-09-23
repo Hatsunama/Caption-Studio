@@ -37,6 +37,10 @@ if (process.argv.includes('--github-env')) {
 function validate(value) {
   if (value?.schemaVersion !== 1) throw new Error('Unsupported product contract version.');
   const release = value.android?.release;
+  const expectedAndroidPackage = 'com.xmilo_at_your_side.caption_studio';
+  if (value.android?.sourcePackage !== expectedAndroidPackage || release?.package !== expectedAndroidPackage) {
+    throw new Error(`Caption Studio Android application id must be ${expectedAndroidPackage}.`);
+  }
   const translation = value.translation;
   for (const [label, candidate] of Object.entries({
     repository: value.repository,

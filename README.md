@@ -4,6 +4,10 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 ## Install it on an Android phone
 
+The expected Android application ID for source and release builds is `com.xmilo_at_your_side.caption_studio`. It installs in a separate sandbox from `com.hatsunama.captionstudio` and `com.hatsunama.captionstudio.fixed`. Keep those older apps installed: their projects, settings, and downloaded models stay in their own storage and do not automatically appear in the new app. This package change does not migrate data. Only an existing installation of the new ID with compatible signing can be updated in place; never uninstall an app or clear its data to resolve an installation failure.
+
+Previously published APKs are immutable and may still use an older ID. The Windows installer refuses those APKs until a release with the expected ID and pinned signing certificate is available. Existing signing keys and certificate lineage are retained, but a signing lineage cannot move projects between package IDs.
+
 ### Easiest: download on the phone
 
 1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.86) on the phone.
@@ -33,31 +37,43 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 
 ### Recommended: install from a Windows PC with the phone plugged in
 
-1. Install Google's [Android SDK Platform Tools](https://developer.android.com/tools/releases/platform-tools) and Android SDK Build Tools. The installer uses `adb` for the device and `apksigner` to verify the release certificate before installation.
+1. Install Google's [Android SDK Platform Tools](https://developer.android.com/tools/releases/platform-tools), Android SDK Build Tools, and Java for `apksigner`. Add `adb` to `PATH`; keep Build Tools in the same Android SDK or add `apksigner` and `aapt2` (or `aapt`) to `PATH`.
 2. On the phone, open **Settings → About phone** and tap **Build number** seven times.
 3. Open **Settings → System → Developer options** and enable **USB debugging**.
 4. Plug in the phone.
-5. Run this PowerShell script. It reads the maintained product contract, downloads the current Caption Studio APK, verifies both its GitHub SHA-256 digest and pinned signing certificate, accepts exactly one authorized Android device, and never uninstalls an app or clears its data. An existing installation under the data-preserving update package is updated in place; the original production app has separate storage and is left untouched.
+5. Paste the entire block below into Windows PowerShell 5.1 or PowerShell 7 on Windows. It downloads the maintained installer and runs it in a separate PowerShell process, with an execution-policy override limited to that child process (organization-enforced policies still apply). Disconnect other phones and emulators: the installer requires exactly one listed device, authorized, online, and fully booted; an additional unauthorized or offline device also stops installation.
+
+The installer selects the highest semantic version at or above the product contract's minimum from published releases, including prereleases, with the expected APK asset. It does not install an unpublished local test APK or pin the older release linked above. Before installation it checks the APK against GitHub's SHA-256 asset digest, verifies its signature and pinned certificate, requires exactly `com.xmilo_at_your_side.caption_studio`, checks `versionName` against the selected release tag, and validates `versionCode` is in Android's allowed range. After installation it checks the installed `versionName` again. Missing or mismatched metadata stops installation; there is no fallback to an older-package APK. The installer and certificate pin come from this repository, so these are consistency checks, not independent protection against repository compromise.
 
 ```powershell
-$ErrorActionPreference = 'Stop'
+& {
+    $ErrorActionPreference = 'Stop'
+    $PSNativeCommandUseErrorActionPreference = $false
+    $PowerShellExe = if ($PSVersionTable.PSEdition -eq 'Core') {
+        Join-Path $PSHOME 'pwsh.exe'
+    } else {
+        Join-Path $PSHOME 'powershell.exe'
+    }
+    $Installer = Join-Path $env:TEMP ("install-caption-studio-" + [Guid]::NewGuid().ToString('N') + '.ps1')
 
-$Installer = Join-Path $env:TEMP ("install-caption-studio-" + [Guid]::NewGuid().ToString('N') + '.ps1')
-
-try {
-    Invoke-WebRequest -UseBasicParsing `
-        -Uri 'https://raw.githubusercontent.com/Hatsunama/Caption-Studio/main/scripts/install-caption-studio.ps1' `
-        -OutFile $Installer
-    & $Installer
-}
-finally {
-    if (Test-Path -LiteralPath $Installer) {
-        try {
-            Remove-Item -LiteralPath $Installer -Force -ErrorAction Stop
-            Write-Host 'Temporary installer script removed.'
+    try {
+        Invoke-WebRequest -UseBasicParsing `
+            -Uri 'https://raw.githubusercontent.com/Hatsunama/Caption-Studio/main/scripts/install-caption-studio.ps1' `
+            -OutFile $Installer
+        & $PowerShellExe -NoProfile -ExecutionPolicy Bypass -File $Installer
+        if ($LASTEXITCODE -ne 0) {
+            throw "Caption Studio installer failed (exit $LASTEXITCODE). Keep the error output; do not uninstall or clear app data."
         }
-        catch {
-            Write-Warning "Could not remove temporary installer ${Installer}: $($_.Exception.Message)"
+    }
+    finally {
+        if (Test-Path -LiteralPath $Installer) {
+            try {
+                Remove-Item -LiteralPath $Installer -Force -ErrorAction Stop
+                Write-Host 'Temporary installer script removed.'
+            }
+            catch {
+                Write-Warning "Could not remove temporary installer ${Installer}: $($_.Exception.Message)"
+            }
         }
     }
 }
@@ -67,9 +83,9 @@ The first time `adb devices` runs, unlock the phone. Tap **Allow** on **Allow US
 
 If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, stop. The installed app uses a different signing identity. Do not uninstall it if its local projects or drafts matter; an uninstall can make that data unrecoverable.
 
-The original production app and Caption Studio Fixed have different package identities. The installer updates only Caption Studio Fixed. Android verifies the signing identity and rejects mismatches without uninstalling or clearing either app.
+**Older apps store separate projects.** This build installs as `com.xmilo_at_your_side.caption_studio`; no old-app migration is required or performed. It does not update `com.hatsunama.captionstudio` or `com.hatsunama.captionstudio.fixed`, and their projects, settings, and downloaded models do not appear in the new app. Keep those apps and their data. Only an existing installation of the new package with compatible signing and version code can be updated in place. The installer uses `adb install -r` without uninstalling, clearing data, or allowing a downgrade.
 
-Never uninstall or clear either app to bypass an installation failure. Keep the error output for diagnosis; uninstalling deletes local drafts and projects.
+Never uninstall or clear any of these apps to bypass an installation failure. Keep the error output for diagnosis; uninstalling deletes local drafts and projects. The wrapper attempts to remove its temporary script in `finally` on success or failure; the installer also cleans up its temporary APK and download directory. Cleanup failures print the remaining path for manual removal.
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
@@ -88,7 +104,7 @@ Current Android build: **1.4.86** (`v1.4.86`, Android version code 98).
 - Automatic project-owned playback proxies for video formats the phone cannot decode reliably; the original source remains untouched and is still used for final export
 - Source-orientation-aware preview
 - Persistent first-frame thumbnails on project cards, with readable date/time names replacing UUIDs and camera-number filenames
-- A dedicated `com.hatsunama.captionstudio` Android identity so Caption Studio installs as its own app
+- A dedicated `com.xmilo_at_your_side.caption_studio` Android identity so Caption Studio installs as its own app; older package IDs retain separate app data
 - On-device Whisper transcription through `whisper.rn`
 - Native Android audio decoding to PCM WAV without a cloud API
 - Foreground voice-over recording with multiple editable takes, live level feedback, and project-owned waveform persistence
@@ -152,6 +168,16 @@ Video and text transforms use normalized coordinates so projects remain portable
 
 ## Build from source on Windows
 
+### Release metadata provenance
+
+The publish workflow uploads `caption-studio-release.json` alongside the APK and checksum in the initial release creation. Schema version 1 records `repository`, `tag`, `sourceCommit`, `package`, `version`, `versionCode`, `signingCertificateSha256`, and `apk` (`name`, `sha256`). The workflow derives APK fields from the packaged, signature-verified APK, checks them against release inputs and the existing package/certificate contract, and records the protected tag's checked commit. Tagged `app.json` is not release evidence: workflow version overrides exist only in the build checkout.
+
+Release ordering reads this manifest, validates its identity and tag, and compares its APK hash with GitHub's asset digest when available. A malformed, unavailable, or inconsistent manifest blocks publication; it never falls back silently. The manifest and APK share the repository release trust boundary, not an independent attestation. Keep immutable releases enabled and restrict release writers and protected tags; the workflow does not enable repository policy itself.
+
+Historical releases without a manifest remain untouched. The checker downloads and inspects their actual APKs sequentially, verifies signatures, checks GitHub's digest when available, and removes each temporary download. The expected package must match the pinned certificate and release tag. Only the two recognized historical package IDs (`com.hatsunama.captionstudio` and `com.hatsunama.captionstudio.fixed`) are excluded from the current package's versionCode maximum; their release versions still participate in semantic version ordering. Unknown packages, unavailable APKs, invalid signatures, or inconsistent metadata block publication and require investigation, never a guessed code or edits to immutable releases.
+
+Historical checks require `gh` authentication, Java, network/disk capacity for one APK, and `SIDECAR_BUILD_TOOLS` pointing to an Android SDK build-tools directory containing `aapt` and `apksigner` (configured on the Linux release runner). Releases lacking a GitHub asset digest rely on the downloaded APK's verified signature and repository provenance. Legacy APKs are downloaded again on each check, including the final pre-publication check; no unverified migration ledger or stale cache is used. Both semantic version and versionCode must strictly exceed the applicable published history, including prereleases, and existing release tags (including drafts) cannot be replaced.
+
 Requirements: Node.js 22.13 or newer, Android SDK 36, JDK 17, and an Android device with USB debugging enabled.
 
 Clone to a short path such as `C:\Caption-Studio`. Android's native CMake build can exceed Windows' object-file path limit when the repository is nested deeply under Documents.
@@ -196,3 +222,18 @@ For a production submission, use `npm run release:play` to produce the signed An
 ## License
 
 MIT. Third-party libraries and downloaded models retain their own licenses. Runtime attribution and distributable copyright notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); model revisions, provenance, sizes, and hashes are in [MODEL_NOTICES.md](MODEL_NOTICES.md). Sixty-two bundled typefaces use the SIL Open Font License 1.1. Fontdiner Swanky, Permanent Marker, Chewy, Luckiest Guy, Rock Salt, and Special Elite use Apache License 2.0. The individual font license files are preserved in [`assets/fonts/licenses`](assets/fonts/licenses), and the app includes an offline notices screen with MIT, Apache 2.0, and OFL terms.
+# Android package transition
+
+Source and release APKs must use exactly `com.xmilo_at_your_side.caption_studio`.
+This is a separate Android app from both `com.hatsunama.captionstudio` and
+`com.hatsunama.captionstudio.fixed`, not an in-place update of either old app.
+The old app's private drafts do not migrate to the new package. Keep the old app
+installed and keep its data; do not uninstall it or clear its data. Existing
+project data and signing keys must be preserved.
+
+The installer must reject any downloaded APK whose package or signing
+certificate does not match the release contract. A release tag, filename, or
+version alone does not establish compatibility. If a matching release has not
+been published, installation must stop; do not install an old-package APK as a
+fallback. An in-place update is possible only for an existing installation of
+the new package with a compatible signing certificate and version code.

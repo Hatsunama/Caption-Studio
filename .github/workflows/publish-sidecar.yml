@@ -37,7 +37,14 @@ jobs:
           cache: gradle
 
       - name: Load product contract
-        run: node ./scripts/generate-product-contract.mjs --check --github-env
+        run: |
+          node ./scripts/generate-product-contract.mjs --check --github-env
+          node -e "const c = require('./config/product-contract.json'); const id = 'com.xmilo_at_your_side.caption_studio'; if (c.android.sourcePackage !== id || c.android.release.package !== id) throw new Error('Unexpected Android application id');"
+          # Historical immutable releases require reading the actual APK metadata.
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -x "$build_tools/aapt"
+          test -x "$build_tools/apksigner"
+          echo "SIDECAR_BUILD_TOOLS=$build_tools" >> "$GITHUB_ENV"
 
       - name: Validate release inputs
         shell: bash
@@ -76,7 +83,7 @@ jobs:
           npx expo install --check
           npx --yes expo-doctor@1.20.4
 
-      - name: Configure data-preserving update identity
+      - name: Configure expected Android application identity
         env:
           VERSION: ${{ inputs.version }}
           VERSION_CODE: ${{ inputs.version_code }}
@@ -161,6 +168,9 @@ jobs:
           mkdir -p dist
           cp "$source_apk" "dist/$CAPTION_STUDIO_RELEASE_ASSET"
           (cd dist && sha256sum "$CAPTION_STUDIO_RELEASE_ASSET" > "$CAPTION_STUDIO_RELEASE_ASSET.sha256")
+          node ./scripts/configure-sidecar-release.mjs --write-metadata \
+            "$VERSION" "$VERSION_CODE" "dist/$CAPTION_STUDIO_RELEASE_ASSET" \
+            dist/caption-studio-release.json
 
       - name: Publish prerelease without replacement
         shell: bash
@@ -177,9 +187,10 @@ jobs:
           gh release create "$tag" \
             "dist/$CAPTION_STUDIO_RELEASE_ASSET" \
             "dist/$CAPTION_STUDIO_RELEASE_ASSET.sha256" \
+            dist/caption-studio-release.json \
             --prerelease \
             --title "Caption Studio ${VERSION}" \
-            --notes "Data-preserving Android build from main at $GITHUB_SHA. It updates package $CAPTION_STUDIO_RELEASE_PACKAGE without uninstalling, clearing, or migrating either Caption Studio installation."
+            --notes "Android build from main at $GITHUB_SHA for package $CAPTION_STUDIO_RELEASE_PACKAGE. First installation uses a separate sandbox from older Caption Studio package IDs; their apps and projects remain untouched and are not migrated. Only an existing installation of this same package with compatible signing can be updated in place. No app is uninstalled or cleared."
 
       - name: Retain Caption Studio APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

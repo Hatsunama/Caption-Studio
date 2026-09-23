@@ -16,6 +16,7 @@ concurrency:
 
 env:
   CI: true
+  CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE: com.xmilo_at_your_side.caption_studio
 
 jobs:
   verify:
@@ -112,7 +113,8 @@ jobs:
           test -x "$llvm_objdump"
           badging="$($build_tools/aapt dump badging "$apk")"
           printf '%s\n' "$badging"
-          expected_package="$(node -p "require('./app.json').expo.android.package")"
+          expected_package="$CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE"
+          test "$(node -p "require('./app.json').expo.android.package")" = "$expected_package"
           expected_version_code="$(node -p "require('./app.json').expo.android.versionCode")"
           expected_version_name="$(node -p "require('./app.json').expo.version")"
           grep -Fq "package: name='$expected_package' versionCode='$expected_version_code' versionName='$expected_version_name'" <<< "$badging"

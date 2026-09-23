@@ -3,7 +3,7 @@ import { normalizeCaptionLineHeight } from '@/lib/caption-line-spacing';
 import { positiveLayerScale } from '@/lib/layer-geometry';
 import { captionTransform } from '@/lib/caption-transform';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
-import { emptyCaptionTrackCollection, synchronizeCaptionTracks } from '@/lib/caption-tracks';
+import { emptyCaptionTrackCollection, normalizedTranslationFailureReason, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { sameCaptionLanguageFamily } from '@/lib/caption-languages';
 import { hydrateVideoTransition } from '@/lib/video-transitions';
 import { DEFAULT_VIDEO_FRAME_RATE } from '@/lib/video-source-metadata';
@@ -430,6 +430,8 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
           translationSkipped: cue.translationSkipped === undefined ? undefined : booleanValue(cue.translationSkipped, `translation cue ${cueIndex + 1} skipped state`),
           text,
           status,
+          // Optional metadata remains compatible with projects saved before reasons existed.
+          failureReason: status === 'failed' ? normalizedTranslationFailureReason(cue.failureReason) : undefined,
           reviewed,
           startMs: optionalFiniteNumber(cue.startMs, `translation cue ${cueIndex + 1} start`, 0, Number.MAX_SAFE_INTEGER),
           // Zero-length cues are valid legacy state on either track. A deliberate

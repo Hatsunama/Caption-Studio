@@ -8,7 +8,7 @@
     "scheme": "captionstudio",
     "userInterfaceStyle": "dark",
     "android": {
-      "package": "com.hatsunama.captionstudio",
+      "package": "com.xmilo_at_your_side.caption_studio",
       "versionCode": 98,
       "allowBackup": false,
       "blockedPermissions": [

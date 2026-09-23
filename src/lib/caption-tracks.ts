@@ -233,6 +233,7 @@ export function updatePairedCaptionTexts(
         text: update.translatedText.trim(),
         status: update.translationStatus ?? 'translated',
         reviewed: update.translationStatus === 'reviewed',
+        failureReason: undefined,
       };
     }),
   }));
@@ -537,7 +538,7 @@ export function synchronizeCaptionTracks(
         ...track,
         cues: captions.map((caption) => {
           const cue = synchronizeCue(track.id, caption, existing.get(caption.id));
-          return sourceLanguageChanged && cue.text.trim() ? { ...cue, status: 'stale' as const } : cue;
+          return sourceLanguageChanged && cue.text.trim() && cue.status !== 'failed' ? { ...cue, status: 'stale' as const } : cue;
         }),
       };
     }),
@@ -656,6 +657,9 @@ function createCue(trackId: string, source: CaptionBlock, translatedText: string
 
 function synchronizeCue(trackId: string, source: CaptionBlock, cue: TranslationCaptionCue | undefined) {
   if (!cue) return createCue(trackId, source, '');
+  // A source edit does not undo an unsuccessful attempt or erase its reason.
+  // Retain the snapshot belonging to saved text until a replacement is committed.
+  if (cue.status === 'failed') return cue;
   if (cue.sourceTextSnapshot === source.text) {
     if (cue.status !== 'stale') return cue;
     return { ...cue, status: cue.reviewed ? 'reviewed' as const : 'translated' as const };
@@ -664,6 +668,11 @@ function synchronizeCue(trackId: string, source: CaptionBlock, cue: TranslationC
     return { ...cue, sourceTextSnapshot: source.text, status: 'pending' as const, reviewed: false };
   }
   return { ...cue, status: 'stale' as const };
+}
+
+export function normalizedTranslationFailureReason(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return value.trim().slice(0, 1024) || undefined;
 }
 
 function requiredText(value: string, label: string) {

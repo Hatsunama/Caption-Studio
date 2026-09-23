@@ -20,6 +20,18 @@ test('release verifier accepts generated modern Gradle release signing', () => {
   withFixture((root) => assert.doesNotThrow(() => verifyAndroidReleaseConfig(root)));
 });
 
+test('release verifier rejects a legacy native application id', () => {
+  withFixture((root) => {
+    const buildFile = join(root, 'android', 'app', 'build.gradle');
+    const source = readFileSync(buildFile, 'utf8').replace(
+      "applicationId = 'com.xmilo_at_your_side.caption_studio'",
+      "applicationId = 'com.hatsunama.captionstudio'",
+    );
+    writeFileSync(buildFile, source);
+    assert.throws(() => verifyAndroidReleaseConfig(root), /Generated Android application id must be/);
+  });
+});
+
 test('release verifier rejects a debug-signed release build', () => {
   withFixture((root) => {
     const buildFile = join(root, 'android', 'app', 'build.gradle');
@@ -114,6 +126,7 @@ def hasCaptionStudioReleaseSigning = [captionStudioReleaseStoreFile, captionStud
 android {
   compileSdk = rootProject.ext.compileSdkVersion
   defaultConfig {
+    applicationId = 'com.xmilo_at_your_side.caption_studio'
     minSdkVersion = rootProject.ext.minSdkVersion
     targetSdkVersion = rootProject.ext.targetSdkVersion
   }
@@ -172,7 +185,7 @@ tasks.configureEach { task ->
     JSON.stringify({
       expo: {
         android: {
-          package: 'com.hatsunama.captionstudio',
+          package: 'com.xmilo_at_your_side.caption_studio',
           versionCode: 12,
           allowBackup: false,
         },

@@ -16,7 +16,8 @@ test('generated TypeScript and Android model contracts exactly match the product
 
 test('release identity and translation artifact each have one authoritative manifest owner', () => {
   const contract = JSON.parse(readFileSync(fileURLToPath(new URL('../config/product-contract.json', import.meta.url)), 'utf8'));
-  assert.equal(contract.android.release.package, 'com.hatsunama.captionstudio.fixed');
+  assert.equal(contract.android.sourcePackage, 'com.xmilo_at_your_side.caption_studio');
+  assert.equal(contract.android.release.package, 'com.xmilo_at_your_side.caption_studio');
   assert.match(contract.android.release.signingCertificateSha256, /^[a-f0-9]{64}$/);
   assert.equal(contract.translation.downloadBytes, 1597931520);
   assert.match(contract.translation.sha256, /^[a-f0-9]{64}$/);

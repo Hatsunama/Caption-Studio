@@ -171,6 +171,8 @@ export type TranslationCaptionStatus = 'pending' | 'translated' | 'reviewed' | '
 
 export type TranslationCaptionCue = {
   translationSkipped?: boolean;
+  /** Reason returned by the last failed translation attempt, when available. */
+  failureReason?: string;
   id: Identifier;
   sourceCaptionId: Identifier;
   sourceTextSnapshot: string;

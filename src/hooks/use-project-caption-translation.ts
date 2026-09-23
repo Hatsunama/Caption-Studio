@@ -88,7 +88,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     setCancelling(false);
     setSaving(kind === 'manual-save');
     setProgress(kind === 'translation'
-      ? { stage: 'loading-model', progress: 0, detail: 'Preparing local natural translation' }
+      ? { stage: 'loading-model', progress: null, detail: 'Preparing local natural translation' }
       : undefined);
     try {
       const next = await operation((nextProgress) => {

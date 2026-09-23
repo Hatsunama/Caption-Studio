@@ -5,12 +5,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { configureSidecarApp } from '../scripts/configure-sidecar-release.mjs';
+import {
+  checkPublishedRelease, configureSidecarApp, releaseMetadataAsset,
+  resolvePublishedRelease, validateReleaseMetadata,
+} from '../scripts/configure-sidecar-release.mjs';
 
 const root = new URL('../', import.meta.url);
 const productContract = JSON.parse(readFileSync(fileURLToPath(new URL('config/product-contract.json', root)), 'utf8'));
 
-test('side-by-side release derives an isolated Android identity', async () => {
+test('release keeps the expected Android identity', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'caption-studio-sidecar-'));
   try {
     const configPath = path.join(directory, 'app.json');
@@ -20,18 +23,26 @@ test('side-by-side release derives an isolated Android identity', async () => {
         slug: 'caption-studio',
         scheme: 'captionstudio',
         version: '1.4.2',
-        android: { package: 'com.hatsunama.captionstudio', versionCode: 14 },
+        android: { package: 'com.xmilo_at_your_side.caption_studio', versionCode: 14 },
       },
     }));
     const source = JSON.parse(readFileSync(configPath, 'utf8'));
     const configured = configureSidecarApp(source, '1.4.86', 98);
     assert.equal(configured.expo.name, 'Caption Studio');
     assert.equal(configured.expo.android.package, productContract.android.release.package);
+    assert.equal(configured.expo.android.package, 'com.xmilo_at_your_side.caption_studio');
     assert.equal(configured.expo.android.versionCode, 98);
     assert.equal(configured.expo.version, '1.4.86');
     assert.equal(configured.expo.scheme, productContract.android.release.scheme);
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('release rejects legacy package IDs', () => {
+  for (const packageId of ['com.hatsunama.captionstudio', 'com.hatsunama.captionstudio.fixed']) {
+    assert.throws(() => configureSidecarApp({ expo: { android: { package: packageId } } }, '1.4.86', 98),
+      /unexpected Android package/);
   }
 });
 
@@ -47,6 +58,9 @@ test('release workflow uses stable secrets and publishes a verified immutable AP
   assert.match(workflow, /tag="v\$\{VERSION\}"/);
   assert.match(workflow, /CAPTION_STUDIO_RELEASE_ASSET/);
   assert.match(workflow, /:app:lintRelease/);
+  assert.match(workflow, /--write-metadata/);
+  assert.match(workflow, /SIDECAR_BUILD_TOOLS/);
+  assert.match(workflow, /"dist\/\$CAPTION_STUDIO_RELEASE_ASSET.sha256" \\\r?\n\s+dist\/caption-studio-release.json/);
   assert.match(workflow, /--init-script \.\.\/scripts\/first-party-android-lint\.gradle/);
   assert.doesNotMatch(workflow, /Caption Studio Fixed/);
   assert.doesNotMatch(workflow, /v\$\{VERSION\}-fixed/);
@@ -54,11 +68,89 @@ test('release workflow uses stable secrets and publishes a verified immutable AP
   assert.doesNotMatch(workflow, /keytool -genkeypair/);
 });
 
-test('published release version-code verification uses release metadata, not APK downloads', async () => {
-  const releaseScript = await readFile(new URL('scripts/configure-sidecar-release.mjs', root), 'utf8');
-  assert.match(releaseScript, /contents\/app\.json\?ref=/);
-  assert.doesNotMatch(releaseScript, /gh', \['release', 'download'/);
-  assert.match(releaseScript, /if \(android\?\.package !== productContract\.android\.sourcePackage\) return null/);
+function metadata(overrides = {}) {
+  return {
+    schemaVersion: 1, repository: productContract.repository, tag: 'v1.4.86',
+    version: '1.4.86', versionCode: 98, sourceCommit: 'a'.repeat(40),
+    package: productContract.android.release.package,
+    signingCertificateSha256: productContract.android.release.signingCertificateSha256,
+    apk: { name: productContract.android.release.assetName, sha256: 'b'.repeat(64) },
+    ...overrides,
+  };
+}
+
+function published(withMetadata = true) {
+  return {
+    tag_name: 'v1.4.86', draft: false, prerelease: true, published_at: '2026-09-01T00:00:00Z',
+    assets: [
+      { name: productContract.android.release.assetName, digest: `sha256:${'b'.repeat(64)}` },
+      ...(withMetadata ? [{ name: releaseMetadataAsset, id: 123, size: 600 }] : []),
+    ],
+  };
+}
+
+test('authoritative manifest supplies checkout-only versionCode without consulting tagged config or APK', async () => {
+  const result = await resolvePublishedRelease(published(), {
+    readMetadata: async () => metadata({ versionCode: 123 }),
+    readLegacy: async () => assert.fail('Manifest must avoid APK download'),
+  });
+  assert.deepEqual(result, { tag: 'v1.4.86', versionCode: 123 });
+});
+
+test('metadata rejects wrong provenance, identity, ordering fields and digest', () => {
+  for (const overrides of [
+    { schemaVersion: 2 }, { repository: 'other/repo' }, { tag: 'v1.4.85' },
+    { version: '1.4.85' }, { versionCode: 0 }, { versionCode: 2100000001 },
+    { versionCode: '98' }, { sourceCommit: '' }, { package: 'com.hatsunama.captionstudio' },
+    { signingCertificateSha256: '0'.repeat(64) },
+    { apk: { name: 'other.apk', sha256: 'b'.repeat(64) } },
+    { apk: { name: productContract.android.release.assetName, sha256: 'c'.repeat(64) } },
+  ]) {
+    assert.throws(() => validateReleaseMetadata(metadata(overrides), 'v1.4.86', published().assets[0]));
+  }
+});
+
+test('invalid or unavailable manifest fails closed without a legacy fallback', async () => {
+  for (const readMetadata of [async () => metadata({ version: '1.0.0' }),
+    async () => { throw new Error('API failure'); }]) {
+    await assert.rejects(resolvePublishedRelease(published(), {
+      readMetadata, readLegacy: async () => assert.fail('Must not fall back'),
+    }));
+  }
+});
+
+test('historical releases use actual APK identity and exclude only known old packages', async () => {
+  const release = published(false);
+  const resolve = (identity) => resolvePublishedRelease(release, { readLegacy: async () => identity });
+  assert.deepEqual(await resolve(metadata({ versionCode: 123 })), { tag: 'v1.4.86', versionCode: 123 });
+  for (const packageId of ['com.hatsunama.captionstudio', 'com.hatsunama.captionstudio.fixed']) {
+    assert.equal(await resolve(metadata({ package: packageId })), null);
+  }
+  for (const overrides of [{ package: 'unknown.package' }, { version: '1.4.85' },
+    { signingCertificateSha256: '0'.repeat(64) }, { versionCode: 0 }]) {
+    await assert.rejects(resolve(metadata(overrides)));
+  }
+  await assert.rejects(resolvePublishedRelease(release, {
+    readLegacy: async () => { throw new Error('APK unavailable'); },
+  }), /APK unavailable/);
+});
+
+test('ordering includes prereleases, all historical codes, and draft tag collisions', async () => {
+  const releases = [published(), { ...published(false), tag_name: 'v1.4.85' }];
+  const options = {
+    listReleases: async () => releases,
+    resolveRelease: async (release) => ({ tag: release.tag_name,
+      versionCode: release.tag_name === 'v1.4.85' ? 150 : 98 }),
+  };
+  await assert.rejects(checkPublishedRelease('1.4.87', 150, options), /must exceed.*150/);
+  await checkPublishedRelease('1.4.87', 151, options);
+  await assert.rejects(checkPublishedRelease('1.4.84', 151, options));
+  await assert.rejects(checkPublishedRelease('1.4.86', 151, options), /already exists/);
+  releases.push({ ...published(), tag_name: 'v1.4.87', draft: true });
+  await assert.rejects(checkPublishedRelease('1.4.87', 151, options), /already exists/);
+  await assert.rejects(checkPublishedRelease('1.4.88', 151, {
+    listReleases: async () => { throw new Error('API failure'); },
+  }), /API failure/);
 });
 
 test('verification workflow runs Android lint before retaining release artifacts', async () => {
@@ -74,6 +166,18 @@ test('installer is fail-closed and cannot delete the production app', async () =
   assert.match(installer, /config\/product-contract\.json/);
   assert.match(installer, /signingCertificateSha256/);
   assert.match(installer, /Get-ApkCertificateSha256/);
+  assert.ok(installer.includes("$Package -cne 'com.xmilo_at_your_side.caption_studio'"));
+  assert.ok(installer.includes("[string]$Contract.android.sourcePackage -cne 'com.xmilo_at_your_side.caption_studio'"));
+  assert.ok(installer.includes('$ActualPackage -cne $Package'));
+  assert.ok(installer.includes('APK package mismatch:'));
+  const packageCheck = installer.indexOf('$ActualPackage = Get-ApkPackage');
+  const installCommand = installer.indexOf("$InstallOutput = @(Invoke-Adb @('-s', $Serial, 'install'");
+  assert.ok(packageCheck >= 0 && installCommand > packageCheck);
+  assert.ok(installer.includes('-ExpectedVersion $ReleaseVersionText'));
+  assert.ok(installer.includes('$VersionMatch.Groups[2].Value -cne $ExpectedVersion'));
+  assert.ok(installer.includes('$VersionMatch.Groups[2].Value -cnotmatch $VersionPattern'));
+  assert.ok(installer.includes('[long]$VersionMatch.Groups[1].Value -gt 2100000000'));
+  assert.ok(installer.includes('APK version metadata is missing or invalid. Refusing installation.'));
   assert.match(installer, /apksigner/);
   assert.match(installer, /Multiple Android devices are connected/);
   assert.match(installer, /device\|unauthorized\|offline/);
@@ -83,5 +187,5 @@ test('installer is fail-closed and cannot delete the production app', async () =
   assert.match(installer, /'install', '-r', '--no-streaming'/);
   assert.match(installer, /\$Package = \[string\]\$Contract\.android\.release\.package/);
   assert.doesNotMatch(installer, /['"](?:uninstall|clear)['"]/);
-  assert.doesNotMatch(installer, /com\.hatsunama\.captionstudio(?:['"]|\s)/);
+  assert.doesNotMatch(installer, /com\.hatsunama\.captionstudio(?:\.fixed)?(?:['"]|\s)/);
 });

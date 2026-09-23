@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "repository": "Hatsunama/Caption-Studio",
   "android": {
-    "sourcePackage": "com.hatsunama.captionstudio",
+    "sourcePackage": "com.xmilo_at_your_side.caption_studio",
     "release": {
       "name": "Caption Studio",
       "slug": "caption-studio-fixed",
       "scheme": "captionstudiofixed",
-      "package": "com.hatsunama.captionstudio.fixed",
+      "package": "com.xmilo_at_your_side.caption_studio",
       "channel": "fixed-sidecar",
       "assetName": "caption-studio-android.apk",
       "minimumVersion": "1.4.86",

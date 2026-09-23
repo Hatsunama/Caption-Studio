@@ -110,7 +110,7 @@ test('audio and transition ownership stays out of the editor screen', () => {
 
 test('Caption Studio has an isolated Android identity', () => {
   const appConfig = JSON.parse(readFileSync(new URL('../app.json', import.meta.url), 'utf8'));
-  assert.equal(appConfig.expo.android.package, 'com.hatsunama.captionstudio');
+  assert.equal(appConfig.expo.android.package, 'com.xmilo_at_your_side.caption_studio');
   assert.doesNotMatch(JSON.stringify(appConfig), /cuecam/i);
 });
 

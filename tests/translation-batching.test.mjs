@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createTranslationBatches } from '../src/lib/translation-batching.ts';
+import { splitBatchesByContext } from '../src/lib/contextual-translation-batching.ts';
 
 const repositoryRoot = new URL('../', import.meta.url);
 
@@ -50,6 +51,21 @@ test('translation batching rejects an invalid runtime capacity contract', () => 
   );
 });
 
+test('unfinished captions remain in contiguous runs with their true neighbors', () => {
+  const allCaptions = Array.from({ length: 9 }, (_, index) => ({ id: `cue-${index}`, text: `line ${index}` }));
+  const selected = [allCaptions[1], allCaptions[2], allCaptions[6], allCaptions[8]];
+  const batches = createTranslationBatches(selected, {
+    maxCaptionsPerBatch: 32,
+    maxCaptionCharactersPerBatch: 8_000,
+  });
+
+  assert.deepEqual(
+    splitBatchesByContext(batches, allCaptions).map((batch) => batch.map((caption) => caption.id)),
+    [['cue-1', 'cue-2'], ['cue-6'], ['cue-8']],
+  );
+  assert.throws(() => splitBatchesByContext([selected.slice().reverse()], allCaptions), /out of order/);
+});
+
 test('the native module owns translation capacity and the service consumes it', async () => {
   const [translator, module, bridge, service] = await Promise.all([
     readFile(new URL('modules/caption-translation/android/src/main/java/app/captionstudio/translation/NaturalCaptionTranslator.java', repositoryRoot), 'utf8'),
@@ -61,7 +77,7 @@ test('the native module owns translation capacity and the service consumes it', 
   assert.match(translator, /static final int MAX_CAPTIONS = 32/);
   assert.match(module, /"maxCaptionsPerBatch" to NaturalCaptionTranslator\.MAX_CAPTIONS/);
   assert.match(bridge, /readonly limits: NaturalCaptionTranslationLimits/);
-  assert.match(service, /createTranslationBatches\(captions, limits\)/);
+  assert.match(service, /splitBatchesByContext\(createTranslationBatches\(captions, limits\), fullContext\)/);
   assert.match(service, /requireNaturalCaptionTranslationLimits\(CaptionTranslation\.limits\)/);
   assert.doesNotMatch(service, /maxCaptionsPerBatch:\s*32/);
 });

@@ -116,7 +116,7 @@ export async function refreshProjectCaptionTranslation(options: {
     qwenSource,
     updatedAt,
   );
-  return commitTranslationAttempt(providerProject, track.id, captions, writes);
+  return commitTranslationAttempt(providerProject, track.id, captions, writes, translated.failureReasons);
 }
 
 export async function synchronizeProjectDualCaptionEdits(options: {

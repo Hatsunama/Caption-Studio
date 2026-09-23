@@ -17,6 +17,7 @@ import {
   captionTextTail,
 } from '@/lib/caption-text-breaks';
 import { createTranslationBatches } from '@/lib/translation-batching';
+import { splitBatchesByContext } from '@/lib/contextual-translation-batching';
 import { validateTranslationUnits } from '@/lib/translation-input';
 import {
   acceptTranslationBoundary,
@@ -26,6 +27,7 @@ import {
   downloadVerifiedModel,
   ModelDownloadIntegrityError,
   ModelDownloadPausedError,
+  ModelDownloadTransferError,
   resumableModelDownloadReservation,
 } from '@/services/verified-model-download';
 
@@ -84,8 +86,8 @@ export class CaptionTranslationCancelledError extends Error {
 }
 
 export class CaptionTranslationDownloadError extends Error {
-  constructor() {
-    super('The language-model download stopped before it finished. Downloaded bytes were saved. Keep Caption Studio open with the phone unlocked, then start translation again to resume.');
+  constructor(message = 'The language-model download stopped before it finished. Try again with a stable connection and keep Caption Studio open.') {
+    super(message);
     this.name = 'CaptionTranslationDownloadError';
   }
 }
@@ -211,7 +213,7 @@ export async function translateNaturalCaptionOperations(options: {
     }));
     const originalIdByKey = new Map(originalCaptions.map((caption) => [keyByOriginalId.get(caption.id)!, caption.id]));
     const contextIndex = new Map(fullContext.map((caption, index) => [caption.id, index]));
-    const batches = createTranslationBatches(captions, limits).map((batch) => {
+    const batches = splitBatchesByContext(createTranslationBatches(captions, limits), fullContext).map((batch) => {
       const context = batchContext(fullContext, contextIndex, batch);
       return {
         captions: batch,
@@ -375,7 +377,9 @@ async function downloadNaturalTranslationModel(
   const directory = translationModelDirectory();
   directory.create({ idempotent: true, intermediates: true });
   const target = translationModelFile();
-  const reservation = await resumableModelDownloadReservation(target, NATURAL_TRANSLATION_MODEL);
+  const reservation = await resumableModelDownloadReservation(
+    target, NATURAL_TRANSLATION_MODEL, (uri) => CaptionMedia.sha256(uri),
+  );
   await requireFreeSpace(
     reservation + 384 * 1024 * 1024,
     'download the optional natural multilingual translation model',
@@ -383,7 +387,7 @@ async function downloadNaturalTranslationModel(
   throwIfCancelled(run);
   onProgress?.({
     stage: 'downloading-model',
-    progress: 0,
+    progress: null,
     detail: 'take a little breath — your local AI is settling onto this phone; it can take a bit, and that’s okay; you only wait through this once.',
   });
   try {
@@ -413,6 +417,7 @@ async function downloadNaturalTranslationModel(
     if (error instanceof ModelDownloadIntegrityError) {
       throw new Error('The natural translation model failed its security check and was discarded.');
     }
+    if (error instanceof ModelDownloadTransferError) throw new CaptionTranslationDownloadError(error.message);
     throw new CaptionTranslationDownloadError();
   }
   throwIfCancelled(run);
@@ -542,7 +547,7 @@ async function translateWithModelRecovery(
     throwIfCancelled(run);
     onProgress?.({
       stage: 'loading-model',
-      progress: 0,
+      progress: null,
       detail: 'Loading the local natural-language model',
     });
     const stopProgress = pollNativeProgress(run, onProgress);
@@ -607,8 +612,10 @@ export function captionTranslationProgress(native: {
   const cueProgress = total > 0 ? processed / total : undefined;
   const reportedProgress = Number.isFinite(native.percent) ? Math.max(0, native.percent! / 100) : undefined;
   const progress = terminalComplete ? 1
-    : cueProgress != null ? Math.min(0.99, cueProgress)
-      : reportedProgress != null ? Math.min(0.99, reportedProgress) : null;
+    : stage === 'loading-model' ? null
+      : stage === 'verifying-model' ? (reportedProgress != null ? Math.min(0.99, reportedProgress) : null)
+        : cueProgress != null ? Math.min(0.99, cueProgress)
+          : reportedProgress != null ? Math.min(0.99, reportedProgress) : null;
   return { stage, progress, detail: label + count };
 }
 

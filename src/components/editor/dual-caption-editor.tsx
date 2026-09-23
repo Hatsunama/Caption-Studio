@@ -160,6 +160,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
 
   const includedPairs = useMemo(() => props.pairs.filter((pair) => !pair.translation.translationSkipped), [props.pairs]);
   const missingCount = useMemo(() => includedPairs.filter((pair) => !pair.translation.text.trim()).length, [includedPairs]);
+  const failedCount = useMemo(() => includedPairs.filter((pair) => pair.translation.status === 'failed').length, [includedPairs]);
   const needsRefresh = useMemo(() => includedPairs.filter((pair) => (
     !pair.translation.text.trim() || pair.translation.status === 'pending' || pair.translation.status === 'stale' || pair.translation.status === 'failed'
   )), [includedPairs]);
@@ -266,19 +267,19 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
             />
             <HeaderAction
                 label={`Refresh unfinished (${needsRefresh.length})`}
-                disabled={disabled || dirty || needsRefresh.length === 0}
+                disabled={disabled || dirty || !props.automaticTranslation || needsRefresh.length === 0}
                 onPress={() => props.onRefresh(needsRefresh.map((pair) => pair.source.id))}
               />
-            <HeaderAction label={`Refresh selected (${selectedPairs.length})`} disabled={disabled || dirty || selectedPairs.length === 0}
+            <HeaderAction label={`Refresh selected (${selectedPairs.length})`} disabled={disabled || dirty || !props.automaticTranslation || selectedPairs.length === 0}
               onPress={() => props.onRefresh(selectedPairs.map((pair) => pair.source.id))} />
-            <HeaderAction label={`Refresh all (${includedPairs.length})`} disabled={disabled || dirty || includedPairs.length === 0}
+            <HeaderAction label={`Refresh all (${includedPairs.length})`} disabled={disabled || dirty || !props.automaticTranslation || includedPairs.length === 0}
               onPress={() => props.onRefresh(includedPairs.map((pair) => pair.source.id))} />
             <HeaderAction label={selectedPairs.length === includedPairs.length && includedPairs.length > 0 ? 'Clear selection' : 'Select all'} disabled={disabled || includedPairs.length === 0}
               onPress={() => setSelectedIds(selectedPairs.length === includedPairs.length ? new Set() : new Set(includedPairs.map((pair) => pair.source.id)))} />
             <HeaderAction label="Remove second language" danger disabled={disabled || dirty} onPress={props.onRemove} />
           </View>
           <Text style={{ marginTop: 11, color: chrome.muted, fontSize: 12, lineHeight: 17 }}>
-            {missingCount} need translation; {needsRefresh.length - missingCount} have text to review; {skippedCount} skipped. You can export available text anyway. Save typed edits before refreshing. Refresh replaces only the selected second-language text.
+            {failedCount} failed; {missingCount} empty; {needsRefresh.length} unfinished; {skippedCount} skipped. You can export available text anyway. Save typed edits before refreshing. Failed refreshes keep saved text; successful refreshes replace only the requested second-language text.
           </Text>
         </View>
 
@@ -395,6 +396,12 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
       </View>
       <HeaderAction label={skipped ? 'Include second line' : 'Skip second line'} disabled={props.disabled || props.dirty}
         onPress={() => props.onSkip(pair.source.id, !skipped)} />
+      {pair.translation.status === 'failed' ? (
+        <Text accessibilityRole="alert" selectable style={{ color: chrome.dangerText, fontSize: 12, lineHeight: 17 }}>
+          Translation failed: {pair.translation.failureReason || 'No failure reason was returned.'}
+          {pair.translation.text.trim() ? ' Previously saved text was kept.' : ' No translated text was saved.'}
+        </Text>
+      ) : null}
       {textChanged || pair.translation.status === 'stale' || pair.translation.status === 'reviewed' ? (
         <Text accessibilityRole="alert" style={{ color: chrome.warning, fontSize: 12, lineHeight: 17 }}>
           Text was edited. Check whether the other language still matches. Refresh is optional and replaces {props.targetLanguageLabel}; keeping your text is fine.
@@ -412,7 +419,7 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
         value={draft.translatedText}
         disabled={props.disabled}
         cueNumber={index + 1}
-        placeholder="Translation pending"
+        placeholder={skipped ? 'Translation skipped' : pair.translation.status === 'failed' ? 'Translation failed' : 'Translation pending'}
         onChangeText={(value) => props.store.setDraft(pair.source.id, 'translatedText', value)}
       />
     </View>

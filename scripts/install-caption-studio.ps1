@@ -14,7 +14,8 @@ $AssetName = [string]$Contract.android.release.assetName
 $ExpectedCertificate = ([string]$Contract.android.release.signingCertificateSha256).ToUpperInvariant()
 if ($Repository -ne 'Hatsunama/Caption-Studio' -or
     $MinimumVersion -cnotmatch $VersionPattern -or
-    $Package -notmatch '^[a-zA-Z][a-zA-Z0-9_.]+$' -or
+    [string]$Contract.android.sourcePackage -cne 'com.xmilo_at_your_side.caption_studio' -or
+    $Package -cne 'com.xmilo_at_your_side.caption_studio' -or
     $AssetName -notmatch '^[a-zA-Z0-9._-]+\.apk$' -or
     $ExpectedCertificate -notmatch '^[A-F0-9]{64}$') {
     throw 'The Caption Studio product contract is invalid. Refusing installation.'
@@ -137,6 +138,49 @@ function Resolve-ApkSigner {
     $null
 }
 
+function Get-ApkPackage {
+    param(
+        [Parameter(Mandatory)][string]$ApkSigner,
+        [Parameter(Mandatory)][string]$ApkPath,
+        [Parameter(Mandatory)][string]$ExpectedVersion
+    )
+    $BuildToolsDirectory = Split-Path -Parent $ApkSigner
+    $Aapt = $null
+    foreach ($Name in @('aapt2.exe', 'aapt.exe', 'aapt2', 'aapt')) {
+        $Candidate = Join-Path $BuildToolsDirectory $Name
+        if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+            $Aapt = $Candidate
+            break
+        }
+        $Command = Get-Command $Name -ErrorAction SilentlyContinue
+        if ($Command) { $Aapt = $Command.Source; break }
+    }
+    if (-not $Aapt) { throw 'Android SDK Build Tools with aapt2 or aapt are required to verify the APK package.' }
+    $PreviousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $PSNativeCommandUseErrorActionPreference = $false
+        $Output = @(& $Aapt dump badging $ApkPath 2>&1 | ForEach-Object { $_.ToString() })
+        $ExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $PreviousPreference
+    }
+    if ($ExitCode -ne 0) { throw 'Cannot read APK package metadata. Refusing installation.' }
+    $PackageLines = @($Output | Where-Object { $_ -cmatch "^package: name='([^']+)'" })
+    if ($PackageLines.Count -ne 1) { throw 'APK package metadata is missing or ambiguous. Refusing installation.' }
+    $VersionMatch = [regex]::Match($PackageLines[0], "^package: name='[^']+' versionCode='([1-9][0-9]{0,9})' versionName='([^']+)'(?:\s|$)")
+    if (-not $VersionMatch.Success) {
+        throw 'APK version metadata is missing or invalid. Refusing installation.'
+    }
+    if ([long]$VersionMatch.Groups[1].Value -gt 2100000000 -or
+        $VersionMatch.Groups[2].Value -cnotmatch $VersionPattern -or
+        $VersionMatch.Groups[2].Value -cne $ExpectedVersion) {
+        throw 'APK version does not match the selected release or has an invalid versionCode. Refusing installation.'
+    }
+    [regex]::Match($PackageLines[0], "^package: name='([^']+)'").Groups[1].Value
+}
+
 function Get-ApkCertificateSha256 {
     param(
         [Parameter(Mandatory)][string]$ApkSigner,
@@ -244,6 +288,11 @@ try {
         throw 'APK signing certificate mismatch. Refusing installation.'
     }
 
+    $ActualPackage = Get-ApkPackage -ApkSigner $ApkSigner -ApkPath $Apk -ExpectedVersion $ReleaseVersionText
+    if ($ActualPackage -cne $Package) {
+        throw "APK package mismatch: expected $Package, found $ActualPackage. Refusing installation."
+    }
+    Write-Host "Installing $Package. Older package IDs keep their own apps and projects; no data is migrated."
     $InstallOutput = @(Invoke-Adb @('-s', $Serial, 'install', '-r', '--no-streaming', $Apk))
     $InstallOutput | Out-Host
     if (-not ($InstallOutput | Where-Object { $_.Trim() -eq 'Success' })) {
@@ -266,7 +315,7 @@ try {
     if ($InstalledVersion.Count -ne 1 -or $InstalledVersion[0] -ne $ReleaseVersionText) {
         throw "Installed package version does not match release $($Release.tag_name). No app data was cleared."
     }
-    Write-Host 'Caption Studio updated. Neither app was uninstalled or cleared.'
+    Write-Host 'Caption Studio installed or updated under its expected package ID. Existing apps and their separate project storage were preserved.'
 }
 finally {
     if ($OwnsTempDir) {

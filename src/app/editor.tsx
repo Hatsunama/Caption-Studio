@@ -2751,7 +2751,8 @@ function recordingMeterLevel(metering: number | undefined) {
 function translationProgressLabel(progress?: CaptionTranslationProgress) {
   if (!progress) return undefined;
   if (progress.progress == null) return progress.detail;
-  return `${progress.detail} · ${Math.round(progress.progress * 100)}%`;
+  const unit = progress.stage === 'translating' ? 'of cues' : 'of this step';
+  return `${progress.detail} · ${Math.round(progress.progress * 100)}% ${unit}`;
 }
 
 function exportProgressLabel(progress: ProjectVideoExportProgress) {

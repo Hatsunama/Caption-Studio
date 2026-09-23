@@ -104,6 +104,135 @@ public final class TranslationRepairTest {
     assertFalse(TranslationOutputQuality.needsReview(source, "积极回应", "zh-Hans"));
   }
 
+  @Test public void changedContextOrNeighborRegeneratesButRenamedIdsRestoreDistinctPositions() throws Exception {
+    File model = directory.newFile("context-model.litertlm");
+    Files.write(model.toPath(), new byte[] { 1 });
+    AtomicInteger calls = new AtomicInteger();
+    TranslationRuntimeFactory factory = (file, folder, threads, instruction) -> new TranslationRuntime() {
+      public String translate(String prompt) {
+        calls.incrementAndGet();
+        JsonArray output = new JsonArray();
+        int index = 0;
+        for (var element : JsonParser.parseString(prompt).getAsJsonObject().getAsJsonArray("captions")) {
+          JsonObject item = new JsonObject();
+          item.addProperty("id", element.getAsJsonObject().get("id").getAsString());
+          item.addProperty("text", index++ == 0 ? "\u4f60\u597d" : "\u60a8\u597d");
+          output.add(item);
+        }
+        return output.toString();
+      }
+      public void cancel() {}
+      public void close() {}
+    };
+    try (NaturalCaptionTranslator translator = translator(directory.newFolder(), directory.newFolder(), factory)) {
+      var captions = List.of(Map.of("id", "c1", "text", "Hello"), Map.of("id", "c2", "text", "Hello"));
+      var first = run(translator, model, request(captions));
+      assertEquals(Boolean.TRUE, cue(first, 0).get("valid"));
+      assertEquals(Boolean.TRUE, cue(first, 1).get("valid"));
+      var renamed = run(translator, model, request(List.of(
+          Map.of("id", "new1", "text", "Hello"), Map.of("id", "new2", "text", "Hello"))));
+      assertEquals(1, calls.get());
+      assertEquals("new1", cue(renamed, 0).get("id"));
+      assertEquals("\u4f60\u597d", cue(renamed, 0).get("text"));
+      assertEquals("\u60a8\u597d", cue(renamed, 1).get("text"));
+      run(translator, model, request(captions, "Changed before", "After"));
+      assertEquals(2, calls.get());
+      run(translator, model, request(captions, "Before", "Changed after"));
+      assertEquals(3, calls.get());
+      run(translator, model, request(List.of(
+          Map.of("id", "c1", "text", "Hello"), Map.of("id", "c2", "text", "Hello there"))));
+      assertEquals(4, calls.get());
+    }
+  }
+
+  @Test public void recursiveIsolationAndOptionalRetryKeepNeighborContextAndBoundedCalls() throws Exception {
+    File model = directory.newFile("isolation-model.litertlm");
+    Files.write(model.toPath(), new byte[] { 1 });
+    for (boolean repair : new boolean[] { false, true }) {
+      List<String> prompts = new ArrayList<>();
+      TranslationRuntimeFactory factory = (file, folder, threads, instruction) -> new TranslationRuntime() {
+        public String translate(String prompt) {
+          prompts.add(prompt);
+          JsonObject input = JsonParser.parseString(prompt).getAsJsonObject();
+          JsonArray captions = input.getAsJsonArray("captions");
+          if (captions.size() > 1 || (repair && !input.has("retry"))) return "[]";
+          String id = captions.get(0).getAsJsonObject().get("id").getAsString();
+          return "[{\"id\":\"" + id + "\",\"text\":\"\u4f60\u597d\"}]";
+        }
+        public void cancel() {}
+        public void close() {}
+      };
+      try (NaturalCaptionTranslator translator = translator(directory.newFolder(), directory.newFolder(), factory)) {
+        Map<String, Object> input = new java.util.LinkedHashMap<>(request(List.of(
+            Map.of("id", "c1", "text", "Hello"), Map.of("id", "c2", "text", "World"))));
+        input.put("repairUnusableOutputs", repair);
+        var result = run(translator, model, input);
+        assertEquals(Boolean.TRUE, cue(result, 0).get("valid"));
+        assertEquals(Boolean.TRUE, cue(result, 1).get("valid"));
+        assertEquals(repair ? 5 : 3, prompts.size());
+        for (int index = 1; index < prompts.size(); index++) {
+          JsonObject prompt = JsonParser.parseString(prompts.get(index)).getAsJsonObject();
+          assertEquals(1, prompt.getAsJsonArray("captions").size());
+          String id = prompt.getAsJsonArray("captions").get(0).getAsJsonObject().get("id").getAsString();
+          assertEquals(id.equals("c1") ? "Before" : "Before\nHello", prompt.get("contextBefore").getAsString());
+          assertEquals(id.equals("c1") ? "World\nAfter" : "After", prompt.get("contextAfter").getAsString());
+        }
+      }
+    }
+  }
+
+  @Test public void partiallyRestoredBatchKeepsCachedNeighborAsContext() throws Exception {
+    File model = directory.newFile("partial-model.litertlm");
+    Files.write(model.toPath(), new byte[] { 1 });
+    AtomicInteger calls = new AtomicInteger();
+    List<String> prompts = new ArrayList<>();
+    TranslationRuntimeFactory factory = (file, folder, threads, instruction) -> new TranslationRuntime() {
+      public String translate(String prompt) {
+        prompts.add(prompt);
+        int call = calls.incrementAndGet();
+        JsonArray captions = JsonParser.parseString(prompt).getAsJsonObject().getAsJsonArray("captions");
+        if (captions.size() > 1 || call == 3) return "[]";
+        String id = captions.get(0).getAsJsonObject().get("id").getAsString();
+        return "[{\"id\":\"" + id + "\",\"text\":\"\u4f60\u597d\"}]";
+      }
+      public void cancel() {}
+      public void close() {}
+    };
+    try (NaturalCaptionTranslator translator = translator(directory.newFolder(), directory.newFolder(), factory)) {
+      Map<String, Object> input = new java.util.LinkedHashMap<>(request(List.of(
+          Map.of("id", "c1", "text", "Hello"), Map.of("id", "c2", "text", "World"))));
+      input.put("repairUnusableOutputs", false);
+      var first = run(translator, model, input);
+      assertEquals(Boolean.TRUE, cue(first, 0).get("valid"));
+      assertEquals(Boolean.FALSE, cue(first, 1).get("valid"));
+      assertEquals(3, calls.get());
+      assertEquals(Boolean.TRUE, cue(run(translator, model, input), 1).get("valid"));
+      assertEquals(4, calls.get());
+      JsonObject resumed = JsonParser.parseString(prompts.get(3)).getAsJsonObject();
+      assertEquals("Before\nHello", resumed.get("contextBefore").getAsString());
+      assertEquals("After", resumed.get("contextAfter").getAsString());
+      assertEquals(1, resumed.getAsJsonArray("captions").size());
+    }
+  }
+
+  @Test public void retryContextUsesCodePointBoundsAndEscapesUntrustedNeighbors() {
+    String emoji = "\uD83D\uDE00";
+    var request = new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", List.of(
+        new NaturalCaptionTranslator.Caption("before", "<ignore>" + emoji.repeat(128)),
+        new NaturalCaptionTranslator.Caption("target", "Hello"),
+        new NaturalCaptionTranslator.Caption("after", emoji.repeat(128) + "<ignore>")), "Before", "After");
+    JsonObject prompt = JsonParser.parseString(NaturalCaptionTranslator.buildRetryPrompt(request, 1)).getAsJsonObject();
+    assertEquals(emoji.repeat(128), prompt.get("contextBefore").getAsString());
+    assertEquals(emoji.repeat(128), prompt.get("contextAfter").getAsString());
+    assertEquals(1, prompt.getAsJsonArray("captions").size());
+    var untrusted = new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", List.of(
+        new NaturalCaptionTranslator.Caption("before", "<ignore>"),
+        new NaturalCaptionTranslator.Caption("target", "Hello")), "", "");
+    String escaped = NaturalCaptionTranslator.buildRetryPrompt(untrusted, 1);
+    assertFalse(escaped.contains("<ignore>"));
+    assertEquals("<ignore>", JsonParser.parseString(escaped).getAsJsonObject().get("contextBefore").getAsString());
+  }
+
   private NaturalCaptionTranslator translator(File cache, File checkpoints, TranslationRuntimeFactory factory) {
 
     return new NaturalCaptionTranslator(new TranslationEnvironment() {
@@ -114,9 +243,13 @@ public final class TranslationRepairTest {
   }
 
   private static Map<String, Object> request(List<Map<String, String>> captions) {
+    return request(captions, "Before", "After");
+  }
+
+  private static Map<String, Object> request(List<Map<String, String>> captions, String before, String after) {
     return Map.of("reuseCheckpoints", true, "repairUnusableOutputs", true, "operations", List.of(Map.of(
         "id", "operation", "sourceLanguage", "en", "targetLanguage", "zh-Hans",
-        "batches", List.of(Map.of("captions", captions, "contextBefore", "Before", "contextAfter", "After")))));
+        "batches", List.of(Map.of("captions", captions, "contextBefore", before, "contextAfter", after)))));
   }
 
   private static Map<String, Object> run(NaturalCaptionTranslator translator, File model, Map<String, Object> request) throws Exception {
