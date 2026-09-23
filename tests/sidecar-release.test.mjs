@@ -7,11 +7,24 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   checkPublishedRelease, configureSidecarApp, releaseMetadataAsset,
-  resolvePublishedRelease, validateReleaseMetadata,
+  parseSigningCertificate, resolvePublishedRelease, validateReleaseMetadata,
 } from '../scripts/configure-sidecar-release.mjs';
 
 const root = new URL('../', import.meta.url);
 const productContract = JSON.parse(readFileSync(fileURLToPath(new URL('config/product-contract.json', root)), 'utf8'));
+
+test('APK signer parser accepts verified v2 and legacy output but rejects ambiguous identity', () => {
+  const pinned = productContract.android.release.signingCertificateSha256;
+  assert.equal(parseSigningCertificate(`Number of signers: 1\nV2 Signer: certificate SHA-256 digest: ${pinned}\n`, pinned), pinned);
+  assert.equal(parseSigningCertificate(`Number of signers: 1\nSigner #1 certificate SHA-256 digest: ${pinned}\n`, pinned), pinned);
+  assert.equal(parseSigningCertificate(`Number of signers: 1\nV2 Signer: certificate SHA-256 digest: ${pinned}\nV3 Signer: certificate SHA-256 digest: ${pinned}\n`, pinned), pinned);
+  for (const output of [
+    `Number of signers: 2\nV2 Signer: certificate SHA-256 digest: ${pinned}\n`,
+    `Number of signers: 1\nV2 Signer: certificate SHA-256 digest: ${'0'.repeat(64)}\n`,
+    `Number of signers: 1\nV2 Signer: certificate SHA-256 digest: ${pinned}\nV3 Signer: certificate SHA-256 digest: ${'0'.repeat(64)}\n`,
+    `V2 Signer: certificate SHA-256 digest: ${pinned}\n`,
+  ]) assert.throws(() => parseSigningCertificate(output, pinned));
+});
 
 test('release keeps the expected Android identity', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'caption-studio-sidecar-'));

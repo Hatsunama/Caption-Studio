@@ -27,6 +27,17 @@ async function hashApk(filename) {
   return hash.digest('hex');
 }
 
+export function parseSigningCertificate(certificates, expectedSha256) {
+  const count = [...certificates.matchAll(/^Number of signers: ([0-9]+)\r?$/gm)];
+  const digests = [...certificates.matchAll(/^(?:Signer #[0-9]+|V[0-9]+(?:\.[0-9]+)? Signer:) certificate SHA-256 digest: ([0-9a-fA-F]{64})\r?$/gm)]
+    .map((match) => match[1].toLowerCase());
+  if (count.length !== 1 || Number(count[0][1]) !== 1 || digests.length === 0 ||
+      digests.some((digest) => digest !== expectedSha256)) {
+    throw new Error('APK must have exactly one signer with the pinned release certificate.');
+  }
+  return expectedSha256;
+}
+
 async function inspectApk(filename) {
   const buildTools = process.env.SIDECAR_BUILD_TOOLS;
   if (!buildTools) throw new Error('SIDECAR_BUILD_TOOLS must name an Android SDK build-tools directory.');
@@ -35,11 +46,10 @@ async function inspectApk(filename) {
   if (!identity) throw new Error('Cannot read published APK identity.');
   const { stdout: certificates } = await run(path.join(buildTools, 'apksigner'),
     ['verify', '--verbose', '--print-certs', filename]);
-  const signers = [...certificates.matchAll(/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]{64})\r?$/gm)];
-  if (signers.length !== 1) throw new Error('Expected exactly one APK signing certificate.');
+  const signingCertificateSha256 = parseSigningCertificate(certificates, releaseContract.signingCertificateSha256);
   return {
     package: identity[1], version: identity[3], versionCode: Number(identity[2]),
-    signingCertificateSha256: signers[0][1].toLowerCase(),
+    signingCertificateSha256,
     apk: { name: releaseContract.assetName, sha256: await hashApk(filename) },
   };
 }
