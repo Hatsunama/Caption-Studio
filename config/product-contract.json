@@ -10,7 +10,7 @@
       "package": "com.xmilo_at_your_side.caption_studio",
       "channel": "fixed-sidecar",
       "assetName": "caption-studio-android.apk",
-      "minimumVersion": "1.4.92",
+      "minimumVersion": "1.4.95",
       "signingCertificateSha256": "d02d23b28cbc615e3686d181aedefbbe5de993a0b6ba3f8e4ea2b6160211b35f"
     }
   },
