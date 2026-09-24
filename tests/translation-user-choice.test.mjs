@@ -98,8 +98,9 @@ test('short acknowledgements and invariant tokens work without admitting echoed 
     ['a name', '\u{20BB7}', 'zh-Hans'],
     ['okay', '\u1eea', 'vi'],
   ]) assert.equal(usableAutomaticTranslation(source, text, false, target), text);
-  for (const text of ['Hello world', '', 'okay']) {
+  for (const text of ['Hello world', '']) {
     assert.equal(usableAutomaticTranslation(text || 'Hello', text, false, 'zh-Hans'), undefined);
   }
+  assert.equal(usableAutomaticTranslation('okay', 'okay', false, 'zh-Hans'), 'okay');
   assert.equal(usableAutomaticTranslation('OK', 'OK', true, 'zh-Hans'), undefined);
 });
