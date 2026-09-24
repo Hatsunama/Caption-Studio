@@ -139,11 +139,17 @@ jobs:
         working-directory: android
         run: ./gradlew :app:lintRelease --init-script ../scripts/first-party-android-lint.gradle --no-daemon --stacktrace --warning-mode all
 
-      - name: Test and build Caption Studio release APK
+      - name: Test Caption Studio Android release modules
         env:
           NODE_ENV: production
         working-directory: android
-        run: ./gradlew :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest :app:assembleRelease --no-daemon --stacktrace --warning-mode all
+        run: ./gradlew :app:testReleaseUnitTest :caption-diagnostics:testReleaseUnitTest :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest --no-daemon --stacktrace --warning-mode all
+
+      - name: Build Caption Studio release APK
+        env:
+          NODE_ENV: production
+        working-directory: android
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace --warning-mode all
 
       - name: Verify and package APK
         id: package

@@ -40,8 +40,10 @@ type DualCaptionEditorProps = {
   trackVisible: boolean;
   automaticTranslation: boolean;
   busy: boolean;
+  translationActive: boolean;
   progressLabel?: string;
   errorMessage?: string;
+  warningMessage?: string;
   retryErrorAvailable: boolean;
   onDismissError: () => void;
   onRetryError: () => void;
@@ -296,26 +298,33 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           contentContainerStyle={{ gap: 10, padding: 14, paddingBottom: 120 }}
         />
 
-        {props.busy || props.errorMessage ? (
+        {props.busy || props.errorMessage || props.warningMessage ? (
           <View style={{ position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.78)' }}>
             <View style={{ width: '100%', maxWidth: 380, gap: 14, padding: 22, borderRadius: chrome.radius.xl, backgroundColor: chrome.surfaceRaised }}>
               {props.busy ? <ActivityIndicator color={chrome.accent} size="large" /> : null}
-              <Text accessibilityRole={props.errorMessage ? 'alert' : undefined} selectable style={{ color: props.errorMessage ? chrome.dangerText : chrome.text, fontSize: 17, lineHeight: 24, fontWeight: '700', textAlign: 'center' }}>
-                {props.errorMessage ?? props.progressLabel ?? 'Translating locally…'}
+              <Text accessibilityRole={props.errorMessage || props.warningMessage ? 'alert' : undefined} selectable style={{ color: props.warningMessage ? chrome.warning : props.errorMessage ? chrome.dangerText : chrome.text, fontSize: 17, lineHeight: 24, fontWeight: '700', textAlign: 'center' }}>
+                {props.warningMessage ?? props.errorMessage ?? props.progressLabel ?? 'Translating locally…'}
               </Text>
-              <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 19, textAlign: 'center' }}>
-                Keep Caption Studio open on this screen and keep the phone unlocked until this finishes.
-              </Text>
+              {props.busy && !props.errorMessage && !props.warningMessage ? (
+                <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 19, textAlign: 'center' }}>
+                  Keep Caption Studio open on this screen and keep the phone unlocked until this finishes.
+                </Text>
+              ) : null}
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 {props.errorMessage && props.retryErrorAvailable ? (
                   <Pressable accessibilityRole="button" accessibilityLabel="Retry interrupted translation" onPress={props.onRetryError} style={{ flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: chrome.radius.md, backgroundColor: chrome.accent }}>
                     <Text style={{ color: chrome.accentInk, fontWeight: '800' }}>Retry</Text>
                   </Pressable>
                 ) : null}
-                <Pressable accessibilityRole="button" onPress={props.errorMessage ? props.onDismissError : props.onCancelBusy} style={{ flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: chrome.radius.md, backgroundColor: chrome.fill }}>
-                  <Text style={{ color: props.errorMessage ? chrome.text : chrome.dangerText, fontWeight: '800' }}>{props.errorMessage ? 'Close' : 'Cancel'}</Text>
+                <Pressable accessibilityRole="button" onPress={props.errorMessage || props.warningMessage ? props.onDismissError : props.onCancelBusy} style={{ flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: chrome.radius.md, backgroundColor: chrome.fill }}>
+                  <Text style={{ color: props.errorMessage || props.warningMessage ? chrome.text : chrome.dangerText, fontWeight: '800' }}>{props.errorMessage || props.warningMessage ? 'Close' : 'Cancel'}</Text>
                 </Pressable>
               </View>
+              {props.translationActive && !props.errorMessage && !props.warningMessage ? (
+                <Text style={{ color: chrome.muted, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
+                  Translations are happening locally with a 1.5B Qwen model. It will not be instant and I apologize for that.
+                </Text>
+              ) : null}
             </View>
           </View>
         ) : null}

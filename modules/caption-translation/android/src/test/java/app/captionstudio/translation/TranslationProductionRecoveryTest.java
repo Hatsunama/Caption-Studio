@@ -25,7 +25,7 @@ public final class TranslationProductionRecoveryTest {
       List<Boolean> flags = new ArrayList<>();
       Map<String, Object> result = run(flags, fallback, false);
       assertEquals(9, flags.size());
-      assertEquals(Boolean.FALSE, flags.get(0));
+      assertEquals(Boolean.TRUE, flags.get(0));
       for (int i = 1; i < flags.size(); i++) assertTrue(flags.get(i));
       for (Object item : (List<?>) result.get("captions")) {
         Map<?, ?> cue = (Map<?, ?>) item;
@@ -40,7 +40,7 @@ public final class TranslationProductionRecoveryTest {
   @Test public void mixedFailuresPreserveAcceptedCuesAndSourceNeighbors() throws Exception {
     List<Boolean> flags = new ArrayList<>();
     Map<String, Object> result = run(flags, false, true);
-    assertEquals(List.of(false, true, true), flags);
+    assertEquals(List.of(true, true, true), flags);
     for (Object item : (List<?>) result.get("captions")) {
       Map<?, ?> cue = (Map<?, ?>) item;
       assertEquals(true, cue.get("valid"));

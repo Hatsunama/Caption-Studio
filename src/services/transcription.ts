@@ -2,6 +2,7 @@ import { Directory, File, FileMode, Paths } from 'expo-file-system';
 import { initWhisper, initWhisperVad } from 'whisper.rn/index';
 
 import CaptionMedia from 'caption-media';
+import { assertCaptionAudioAvailable } from '@/lib/media-validation';
 import { alignWordsToSpeech } from '@/lib/speech-alignment';
 import { PREPARING_AUDIO_CUES } from '@/lib/transcription-progress';
 import { coalesceWhisperWords } from '@/lib/whisper-words';
@@ -351,6 +352,8 @@ export async function transcribeVideoLocally(options: {
   session?: CaptionGenerationSessionContext;
 }): Promise<LocalTranscriptionResult> {
   const { projectId, videoUri, modelId, onProgress, session } = options;
+  session?.throwIfCancelled();
+  assertCaptionAudioAvailable(await CaptionMedia.getMediaInfo(videoUri));
   session?.throwIfCancelled();
   const audioDirectory = new Directory(Paths.cache, 'caption-audio');
   audioDirectory.create({ idempotent: true, intermediates: true });

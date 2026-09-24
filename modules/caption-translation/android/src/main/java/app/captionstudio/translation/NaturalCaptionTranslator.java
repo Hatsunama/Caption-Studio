@@ -319,19 +319,25 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           0,
           session.batches.size()
       );
-      modelVerifier.verify(
-          model,
-          () -> run.cancelled.get() || Thread.currentThread().isInterrupted(),
-          percent -> updateProgress(
-              run,
-              "verifying-model",
-              percent,
-              0,
-              session.totalCaptions,
-              0,
-              session.batches.size()
-          )
-      );
+      long verificationStartNanos = System.nanoTime();
+      try {
+        modelVerifier.verify(
+            model,
+            () -> run.cancelled.get() || Thread.currentThread().isInterrupted(),
+            percent -> updateProgress(
+                run,
+                "verifying-model",
+                percent,
+                0,
+                session.totalCaptions,
+                0,
+                session.batches.size()
+            )
+        );
+      } finally {
+        run.verificationMs = elapsedMilliseconds(verificationStartNanos);
+        logVerificationMetrics(run.verificationMs);
+      }
       updateProgress(
           run,
           "loading-model",
@@ -499,6 +505,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       result = resultMap(session, translated, elapsedMilliseconds(startedAtNanos));
       result.put("backend", runtime == null ? "none" : TranslationBatchMetrics.safeBackend(runtime.backendName()));
       result.put("initializationFallback", runtime != null && runtime.initializationFallback());
+      result.put("verificationMs", run.verificationMs);
       result.put("batchMetrics", run.metrics);
       result.put("benchmarkNoCheckpoints", run.benchmarkNoCheckpoints);
     } catch (Throwable caught) {
@@ -830,6 +837,14 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       Log.i(LOG_TAG, "Translation batch metrics: " + metrics);
     } catch (RuntimeException unavailableLogger) {
       // Diagnostics must not alter acceptance, checkpoints, or terminal delivery.
+    }
+  }
+
+  private static void logVerificationMetrics(long durationMs) {
+    try {
+      Log.i(LOG_TAG, "Translation model verification metrics: {durationMs=" + durationMs + "}");
+    } catch (RuntimeException unavailableLogger) {
+      // Diagnostics must not alter translation or terminal delivery.
     }
   }
 
@@ -1904,6 +1919,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
 
   private static final class ActiveRun {
     int diagnosticAttempt;
+    long verificationMs;
     boolean benchmarkNoCheckpoints;
     TranslationBackendSelection.Preference backendPreference;
     TranslationBatchMetrics batchMetrics;
