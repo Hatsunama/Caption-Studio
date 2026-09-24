@@ -87,7 +87,7 @@ public final class TranslationRepairTest {
     assertFalse(TranslationOutputQuality.needsReview("42", "42", "ja"));
     assertFalse(TranslationOutputQuality.needsReview("a name", "\uD842\uDFB7", "zh-Hans"));
     assertTrue(TranslationOutputQuality.needsReview("Hello", "Hello", "zh-Hans"));
-    assertTrue(TranslationOutputQuality.needsReview("okay", "okay", "zh-Hans"));
+    assertFalse(TranslationOutputQuality.needsReview("okay", "okay", "zh-Hans"));
     assertTrue(TranslationOutputQuality.needsReview("okay", "", "zh-Hans"));
     assertFalse(TranslationOutputQuality.needsReview("We already arrived", "我们已经到了", "zh-Hans"));
     assertTrue(TranslationOutputQuality.needsReview("We already arrived", "我們已經到了", "zh-Hans"));
@@ -245,13 +245,167 @@ public final class TranslationRepairTest {
         .getAsJsonObject("sourceNeighbors").get("before").getAsString());
   }
 
+  @Test public void borrowedAcknowledgementsDoNotExemptSentencesOrOtherWords() {
+    for (String text : new String[] { "okay.", "OKAY!", "OK", "O.K." }) {
+      assertFalse(text, TranslationOutputQuality.needsReview("okay.", text, "zh-Hans"));
+    }
+    for (String text : new String[] { "Okay, keep the app blank", "hello", "yes", "o k a y" }) {
+      assertTrue(text, TranslationOutputQuality.needsReview("okay.", text, "zh-Hans"));
+    }
+    assertTrue(TranslationOutputQuality.needsReview("A blank app should stay blank when",
+        "a blank app should stay blank when!", "es"));
+  }
+
+  @Test public void structuredReasonsKeepEmptyLengthEchoAndScriptDistinct() {
+    assertEquals(TranslationOutputQuality.Reason.EMPTY,
+        TranslationOutputQuality.classify("okay.", "\u00a0\u200b", "zh-Hans"));
+    assertEquals(TranslationOutputQuality.Reason.RUNAWAY_LENGTH,
+        TranslationOutputQuality.classify("okay.", "okay ".repeat(30), "zh-Hans"));
+    assertEquals(TranslationOutputQuality.Reason.SOURCE_ECHO,
+        TranslationOutputQuality.classify("A blank app should stay blank when", "a blank app should stay blank when!", "es"));
+    assertEquals(TranslationOutputQuality.Reason.WRONG_SCRIPT,
+        TranslationOutputQuality.classify("Hello", "Bonjour", "zh-Hans"));
+    assertEquals(TranslationOutputQuality.Reason.NONE,
+        TranslationOutputQuality.classify("okay.", "Okay!", "zh-Hans"));
+    assertEquals(TranslationOutputQuality.Reason.NONE,
+        TranslationOutputQuality.classify("okay.", "可以", "zh-Hans"));
+  }
+
+  @Test public void qualityRepairExplainsEachReasonAndRetainsContextInOneRuntime() throws Exception {
+    String source = "A blank app should stay blank when";
+    String[][] cases = {
+        { source, "SOURCE_ECHO", "Translate the meaning" },
+        { "Unrelated English output", "WRONG_SCRIPT", "writing system" },
+        { "這個應用應該保持空白", "WRONG_SCRIPT", "writing system" },
+        { "", "EMPTY", "non-empty" },
+        { "字".repeat(180), "RUNAWAY_LENGTH", "only this cue" }
+    };
+    File model = directory.newFile("quality-model.litertlm");
+    Files.write(model.toPath(), new byte[] { 1 });
+    for (String[] scenario : cases) {
+      AtomicInteger opened = new AtomicInteger();
+      AtomicInteger closed = new AtomicInteger();
+      List<String> prompts = new ArrayList<>();
+      List<String> logs = new ArrayList<>();
+      TranslationRuntimeFactory factory = (file, folder, threads, instruction) -> {
+        opened.incrementAndGet();
+        return new TranslationRuntime() {
+          public String translate(String prompt) {
+            prompts.add(prompt);
+            JsonObject input = JsonParser.parseString(prompt).getAsJsonObject();
+            JsonArray output = new JsonArray();
+            for (var value : input.getAsJsonArray("captions")) {
+              JsonObject item = new JsonObject();
+              String id = value.getAsJsonObject().get("id").getAsString();
+              item.addProperty("id", id);
+              item.addProperty("text", id.equals("cue29") && prompts.size() == 1
+                  ? scenario[0] : "空白应用应保持空白");
+              output.add(item);
+            }
+            return output.toString();
+          }
+          public void cancel() {}
+          public void close() { closed.incrementAndGet(); }
+        };
+      };
+      try (NaturalCaptionTranslator translator = translator(directory.newFolder(), directory.newFolder(), factory, logs::add)) {
+        var result = run(translator, model, request(List.of(
+            Map.of("id", "neighbor", "text", "Previous source cue"),
+            Map.of("id", "cue29", "text", source))));
+        assertEquals(Boolean.TRUE, cue(result, 1).get("valid"));
+        assertEquals(2, prompts.size());
+        assertEquals(1, opened.get()); assertEquals(1, closed.get());
+        JsonObject retry = JsonParser.parseString(prompts.get(1)).getAsJsonObject();
+        assertEquals("translate_caption_batch", retry.get("task").getAsString());
+        assertEquals(1, retry.getAsJsonArray("captions").size());
+        assertEquals("cue29", retry.getAsJsonArray("captions").get(0).getAsJsonObject().get("id").getAsString());
+        assertEquals("Before", retry.get("contextBefore").getAsString());
+        assertEquals("After", retry.get("contextAfter").getAsString());
+        assertEquals("Before\nPrevious source cue", retry.getAsJsonObject("sourceNeighbors").get("before").getAsString());
+        assertEquals("After", retry.getAsJsonObject("sourceNeighbors").get("after").getAsString());
+        assertTrue("Missing structured repair for " + scenario[1], retry.has("repair"));
+        JsonObject repair = retry.getAsJsonObject("repair");
+        assertEquals(scenario[1], repair.get("reason").getAsString());
+        assertTrue(repair.get("guidance").getAsString().contains(scenario[2]));
+        assertTrue(repair.get("guidance").getAsString().contains("exactly two string fields"));
+        assertTrue(logs.toString(), logs.stream().anyMatch(line -> line.contains("qualityReason=" + scenario[1])));
+        for (String line : logs) {
+          assertFalse(line.contains(source)); assertFalse(line.contains("cue29"));
+          assertFalse(line.contains("Previous source cue")); assertFalse(line.contains("Unrelated English output"));
+          assertFalse(line.contains("空白"));
+        }
+      }
+    }
+  }
+
+  @Test public void repairDropsOversizedNeighborsButKeepsQualityReason() throws Exception {
+    File model = directory.newFile("capacity-model.litertlm");
+    Files.write(model.toPath(), new byte[] { 1 });
+    List<String> prompts = new ArrayList<>();
+    TranslationRuntimeFactory factory = (file, folder, threads, instruction) -> new TranslationRuntime() {
+      public String translate(String prompt) {
+        prompts.add(prompt);
+        JsonObject input = JsonParser.parseString(prompt).getAsJsonObject();
+        String id = input.getAsJsonArray("captions").get(0).getAsJsonObject().get("id").getAsString();
+        return "[{\"id\":\"" + id + "\",\"text\":\"" + (input.has("retry") ? "你好" : "") + "\"}]";
+      }
+      public void cancel() {}
+      public void close() {}
+    };
+    try (NaturalCaptionTranslator translator = translator(directory.newFolder(), directory.newFolder(), factory)) {
+      var result = run(translator, model, request(List.of(
+          Map.of("id", "before", "text", "<".repeat(128)),
+          Map.of("id", "target", "text", "Hello " + "please ".repeat(40)),
+          Map.of("id", "after", "text", "<".repeat(128)))));
+      assertEquals(Boolean.TRUE, cue(result, 1).get("valid"));
+      assertEquals(2, prompts.size());
+      JsonObject retry = JsonParser.parseString(prompts.get(1)).getAsJsonObject();
+      assertEquals("EMPTY", retry.getAsJsonObject("repair").get("reason").getAsString());
+      assertEquals("", retry.get("contextBefore").getAsString());
+      assertEquals("", retry.get("contextAfter").getAsString());
+      assertEquals("", retry.getAsJsonObject("sourceNeighbors").get("before").getAsString());
+      assertEquals("", retry.getAsJsonObject("sourceNeighbors").get("after").getAsString());
+    }
+  }
+
+  @Test public void persistentQualityRejectionStaysInvalidAfterOneRepairAndIsNotCached() throws Exception {
+    File model = directory.newFile("echo-model.litertlm");
+    Files.write(model.toPath(), new byte[] { 1 });
+    AtomicInteger calls = new AtomicInteger();
+    List<String> logs = new ArrayList<>();
+    TranslationRuntimeFactory factory = (file, folder, threads, instruction) -> new TranslationRuntime() {
+      public String translate(String prompt) {
+        calls.incrementAndGet();
+        return "[{\"id\":\"cue29\",\"text\":\"A blank app should stay blank when\"}]";
+      }
+      public void cancel() {}
+      public void close() {}
+    };
+    try (NaturalCaptionTranslator translator = translator(directory.newFolder(), directory.newFolder(), factory, logs::add)) {
+      var input = request(List.of(Map.of("id", "cue29", "text", "A blank app should stay blank when")));
+      for (int runIndex = 1; runIndex <= 2; runIndex++) {
+        var rejected = cue(run(translator, model, input), 0);
+        assertEquals(Boolean.FALSE, rejected.get("valid"));
+        assertEquals("", rejected.get("text"));
+        assertEquals("QUALITY_REVIEW", rejected.get("failureReason"));
+        assertEquals(2 * runIndex, calls.get());
+      }
+      assertTrue(logs.stream().anyMatch(line -> line.contains("stage=REPAIR") && line.contains("qualityReason=SOURCE_ECHO")));
+    }
+  }
+
   private NaturalCaptionTranslator translator(File cache, File checkpoints, TranslationRuntimeFactory factory) {
+    return translator(cache, checkpoints, factory, line -> {});
+  }
+
+  private NaturalCaptionTranslator translator(File cache, File checkpoints, TranslationRuntimeFactory factory,
+      java.util.function.Consumer<String> diagnostics) {
 
     return new NaturalCaptionTranslator(new TranslationEnvironment() {
       public File prepareCacheDirectory() { return cache; }
       public File prepareCheckpointDirectory() { return checkpoints; }
       public void verifyDeviceCapacity(File model) {}
-    }, factory, (model, cancelled, progress) -> {}, Executors.newSingleThreadExecutor());
+    }, factory, (model, cancelled, progress) -> {}, Executors.newSingleThreadExecutor(), diagnostics);
   }
 
   private static Map<String, Object> request(List<Map<String, String>> captions) {
