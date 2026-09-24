@@ -43,30 +43,19 @@ export function VideoTransitionOverlay(props: Props) {
     [props.timelineMs, windows],
   );
   if (!props.admitted) return null;
-  if (!props.visible) {
-    return <View pointerEvents="none" style={[fill, { opacity: 0.001 }]}><TimelineVideoPair {...props} /></View>;
-  }
-  if (!props.transportReady || frame?.key === failedPreviewKey) return <TimelineVideoPair {...props} />;
-  if (frame?.mode === 'cover') {
-    return (
-      <>
-        <TimelineVideoPair {...props} />
-        <CoverTransition frame={frame} width={props.width} height={props.height} />
-      </>
-    );
-  }
-  if (frame?.unavailableReason) {
-    return (
-      <>
-        <TimelineVideoPair {...props} />
-        <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame.unavailableReason} />
-      </>
-    );
-  }
-  if (frame?.mode !== 'composite' || !frame.outgoing || !frame.incoming) {
-    return <TimelineVideoPair {...props} />;
-  }
-  return <CompositeVideoTransitionOverlay {...props} frame={frame} onUnavailable={() => setFailedPreviewKey(frame.key)} />;
+  const transitionReady = props.visible && props.transportReady && frame?.key !== failedPreviewKey;
+  return (
+    <View pointerEvents="none" style={fill}>
+      <TimelineVideoPair {...props} />
+      {!props.visible ? <View style={[fill, { backgroundColor: props.backgroundColor }]} /> : null}
+      {transitionReady && frame?.mode === 'cover'
+        ? <CoverTransition frame={frame} width={props.width} height={props.height} /> : null}
+      {transitionReady && frame?.unavailableReason
+        ? <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame.unavailableReason} /> : null}
+      {transitionReady && frame?.mode === 'composite' && frame.outgoing && frame.incoming && !frame.unavailableReason
+        ? <CompositeVideoTransitionOverlay {...props} frame={frame} onUnavailable={() => setFailedPreviewKey(frame.key)} /> : null}
+    </View>
+  );
 }
 
 function TimelineVideoPair(props: Props) {
@@ -81,7 +70,7 @@ function TimelineVideoPair(props: Props) {
             transform={props.currentTransform}
             width={props.width}
             height={props.height}
-            opacity={slot === props.activeSlot ? 1 : 0.001}
+            effectStyle={{ zIndex: slot === props.activeSlot ? 1 : 0, backgroundColor: props.backgroundColor }}
             onFirstFrameRender={() => props.onFirstFrameRender(slot, props.slots[slot].prepareToken)}
           />
         );
@@ -105,18 +94,15 @@ function CompositeVideoTransitionOverlay(props: Props & {
     || props.slots[outgoingSlot].readiness !== 'ready'
     || props.slots[incomingSlot].readiness !== 'ready'
   ) {
-    return <TimelineVideoPair {...props} />;
+    return null;
   }
   return (
-    <>
-      <TimelineVideoPair {...props} />
-      <SynchronizedComposite
-        key={`${props.frame.key}:${props.slots[outgoingSlot].prepareToken}:${props.slots[incomingSlot].prepareToken}`}
-        {...props}
-        outgoingSlot={outgoingSlot as 0 | 1}
-        incomingSlot={incomingSlot as 0 | 1}
-      />
-    </>
+    <SynchronizedComposite
+      key={`${props.frame.key}:${props.slots[outgoingSlot].prepareToken}:${props.slots[incomingSlot].prepareToken}`}
+      {...props}
+      outgoingSlot={outgoingSlot as 0 | 1}
+      incomingSlot={incomingSlot as 0 | 1}
+    />
   );
 }
 

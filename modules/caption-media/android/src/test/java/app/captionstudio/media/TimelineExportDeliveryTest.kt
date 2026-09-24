@@ -15,6 +15,30 @@ import java.io.File
 @Config(sdk = [29], manifest = Config.NONE)
 class TimelineExportDeliveryTest {
   @Test
+  fun rejectsShortVideoTrackEvenWhenContainerDurationMatchesRender() {
+    // A non-empty MP4 can have a valid video track and dimensions while audio
+    // extends the container to the requested four-second duration.
+    val videoTrackDurationMs = 2_000L
+    val containerDurationMs = 4_000L
+    assertEquals(4_000L, maxOf(videoTrackDurationMs, containerDurationMs))
+
+    assertThrows(IllegalStateException::class.java) {
+      requireMatchingVideoTrackDuration(videoTrackDurationMs, expectedDurationMs = 4_000L, frameRate = 30)
+    }
+  }
+
+  @Test
+  fun acceptsVideoTrackWithinFrameToleranceButRejectsLargerMismatch() {
+    assertEquals(3_967L, requireMatchingVideoTrackDuration(3_967L, expectedDurationMs = 4_000L, frameRate = 30))
+    assertThrows(IllegalStateException::class.java) {
+      requireMatchingVideoTrackDuration(3_900L, expectedDurationMs = 4_000L, frameRate = 30)
+    }
+    assertThrows(IllegalStateException::class.java) {
+      requireMatchingVideoTrackDuration(0L, expectedDurationMs = 4_000L, frameRate = 30)
+    }
+  }
+
+  @Test
   fun requireRenderedVideoFileRejectsMissingAndEmptyFiles() {
     val missing = File.createTempFile("caption-studio-missing", ".mp4")
     assertTrue(missing.delete())

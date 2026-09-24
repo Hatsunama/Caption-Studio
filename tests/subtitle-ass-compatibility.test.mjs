@@ -40,6 +40,8 @@ function assDialogueText(dialogue) {
 
 function projectFixture(text) {
   return {
+    clips: [], audioClips: [], layers: [{ id: 'captions', kind: 'captions', visible: true }],
+    export: { burnCaptions: true },
     captions: [{ id: 'caption', text, startMs: 0, endMs: 1_000, wordIds: [] }],
     captionTracks: { schemaVersion: 1, translations: [] },
     transcription: { language: 'en', modelId: 'fast', words: [], sourceResults: {} },

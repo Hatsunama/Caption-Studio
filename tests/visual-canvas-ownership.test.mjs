@@ -31,31 +31,33 @@ function assertCanvas(project, expected, visible = true) {
   assert.ok(layer);
   assert.equal(layer.kind === 'text' ? layer.text : layer.uri, layer.kind === 'text' ? 'New text' : 'file:///image.png');
   assert.deepEqual(rangeOf(layer), expected);
-  assert.equal(layer.timingMode, 'timeline');
-  assert.equal(layer.sourceAnchors, undefined);
   assert.notEqual(layer.timelineVisible, false);
   assert.equal(layer.visible, visible);
   assert.equal(projectHasEditorLayer(project, layer.id), true, 'selection retains the original identity');
   const plan = buildTimelineRenderPlan(project);
-  assert.deepEqual(rangeOf(plan.layers.find(item => item.id === layer.id)), expected);
   assert.equal(plan.durationMs, projectTimelineDuration(project));
-  assert.ok(plan.durationMs >= expected[1]);
+  const output = plan.layers.find(item => item.id === layer.id);
+  if (!visible || expected[0] >= plan.durationMs) assert.equal(output, undefined);
+  else assert.deepEqual(rangeOf(output), [expected[0], Math.min(expected[1], plan.durationMs)]);
+  if (project.clips.length === 0 && visible) assert.ok(plan.durationMs >= expected[1]);
 }
 
 for (const kind of ['text', 'image']) {
   for (const edge of ['end', 'move']) {
-    test(`${kind} ${edge}: canvas ownership survives reopen and every later clip operation`, () => {
-      let project = add(fixture(), kind).project;
+    test(`${kind} ${edge}: bounded video timing survives reopen and later clip operations`, () => {
+      let project = add(fixture(), kind, 'selected', 500, 3500).project;
+      layerAt(project).timingMode = 'timeline';
+      layerAt(project).sourceAnchors = undefined;
       project = add(project, kind, 'sibling', 2500, 3500).project;
       const before = structuredClone(project);
-      const expected = edge === 'end' ? [500, 7000] : [6000, 7000];
+      const expected = edge === 'end' ? [500, 4000] : [1000, 4000];
       project = setLayerTiming(project, 'selected', edge, 6000, 7000);
-      assert.deepEqual(rangeOf(layerAt(before)), [500, 1500]);
+      assert.deepEqual(rangeOf(layerAt(before)), [500, 3500]);
       assert.deepEqual(layerAt(project, 'sibling'), layerAt(before, 'sibling'));
       assertCanvas(project, expected);
       project = reopen(project);
       assertCanvas(project, expected);
-      assert.deepEqual(projectTimelineSegmentAt(project, 6500), { kind: 'gap', startMs: 4000, endMs: 7000 });
+      assert.equal(projectTimelineSegmentAt(project, 6500), undefined);
       const [first, second] = project.clips;
       const operations = [
         value => trimVideoClip(value, first.id, 'end', 1000).project,
@@ -72,8 +74,8 @@ for (const kind of ['text', 'image']) {
       project = reopen(deleteVideoClip(project, first.id).project);
       project = reopen(deleteVideoClip(project, second.id).project);
       assertCanvas(project, expected);
-      assert.equal(projectTimelineDuration(project), 7000);
-      assert.equal(projectTimelineSegmentAt(project, 6500).kind, 'gap');
+      assert.equal(projectTimelineDuration(project), 4000);
+      assert.equal(projectTimelineSegmentAt(project, 3500).kind, 'gap');
       assert.deepEqual(buildTimelineRenderPlan(project).clips, []);
     });
   }
@@ -97,23 +99,27 @@ for (const kind of ['text', 'image']) {
     assertCanvas(reopen(deleteVideoClip(extended, extended.clips[0].id).project), [500, 4500]);
   });
 
-  test(`${kind}: insertion at/beyond footage and on an empty canvas creates a usable range`, () => {
+  test(`${kind}: video insertion stays within footage and empty canvas can grow`, () => {
     for (const start of [4000, 6000]) {
       const project = add(fixture(), kind, 'selected', start, 4000).project;
-      assertCanvas(reopen(project), [start, start + 3000]);
+      const layer = layerAt(reopen(project));
+      assert.deepEqual(rangeOf(layer), [3920, 4000]);
+      assert.equal(projectTimelineDuration(project), 4000);
     }
     const empty = fixture();
     empty.clips = [];
     assertCanvas(reopen(add(empty, kind, 'selected', 0, 0).project), [0, 3000]);
     const nearEnd = add(fixture(), kind, 'selected', 3990, 4000).project;
-    assertCanvas(reopen(nearEnd), [3990, 4070]);
+    assert.deepEqual(rangeOf(layerAt(reopen(nearEnd))), [3920, 4000]);
   });
 
   test(`${kind}: user visibility, split identity and sticky ownership survive later edits`, () => {
     let project = add(fixture(), kind).project;
+    layerAt(project).timingMode = 'timeline';
+    layerAt(project).sourceAnchors = undefined;
     layerAt(project).visible = false;
     project = setLayerTiming(project, 'selected', 'end', 500, 7000);
-    assertCanvas(reopen(project), [500, 7000], false);
+    assertCanvas(reopen(project), [500, 4000], false);
     project = setLayerTiming(project, 'selected', 'end', 500, 1500);
     project = reopen(setVideoClipGap(project, project.clips[0].id, 1000).project);
     assertCanvas(project, [500, 1500], false);
@@ -121,12 +127,15 @@ for (const kind of ['text', 'image']) {
     assert.ok(split);
     const edited = reopen(deleteVideoClip(split.project, project.clips[0].id).project);
     assert.equal(layerAt(edited), undefined);
+    const plan = buildTimelineRenderPlan(edited);
     for (const [id, range] of [['text-left', [500, 1000]], ['text-right', [1000, 1500]]]) {
       const layer = layerAt(edited, id);
       assert.deepEqual(rangeOf(layer), range);
       assert.equal(layer.timingMode, 'timeline');
       assert.equal(layer.sourceAnchors, undefined);
       assert.equal(layer.visible, false);
+      assert.equal(projectHasEditorLayer(edited, id), true);
+      assert.equal(plan.layers.find(item => item.id === id), undefined);
     }
   });
 
@@ -163,6 +172,6 @@ for (const kind of ['text', 'image']) {
     project = reopen(setVideoClipGap(project, second.id, 0).project);
     project = reopen(deleteVideoClip(project, second.id).project);
     assert.deepEqual(layerAt(project), orphan);
-    assert.equal(projectTimelineDuration(project), 0);
+    assert.equal(projectTimelineDuration(project), orphan.endMs);
   });
 }

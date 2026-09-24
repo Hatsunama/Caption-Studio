@@ -69,14 +69,16 @@ test('a reviewed translation becoming stale still saves and reloads with human p
   assert.equal(restored.captionTracks.translations[0].cues[0].reviewed, true);
 });
 
-test('missing translations deliberately moved beyond footage extend canvas and require export consent', () => {
+test('visible unresolved translation can extend canvas and requires export consent', () => {
   let project = fixture();
+  project.clips = [];
   const trackId = project.captionTracks.translations[0].id;
   project = setTranslationCueSkipped(project, trackId, 'c2', true);
+  project.captionTracks.translations[0].cues[2].status = 'failed';
   project = setTranslationCueTiming(project, trackId, 'c3', 'move', 9000, 10500);
   project = decodeVersionTwoProject(JSON.parse(JSON.stringify(project)));
   assert.equal(projectTimelineDuration(project), 10500);
-  assert.deepEqual(projectTimelineSegmentAt(project, 9500), { kind: 'gap', startMs: 6000, endMs: 10500 });
+  assert.deepEqual(projectTimelineSegmentAt(project, 9500), { kind: 'gap', startMs: 0, endMs: 10500 });
   assert.deepEqual(exportTranslationSummary(project), { missing: 1, needsReview: 0 });
   assert.throws(() => exportCaptionPairs(project), /Export anyway/);
   assert.throws(() => buildTimelineRenderPlan(project), /Export anyway/);
@@ -85,7 +87,7 @@ test('missing translations deliberately moved beyond footage extend canvas and r
   const plan = buildTimelineRenderPlan(project, undefined, true);
   assert.equal(plan.durationMs, 10500);
   assert.equal(plan.backgroundColor, project.canvas.backgroundColor);
-  assert.equal(exportCaptionPairs(project, true).length, 1);
+  assert.equal(exportCaptionPairs(project, true).length, 2);
   project.captionTracks.translations[0].cues[2].timelineVisible = false;
   assert.deepEqual(exportTranslationSummary(project), { missing: 0, needsReview: 0 });
   assert.equal(exportCaptionPairs(project).length, 1);

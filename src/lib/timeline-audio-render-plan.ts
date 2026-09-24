@@ -1,4 +1,5 @@
-import { projectTimelineDuration } from '@/lib/project-timeline';
+import { projectRenderDuration } from '@/lib/project-timeline';
+import { audibleAudioClipsWithin } from '@/lib/audio-timeline';
 import { buildClipTimeline } from '@/lib/video-timeline';
 import type { CaptionProject } from '@/types/project';
 
@@ -24,7 +25,7 @@ export type TimelineAudioRenderPlan = {
 };
 
 export function buildTimelineAudioRenderPlan(project: CaptionProject): TimelineAudioRenderPlan {
-  const durationMs = projectTimelineDuration(project);
+  const durationMs = projectRenderDuration(project);
   const videoSourceById = new Map(project.sources.map((source) => [source.id, source]));
   const audioSourceById = new Map(project.audioSources.map((source) => [source.id, source]));
   const videoClips = buildClipTimeline(project.clips).flatMap((entry) => {
@@ -42,7 +43,7 @@ export function buildTimelineAudioRenderPlan(project: CaptionProject): TimelineA
       muted: entry.clip.muted,
     }];
   });
-  const audioClips = project.audioClips.flatMap((clip) => {
+  const audioClips = audibleAudioClipsWithin(project, durationMs).flatMap((clip) => {
     const source = audioSourceById.get(clip.sourceId);
     const sourceDurationMs = Math.max(0, clip.sourceEndMs - clip.sourceStartMs);
     const timelineEndMs = Math.min(durationMs, clip.startMs + sourceDurationMs);

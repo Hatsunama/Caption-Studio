@@ -24,8 +24,9 @@ function fixture() {
 
 for (const kind of ['caption', 'translation', 'text']) {
   for (const edge of ['end', 'move']) {
-    test(`${kind} ${edge} beyond footage survives save/reopen and reaches preview/export unchanged`, () => {
+    test(`${kind} ${edge} on canvas survives save/reopen and reaches preview/export unchanged`, () => {
       let project = fixture();
+      project.clips = [];
       if (kind === 'text') project = createTextLayer(project, 'text', 500, 4000).project;
       const before = structuredClone(project);
       const trackId = project.captionTracks.translations[0].id;
@@ -40,7 +41,7 @@ for (const kind of ['caption', 'translation', 'text']) {
           : restored.layers.find((layer) => layer.id === 'text');
       assert.deepEqual([range.startMs, range.endMs], expected);
       assert.equal(projectTimelineDuration(restored), expected[1]);
-      assert.deepEqual(projectTimelineSegmentAt(restored, 6500), { kind: 'gap', startMs: 4000, endMs: expected[1] });
+      assert.deepEqual(projectTimelineSegmentAt(restored, 6500), { kind: 'gap', startMs: 0, endMs: expected[1] });
       assert.ok(range.startMs <= 6500 && range.endMs > 6500);
       if (kind === 'caption') {
         assert.equal(captionPreviewState(restored.captions, 6500).active.id, 'c1');
@@ -50,7 +51,7 @@ for (const kind of ['caption', 'translation', 'text']) {
       const plan = buildTimelineRenderPlan(restored);
       assert.equal(plan.durationMs, expected[1]);
       assert.equal(plan.backgroundColor, '#123456');
-      assert.equal(plan.clips[0].timelineEndMs, 4000);
+      assert.deepEqual(plan.clips, []);
       const output = kind === 'text' ? plan.layers.find((layer) => layer.id === 'text')
         : plan.captions.find((caption) => caption.id === (kind === 'caption' ? 'c1' : range.translation.id));
       assert.deepEqual([output.startMs, output.endMs], expected);
@@ -64,12 +65,17 @@ for (const kind of ['caption', 'translation', 'text']) {
   }
 }
 
-test('ordinary text insertion ends with footage; deliberate insertion past footage extends canvas', () => {
-  for (const [at, expected] of [[3000, [3000, 4000]], [6000, [6000, 9000]], [3990, [3990, 4070]]]) {
+test('video-backed text insertion remains in footage; canvas insertion can extend output', () => {
+  for (const [at, expected] of [[3000, [3000, 4000]], [6000, [3920, 4000]], [3990, [3920, 4000]]]) {
     const { project, layer } = createTextLayer(fixture(), 'text', at, 4000);
     assert.deepEqual([layer.startMs, layer.endMs], expected);
-    assert.equal(projectTimelineDuration(project), expected[1]);
+    assert.equal(projectTimelineDuration(project), 4000);
   }
+  const canvas = fixture();
+  canvas.clips = [];
+  const inserted = createTextLayer(canvas, 'text', 6000, 4000);
+  assert.deepEqual([inserted.layer.startMs, inserted.layer.endMs], [6000, 9000]);
+  assert.equal(projectTimelineDuration(inserted.project), 9000);
 });
 
 test('canvas edits normalize invalid ranges and requests, preserve 80 ms, and reject numeric overflow', () => {
@@ -78,11 +84,13 @@ test('canvas edits normalize invalid ranges and requests, preserve 80 ms, and re
       assert.deepEqual(editCanvasTimelineRange({ startMs: 500, endMs: 1500 }, edge, invalid, invalid), { startMs: 500, endMs: 1500 });
       assert.deepEqual(editCanvasTimelineRange({ startMs: invalid, endMs: invalid }, edge, invalid, invalid), { startMs: 0, endMs: 80 });
       const project = fixture();
+      project.clips = [];
       project.captions[0].startMs = invalid;
       project.captions[0].endMs = invalid;
       const fixed = setCaptionTiming(project, 'c1', edge, invalid, invalid).captions[0];
       assert.deepEqual([fixed.startMs, fixed.endMs], [0, 80]);
       const textProject = createTextLayer(fixture(), 'text', 500, 4000).project;
+      textProject.clips = [];
       const text = textProject.layers.find((layer) => layer.id === 'text');
       text.startMs = invalid; text.endMs = invalid;
       const fixedText = setLayerTiming(textProject, 'text', edge, invalid, invalid).layers.find((layer) => layer.id === 'text');

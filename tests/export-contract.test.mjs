@@ -75,9 +75,11 @@ test('render plans are pure, detached, inherited, and exclude trim-hidden conten
   assert.deepEqual(project, before);
   assert.deepEqual(plan.captions.map((caption) => caption.id), ['visible-caption']);
   assert.deepEqual(plan.layers.map((layer) => layer.id), ['captions', 'visible-title']);
-  assert.equal(plan.durationMs, 5_000);
-  assert.deepEqual([plan.captions[0].startMs, plan.captions[0].endMs], [0, 5_000]);
-  assert.deepEqual([plan.layers[1].startMs, plan.layers[1].endMs], [0, 5_000]);
+  assert.equal(plan.durationMs, 4_000);
+  assert.deepEqual([plan.captions[0].startMs, plan.captions[0].endMs], [0, 4_000]);
+  assert.deepEqual([plan.layers[1].startMs, plan.layers[1].endMs], [0, 4_000]);
+  assert.equal(project.captions[0].endMs, 5_000);
+  assert.equal(project.layers[1].endMs, 5_000);
   assert.equal(plan.captions[0].style.fontSize, 64);
   assert.equal(plan.captions[0].style.font.uri, 'file:///resolved-anton.ttf');
   assert.equal(plan.captions[0].words[0].style.textColor, '#00FF00');
@@ -329,7 +331,7 @@ test('partial AI results persist successes and failures without dropping existin
   assert.equal(failedAgain.captionTracks.translations[0].cues[1].status, 'failed');
 });
 
-test('disabled captions do not block video; canvas-tail translations require export consent', () => {
+test('disabled captions do not block video; out-of-range translations stay stored and canvas tails require consent', () => {
   const project = createEnglishChineseCaptionTrack(exportProject({ captions: [
     { id: 'c1', text: 'Hello', startMs: 0, endMs: 1000, wordIds: [] },
   ] }));
@@ -338,10 +340,15 @@ test('disabled captions do not block video; canvas-tail translations require exp
   const outside = structuredClone(project);
   outside.captionTracks.translations[0].cues[0].startMs = 5000;
   outside.captionTracks.translations[0].cues[0].endMs = 6000;
+  outside.captionTracks.translations[0].cues[0].status = 'failed';
+  assert.equal(buildTimelineRenderPlan(outside).durationMs, 4_000);
+  assert.deepEqual(buildTimelineRenderPlan(outside).captions.map(c => c.text), ['Hello']);
+  assert.equal(outside.captionTracks.translations[0].cues[0].endMs, 6_000);
+  outside.clips = [];
   assert.throws(() => buildTimelineRenderPlan(outside), /need translation or review/);
   const allowed = buildTimelineRenderPlan(outside, undefined, true);
   assert.ok(allowed.durationMs >= 6000);
-  assert.equal(allowed.captions.length, 1);
+  assert.equal(allowed.captions.length, 2);
   assert.doesNotThrow(() => serializeSrt(outside, true));
   assert.doesNotThrow(() => serializeAss(outside, true));
 });

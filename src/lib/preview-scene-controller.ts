@@ -1,5 +1,5 @@
 import { createLayerGesture, resolveLayerGeometry, sameLayerGeometry, type LayerGeometry, type LayerGeometryInput, type LayerTouch } from '@/lib/layer-geometry';
-import { previewCanvasPoint, previewInteractionAtPoint, previewObjectAtPoint, type PreviewObjectTarget, type PreviewOrigin, type PreviewSize } from '@/lib/preview-object-hit-test';
+import { previewCanvasPoint, previewInteractionAtPoint, previewObjectAtPoint, previewObjectContainsPoint, type PreviewObjectTarget, type PreviewOrigin, type PreviewSize } from '@/lib/preview-object-hit-test';
 
 export type PreviewSceneTarget<T> = PreviewObjectTarget<T> & {
   deletable?: boolean;
@@ -45,6 +45,7 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
   let sequence = false;
   let selectedKey: string | undefined;
   let externalSelectedKey: string | undefined;
+  let lastTap: { key: string; point: LayerTouch } | undefined;
 
   const finish = (commit: boolean) => {
     const ending = owner;
@@ -58,6 +59,9 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
         options.onChange(ending.target, resolveLayerGeometry(ending.geometry));
       }
     } finally {
+      lastTap = commit && ending.gesture && !ending.moved && !ending.deleteArmed
+        ? { key: ending.target.key, point: ending.first }
+        : undefined;
       if (ending.gesture) options.onInteractionEnd();
       selectedKey = externalSelectedKey;
       notify();
@@ -116,6 +120,8 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
   return {
     configure(next: PreviewSceneOptions<T>) {
       const previous = selectedKey;
+      if (options && options.contextKey !== next.contextKey) lastTap = undefined;
+      if (!owner && lastTap && next.selectedKey !== lastTap.key) lastTap = undefined;
       externalSelectedKey = next.selectedKey;
       if (!owner) selectedKey = externalSelectedKey;
       options = next;
@@ -123,7 +129,10 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
       if (selectedKey !== previous) notify();
     },
     layout(next: PreviewSize) {
-      if (next.width !== size.width || next.height !== size.height) finish(false);
+      if (next.width !== size.width || next.height !== size.height) {
+        finish(false);
+        lastTap = undefined;
+      }
       size = { ...next };
     },
     grant(touches: readonly LayerTouch[], origin: PreviewOrigin) {
@@ -133,8 +142,20 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
       sequence = true;
       const first = touches[0];
       const selected = options.targets.find((target) => target.key === selectedKey);
-      const interaction = previewInteractionAtPoint(options.targets, selectedKey, local(first, origin), size, Boolean(selected?.deletable));
+      const point = local(first, origin);
+      let interaction = previewInteractionAtPoint(options.targets, selectedKey, point, size, Boolean(selected?.deletable));
+      if (interaction?.mode === 'move' && lastTap && selectedKey === lastTap.key
+        && Math.hypot(first.x - lastTap.point.x, first.y - lastTap.point.y) <= 12) {
+        const candidates = options.targets
+          .filter((target) => previewObjectContainsPoint(target.geometry, point, size))
+          .sort((left, right) => right.order - left.order || right.key.localeCompare(left.key));
+        const currentIndex = candidates.findIndex((target) => target.key === lastTap!.key);
+        if (currentIndex >= 0 && candidates.length > 1) {
+          interaction = { target: candidates[(currentIndex + 1) % candidates.length], mode: 'move' };
+        }
+      }
       if (!interaction) {
+        lastTap = undefined;
         selectedKey = undefined;
         options.onClearSelection();
         notify();
