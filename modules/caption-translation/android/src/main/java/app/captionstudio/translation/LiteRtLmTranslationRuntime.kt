@@ -9,6 +9,7 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.ResponseFormat
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ThinkingConfig
+import com.google.gson.JsonParser
 import java.io.File
 import java.util.function.BooleanSupplier
 import java.util.concurrent.CancellationException
@@ -127,7 +128,8 @@ internal class LiteRtLmTranslationRuntime(
     var operationFailure: Throwable? = null
     try {
       response = if (requireStructuredOutput) {
-        conversation.sendMessage(prompt, responseFormat = ResponseFormat.json(REPAIR_JSON_SCHEMA)).toString()
+        val captionCount = JsonParser.parseString(prompt).asJsonObject.getAsJsonArray("captions").size()
+        conversation.sendMessage(prompt, responseFormat = ResponseFormat.json(responseJsonSchema(captionCount))).toString()
       } else {
         conversation.sendMessage(prompt).toString()
       }
@@ -184,7 +186,8 @@ internal class LiteRtLmTranslationRuntime(
     runCatching { conversation.close() }.exceptionOrNull()
 
   private companion object {
-    const val REPAIR_JSON_SCHEMA = """{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}"""
+    fun responseJsonSchema(count: Int): String =
+      """{"type":"array","minItems":$count,"maxItems":$count,"items":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}"""
   }
 }
 

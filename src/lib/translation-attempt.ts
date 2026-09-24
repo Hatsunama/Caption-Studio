@@ -48,5 +48,5 @@ export function translationAttemptMessage(project: CaptionProject, trackId: stri
   const selected = new Set(ids);
   const track = project.captionTracks.translations.find((candidate) => candidate.id === trackId);
   const failed = track?.cues.filter((cue) => selected.has(cue.sourceCaptionId) && cue.status === 'failed').length ?? 0;
-  return failed ? `${failed} subtitle translation attempt${failed === 1 ? '' : 's'} failed. Successful translations were saved; existing text was kept. Failed lines without saved translations show current source text as an unresolved fallback. See each failed line for its reason. Refresh any or all failed lines, skip them, or export available text and source fallbacks anyway.` : undefined;
+  return failed ? `${failed} subtitle translation attempt${failed === 1 ? '' : 's'} failed. Refresh any or all failed lines, skip them, or export available text and source fallbacks anyway.` : undefined;
 }

@@ -13,7 +13,7 @@ test('long intersecting cue does not expose off-viewport cue bodies', () => {
   ];
   const page = timelineCuePage(indexTimelineCues(cues), 100000, 1000, { left: 500, right: 600 });
   assert.deepEqual(page.bodies.map((cue) => cue.id), ['long', 'visible']);
-  assert.equal(page.density.length, 0);
+  assert.deepEqual(page.overview, []);
   assert.equal(Object.hasOwn(page, 'height'), false);
   assert.equal(Object.hasOwn(page, 'probes'), false);
 });
@@ -21,6 +21,11 @@ test('long intersecting cue does not expose off-viewport cue bodies', () => {
 test('selected intersecting cue retains a body when the viewport is dense', () => {
   const cues = Array.from({ length: 80 }, (_, i) => ({ id: String(i), startMs: 0, endMs: 100000 }));
   const page = timelineCuePage(indexTimelineCues(cues), 100000, 1000, { left: 500, right: 700 }, '11');
-  assert.ok(page.density.length > 0);
+  assert.ok(page.overview.length > 0);
+  for (const entry of page.overview) {
+    assert.deepEqual(Object.keys(entry).sort(), ['endMs', 'left', 'startMs', 'width']);
+    assert.ok(entry.left >= 0 && entry.width > 0 && entry.left + entry.width <= 1000);
+    assert.ok(entry.startMs >= 0 && entry.endMs <= 100000 && entry.startMs < entry.endMs);
+  }
   assert.deepEqual(page.bodies.map((cue) => cue.id), ['11']);
 });

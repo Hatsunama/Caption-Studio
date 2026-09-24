@@ -307,8 +307,8 @@ test('production builds cannot use the debug signing config', () => {
     'android.permission.READ_EXTERNAL_STORAGE',
     'android.permission.SYSTEM_ALERT_WINDOW',
   ]);
-  assert.match(mediaManifest, /WRITE_EXTERNAL_STORAGE/);
-  assert.match(mediaManifest, /maxSdkVersion="28"/);
+  assert.doesNotMatch(mediaManifest, /WRITE_EXTERNAL_STORAGE/);
+  assert.match(legacyPermissionPlugin, /WRITE_EXTERNAL_STORAGE/);
   assert.match(legacyPermissionPlugin, /'android:maxSdkVersion': '28'/);
   assert.doesNotMatch(legacyPermissionPlugin, /com\.facebook\.soloader\.enabled/);
   assert.doesNotMatch(soLoaderPlugin, /WRITE_EXTERNAL_STORAGE/);

@@ -49,7 +49,8 @@ test('LiteRT runtime is pinned, identity-gated, serialized, and deterministicall
   assert.match(runtime, /OUTPUT_TOKEN_LIMIT = 1_536/);
   assert.match(runtime, /Backend\.CPU\(/);
   assert.match(runtime, /engine\.createConversation\(conversationConfig\.copy\([\s\S]*enableResponseFormat = requireStructuredOutput/);
-  assert.match(runtime, /responseFormat = ResponseFormat\.json\(REPAIR_JSON_SCHEMA\)/);
+  assert.match(runtime, /JsonParser\.parseString\(prompt\)\.asJsonObject\.getAsJsonArray\("captions"\)\.size\(\)/);
+  assert.match(runtime, /responseFormat = ResponseFormat\.json\(responseJsonSchema\(captionCount\)\)/);
   assert.match(runtime, /currentConversation\.compareAndSet\(conversation, null\)/);
   assert.match(runtime, /currentConversation\.get\(\)\?\.cancelProcess\(\)/);
   assert.match(runtime, /conversation\.close\(\)/);

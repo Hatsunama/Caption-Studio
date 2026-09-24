@@ -319,7 +319,10 @@ test('partial AI results persist successes and failures without dropping existin
   assert.deepEqual(next.captionTracks.translations[0].cues.map(c => c.status), ['translated', 'failed']);
   assert.equal(next.captionTracks.translations[0].cues[0].text, '\u4f60\u597d');
   assert.equal(track.cues[0].text, '');
-  assert.match(translationAttemptMessage(next, track.id, ['c1', 'c2']), /1 subtitle translation attempt failed/);
+  assert.equal(
+    translationAttemptMessage(next, track.id, ['c1', 'c2']),
+    '1 subtitle translation attempt failed. Refresh any or all failed lines, skip them, or export available text and source fallbacks anyway.',
+  );
   assert.throws(() => buildTimelineRenderPlan(next), /need translation/);
   const retry = commitTranslationAttempt(next, track.id, [project.captions[1]], [
     { sourceCaptionId: 'c2', translatedText: '\u518d\u89c1', translationStatus: 'translated' },

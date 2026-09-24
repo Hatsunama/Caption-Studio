@@ -1,13 +1,15 @@
 export type TimelineInterval = { id: string; startMs: number; endMs: number };
 
-export const MAX_TIMELINE_BODY_CUES = 64;
+export const MAX_TIMELINE_BODY_CUES = 256;
 export const MAX_TIMELINE_DENSITY_BINS = 16;
 export const MIN_TIMELINE_DENSITY_BIN_PX = 44;
+const MIN_DRAWABLE_CUE_PX = 2;
+const MAX_BODY_LANES = 12;
 
 /** One index per content revision. Scroll/selection never sorts, filters, or
  * packs the full track. The index owns references, not copies of cue payloads. */
 export function indexTimelineCues<T extends TimelineInterval>(cues: readonly T[]) {
-  const ordered = [...cues].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.id.localeCompare(b.id));
+  const ordered = [...cues].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
   const ends = ordered.map((cue) => cue.endMs).sort((a, b) => a - b);
   let size = 1;
   while (size < ordered.length) size *= 2;
@@ -60,6 +62,15 @@ export function countTimelineCues<T extends TimelineInterval>(
   return starts - low;
 }
 
+export function timelineCueChoices<T extends TimelineInterval>(
+  index: ReturnType<typeof indexTimelineCues<T>>, startMs: number, endMs: number, offset: number,
+) {
+  const pageSize = 32;
+  const start = Math.max(0, Math.floor(offset));
+  const matches = queryTimelineCues(index, startMs, endMs, start + pageSize + 1).cues;
+  return { cues: matches.slice(start, start + pageSize), hasMore: matches.length > start + pageSize };
+}
+
 export function timelineCuePage<T extends TimelineInterval>(
   index: ReturnType<typeof indexTimelineCues<T>>,
   durationMs: number,
@@ -74,32 +85,36 @@ export function timelineCuePage<T extends TimelineInterval>(
   const selectedIndex = selectedId === undefined ? undefined : index.byId.get(selectedId);
   const selected = selectedIndex === undefined ? undefined : index.ordered[selectedIndex];
   const selectedIntersects = Boolean(selected && selected.startMs <= endMs && selected.endMs >= startMs);
-  const dense = query.cues.length > MAX_TIMELINE_BODY_CUES;
-  const visibleBodies = dense ? (selected && selectedIntersects ? [selected] : []) : query.cues;
+  const crowded = query.cues.length > MAX_TIMELINE_BODY_CUES;
+  const narrow = query.cues.length > MAX_TIMELINE_DENSITY_BINS && query.cues.some(
+    (cue) => (cue.endMs - cue.startMs) / durationMs * trackWidth < MIN_DRAWABLE_CUE_PX,
+  );
+  const visibleLayout = crowded || narrow ? undefined : packTimelineLanes(query.cues);
+  const overviewMode = crowded || narrow || (visibleLayout?.laneCount ?? 0) > MAX_BODY_LANES;
+  const visibleBodies = overviewMode ? (selected && selectedIntersects ? [selected] : []) : query.cues;
   const bodies = pinSelected && selected && !visibleBodies.some((cue) => cue.id === selected.id)
     ? [...visibleBodies, selected]
     : visibleBodies;
-  const layout = packTimelineLanes(bodies);
-  const density: { left: number; width: number; startMs: number; endMs: number; count: number }[] = [];
-  if (dense) {
+  const layout = overviewMode
+    ? { laneById: new Map(bodies.map((cue) => [cue.id, 0])), laneCount: 1 }
+    : packTimelineLanes(bodies);
+  const overview: { left: number; width: number; startMs: number; endMs: number }[] = [];
+  if (overviewMode) {
     const bins = Math.max(1, Math.min(MAX_TIMELINE_DENSITY_BINS, Math.floor((bounds.right - bounds.left) / MIN_TIMELINE_DENSITY_BIN_PX)));
     for (let i = 0; i < bins; i++) {
       const left = bounds.left + (bounds.right - bounds.left) * i / bins;
       const right = bounds.left + (bounds.right - bounds.left) * (i + 1) / bins;
       const from = left / trackWidth * durationMs, to = right / trackWidth * durationMs;
-      const count = countTimelineCues(index, from, to);
-      if (count) density.push({ left, width: right - left, startMs: from, endMs: to, count });
+      if (countTimelineCues(index, from, to)) overview.push({ left, width: right - left, startMs: from, endMs: to });
     }
-    for (const [id, lane] of layout.laneById) layout.laneById.set(id, lane + 1);
-    layout.laneCount = bodies.length ? 2 : 1;
   }
-  return { bodies, density, layout };
+  return { bodies, overview, layout };
 }
 
 export function packTimelineLanes(intervals: TimelineInterval[]) {
   const laneEnds: number[] = [];
   const laneById = new Map<string, number>();
-  const sorted = [...intervals].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.id.localeCompare(b.id));
+  const sorted = [...intervals].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
 
   for (const interval of sorted) {
     let lane = laneEnds.findIndex((endMs) => interval.startMs >= endMs);

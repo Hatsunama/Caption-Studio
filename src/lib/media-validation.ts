@@ -12,6 +12,12 @@ export type ProbedVideoInfo = {
   videoMimeType: string;
 };
 
+export function assertCaptionAudioAvailable(info: Pick<ProbedVideoInfo, 'hasAudio'>): void {
+  if (!info.hasAudio) {
+    throw new Error('This video has no audio track. Choose a video with spoken audio, or add an audio track before generating captions.');
+  }
+}
+
 export function assertSupportedVideo(info: ProbedVideoInfo, displayName: string): void {
   if (!info.hasVideoTrack) {
     throw new Error(`${displayName} does not contain a video track. Choose a video file instead of audio-only media.`);

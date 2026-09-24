@@ -2,6 +2,9 @@ package app.captionstudio.translation;
 
 import static org.junit.Assert.*;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -130,15 +133,16 @@ public final class TranslationBatchMetricsTest {
     }
   }
 
-  @Test public void rejectedCueUsesConstrainedRepairWithoutChangingNormalGeneration() throws Exception {
+  @Test public void rejectedStructuredCueUsesConstrainedRepair() throws Exception {
     List<Boolean> structured = new ArrayList<>();
+    AtomicInteger calls = new AtomicInteger();
     try (NaturalCaptionTranslator translator = translator((file, cache, threads, instruction) ->
         new TranslationRuntime() {
           public boolean supportsStructuredOutput() { return true; }
           public String translate(String prompt) { throw new AssertionError("Expected per-request settings"); }
           public String translate(String prompt, int tokens, boolean requireStructuredOutput) {
             structured.add(requireStructuredOutput);
-            return requireStructuredOutput ? "[{\"id\":\"cue\",\"text\":\"Bonjour\"}]" : "[";
+            return calls.incrementAndGet() == 1 ? "[]" : "[{\"id\":\"cue\",\"text\":\"Bonjour\"}]";
           }
           public void cancel() {}
           public void close() {}
@@ -147,9 +151,54 @@ public final class TranslationBatchMetricsTest {
       request.put("repairUnusableOutputs", true);
       Result result = run(translator, request);
       assertNull(result.error);
-      assertEquals(List.of(false, true), structured);
+      assertEquals(List.of(true, true), structured);
       assertEquals(List.of(Map.of("id", "cue", "text", "Bonjour", "valid", true)),
           result.value.get("captions"));
+    }
+  }
+
+  @Test public void groupedGenerationUsesStructuredOutputWithoutFifteenSingletonRepairs() throws Exception {
+    List<Boolean> structured = new ArrayList<>();
+    List<Map<String, String>> captions = new ArrayList<>();
+    for (int index = 0; index < 15; index++) {
+      captions.add(Map.of("id", "c" + index, "text", "Hello " + index));
+    }
+    TranslationRuntimeFactory factory = (file, cache, threads, instruction) -> new TranslationRuntime() {
+      public boolean supportsStructuredOutput() { return true; }
+      public String translate(String prompt) { throw new AssertionError("Expected per-request settings"); }
+      public String translate(String prompt, int tokens, boolean requireStructuredOutput) {
+        structured.add(requireStructuredOutput);
+        JsonObject input = JsonParser.parseString(prompt).getAsJsonObject();
+        assertEquals("Earlier source", input.get("contextBefore").getAsString());
+        assertEquals("Later source", input.get("contextAfter").getAsString());
+        if (!requireStructuredOutput) return "[]";
+        JsonArray output = new JsonArray();
+        for (var element : input.getAsJsonArray("captions")) {
+          JsonObject item = new JsonObject();
+          item.addProperty("id", element.getAsJsonObject().get("id").getAsString());
+          item.addProperty("text", "Bonjour");
+          output.add(item);
+        }
+        return output.toString();
+      }
+      public void cancel() {}
+      public void close() {}
+    };
+    try (NaturalCaptionTranslator translator = translator(factory)) {
+      Map<String, Object> request = Map.of("repairUnusableOutputs", true,
+          "operations", List.of(Map.of("id", "op", "sourceLanguage", "en", "targetLanguage", "fr",
+              "batches", List.of(Map.of("captions", captions,
+                  "contextBefore", "Earlier source", "contextAfter", "Later source")))));
+      Result result = run(translator, request);
+      assertNull(result.error);
+      assertEquals(15, ((List<?>) result.value.get("captions")).size());
+      for (Object cue : (List<?>) result.value.get("captions")) {
+        assertEquals(true, ((Map<?, ?>) cue).get("valid"));
+      }
+      assertEquals(List.of(true, true), structured);
+      Map<?, ?> metrics = (Map<?, ?>) ((List<?>) result.value.get("batchMetrics")).get(0);
+      assertEquals(2, metrics.get("attempts"));
+      assertEquals(0, metrics.get("repairAttempts"));
     }
   }
 

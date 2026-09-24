@@ -2450,8 +2450,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           && canAutomaticallyTranslatePair(primaryCaptionLanguage, selectedTranslationTrack.languageTag),
         )}
         busy={Boolean(translationProgress) || translationCancelling}
+        translationActive={translationProgress?.stage === 'translating' && !translationCancelling}
         progressLabel={translationCancelling ? 'Cancelling local translation…' : translationProgressLabel(translationProgress)}
         errorMessage={translationController.error}
+        warningMessage={translationController.warning}
         retryErrorAvailable={translationController.retryAvailable}
         onDismissError={translationController.clearError}
         onRetryError={() => { void translationController.retry(); }}

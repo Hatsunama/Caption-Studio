@@ -117,6 +117,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
   const [cancelling, setCancelling] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
+  const [warning, setWarning] = useState<string>();
   const [retryAvailable, setRetryAvailable] = useState(false);
 
   useLayoutEffect(() => {
@@ -155,6 +156,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     interruptedRef.current = false;
     retryRequestRef.current = undefined;
     setError(undefined);
+    setWarning(undefined);
     setRetryAvailable(false);
     setCancelling(false);
     setSaving(kind === 'manual-save');
@@ -176,7 +178,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
       if (request.incremental) {
         const message = completionMessage?.(optionsRef.current.getCurrentProject());
         if (message) {
-          setError(message);
+          setWarning(message);
           return false;
         }
         return true;
@@ -189,7 +191,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
       if (next !== baseline) await optionsRef.current.commitProject(baseline, next);
       const message = completionMessage?.(next);
       if (message && mountedRef.current) {
-        setError(message);
+        setWarning(message);
         return false;
       }
       return true;
@@ -235,6 +237,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     retryRequestRef.current = undefined;
     setRetryAvailable(false);
     setError(undefined);
+    setWarning(undefined);
   }, []);
 
   const refresh = useCallback((
@@ -287,6 +290,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     progress,
     cancelling,
     error,
+    warning,
     retryAvailable,
     clearError,
     retry,
