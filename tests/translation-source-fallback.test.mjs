@@ -7,7 +7,8 @@ import { exportCaptionPairs, exportTranslationSummary } from '../src/lib/export-
 import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
 import { serializeSrt, serializeAss } from '../src/lib/subtitle-export.ts';
 import { dualCaptionDraftsFromPairs, mergeRecoveredDualCaptionDrafts, shouldRestoreDualCaptionJournal } from '../src/lib/dual-caption-drafts.ts';
-import { usableAutomaticTranslation } from '../src/lib/caption-translation-commit.ts';
+import { usableAutomaticTranslation, translatedSliceReviewFlags, automaticTranslationCueWrites } from '../src/lib/caption-translation-commit.ts';
+import { isLikelyUntranslatedCaption } from '../src/lib/caption-languages.ts';
 import { decodePersistedProject } from '../src/lib/project-codec.ts';
 import { serializeProjectSnapshot } from '../src/lib/project-schema.ts';
 
@@ -91,6 +92,26 @@ test('safe invariant tokens pass through, arbitrary echoed sentences do not', ()
   }
   for (const target of ['zh-Hans', 'fr', 'ja']) {
     assert.equal(usableAutomaticTranslation('Hello world', 'Hello world', false, target), undefined);
+  }
+});
+
+test('native borrowed acknowledgements complete without review or source fallback for Chinese', () => {
+  for (const [source, translated] of [['Okay.', 'okay'], ['OK', 'O.K.'], ['O.K.', 'OK']]) {
+    assert.equal(isLikelyUntranslatedCaption(source, translated, 'zh-Hans'), false);
+    assert.equal(usableAutomaticTranslation(source, translated, false, 'zh-Hans'), translated);
+    const captions = [{ id: 'c2', text: source }];
+    const translatedById = new Map([['c2', translated]]);
+    assert.deepEqual([...translatedSliceReviewFlags(translatedById, new Map([['c2', source]]), 'zh-Hans')], []);
+    const writes = automaticTranslationCueWrites({ captions, translatedById, previousById: new Map(), targetLanguage: 'zh-Hans' });
+    const project = fixture();
+    project.captions[1].text = source;
+    const pair = resolveCaptionPairs(commitTranslationAttempt(project, trackId, captions, writes), trackId)[1];
+    assert.equal(pair.translation.status, 'translated');
+    assert.equal(pair.translation.text, translated);
+    assert.equal(pair.displayProvenance, 'translation');
+  }
+  for (const source of ['Okay then', 'O K']) {
+    assert.equal(isLikelyUntranslatedCaption(source, source, 'zh-Hans'), true);
   }
 });
 

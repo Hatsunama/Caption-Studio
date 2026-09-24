@@ -49,6 +49,11 @@ public final class TranslationFailureDiagnosticsTest {
       assertEquals(false, cue(result, 0).get("valid"));
       assertEquals("", cue(result, 0).get("text"));
       assertEquals(entry[1], cue(result, 0).get("failureReason"));
+      String reason = entry[1].equals("BLANK_TEXT") ? "EMPTY"
+          : entry[1].equals("TEXT_TOO_LONG") || entry[1].equals("IMPLAUSIBLE_LENGTH") ? "RUNAWAY_LENGTH"
+          : entry[1].equals("QUALITY_REVIEW") ? "WRONG_SCRIPT" : null;
+      if (reason == null) assertFalse(logs.get(0).contains("qualityReason="));
+      else assertTrue(logs.get(0).endsWith("qualityReason=" + reason));
       assertSafe(logs);
     }
   }
@@ -133,7 +138,7 @@ public final class TranslationFailureDiagnosticsTest {
 
   private static void assertSafe(List<String> logs) {
     for (String log : logs) assertTrue(log, log.matches(
-        "batch=[0-9]+ attempt=[0-9]+ stage=[A-Z_]+ phase=[A-Z_]+ failure=[A-Z_]+ group=[0-9]+ item=-?[0-9]+ promptBucket=-?[0-9]+ outputBucket=-?[0-9]+ textBucket=-?[0-9]+ tokens=[0-9]+ expected=[0-9]+ actual=-?[0-9]+"));
+        "batch=[0-9]+ attempt=[0-9]+ stage=[A-Z_]+ phase=[A-Z_]+ failure=[A-Z_]+ group=[0-9]+ item=-?[0-9]+ promptBucket=-?[0-9]+ outputBucket=-?[0-9]+ textBucket=-?[0-9]+ tokens=[0-9]+ expected=[0-9]+ actual=-?[0-9]+(?: qualityReason=(?:EMPTY|RUNAWAY_LENGTH|SOURCE_ECHO|WRONG_SCRIPT))?"));
   }
 
   private static String response(String id, String text) {

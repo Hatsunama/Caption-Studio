@@ -83,6 +83,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           + "contextBefore and contextAfter are context only and must never appear as output items. "
           + "sourceNeighbors contains read-only neighboring source text, never output items or additional translation requests. "
           + "Do not add explanations, facts or other captions. Never echo the source as a fallback. "
+          + "A standalone conventional borrowed acknowledgement such as OK or okay may be retained; this does not permit untranslated sentences. "
+          + "On retry, repair.reason and repair.guidance describe native validation feedback; correct that issue using the source and read-only context. "
           + "Use the target writing system: zh-Hans is Simplified Chinese; zh-Hant is Traditional Chinese. "
           + "Return exactly one JSON array and nothing else, with one object per input caption in the same order. "
           + "Every object has exactly two string fields, id and text. Copy every requested id exactly. No Markdown or code fences.";
@@ -619,8 +621,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
             checkpointResponse(List.of(new Caption("fragment", candidate.text)))
         );
       } else {
-        if (candidate.valid) diagnostic.emit(FailurePhase.QUALITY, FailureClass.QUALITY_REVIEW,
-            index, candidate.text.length());
+        fragment.qualityReason = qualityReason(candidate, fragment.requestCaption.text, targetLanguage);
+        if (candidate.valid) diagnostic.emitQuality(fragment.qualityReason, index, candidate.text.length());
         run.batchMetrics.reject(candidate.valid);
         fragment.failureReason = candidate.valid ? FailureClass.QUALITY_REVIEW.name() : candidate.failureReason;
         rejected.add(fragment);
@@ -671,12 +673,17 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         contextBefore,
         contextAfter
     );
-    String retryPrompt = withSourceNeighbors(buildRetryPrompt(retry, 0),
+    String retryPrompt = withSourceNeighbors(buildRetryPrompt(retry, 0, fragment.qualityReason),
         fragment.contextBefore, fragment.contextAfter);
     int retryTokens = outputTokenLimit(List.of(fragment.requestCaption), true);
     if (!fitsPromptCapacity(retryPrompt, retryTokens)) {
       retry = new ValidatedRequest(sourceLanguage, targetLanguage, List.of(fragment.requestCaption), "", "");
-      retryPrompt = buildRetryPrompt(retry, 0);
+      // Drop outer context before the immediate source neighbors.
+      retryPrompt = withSourceNeighbors(buildRetryPrompt(retry, 0, fragment.qualityReason),
+          fragment.contextBefore, fragment.contextAfter);
+      if (!fitsPromptCapacity(retryPrompt, retryTokens)) {
+        retryPrompt = buildRetryPrompt(retry, 0, fragment.qualityReason);
+      }
     }
     requirePromptCapacity(retryPrompt, retryTokens);
     AttemptDiagnostic repairDiagnostic = new AttemptDiagnostic(diagnosticSink, batchIndex,
@@ -691,8 +698,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           checkpointResponse(List.of(new Caption("fragment", candidate.text)))
       );
     } else {
-      if (candidate.valid) repairDiagnostic.emit(FailurePhase.QUALITY, FailureClass.QUALITY_REVIEW,
-          0, candidate.text.length());
+      fragment.qualityReason = qualityReason(candidate, fragment.requestCaption.text, targetLanguage);
+      if (candidate.valid) repairDiagnostic.emitQuality(fragment.qualityReason, 0, candidate.text.length());
       run.batchMetrics.reject(candidate.valid);
       fragment.failureReason = candidate.valid ? FailureClass.QUALITY_REVIEW.name() : candidate.failureReason;
     }
@@ -755,6 +762,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     int[] textBuckets;
     int outputBucket = -1;
     int actual = -1; // Unknown until the complete array has been read; never a partial count.
+    TranslationOutputQuality.Reason qualityReason = TranslationOutputQuality.Reason.NONE;
 
     AttemptDiagnostic(Consumer<String> sink, int batch, int ordinal, AttemptStage stage,
         int group, int promptLength, int tokens) {
@@ -789,13 +797,22 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       emitBucket(phase, failure, item, lengthBucket(textLength));
     }
 
+    void emitQuality(TranslationOutputQuality.Reason reason, int item, int textLength) {
+      qualityReason = reason;
+      try { emit(FailurePhase.QUALITY, FailureClass.QUALITY_REVIEW, item, textLength); }
+      finally { qualityReason = TranslationOutputQuality.Reason.NONE; }
+    }
+
     private void emitBucket(FailurePhase phase, FailureClass failure, int item, int textBucket) {
+      TranslationOutputQuality.Reason reason = phase == FailurePhase.QUALITY
+          ? qualityReason : parseQualityReason(failure.name());
       try {
         sink.accept("batch=" + batch + " attempt=" + ordinal + " stage=" + stage
             + " phase=" + phase + " failure=" + failure + " group=" + group + " item=" + item
             + " promptBucket=" + promptBucket + " outputBucket=" + outputBucket
             + " textBucket=" + textBucket + " tokens=" + tokens
-            + " expected=" + group + " actual=" + actual);
+            + " expected=" + group + " actual=" + actual
+            + (reason == TranslationOutputQuality.Reason.NONE ? "" : " qualityReason=" + reason.name()));
       } catch (RuntimeException | OutOfMemoryError unavailableLogger) {
         // Best effort even on memory failure; never replace the original outcome.
       }
@@ -881,12 +898,44 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   }
 
   static String buildRetryPrompt(ValidatedRequest request, int index) {
+    return buildRetryPrompt(request, index, TranslationOutputQuality.Reason.NONE);
+  }
+
+  static String buildRetryPrompt(ValidatedRequest request, int index, TranslationOutputQuality.Reason reason) {
     ValidatedRequest single = new ValidatedRequest(request.sourceLanguage, request.targetLanguage,
         List.of(request.captions.get(index)),
         boundedContext(request.contextBefore, true),
         boundedContext(request.contextAfter, false));
     JsonObject payload = com.google.gson.JsonParser.parseString(buildUserPrompt(single)).getAsJsonObject();
     payload.addProperty("retry", true);
+    JsonObject repair = new JsonObject();
+    repair.addProperty("reason", reason == TranslationOutputQuality.Reason.NONE ? "RESPONSE_CONTRACT" : reason.name());
+    String guidance;
+    switch (reason) {
+      case SOURCE_ECHO:
+        guidance = "Translate the meaning into targetLanguage; the previous text repeated the source. "
+            + "Changing only case or punctuation is not translation. Preserve an unfinished phrase without inventing its ending. ";
+        break;
+      case WRONG_SCRIPT:
+        guidance = "Use the requested targetLanguage writing system throughout the translated prose, including the requested Chinese variant. "
+            + "Preserve names and numbers where appropriate, but do not leave the sentence untranslated. ";
+        break;
+      case RUNAWAY_LENGTH:
+        guidance = "Translate only this cue concisely. The previous output was too long for its source. "
+            + "Do not translate neighboring cues, add explanations, repeat text or complete an unfinished phrase. ";
+        break;
+      case EMPTY:
+        guidance = "Return a non-empty translation of this cue's meaning in targetLanguage. "
+            + "A short acknowledgement needs only a natural short acknowledgement, with no prescribed wording. ";
+        break;
+      default:
+        guidance = "The previous response failed the response contract. Regenerate the requested caption from its source. ";
+    }
+    repair.addProperty("guidance", guidance
+        + "Use contextBefore, contextAfter and sourceNeighbors only to understand this cue. "
+        + "Return exactly one JSON array containing one object with exactly two string fields, id and text. "
+        + "Copy the requested id exactly. No extra items, Markdown, commentary or repair fields in the output.");
+    payload.add("repair", repair);
     return withSourceNeighbors(payload.toString(),
         neighboringContext(request.captions, index, "", true),
         neighboringContext(request.captions, index, "", false));
@@ -916,6 +965,20 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
 
   private static boolean usable(Caption caption, String source, String target) {
     return caption.valid && !TranslationOutputQuality.needsReview(source, caption.text, target);
+  }
+
+  private static TranslationOutputQuality.Reason qualityReason(Caption caption, String source, String target) {
+    return caption.valid ? TranslationOutputQuality.classify(source, caption.text, target)
+        : parseQualityReason(caption.failureReason);
+  }
+
+  // The strict parser discards unusable text. Carry its bounded reason forward
+  // instead of retaining model output or misclassifying every discarded item as empty.
+  private static TranslationOutputQuality.Reason parseQualityReason(String failure) {
+    if ("BLANK_TEXT".equals(failure)) return TranslationOutputQuality.Reason.EMPTY;
+    if ("IMPLAUSIBLE_LENGTH".equals(failure) || "TEXT_TOO_LONG".equals(failure)
+        || "TOTAL_TEXT_TOO_LONG".equals(failure)) return TranslationOutputQuality.Reason.RUNAWAY_LENGTH;
+    return TranslationOutputQuality.Reason.NONE;
   }
 
   private static boolean literalOnly(String text) {
@@ -1744,6 +1807,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     final String contextBefore;
     final String contextAfter;
     String failureReason;
+    TranslationOutputQuality.Reason qualityReason = TranslationOutputQuality.Reason.NONE;
 
     FragmentWork(
         PreparedCue preparedCue,
