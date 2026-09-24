@@ -2,6 +2,7 @@ import { resolveCaptionStyle } from '@/lib/style-resolver';
 import { resolveLayerGeometry } from '@/lib/layer-geometry';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import { exportCaptionPairs } from '@/lib/export-caption-pairs';
+import { projectRenderDuration } from '@/lib/project-timeline';
 import {
   captionLayoutText,
   captionSpokenTokenSpans,
@@ -121,15 +122,20 @@ function translationsByCaption(project: CaptionProject, allowIncompleteTranslati
   return pairs;
 }
 
-export function visibleCaptions(project: Pick<CaptionProject, 'captions'>) {
+export function visibleCaptions(project: CaptionProject) {
+  const durationMs = projectRenderDuration(project);
   return project.captions
     .filter((caption) => (
+      durationMs > 0
+      &&
       caption.timelineVisible !== false
       && Number.isFinite(caption.startMs)
       && Number.isFinite(caption.endMs)
-      && caption.endMs > Math.max(0, caption.startMs)
+      && Math.min(durationMs, Math.round(caption.endMs)) > Math.max(0, Math.round(caption.startMs))
       && caption.text.trim()
     ))
+    .map((caption) => ({ ...caption, startMs: Math.max(0, Math.round(caption.startMs)),
+      endMs: Math.min(durationMs, Math.round(caption.endMs)) }))
     .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs || left.id.localeCompare(right.id));
 }
 

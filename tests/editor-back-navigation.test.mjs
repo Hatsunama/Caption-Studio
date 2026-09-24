@@ -312,10 +312,12 @@ for (const scenario of [
 
 test('successive Back events unwind submenu, selection, and vertical scroll separately', (t) => {
   const h = mount(t);
-  h.layout(560); h.press('Fonts', true);
+  h.layout(560); h.press('Fonts');
+  const fontBrowser = (node) => node.props.visible === true && typeof node.props.previewText === 'string';
+  assert.equal(h.all(fontBrowser).length, 1, 'Fonts opens its editor modal');
   const scrollCount = h.calls.scrolls.length;
   h.routeBack(); noExit(h);
-  assert.equal(activeTool(h, 'Fonts'), false);
+  assert.equal(h.all(fontBrowser).length, 0, 'first Back closes the font browser');
   assert.ok(activeTool(h, 'Captions'), 'first Back retains the underlying tool');
   assert.equal(h.calls.scrolls.length, scrollCount, 'closing a submenu must not also scroll the parent');
   h.timeline().props.onSelectCaption(h.timeline().props.captions[0]); h.render();

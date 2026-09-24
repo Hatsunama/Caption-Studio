@@ -51,6 +51,7 @@ import { useScriptEditorExit } from '@/hooks/use-script-editor-exit';
 import { resolveEditorBackStep } from '@/lib/editor-back-navigation';
 import { deleteAudioClip, duplicateAudioClip, moveAudioClip, splitAudioClip, updateAudioClip } from '@/lib/audio-timeline';
 import { applyTimelineItemTiming, type TimelineItemReference, type TimelineTimingEdge } from '@/lib/timeline-item-editor';
+import { timelineArtifactEditLimit } from '@/lib/timeline-edit-bounds';
 import { findAnimationPreset } from '@/lib/animation-presets';
 import { canAutomaticallyTranslatePair, captionLanguageLabel, type CaptionLanguageTag } from '@/lib/caption-languages';
 import { exportTranslationSummary } from '@/lib/export-caption-pairs';
@@ -85,6 +86,7 @@ import {
   deleteCaptionBlock,
   deleteVideoClip,
   deleteVisualLayer,
+  duplicateVisualLayer,
   moveVisualLayer,
   MAX_PROJECT_WATERMARKS,
   setCanvasPreset as applyCanvasPreset,
@@ -195,7 +197,7 @@ const palette = {
 type PendingStyleChange = {
   label: string;
   patch: CaptionStylePatch;
-  translationTrackId?: string;
+  captionId?: string;
 };
 
 export default function EditorScreen() {
@@ -623,14 +625,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const selectedTranslationPair = translationTrackSelected
     ? selectedTranslationPairs.find((pair) => pair.source.id === selectedCaptionId)
     : undefined;
-  const selectedAnimationId = activeTool === 'stickers' && selectedTextLayer
+  const selectedAnimationId = selectedTextLayer
     ? selectedTextLayer.style.animation.id
     : selectedTranslationPair
       ? selectedTranslationPair.style.animation.id
     : selectedCaption
       ? resolveCaptionStyle(project.projectStyle, selectedCaption).animation.id
       : project.projectStyle.animation.id;
-  const selectedLineHeight = activeTool === 'stickers' && selectedTextLayer
+  const selectedLineHeight = selectedTextLayer
     ? selectedTextLayer.style.lineHeight
     : selectedTranslationPair
       ? selectedTranslationPair.style.lineHeight
@@ -875,11 +877,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     const change = pendingChange;
     if (!change) return;
     try {
-      const receipt = await commitEditorProject((before) => change.translationTrackId
-        ? scope === 'caption' && selectedCaptionId
-          ? setTranslationCueStyle(before, change.translationTrackId, selectedCaptionId, change.patch, new Date().toISOString())
-          : setTranslationTrackStyle(before, change.translationTrackId, change.patch, new Date().toISOString())
-        : applyStylePatch(before, selectedCaptionId, scope, change.patch));
+      const receipt = await commitEditorProject((before) => applyStylePatch(
+        before,
+        change.captionId,
+        scope === 'caption' && change.captionId ? 'caption' : 'all',
+        change.patch,
+      ));
       if (editorSession.isCurrent(receipt)) setPendingChange(undefined);
     } catch (caught) {
       Alert.alert('Style change not saved', caught instanceof Error ? caught.message : 'The style change could not be saved. Try again.');
@@ -888,7 +891,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const chooseFont = (choice: FontChoice, colors?: FontColors) => {
     setFontBrowserOpen(false);
-    if (activeTool === 'stickers' && selectedTextLayer) {
+    if (selectedTextLayer) {
       updateTextLayerStyle(selectedTextLayer.id, fontChoicePatch(choice, colors), true);
       return;
     }
@@ -896,6 +899,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const queueCaptionStyleChange = (label: string, patch: CaptionStylePatch) => {
+    if (selectedTextLayer) {
+      updateTextLayerStyle(selectedTextLayer.id, patch, true);
+      return;
+    }
     if (translationTrackSelected && selectedTranslationTrack) {
       const trackId = selectedTranslationTrack.id;
       void commitEditorProject((before) => setTranslationTrackStyle(before, trackId, patch, new Date().toISOString()))
@@ -904,12 +911,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         });
       return;
     }
-    setPendingChange({ label, patch });
+    setPendingChange({ label, patch, captionId: selectedCaptionId });
   };
 
   const chooseAnimation = (id: CaptionAnimationId) => {
     const preset = findAnimationPreset(id);
-    if (activeTool === 'stickers' && selectedTextLayer) {
+    if (selectedTextLayer) {
       updateTextLayerStyle(selectedTextLayer.id, {
         animation: { id, intensity: preset.intensity, durationMs: preset.durationMs },
       }, true);
@@ -944,7 +951,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const beginLineHeightChange = () => {
-    if (activeTool !== 'stickers' && animationScope === 'caption' && !selectedCaptionId) return;
+    if (!selectedTextLayer && animationScope === 'caption' && !selectedCaptionId) return;
     pushUndo();
   };
 
@@ -952,7 +959,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     const scope = animationScope === 'caption' && selectedCaptionId ? 'caption' : 'all';
     setProject((current) => {
       const patch = { lineHeight };
-      if (activeTool === 'stickers' && selectedTextLayer) return setTextLayerStyle(current, selectedTextLayer.id, patch);
+      if (selectedTextLayer) return setTextLayerStyle(current, selectedTextLayer.id, patch);
       if (translationTrackSelected && selectedTranslationTrack) {
         return scope === 'caption' && selectedCaptionId
           ? setTranslationCueStyle(current, selectedTranslationTrack.id, selectedCaptionId, patch, new Date().toISOString())
@@ -1241,7 +1248,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const updateTimelineItemTiming = (item: TimelineItemReference, edge: TimelineTimingEdge, startMs: number, endMs: number) => {
     setProject((current) => {
-      const next = applyTimelineItemTiming(current, item, edge, startMs, endMs, timelineDurationMs);
+      const next = applyTimelineItemTiming(current, item, edge, startMs, endMs, timelineArtifactEditLimit(current, timelineDurationMs));
       return next;
     });
   };
@@ -1317,6 +1324,20 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       return next;
     });
     setSelectedLayerId('captions');
+  };
+
+  const duplicateSelectedVisual = async () => {
+    if (!selectedLayer || selectedLayer.kind === 'captions') return;
+    const layerId = selectedLayer.id;
+    const kind = selectedLayer.kind;
+    const duplicateId = uniqueId(kind);
+    try {
+      const receipt = await commitEditorProject((before) =>
+        duplicateVisualLayer(before, layerId, duplicateId)?.project ?? null);
+      if (receipt && editorSession.isCurrent(receipt)) selectEditorObject({ kind, id: duplicateId });
+    } catch {
+      // commitEditorProject reports the failed save without publishing the copy.
+    }
   };
 
   const splitSelectedVisualAtPlayhead = () => {
@@ -1565,7 +1586,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const shiftSelectedAudio = (deltaMs: number) => {
     if (!selectedAudioClip) return;
     pushUndo();
-    commitAudioProject(moveAudioClip(editorSession.current(), selectedAudioClip.id, selectedAudioClip.startMs + deltaMs, timelineDurationMs));
+    commitAudioProject(moveAudioClip(editorSession.current(), selectedAudioClip.id, selectedAudioClip.startMs + deltaMs, timelineArtifactEditLimit(editorSession.current(), timelineDurationMs)));
   };
 
   const removeSelectedAudio = () => {
@@ -1577,7 +1598,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const copySelectedAudio = () => {
     if (!selectedAudioClipId) return;
-    const result = duplicateAudioClip(editorSession.current(), selectedAudioClipId, uniqueId('audio-clip'), timelineDurationMs);
+    const result = duplicateAudioClip(editorSession.current(), selectedAudioClipId, uniqueId('audio-clip'), timelineArtifactEditLimit(editorSession.current(), timelineDurationMs));
     if (!result) return;
     pushUndo();
     commitAudioProject(result.project);
@@ -2221,6 +2242,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
                 <Action label="Edit text" onPress={() => { setEditingLayerId(selectedTextLayer.id); setEditingText(selectedTextLayer.text); }} />
                 <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
+                {!selectedTextLayer.watermark ? <Action label="Duplicate" onPress={duplicateSelectedVisual} /> : null}
                 <Action label="Delete text layer" danger onPress={() => deleteLayer(selectedTextLayer.id)} />
                 <Action label="Add text layer" onPress={addTextLayer} />
                 <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
@@ -2228,6 +2250,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             ) : selectedImageLayer ? (
               <PersistedHorizontalScroll id="tool:stickers:image" contentContainerStyle={{ gap: 8 }}>
                 <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
+                <Action label="Duplicate" onPress={duplicateSelectedVisual} />
                 <Action label="Delete sticker" danger onPress={() => deleteLayer(selectedImageLayer.id)} />
                 <Action label="Add text layer" onPress={addTextLayer} />
                 <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
@@ -2247,8 +2270,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           </View>
         ) : (
           <View style={{ gap: 12 }}>
-            <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>CAPTION CONTROLS</Text>
-            {translationTrackSelected && selectedTranslationTrack ? (
+            <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>{selectedTextLayer ? 'SCREEN TEXT CONTROLS' : selectedImageLayer ? 'IMAGE SELECTED' : 'CAPTION CONTROLS'}</Text>
+            {selectedTextLayer ? (
+              <PersistedHorizontalScroll id="tool:captions:selected-text" contentContainerStyle={{ gap: 8 }}>
+                <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
+                <Action label="Edit text" onPress={() => { setEditingLayerId(selectedTextLayer.id); setEditingText(selectedTextLayer.text); }} />
+              </PersistedHorizontalScroll>
+            ) : selectedImageLayer ? (
+              <Text style={{ color: palette.muted, fontSize: 12 }}>Select a caption in the timeline to change caption styling.</Text>
+            ) : translationTrackSelected && selectedTranslationTrack ? (
               <PersistedHorizontalScroll id="tool:captions:translation" contentContainerStyle={{ gap: 8 }}>
                 <Action label="Edit both languages" color={chrome.accent} onPress={() => setDualCaptionEditorOpen(true)} />
                 <Action label="Closer together" disabled={(selectedTranslationTrack.stackGap ?? DEFAULT_TRANSLATION_STACK_GAP) <= MIN_TRANSLATION_STACK_GAP} onPress={() => adjustTranslationGap(-0.016)} />
@@ -2295,12 +2325,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 />
               </PersistedHorizontalScroll>
             )}
-            <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: chrome.hairline, paddingTop: 12 }}>
-              <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>CAPTION ANIMATION</Text>
+            {!selectedImageLayer ? <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: chrome.hairline, paddingTop: 12 }}>
+              <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>{selectedTextLayer ? 'TEXT ANIMATION' : 'CAPTION ANIMATION'}</Text>
               <AnimationBrowser
                 selected={selectedAnimationId}
                 scope={animationScope}
-                hasSelectedCaption={Boolean(selectedCaptionId)}
+                textLayerSelected={Boolean(selectedTextLayer)}
+                hasSelectedCaption={Boolean(selectedCaptionId) && !selectedTextLayer}
                 lineHeight={selectedLineHeight}
                 onScopeChange={setAnimationScope}
                 onSelect={chooseAnimation}
@@ -2308,7 +2339,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 onLineHeightChange={changeLineHeight}
                 onLineHeightEnd={finishLineHeightChange}
               />
-            </View>
+            </View> : null}
           </View>
         )}
 
@@ -2331,7 +2362,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             borderTopColor: '#20262D',
           }}>
           <ToolbarItem label="Stickers" active={activeTool === 'stickers'} onPress={() => openEditorTool('stickers')} />
-          <ToolbarItem label="Fonts" active={fontBrowserOpen} onPress={() => setFontBrowserOpen(true)} />
           <ToolbarItem label="Captions" active={activeTool === 'captions'} onPress={() => openEditorTool('captions')} />
           <ToolbarItem label="Video" active={activeTool === 'video'} onPress={() => openEditorTool('video')} />
           <ToolbarItem label="Audio" active={activeTool === 'audio'} onPress={() => openEditorTool('audio')} />
@@ -2343,7 +2373,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       <ScopeSheet
         visible={Boolean(pendingChange)}
         changeLabel={pendingChange?.label ?? ''}
-        hasSelectedCaption={Boolean(selectedCaptionId)}
+        hasSelectedCaption={Boolean(pendingChange?.captionId)}
         onChoose={chooseStyleScope}
         onClose={() => setPendingChange(undefined)}
       />

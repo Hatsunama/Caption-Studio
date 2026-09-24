@@ -20,21 +20,19 @@ function fixture() {
   return project;
 }
 
-test('deleting the second ten-second video preserves full audio at 15 seconds across domain and render plans', () => {
+test('deleting the second video preserves stored audio but bounds both render plans to footage', () => {
   const before = fixture();
   const { project } = deleteVideoClip(before, before.clips[1].id);
   assert.equal(totalClipDuration(project.clips), 10_000);
   assert.deepEqual(project.audioClips, before.audioClips);
-  assert.equal(projectTimelineDuration(project), 20_000);
+  assert.equal(projectTimelineDuration(project), 10_000);
   const videoPlan = buildTimelineRenderPlan(project);
   const audioPlan = buildTimelineAudioRenderPlan(project);
-  assert.equal(videoPlan.durationMs, 20_000);
+  assert.equal(videoPlan.durationMs, 10_000);
   assert.equal(audioPlan.durationMs, videoPlan.durationMs);
-  assert.equal(videoPlan.audioClips[0].sourceEndMs, 5_200);
-  assert.deepEqual([audioPlan.audioClips[0].timelineStartMs, audioPlan.audioClips[0].timelineEndMs], [15_000, 20_000]);
-  assert.deepEqual(projectTimelineSegmentAt(project, 10_000), { kind: 'gap', startMs: 10_000, endMs: 20_000 });
-  assert.equal(projectTimelineSegmentAt(project, 15_000).kind, 'gap');
-  assert.equal(projectTimelineSegmentAt(project, 20_000).kind, 'gap');
+  assert.deepEqual(videoPlan.audioClips, []);
+  assert.deepEqual(audioPlan.audioClips, []);
+  assert.equal(projectTimelineSegmentAt(project, 15_000), undefined);
   assert.equal(projectTimelineSegmentAt(project, 20_001), undefined);
 });
 
@@ -80,22 +78,26 @@ test('split, trim, reorder, speed and legacy ripple never shorten or remove audi
   }
 });
 
-test('muted audio and hidden timed layers retain extent; canvas-only silent export has no media tracks', () => {
+test('muted audio and hidden timed layers remain reachable on a silent canvas', () => {
   const project = fixture();
   project.clips = [];
   project.audioClips[0].muted = true;
-  assert.equal(buildTimelineRenderPlan(project).durationMs, 20_000);
+  assert.equal(projectTimelineDuration(project), 20_000);
+  assert.throws(() => buildTimelineRenderPlan(project), /Add timed content/);
   project.audioClips = [];
   project.layers.push({ id: 'end-card', kind: 'text', name: 'End card', text: 'End', visible: false,
     startMs: 15_000, endMs: 25_000, style: project.projectStyle });
+  assert.equal(projectTimelineDuration(project), 25_000);
+  assert.equal(project.layers.at(-1).endMs, 25_000);
+  assert.equal(buildTimelineAudioRenderPlan(project).durationMs, 0);
+  project.layers.at(-1).visible = true;
   const plan = buildTimelineRenderPlan(project);
   assert.equal(plan.durationMs, 25_000);
   assert.deepEqual(plan.clips, []);
   assert.deepEqual(plan.audioClips, []);
   assert.equal(plan.layers.at(-1).endMs, 25_000);
-  assert.equal(buildTimelineAudioRenderPlan(project).durationMs, 25_000);
   project.layers.at(-1).timelineVisible = false;
-  assert.equal(projectTimelineDuration(project), 0);
+  assert.equal(projectTimelineDuration(project), 25_000);
   assert.throws(() => buildTimelineRenderPlan(project), /Add timed content/);
 });
 

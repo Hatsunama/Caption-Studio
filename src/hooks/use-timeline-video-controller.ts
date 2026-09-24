@@ -12,7 +12,7 @@ import {
   timelineTimeAt,
   type ClipTimelineEntry,
 } from '@/lib/video-timeline';
-import { CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS, shouldApplyTimelineSeek } from '@/lib/video-playback-policy';
+import { canContinuePreparedTimelineClip, canContinueTimelineClip, CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS, shouldApplyTimelineSeek } from '@/lib/video-playback-policy';
 import { configureTimelinePlayer } from '@/services/video-player-runtime';
 import type { CaptionProject, ProjectVideoSource } from '@/types/project';
 
@@ -421,6 +421,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     cancelScheduledPreload();
     const next = nextEntryAfter(entry);
     if (!next || next.startMs > entry.endMs + CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS) return;
+    if (canContinueTimelineClip(entry, next)) return;
     const standby = (occupiedSlot === 0 ? 1 : 0) as SlotIndex;
     const generation = generationRef.current;
     const entryIndex = entriesRef.current.findIndex((candidate) => candidate.clip.id === entry.clip.id);
@@ -446,6 +447,38 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     } else {
       prepare();
     }
+  };
+
+  const continuePreparedClip = (entry: ClipTimelineEntry, timelineMs: number) => {
+    const previous = entriesRef.current.find((candidate) => candidate.clip.id === activeClipIdRef.current);
+    const source = projectRef.current.sources.find((candidate) => candidate.id === entry.clip.sourceId);
+    if (!previous || !source || reloadRequestedRef.current) return false;
+    const slot = activeSlotRef.current;
+    const runtime = slotRuntimeRef.current[slot];
+    const player = playerForSlot(slot);
+    if (!canContinuePreparedTimelineClip(
+      previous, entry, runtime, videoPlaybackUri(source), player, timelineMs,
+    )) return false;
+    runtime.preparedClipId = entry.clip.id;
+    activeClipIdRef.current = entry.clip.id;
+    boundaryClipIdRef.current = undefined;
+    player.playbackRate = entry.clip.playbackRate;
+    player.muted = entry.clip.muted;
+    player.volume = clipPlaybackVolume(entry.clip, 0);
+    publishSlots();
+    setCurrentMs(entry.startMs);
+    setSourceFailure(undefined);
+    setPhase('ready');
+    if (playIntentRef.current) {
+      try {
+        player.play();
+      } catch (error) {
+        failSource(source, error);
+        return true;
+      }
+    }
+    preloadNext(entry, slot, entry.startMs);
+    return true;
   };
 
   const runGap = (startMs: number, endMs: number, next: ClipTimelineEntry | undefined) => {
@@ -479,6 +512,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const activateClip = async (entry: ClipTimelineEntry, timelineMs: number, generation: number) => {
     cancelGapClock();
     const source = sourceForEntry(entry);
+    if (generation === generationRef.current && continuePreparedClip(entry, timelineMs)) return;
     let slot = reloadRequestedRef.current ? undefined : findPreparedSlot(entry);
 
     if (slot == null) {
@@ -599,7 +633,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     boundaryClipIdRef.current = entry.clip.id;
     const next = nextEntryAfter(entry);
     const gapEndMs = next?.startMs ?? projectTimelineDuration(projectRef.current);
-    if (gapEndMs > entry.endMs + CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS) {
+    if (gapEndMs > entry.endMs) {
       runGap(entry.endMs, gapEndMs, next);
       return;
     }
@@ -609,6 +643,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       setPhase('ended');
       return;
     }
+    if (continuePreparedClip(next, next.startMs)) return;
     requestTargetRef.current(next.startMs);
   };
 

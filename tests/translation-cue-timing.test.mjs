@@ -22,12 +22,12 @@ test('translation timing includes gaps after earlier clips and the final clip', 
   const extended = edit(project, 'end', 6_500, 8_500);
   assert.deepEqual(bounds(extended), [6_500, 8_500]);
   assert.deepEqual(bounds(edit(project, 'start', 6_000, 7_500)), [6_000, 7_500]);
-  assert.deepEqual(bounds(edit(project, 'move', 8_000, 9_000)), [8_000, 9_000]);
-  assert.deepEqual(bounds(edit(project, 'end', 6_500, 20_000)), [6_500, 20_000]);
+  assert.deepEqual(bounds(edit(project, 'move', 8_000, 9_000)), [7_750, 8_750]);
+  assert.deepEqual(bounds(edit(project, 'end', 6_500, 20_000)), [6_500, 8_750]);
   assert.deepEqual(bounds(decodeVersionTwoProject(JSON.parse(JSON.stringify(extended)))), [6_500, 8_500]);
 });
 
-test('explicit translation timing is independent of normalized footage duration', () => {
+test('explicit translation timing respects normalized footage and deliberate gaps', () => {
   const cases = [
     [{ gapBeforeMs: -500, gapAfterMs: 750, playbackRate: 8 }, 1_750],
     [{ gapBeforeMs: Number.NaN, gapAfterMs: Number.NaN, playbackRate: Number.NaN }, 4_000],
@@ -38,7 +38,7 @@ test('explicit translation timing is independent of normalized footage duration'
     const project = projectFixture();
     project.clips = project.clips.map((clip) => ({ ...clip, ...overrides }));
     assert.equal(totalClipDuration(project.clips), expectedEnd);
-    assert.deepEqual(bounds(edit(project, 'end', 500, 50_000)), [500, 50_000]);
+    assert.deepEqual(bounds(edit(project, 'end', 500, 50_000)), [500, expectedEnd]);
   }
 });
 
@@ -48,9 +48,9 @@ test('valid edge edits retain the opposite edge and moves retain duration', () =
     ['start', -500, 0, [0, 1_900]],
     ['start', 3_000, 0, [1_820, 1_900]],
     ['end', 0, 100, [500, 580]],
-    ['end', 0, 8_000, [500, 8_000]],
+    ['end', 0, 8_000, [500, 4_000]],
     ['move', -500, 0, [0, 1_400]],
-    ['move', 3_500, 0, [3_500, 4_900]],
+    ['move', 3_500, 0, [2_600, 4_000]],
   ]) {
     assert.deepEqual(bounds(edit(project, edge, start, end)), expected);
   }
@@ -71,22 +71,27 @@ test('all timing edits canonicalize stale or invalid cue bounds without inverted
         assert.ok(Number.isFinite(actualStart) && Number.isFinite(actualEnd));
         assert.ok(actualStart >= 0);
         assert.ok(actualEnd - actualStart >= 80, `${edge}: ${actualStart}..${actualEnd}`);
+        assert.ok(actualEnd <= 4_000);
       }
     }
   }
-  assert.deepEqual(bounds(edit(projectFixture(5_000, 6_000), 'end', 5_000, 6_000)), [5_000, 6_000]);
-  assert.deepEqual(bounds(edit(projectFixture(3_900, 4_400), 'move', 1_000, 1_500)), [1_000, 1_500]);
-  assert.deepEqual(bounds(edit(projectFixture(0, 8_000), 'move', 2_000, 10_000)), [2_000, 10_000]);
+  assert.deepEqual(bounds(edit(projectFixture(5_000, 6_000), 'end', 5_000, 6_000)), [3_920, 4_000]);
+  assert.deepEqual(bounds(edit(projectFixture(3_900, 4_400), 'move', 1_000, 1_500)), [1_000, 1_100]);
+  assert.deepEqual(bounds(edit(projectFixture(0, 8_000), 'move', 2_000, 10_000)), [0, 4_000]);
 });
 
-test('empty and very short video timelines retain the existing 80 ms minimum', () => {
+test('canvas edits can grow while short video timelines preserve their minimum', () => {
   for (const durationMs of [0, 40, 80]) {
     const project = projectFixture();
     project.clips = durationMs === 0 ? [] : project.clips.map((clip) => ({ ...clip, sourceEndMs: durationMs }));
-    assert.deepEqual(bounds(edit(project, 'start', 5_000, 6_000)), [1_820, 1_900]);
-    assert.deepEqual(bounds(edit(project, 'end', 5_000, 6_000)), [500, 6_000]);
-    assert.deepEqual(bounds(edit(project, 'move', 5_000, 6_000)), [5_000, 6_400]);
-    assert.deepEqual(bounds(edit(project, 'end', 500, 501)), [500, 580]);
+    if (durationMs === 0) {
+      assert.deepEqual(bounds(edit(project, 'end', 500, 6_000)), [500, 6_000]);
+      assert.deepEqual(bounds(edit(project, 'move', 5_000, 6_000)), [5_000, 6_400]);
+    } else if (durationMs < 80) {
+      assert.deepEqual(bounds(edit(project, 'end', 500, 6_000)), [500, 1_900]);
+    } else {
+      assert.deepEqual(bounds(edit(project, 'end', 500, 6_000)), [0, 80]);
+    }
   }
 });
 

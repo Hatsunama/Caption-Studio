@@ -1,4 +1,5 @@
-import { projectTimelineDuration } from '@/lib/project-timeline';
+import { projectRenderDuration } from '@/lib/project-timeline';
+import { audibleAudioClipsWithin } from '@/lib/audio-timeline';
 import { resolveCaptionStyle } from '@/lib/style-resolver';
 import { resolveLayerGeometry } from '@/lib/layer-geometry';
 import { exportCaptionPairs } from '@/lib/export-caption-pairs';
@@ -88,6 +89,9 @@ export function buildTimelineRenderPlan(
 ): TimelineRenderPlan {
   const sourceById = new Map(project.sources.map((source) => [source.id, source]));
   const audioSourceById = new Map(project.audioSources.map((source) => [source.id, source]));
+  const durationMs = projectRenderDuration(project);
+  if (durationMs <= 0) throw new Error('Add timed content before exporting.');
+  const audibleClips = audibleAudioClipsWithin(project, durationMs);
   // Validate raw persisted trims before timeline helpers can normalize them.
   // Keep this out of project decoding so existing drafts remain recoverable.
   for (const clip of project.clips) {
@@ -96,15 +100,12 @@ export function buildTimelineRenderPlan(
     assertExportSourceRange(clip.sourceStartMs, clip.sourceEndMs, source.durationMs,
       `the video clip "${clip.id}"`);
   }
-  for (const clip of project.audioClips) {
-    if (clip.muted || clip.volume <= 0) continue;
+  for (const clip of audibleClips) {
     const source = audioSourceById.get(clip.sourceId);
     if (!source) throw new Error(`An audio source used by clip ${clip.id} is unavailable.`);
     assertExportSourceRange(clip.sourceStartMs, clip.sourceEndMs, source.durationMs,
       `the audio clip "${clip.id}"`);
   }
-  const durationMs = projectTimelineDuration(project);
-  if (durationMs <= 0) throw new Error('Add timed content before exporting.');
   const captionsEnabled = project.export.burnCaptions && project.layers.some((layer) => layer.kind === 'captions' && layer.visible);
   const activeSources = activeProjectVideoSources(project);
   const { width, height } = outputDimensions(project, activeSources);
@@ -127,7 +128,8 @@ export function buildTimelineRenderPlan(
   const wordsById = new Map(project.transcription.words.map((word) => [word.id, word]));
   const captions: TimelineRenderPlan['captions'] = [];
   for (const caption of captionsEnabled ? project.captions : []) {
-    if (caption.timelineVisible === false || !caption.text.trim()) continue;
+    if (caption.timelineVisible === false || !caption.text.trim()
+      || (caption.styleOverride?.opacity ?? project.projectStyle.opacity ?? 1) <= 0) continue;
     const interval = boundedInterval(caption.startMs, caption.endMs, durationMs);
     if (!interval) continue;
     captions.push({
@@ -154,6 +156,7 @@ export function buildTimelineRenderPlan(
   }
 
   for (const pair of captionsEnabled ? exportCaptionPairs(project, allowIncompleteTranslations) : []) {
+    if ((pair.style.opacity ?? 1) <= 0) continue;
     const interval = boundedInterval(pair.startMs, pair.endMs, durationMs);
     if (!interval) continue;
     captions.push({ id: pair.translation.id, text: pair.displayText, ...interval,
@@ -162,7 +165,7 @@ export function buildTimelineRenderPlan(
 
   const layers: TimelineRenderPlan['layers'] = [];
   for (const layer of project.layers) {
-    if (layer.kind !== 'captions' && layer.timelineVisible === false) continue;
+    if (layer.kind !== 'captions' && (!layer.visible || layer.timelineVisible === false)) continue;
     if (layer.kind === 'captions') {
       layers.push({ id: layer.id, kind: layer.kind, visible: layer.visible });
       continue;
@@ -170,7 +173,7 @@ export function buildTimelineRenderPlan(
     const interval = boundedInterval(layer.startMs, layer.endMs, durationMs);
     if (!interval) continue;
     if (layer.kind === 'text') {
-      if (!layer.text.trim()) continue;
+      if (!layer.text.trim() || (layer.style.opacity ?? 1) <= 0) continue;
       layers.push({
         id: layer.id,
         kind: layer.kind,
@@ -181,6 +184,7 @@ export function buildTimelineRenderPlan(
       });
       continue;
     }
+    if (!layer.uri?.trim() || layer.opacity <= 0) continue;
     layers.push({
       id: layer.id,
       kind: layer.kind,
@@ -229,7 +233,7 @@ export function buildTimelineRenderPlan(
     }),
     captions,
     layers,
-    audioClips: project.audioClips.map((clip) => {
+    audioClips: audibleClips.map((clip) => {
       const source = audioSourceById.get(clip.sourceId);
       if (!source) throw new Error(`An audio source used by clip ${clip.id} is unavailable.`);
       return {

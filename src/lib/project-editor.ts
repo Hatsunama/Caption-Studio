@@ -37,6 +37,7 @@ import {
   type VideoTransformPatch,
 } from '@/types/project';
 import { editCanvasTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
+import { editProjectTimelineRange, timelineArtifactEditLimit } from '@/lib/timeline-edit-bounds';
 import { normalizeLayerGeometry } from '@/lib/layer-geometry';
 
 export function setCaptionTexts(project: CaptionProject, changes: CaptionTextChanges) {
@@ -94,7 +95,7 @@ export function setCaptionTiming(
   const entries = buildClipTimeline(project.clips);
   const selected = project.captions.find((caption) => caption.id === captionId);
   if (!selected || selected.timelineVisible === false) return project;
-  const { startMs: safeStartMs, endMs: safeEndMs } = editCanvasTimelineRange(selected, edge, startMs, endMs);
+  const { startMs: safeStartMs, endMs: safeEndMs } = editProjectTimelineRange(project, selected, edge, startMs, endMs);
   if (safeStartMs === selected.startMs && safeEndMs === selected.endMs) return project;
   const captions = project.captions
     .map((caption) => caption.id === captionId
@@ -177,7 +178,7 @@ export function setLayerTiming(
 ) {
   const selected = project.layers.find((layer) => layer.id === layerId && layer.kind !== 'captions');
   if (!selected || selected.kind === 'captions' || selected.timelineVisible === false) return project;
-  const range = editCanvasTimelineRange(selected, edge, startMs, endMs);
+  const range = editProjectTimelineRange(project, selected, edge, startMs, endMs);
   if (range.startMs === selected.startMs && range.endMs === selected.endMs) return project;
   const entries = buildClipTimeline(project.clips);
   return updateProject(project, {
@@ -198,9 +199,13 @@ export function setImageLayer(project: CaptionProject, layerId: string, patch: P
 }
 
 export function createTextLayer(project: CaptionProject, id: string, currentMs: number, durationMs: number) {
-  const startMs = Number.isFinite(currentMs) ? Math.max(0, currentMs) : 0;
-  const defaultEndMs = Number.isFinite(durationMs) && startMs < durationMs
-    ? Math.min(durationMs, startMs + 3_000) : startMs + 3_000;
+  const extentMs = timelineArtifactEditLimit(project, durationMs);
+  const startMs = Number.isFinite(currentMs) ? Math.max(0,
+    project.clips.length ? Math.min(currentMs, Math.max(0, extentMs - 80)) : currentMs) : 0;
+  const defaultEndMs = project.clips.length
+    ? Math.min(extentMs, Number.isFinite(durationMs) && durationMs > startMs ? durationMs : extentMs, startMs + 3_000)
+    : Number.isFinite(durationMs) && startMs < durationMs
+      ? Math.min(durationMs, startMs + 3_000) : startMs + 3_000;
   const range = editCanvasTimelineRange({ startMs, endMs: defaultEndMs }, 'end', startMs, defaultEndMs);
   const layer = attachLayerToTimeline<TextVisualLayer>({
     id,
@@ -245,9 +250,13 @@ export function addImageLayer(project: CaptionProject, options: {
   currentMs: number;
   durationMs: number;
 }) {
-  const startMs = Number.isFinite(options.currentMs) ? Math.max(0, options.currentMs) : 0;
-  const defaultEndMs = Number.isFinite(options.durationMs) && startMs < options.durationMs
-    ? Math.min(options.durationMs, startMs + 3_000) : startMs + 3_000;
+  const extentMs = timelineArtifactEditLimit(project, options.durationMs);
+  const startMs = Number.isFinite(options.currentMs) ? Math.max(0,
+    project.clips.length ? Math.min(options.currentMs, Math.max(0, extentMs - 80)) : options.currentMs) : 0;
+  const defaultEndMs = project.clips.length
+    ? Math.min(extentMs, Number.isFinite(options.durationMs) && options.durationMs > startMs ? options.durationMs : extentMs, startMs + 3_000)
+    : Number.isFinite(options.durationMs) && startMs < options.durationMs
+      ? Math.min(options.durationMs, startMs + 3_000) : startMs + 3_000;
   const range = editCanvasTimelineRange({ startMs, endMs: defaultEndMs }, 'end', startMs, defaultEndMs);
   const layer = attachLayerToTimeline<ImageVisualLayer>({
     id: options.id,
@@ -276,6 +285,17 @@ export function moveVisualLayer(project: CaptionProject, layerId: string, direct
 export function deleteVisualLayer(project: CaptionProject, layerId: string) {
   if (layerId === 'captions') return project;
   return updateProject(project, { layers: project.layers.filter((layer) => layer.id !== layerId) });
+}
+
+export function duplicateVisualLayer(project: CaptionProject, layerId: string, duplicateId: string) {
+  const index = project.layers.findIndex((layer) => layer.id === layerId);
+  const layer = project.layers[index];
+  if (!layer || project.layers.length >= 5_000 || layer.kind === 'captions' || (layer.kind === 'text' && layer.watermark)
+    || project.layers.some((candidate) => candidate.id === duplicateId)) return undefined;
+  const duplicate = { ...layer, id: duplicateId, name: `${layer.name} copy` };
+  const layers = [...project.layers];
+  layers.splice(index + 1, 0, duplicate);
+  return { project: updateProject(project, { layers }), layer: duplicate };
 }
 
 export function splitVisualLayer(

@@ -1,4 +1,4 @@
-import { editCanvasTimelineRange } from '@/lib/timeline-item-timing';
+import { editProjectTimelineRange } from '@/lib/timeline-edit-bounds';
 import { mergePatch, mergeStyle, removePatchedKeys } from '@/lib/caption-style';
 import { captionTransform, hasCaptionTransform, withoutCaptionTransform } from '@/lib/caption-transform';
 import { layerExtent, normalizeLayerGeometry } from '@/lib/layer-geometry';
@@ -319,7 +319,7 @@ export function setTranslationCueTiming(
       const source = project.captions.find((caption) => caption.id === sourceCaptionId);
       const previousStart = cue.startMs ?? source?.startMs ?? 0;
       const previousEnd = cue.endMs ?? source?.endMs ?? previousStart + 80;
-      const range = editCanvasTimelineRange({ startMs: previousStart, endMs: previousEnd }, edge, startMs, endMs);
+      const range = editProjectTimelineRange(project, { startMs: previousStart, endMs: previousEnd }, edge, startMs, endMs);
       return { ...cue, ...range, timelineVisible: true };
     }),
   }), updatedAt);
@@ -418,8 +418,8 @@ export function resolvedProjectCaptionLanguage(project: CaptionProject): string 
   }
 }
 
-export function assertVisibleTranslationTracksCompatible(project: CaptionProject) {
-  const visible = (project.captionTracks?.translations ?? []).filter((track) => track.visible);
+export function assertVisibleTranslationTracksCompatible(project: CaptionProject, trackIds?: ReadonlySet<string>) {
+  const visible = (project.captionTracks?.translations ?? []).filter((track) => track.visible && (!trackIds || trackIds.has(track.id)));
   if (visible.length === 0) return;
   const sourceLanguage = projectPrimaryCaptionLanguage(project);
   for (const track of visible) {

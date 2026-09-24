@@ -206,8 +206,12 @@ test('empty caption menu disables Edit captions and hides deletion', () => {
   assert.equal(actions.some(({ label }) => label === 'Delete subtitle'), false);
 });
 
-test('all-caption animation applies without a cue even with a previously selected text layer', () => {
+test('all-caption animation applies without a cue after leaving a selected text layer', () => {
   const w = workspace({ selectedTextLayer: { id: 'title' } });
+  w.context.selectEditorObject({ kind: 'captions' });
+  w.context.selectedTextLayer = undefined;
+  assert.equal(w.state.layerId, 'captions');
+  assert.equal(w.state.captionId, undefined);
   w.callback('chooseAnimation')('fade');
   for (const caption of w.state.project.captions) {
     assert.equal(resolveCaptionStyle(w.state.project.projectStyle, caption).animation.id, 'fade');

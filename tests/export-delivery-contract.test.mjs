@@ -37,8 +37,8 @@ test('native export keeps the local MP4 until JS delivery and never covers the v
   assert.doesNotMatch(compositorTest, /getOverlaySettings\(2,/);
   assert.match(compositorTest, /val active = settings\.getOverlaySettings\(0, 500_000\)/);
   assert.match(exporter, /requireRenderedVideoFile\(task\.output\)/);
-  assert.match(exporter, /inspectRenderedVideo\(context, Uri\.fromFile\(task\.output\), sizeBytes\)/);
-  assert.match(exporter, /inspectRenderedVideo\(context, mediaUri, verified\.sizeBytes\)/);
+  assert.match(exporter, /inspectRenderedVideo\(context, Uri\.fromFile\(task\.output\), sizeBytes, plan\.durationMs, plan\.frameRate\)/);
+  assert.match(exporter, /inspectRenderedVideo\(context, mediaUri, verified\.sizeBytes, plan\.durationMs, plan\.frameRate\)/);
   assert.match(exporter, /task\.publishedVerified\.set\(true\)/);
   assert.match(exporter, /"outputUri" to Uri\.fromFile\(task\.output\)\.toString\(\)/);
   assert.doesNotMatch(exporter, /task\.output\.delete\(\)\s*\n\s*promise\.resolve/);

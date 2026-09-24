@@ -1,5 +1,6 @@
 import type { AudioClip, CaptionProject, ProjectAudioSource } from '@/types/project';
 import { editTimelineRange, MINIMUM_TIMELINE_ITEM_MS, splitTimelineRange } from '@/lib/timeline-item-timing';
+import { totalClipDuration } from '@/lib/video-timeline';
 
 export const MINIMUM_AUDIO_CLIP_MS = MINIMUM_TIMELINE_ITEM_MS;
 
@@ -9,6 +10,19 @@ export function audioClipDuration(clip: AudioClip) {
 
 export function audioClipEnd(clip: AudioClip) {
   return clip.startMs + audioClipDuration(clip);
+}
+
+/** Project stored ranges stay intact; only the export projection is clipped. */
+export function audibleAudioClipsWithin(project: CaptionProject, durationMs: number): AudioClip[] {
+  return project.audioClips.flatMap((clip) => {
+    if (clip.muted || clip.volume <= 0) return [];
+    const startMs = Math.max(0, clip.startMs);
+    const endMs = Math.min(durationMs, audioClipEnd(clip));
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return [];
+    const sourceStartMs = clip.sourceStartMs + startMs - clip.startMs;
+    return [clampAudioFades({ ...clip, startMs, sourceStartMs,
+      sourceEndMs: sourceStartMs + endMs - startMs })];
+  });
 }
 
 export function audioClipVolume(clip: AudioClip, timelineMs: number) {
@@ -27,8 +41,10 @@ export function addAudioSourceToProject(
   startMs: number,
   timelineDurationMs: number,
 ) {
-  const safeStartMs = clamp(startMs, 0, Math.max(0, timelineDurationMs - MINIMUM_AUDIO_CLIP_MS));
-  const visibleDuration = Math.min(source.durationMs, Math.max(0, timelineDurationMs - safeStartMs));
+  const extentMs = project.clips?.length ? totalClipDuration(project.clips)
+    : Math.max(timelineDurationMs, Math.max(0, startMs) + source.durationMs);
+  const safeStartMs = clamp(startMs, 0, Math.max(0, extentMs - MINIMUM_AUDIO_CLIP_MS));
+  const visibleDuration = Math.min(source.durationMs, Math.max(0, extentMs - safeStartMs));
   if (visibleDuration < MINIMUM_AUDIO_CLIP_MS) return null;
   const clip: AudioClip = {
     id: clipId,
@@ -80,7 +96,7 @@ export function moveAudioClip(project: CaptionProject, clipId: string, startMs: 
         'move',
         startMs,
         startMs + audioClipDuration(clip),
-        timelineDurationMs,
+        audioEditExtent(project, timelineDurationMs),
         MINIMUM_AUDIO_CLIP_MS,
       );
       return range.startMs === clip.startMs ? clip : { ...clip, startMs: range.startMs };
@@ -113,7 +129,7 @@ export function trimAudioClip(
       const targetEnd = clamp(
         requestedTimelineMs,
         clip.startMs + MINIMUM_AUDIO_CLIP_MS,
-        Math.min(timelineDurationMs, clip.startMs + source.durationMs - clip.sourceStartMs),
+        Math.min(audioEditExtent(project, timelineDurationMs), clip.startMs + source.durationMs - clip.sourceStartMs),
       );
       return clampAudioFades({ ...clip, sourceEndMs: clip.sourceStartMs + targetEnd - clip.startMs });
     }),
@@ -166,9 +182,12 @@ export function deleteAudioClip(project: CaptionProject, clipId: string) {
 export function duplicateAudioClip(project: CaptionProject, clipId: string, nextId: string, timelineDurationMs: number) {
   const clip = project.audioClips.find((candidate) => candidate.id === clipId);
   if (!clip) return null;
-  const duration = audioClipDuration(clip);
-  const startMs = clamp(audioClipEnd(clip), 0, Math.max(0, timelineDurationMs - duration));
-  const duplicate = { ...clip, id: nextId, startMs };
+  const extentMs = audioEditExtent(project, timelineDurationMs);
+  const duration = Math.min(audioClipDuration(clip), Math.max(0, extentMs));
+  if (duration < MINIMUM_AUDIO_CLIP_MS) return null;
+  const startMs = clamp(audioClipEnd(clip), 0, extentMs - duration);
+  const duplicate = clampAudioFades({ ...clip, id: nextId, startMs,
+    sourceEndMs: clip.sourceStartMs + duration });
   return { project: updateProject(project, { audioClips: [...project.audioClips, duplicate] }), clip: duplicate };
 }
 
@@ -208,6 +227,10 @@ function clampAudioFades(clip: AudioClip): AudioClip {
     fadeInMs: clamp(clip.fadeInMs, 0, durationMs),
     fadeOutMs: clamp(clip.fadeOutMs, 0, durationMs),
   };
+}
+
+function audioEditExtent(project: CaptionProject, requestedMs: number) {
+  return project.clips?.length ? totalClipDuration(project.clips) : requestedMs;
 }
 
 function updateProject(project: CaptionProject, update: Partial<CaptionProject>): CaptionProject {

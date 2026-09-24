@@ -118,9 +118,9 @@ internal class TimelineVideoExporter(private val context: Context) {
                   try {
                     ensureActive(task)
                     val sizeBytes = requireRenderedVideoFile(task.output)
-                    val verified = inspectRenderedVideo(context, Uri.fromFile(task.output), sizeBytes)
+                    val verified = inspectRenderedVideo(context, Uri.fromFile(task.output), sizeBytes, plan.durationMs, plan.frameRate)
                     val mediaUri = publishToMediaLibrary(task, verified)
-                    inspectRenderedVideo(context, mediaUri, verified.sizeBytes)
+                    inspectRenderedVideo(context, mediaUri, verified.sizeBytes, plan.durationMs, plan.frameRate)
                     synchronized(stateLock) {
                       // Commit verification under the same lock as cancellation.
                       // Whichever wins decides the promise and artifact lifetime.

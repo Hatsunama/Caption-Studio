@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import java.io.File
+import kotlin.math.abs
 
 internal data class VerifiedRenderedVideo(
   val sizeBytes: Long,
@@ -24,7 +25,13 @@ internal fun requireRenderedVideoFile(file: File): Long {
   return size
 }
 
-internal fun inspectRenderedVideo(context: Context, uri: Uri, expectedSize: Long): VerifiedRenderedVideo {
+internal fun inspectRenderedVideo(
+  context: Context,
+  uri: Uri,
+  expectedSize: Long,
+  expectedDurationMs: Long,
+  frameRate: Int,
+): VerifiedRenderedVideo {
   if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") {
     val path = uri.path ?: throw IllegalStateException("The rendered video path is invalid")
     val file = File(path)
@@ -53,14 +60,17 @@ internal fun inspectRenderedVideo(context: Context, uri: Uri, expectedSize: Long
       hasVideo = true
       width = mediaFormatInt(format, MediaFormat.KEY_WIDTH)
       height = mediaFormatInt(format, MediaFormat.KEY_HEIGHT)
-      if (format.containsKey(MediaFormat.KEY_DURATION)) {
-        durationMs = maxOf(durationMs, format.getLong(MediaFormat.KEY_DURATION) / 1_000L)
-      }
+      val videoTrackDurationMs = if (format.containsKey(MediaFormat.KEY_DURATION)) {
+        format.getLong(MediaFormat.KEY_DURATION) / 1_000L
+      } else 0L
+      durationMs = maxOf(
+        durationMs,
+        requireMatchingVideoTrackDuration(videoTrackDurationMs, expectedDurationMs, frameRate),
+      )
     }
     check(hasVideo) { "The export does not contain a video track" }
     val retrieverDuration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-    durationMs = maxOf(durationMs, retrieverDuration)
-    check(durationMs > 0L) { "The export has no readable duration" }
+    check(maxOf(durationMs, retrieverDuration) > 0L) { "The export has no readable duration" }
     val retrieverWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
     val retrieverHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
     width = width.takeIf { it > 0 } ?: retrieverWidth
@@ -73,6 +83,16 @@ internal fun inspectRenderedVideo(context: Context, uri: Uri, expectedSize: Long
     extractor.release()
     retriever.release()
   }
+}
+
+internal fun requireMatchingVideoTrackDuration(videoTrackDurationMs: Long, expectedDurationMs: Long, frameRate: Int): Long {
+  require(expectedDurationMs > 0L && frameRate > 0) { "The requested render duration or frame rate is invalid" }
+  check(videoTrackDurationMs > 0L) { "The export has no readable video-track duration" }
+  val toleranceMs = (2_000L + frameRate - 1) / frameRate + 20L
+  check(abs(videoTrackDurationMs - expectedDurationMs) <= toleranceMs) {
+    "The exported video track duration does not match the requested render duration"
+  }
+  return videoTrackDurationMs
 }
 
 internal fun pendingVideoContentValues(displayName: String): ContentValues {

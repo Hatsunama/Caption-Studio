@@ -65,9 +65,9 @@ test('image timing extends canvas and splits into independently editable timelin
     updatedAt: 'before',
   };
   const moved = setLayerTiming(visual, 'image', 'move', 9_000, 12_000);
-  assert.deepEqual([moved.layers[1].startMs, moved.layers[1].endMs], [9_000, 12_000]);
-  assert.equal(moved.layers[1].timingMode, 'timeline');
-  assert.equal(moved.layers[1].sourceAnchors, undefined);
+  assert.deepEqual([moved.layers[1].startMs, moved.layers[1].endMs], [7_000, 10_000]);
+  assert.equal(moved.layers[1].timingMode, 'source');
+  assert.equal(moved.layers[1].sourceAnchors[0].clipId, 'video');
   const split = splitVisualLayer(visual, 'image', 3_500, 'image-left', 'image-right');
   assert.ok(split);
   assert.deepEqual(split.project.layers.slice(1).map((layer) => [layer.id, layer.startMs, layer.endMs, layer.uri]), [
@@ -176,6 +176,7 @@ test('subtitle serializers emit standards-compliant timing and escaped styling',
     animation: { id: 'none', intensity: 0, durationMs: 1 },
   };
   const project = {
+    clips: [], audioClips: [], layers: [{ id: 'captions', kind: 'captions', visible: true }], export: { burnCaptions: true },
     captions: [{ id: 'c1', text: 'Hello, {world}', startMs: 1_234, endMs: 4_567, wordIds: [] }],
     projectStyle: style,
     canvas: { aspectWidth: 9, aspectHeight: 16 },
@@ -1337,7 +1338,9 @@ test('caption editing opens the full timestamped script and keeps text-layer edi
 
 test('caption menus expose the script editor instead of direct split and join commands', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
-  const captionMenu = editor.slice(editor.indexOf('>CAPTION CONTROLS<'), editor.indexOf('>CAPTION ANIMATION<'));
+  const menuStart = editor.indexOf('<PersistedHorizontalScroll id="tool:captions:caption"');
+  assert.ok(menuStart >= 0, 'find the caption action menu');
+  const captionMenu = editor.slice(menuStart, editor.indexOf('</PersistedHorizontalScroll>', menuStart));
   assert.match(captionMenu, /label="Edit captions"/);
   assert.doesNotMatch(captionMenu, /label="(?:Split[^"\n]*|Join previous|Join next)"/i);
 });

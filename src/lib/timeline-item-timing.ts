@@ -42,26 +42,24 @@ export function editTimelineRange(
   timelineDurationMs: number,
   minimumDurationMs = MINIMUM_TIMELINE_ITEM_MS,
 ): TimelineRange {
-  if (
-    !Number.isFinite(current.startMs)
-    || !Number.isFinite(current.endMs)
-    || !Number.isFinite(requestedStartMs)
-    || !Number.isFinite(requestedEndMs)
-    || !Number.isFinite(timelineDurationMs)
-  ) return current;
+  if (!Number.isFinite(timelineDurationMs)) return current;
   const timelineEndMs = Math.max(0, timelineDurationMs);
   const minimumMs = Math.max(1, minimumDurationMs);
   if (timelineEndMs < minimumMs) return current;
-  const currentStartMs = clamp(current.startMs, 0, timelineEndMs - minimumMs);
-  const currentEndMs = clamp(current.endMs, currentStartMs + minimumMs, timelineEndMs);
+  const finiteStart = Number.isFinite(current.startMs) ? current.startMs : 0;
+  const finiteEnd = Number.isFinite(current.endMs) ? current.endMs : finiteStart + minimumMs;
+  const requestedStart = Number.isFinite(requestedStartMs) ? requestedStartMs : finiteStart;
+  const requestedEnd = Number.isFinite(requestedEndMs) ? requestedEndMs : finiteEnd;
+  const currentStartMs = clamp(finiteStart, 0, timelineEndMs - minimumMs);
+  const currentEndMs = clamp(finiteEnd, currentStartMs + minimumMs, timelineEndMs);
   if (edge === 'start') {
-    return { startMs: clamp(requestedStartMs, 0, currentEndMs - minimumMs), endMs: currentEndMs };
+    return { startMs: clamp(requestedStart, 0, currentEndMs - minimumMs), endMs: currentEndMs };
   }
   if (edge === 'end') {
-    return { startMs: currentStartMs, endMs: clamp(requestedEndMs, currentStartMs + minimumMs, timelineEndMs) };
+    return { startMs: currentStartMs, endMs: clamp(requestedEnd, currentStartMs + minimumMs, timelineEndMs) };
   }
   const durationMs = currentEndMs - currentStartMs;
-  const startMs = clamp(requestedStartMs, 0, timelineEndMs - durationMs);
+  const startMs = clamp(requestedStart, 0, timelineEndMs - durationMs);
   return { startMs, endMs: startMs + durationMs };
 }
 
