@@ -2,6 +2,7 @@ import { NativeModule, registerWebModule } from 'expo';
 
 import type {
   NaturalCaptionTranslationLimits,
+  NaturalCaptionTranslationAcceptedBatch,
   NaturalCaptionTranslationProgress,
   NaturalCaptionTranslationRequest,
   NaturalCaptionTranslationResult,
@@ -26,6 +27,10 @@ class CaptionTranslationModule extends NativeModule<Record<never, never>> {
   }
 
   async cancelNaturalCaptionTranslation(): Promise<void> {}
+
+  async getNaturalCaptionAcceptedBatches(_requestId: string): Promise<NaturalCaptionTranslationAcceptedBatch[]> {
+    return [];
+  }
 
   async getNaturalCaptionTranslationProgress(): Promise<NaturalCaptionTranslationProgress> {
     return {

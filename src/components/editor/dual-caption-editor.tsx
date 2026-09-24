@@ -279,7 +279,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
             <HeaderAction label="Remove second language" danger disabled={disabled || dirty} onPress={props.onRemove} />
           </View>
           <Text style={{ marginTop: 11, color: chrome.muted, fontSize: 12, lineHeight: 17 }}>
-            {failedCount} failed; {missingCount} empty; {needsRefresh.length} unfinished; {skippedCount} skipped. You can export available text anyway. Save typed edits before refreshing. Failed refreshes keep saved text; successful refreshes replace only the requested second-language text.
+            {failedCount} failed; {missingCount} without a saved translation; {needsRefresh.length} unfinished; {skippedCount} skipped. Failed lines without saved translations show current source text as an unresolved fallback. You can export available text and source fallbacks anyway. Save typed edits before refreshing. Failed refreshes keep saved text; successful refreshes replace only the requested second-language text.
           </Text>
         </View>
 
@@ -399,7 +399,7 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
       {pair.translation.status === 'failed' ? (
         <Text accessibilityRole="alert" selectable style={{ color: chrome.dangerText, fontSize: 12, lineHeight: 17 }}>
           Translation failed: {pair.translation.failureReason || 'No failure reason was returned.'}
-          {pair.translation.text.trim() ? ' Previously saved text was kept.' : ' No translated text was saved.'}
+          {pair.translation.text.trim() ? ' Previously saved text was kept.' : ' Showing current source text as an unresolved fallback. No translated text was saved.'}
         </Text>
       ) : null}
       {textChanged || pair.translation.status === 'stale' || pair.translation.status === 'reviewed' ? (
@@ -419,7 +419,7 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
         value={draft.translatedText}
         disabled={props.disabled}
         cueNumber={index + 1}
-        placeholder={skipped ? 'Translation skipped' : pair.translation.status === 'failed' ? 'Translation failed' : 'Translation pending'}
+        placeholder={skipped ? 'Translation skipped' : pair.displayProvenance === 'source-fallback' ? draft.primaryText : 'Translation pending'}
         onChangeText={(value) => props.store.setDraft(pair.source.id, 'translatedText', value)}
       />
     </View>

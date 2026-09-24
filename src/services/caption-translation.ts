@@ -5,6 +5,7 @@ import CaptionTranslation, {
   type NaturalCaptionTranslationLimits,
   type NaturalCaptionTranslationInput,
   type NaturalCaptionTranslationBackend,
+  type NaturalCaptionTranslationAcceptedBatch,
   type NaturalCaptionTranslationResult,
 } from 'caption-translation';
 
@@ -109,6 +110,7 @@ type ActiveTranslation = {
 
 let activeTranslation: ActiveTranslation | undefined;
 let modelDownload: Promise<File> | undefined;
+let nextNativeRequestId = 0;
 
 export type CaptionTranslationResourceLease = {
   ready: Promise<void>;
@@ -156,6 +158,7 @@ export async function translateNaturalCaptionBatch(options: {
   captions: NaturalTranslationUnit[];
   allCaptions?: NaturalTranslationUnit[];
   onProgress?: (progress: CaptionTranslationProgress) => void;
+  onAcceptedBatch?: (batch: NaturalCaptionTranslation) => Promise<void>;
 }): Promise<NaturalCaptionTranslation> {
   const operationId = 'caption-translation';
   const session = await translateNaturalCaptionOperations({
@@ -167,6 +170,9 @@ export async function translateNaturalCaptionBatch(options: {
       allCaptions: options.allCaptions,
     }],
     onProgress: options.onProgress,
+    onAcceptedBatch: options.onAcceptedBatch
+      ? async (_id, batch) => { await options.onAcceptedBatch!(batch); }
+      : undefined,
   });
   const captions = session.operations.get(operationId);
   if (!captions) throw new Error('The local translation session did not return its requested operation.');
@@ -181,6 +187,7 @@ export async function translateNaturalCaptionBatch(options: {
 export async function translateNaturalCaptionOperations(options: {
   operations: NaturalCaptionTranslationOperation[];
   onProgress?: (progress: CaptionTranslationProgress) => void;
+  onAcceptedBatch?: (operationId: string, batch: NaturalCaptionTranslation) => Promise<void>;
 }): Promise<NaturalCaptionTranslationSession> {
   const limits = requireNaturalCaptionTranslationLimits(CaptionTranslation.limits);
   if (activeTranslation) throw new Error('Another caption translation is already running.');
@@ -257,6 +264,61 @@ export async function translateNaturalCaptionOperations(options: {
   const run: ActiveTranslation = { id: Symbol('caption-translation'), cancelled: false };
   activeTranslation = run;
   let resourceLease: CaptionTranslationResourceLease | undefined;
+  const requestId = `${Date.now()}-${++nextNativeRequestId}-${Math.random().toString(36).slice(2)}`;
+  const preparedBatches = prepared.flatMap((operation) => operation.batches.map((batch) => ({ operation, batch })));
+  const committedBatches = new Set<number>();
+  let commitQueue = Promise.resolve();
+  let commitError: unknown;
+  const provider: NaturalCaptionTranslationProvider = {
+    id: 'litertlm',
+    modelId: NATURAL_TRANSLATION_MODEL.id,
+    modelRevision: NATURAL_TRANSLATION_MODEL.revision,
+    promptVersion: NATURAL_TRANSLATION_MODEL.promptVersion,
+  };
+  const acceptBatch = async (batchIndex: number, nativeCaptions: NaturalCaptionTranslationResult['captions']) => {
+    if (!options.onAcceptedBatch || committedBatches.has(batchIndex)) return;
+    const preparedBatch = preparedBatches[batchIndex];
+    if (!preparedBatch) throw new Error('The local model returned an unexpected translation batch.');
+    const { operation, batch } = preparedBatch;
+    const translated = validateNativeResult(batch.captions, nativeCaptions);
+    const rejected = new Set([
+      ...translated.filter((caption) => caption.rejected).map((caption) => caption.id),
+      ...nativeCaptions.filter((caption) => caption.valid === false).map((caption) => caption.id),
+    ]);
+    const repaired = reviewTranslatedCaptions(
+      [{ sourceLanguage: operation.sourceLanguage, targetLanguage: operation.targetLanguage, captions: batch.captions }],
+      new Map(translated.map((caption) => [caption.id, caption.text])),
+      rejected,
+    );
+    const failureByKey = new Map(nativeCaptions.map((caption) => [caption.id, caption.failureReason]));
+    const captions = new Map<string, string>();
+    const needsReview = new Set<string>();
+    const failureReasons = new Map<string, string>();
+    for (const caption of batch.captions) {
+      const originalId = operation.originalIdByKey.get(caption.id)!;
+      const text = repaired.translatedById.get(caption.id) ?? '';
+      captions.set(originalId, text);
+      if (!text || repaired.needsReview.has(caption.id)) {
+        needsReview.add(originalId);
+        failureReasons.set(originalId, failureByKey.get(caption.id) ?? 'output-needs-review');
+      }
+    }
+    await options.onAcceptedBatch(operation.id, { captions, needsReview, failureReasons, provider });
+    committedBatches.add(batchIndex);
+  };
+  const queueBatch = (event: NaturalCaptionTranslationAcceptedBatch) => {
+    if (event.requestId !== requestId || commitError) return;
+    commitQueue = commitQueue.then(async () => {
+      if (!Number.isSafeInteger(event.batchIndex)) throw new Error('The local model returned an invalid batch index.');
+      await acceptBatch(event.batchIndex, event.captions);
+    }).catch((error: unknown) => {
+      commitError = error;
+      void CaptionTranslation.cancelNaturalCaptionTranslation();
+    });
+  };
+  const subscription = options.onAcceptedBatch
+    ? CaptionTranslation.addListener('onNaturalCaptionBatchAccepted', queueBatch)
+    : undefined;
 
   try {
     resourceLease = translationResourceOwner?.();
@@ -269,7 +331,21 @@ export async function translateNaturalCaptionOperations(options: {
         targetLanguage: operation.targetLanguage,
         batches: operation.batches,
       })) };
-      const result = await translateWithModelRecovery(run, nativeRequest.operations, options.onProgress);
+      let result: NaturalCaptionTranslationResult;
+      try {
+        result = await translateWithModelRecovery(run, nativeRequest.operations, options.onProgress,
+          options.onAcceptedBatch ? requestId : undefined);
+      } catch (error) {
+        if (options.onAcceptedBatch) {
+          const accepted = await CaptionTranslation.getNaturalCaptionAcceptedBatches(requestId);
+          for (const batch of accepted) queueBatch(batch);
+        }
+        await commitQueue;
+        if (commitError) throw commitError;
+        throw error;
+      }
+      await commitQueue;
+      if (commitError) throw commitError;
       throwIfCancelled(run);
       if (
         result.offline !== true
@@ -305,6 +381,16 @@ export async function translateNaturalCaptionOperations(options: {
         rejected,
       );
       throwIfCancelled(run);
+      if (options.onAcceptedBatch) {
+        let offset = 0;
+        for (let batchIndex = 0; batchIndex < preparedBatches.length; batchIndex++) {
+          const count = preparedBatches[batchIndex].batch.captions.length;
+          queueBatch({ requestId, batchIndex, captions: result.captions.slice(offset, offset + count) });
+          offset += count;
+        }
+        await commitQueue;
+        if (commitError) throw commitError;
+      }
       const translatedById = repaired.translatedById;
       const translatedOperations = new Map<string, ReadonlyMap<string, string>>();
       const needsReviewByOperation = new Map<string, ReadonlySet<string>>();
@@ -329,18 +415,14 @@ export async function translateNaturalCaptionOperations(options: {
         operations: translatedOperations,
         needsReviewByOperation,
         failureReasonsByOperation,
-        provider: {
-          id: 'litertlm',
-          modelId: result.modelId,
-          modelRevision: NATURAL_TRANSLATION_MODEL.revision,
-          promptVersion: NATURAL_TRANSLATION_MODEL.promptVersion,
-        },
+        provider,
       } satisfies NaturalCaptionTranslationSession;
     } catch (error) {
       if (run.cancelled || translationCancelled(error)) throw new CaptionTranslationCancelledError();
       throw error;
     }
   } finally {
+    subscription?.remove();
     try {
       if (resourceLease) await resourceLease.restore();
     } finally {
@@ -525,11 +607,13 @@ async function translateWithNative(
     targetLanguage: CaptionLanguageTag;
     batches: { captions: NaturalCaptionTranslationInput[]; contextBefore?: string; contextAfter?: string; }[];
   }[],
+  requestId?: string,
 ) {
   const benchmarkNoCheckpoints = TRANSLATION_BENCHMARK_BACKEND !== undefined;
   const runtimeBackend = TRANSLATION_BENCHMARK_BACKEND ?? 'cpu';
   const result = await CaptionTranslation.translateNaturalCaptions(modelUri, {
     operations,
+    requestId,
     runtimeBackend,
     benchmarkNoCheckpoints,
     reuseCheckpoints: !benchmarkNoCheckpoints,
@@ -605,6 +689,7 @@ async function translateWithModelRecovery(
   run: ActiveTranslation,
   operations: Parameters<typeof translateWithNative>[1],
   onProgress?: (progress: CaptionTranslationProgress) => void,
+  requestId?: string,
 ) {
   let recoveryAttempted = false;
   while (true) {
@@ -619,7 +704,7 @@ async function translateWithModelRecovery(
     const stopProgress = pollNativeProgress(run, onProgress);
     try {
       // Recovery changes only the model file; successful cue checkpoints remain reusable.
-      return await translateWithNative(model.uri, operations);
+      return await translateWithNative(model.uri, operations, requestId);
     } catch (error) {
       if (!isNativeModelIntegrityFailure(error)) throw error;
       // Remove the trust marker first, including after a failed recovery attempt.

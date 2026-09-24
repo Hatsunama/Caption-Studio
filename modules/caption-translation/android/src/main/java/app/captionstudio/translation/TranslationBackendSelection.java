@@ -62,9 +62,13 @@ final class TranslationBackendSelection {
     return new TranslationRuntime() {
       public String backendName() { return backend; }
       public boolean initializationFallback() { return fallback; }
+      public boolean supportsStructuredOutput() { return runtime.supportsStructuredOutput(); }
       public String translate(String prompt) throws Exception { return runtime.translate(prompt); }
       public String translate(String prompt, int tokens) throws Exception {
         return runtime.translate(prompt, tokens);
+      }
+      public String translate(String prompt, int tokens, boolean requireStructuredOutput) throws Exception {
+        return runtime.translate(prompt, tokens, requireStructuredOutput);
       }
       public void cancel() { runtime.cancel(); }
       public void close() throws TranslationRuntimeCleanupException { runtime.close(); }

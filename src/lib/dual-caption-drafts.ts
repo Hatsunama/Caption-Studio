@@ -57,7 +57,7 @@ export function mergeRecoveredDualCaptionDrafts(
     if (!recoveredDraft) return [id, committedDraft];
     return [id, {
       primaryText: recoveredDraft.primaryText,
-      translatedText: recoveredTranslationLooksCommitted(recoveredDraft)
+      translatedText: recoveredTranslationLooksCommitted(recoveredDraft, committedDraft)
         ? recoveredDraft.translatedText
         : committedDraft.translatedText,
     }];
@@ -80,13 +80,17 @@ export function shouldRestoreDualCaptionJournal(
     const recoveredDraft = recovered[id];
     if (!recoveredDraft) return false;
     const primaryEdited = recoveredDraft.primaryText !== committedDraft.primaryText;
-    const translationEdited = recoveredTranslationLooksCommitted(recoveredDraft)
+    const translationEdited = recoveredTranslationLooksCommitted(recoveredDraft, committedDraft)
       && recoveredDraft.translatedText !== committedDraft.translatedText;
     return primaryEdited || translationEdited;
   });
 }
 
-function recoveredTranslationLooksCommitted(draft: DualCaptionDraft) {
-  const translated = draft.translatedText.trim();
-  return Boolean(translated) && translated !== draft.primaryText.trim();
+function recoveredTranslationLooksCommitted(draft: DualCaptionDraft, committed: DualCaptionDraft) {
+  const comparable = (text: string) => text.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase();
+  const translated = comparable(draft.translatedText);
+  // A journal can contain the old source in the second field after primary typing.
+  // Neither source version is evidence of a recovered translation.
+  return Boolean(translated) && translated !== comparable(draft.primaryText)
+    && translated !== comparable(committed.primaryText);
 }

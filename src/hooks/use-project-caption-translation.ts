@@ -1,14 +1,18 @@
-import { translationAttemptMessage } from '@/lib/translation-attempt';
+import { commitTranslationAttempt, translationAttemptMessage } from '@/lib/translation-attempt';
+import { automaticTranslationCueWrites } from '@/lib/caption-translation-commit';
+import { canAutomaticallyTranslatePair, captionLanguageFamily } from '@/lib/caption-languages';
+import { projectPrimaryCaptionLanguage, resolveCaptionPairs, setTranslationTrackProvider } from '@/lib/caption-tracks';
+import { visibleTimelineCaptions } from '@/lib/video-timeline';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 
 import {
   cancelNaturalCaptionTranslation,
   CaptionTranslationCancelledError,
+  translateNaturalCaptionBatch,
   type CaptionTranslationProgress,
 } from '@/services/caption-translation';
 import {
-  refreshProjectCaptionTranslation,
   synchronizeProjectDualCaptionEdits,
   type DualCaptionTextEdit,
 } from '@/services/project-caption-translation';
@@ -21,6 +25,7 @@ type ControllerOptions = {
 
 type TranslationOperation = (
   onProgress: (next: CaptionTranslationProgress) => void,
+  onAcceptedBatch: (apply: (current: CaptionProject) => CaptionProject) => Promise<void>,
 ) => Promise<CaptionProject>;
 
 type TranslationRequest = {
@@ -28,10 +33,76 @@ type TranslationRequest = {
   baseline: CaptionProject;
   operation: TranslationOperation;
   completionMessage?: (next: CaptionProject) => string | undefined;
+  incremental?: boolean;
+  retryWith?: (project: CaptionProject) => TranslationRequest;
 };
 
 function interruptedOperationLabel(stage: CaptionTranslationProgress['stage'] | undefined) {
   return stage === 'downloading-model' ? 'language-model download' : 'translation';
+}
+
+async function refreshIncremental(
+  project: CaptionProject,
+  trackId: string,
+  sourceCaptionIds: readonly string[],
+  onProgress: (progress: CaptionTranslationProgress) => void,
+  onAcceptedBatch: (apply: (current: CaptionProject) => CaptionProject) => Promise<void>,
+) {
+  const track = project.captionTracks.translations.find((candidate) => candidate.id === trackId);
+  if (!track) throw new Error('The second-language caption track no longer exists.');
+  const sourceLanguage = projectPrimaryCaptionLanguage(project);
+  if (captionLanguageFamily(track.sourceLanguageTag) !== captionLanguageFamily(sourceLanguage)
+    || !canAutomaticallyTranslatePair(sourceLanguage, track.languageTag)) {
+    throw new Error('The second-language track no longer matches an available translation direction.');
+  }
+  const context = visibleTimelineCaptions(project.captions);
+  const eligible = new Set(resolveCaptionPairs(project, trackId)
+    .filter((pair) => pair.timelineVisible).map((pair) => pair.source.id));
+  const selected = new Set(sourceCaptionIds);
+  const captions = project.captions.filter((caption) => selected.has(caption.id)
+    && eligible.has(caption.id) && caption.text.trim());
+  if (!captions.length) return project;
+  const originalCues = new Map(track.cues.map((cue) => [cue.sourceCaptionId, cue]));
+  await translateNaturalCaptionBatch({
+    sourceLanguage,
+    targetLanguage: track.languageTag,
+    captions: captions.map(({ id, text }) => ({ id, text })),
+    allCaptions: context.map(({ id, text }) => ({ id, text })),
+    onProgress,
+    onAcceptedBatch: async (batch) => {
+      const batchCaptions = captions.filter((caption) => batch.captions.has(caption.id));
+      await onAcceptedBatch((current) => {
+        const currentTrack = current.captionTracks.translations.find((candidate) => candidate.id === trackId);
+        if (!currentTrack || currentTrack.languageTag !== track.languageTag
+          || currentTrack.sourceLanguageTag !== track.sourceLanguageTag
+          || projectPrimaryCaptionLanguage(current) !== sourceLanguage) return current;
+        const currentContext = visibleTimelineCaptions(current.captions);
+        if (currentContext.length !== context.length || context.some((caption, index) =>
+          currentContext[index].id !== caption.id || currentContext[index].text !== caption.text)) return current;
+        const currentCues = new Map(currentTrack.cues.map((cue) => [cue.sourceCaptionId, cue]));
+        const safe = batchCaptions.filter((caption) => {
+          const source = current.captions.find((candidate) => candidate.id === caption.id);
+          const originalCue = originalCues.get(caption.id);
+          const cue = currentCues.get(caption.id);
+          return source?.text === caption.text && source.timelineVisible !== false
+            && originalCue && cue && cue.text === originalCue.text
+            && cue.status === originalCue.status && cue.reviewed === originalCue.reviewed
+            && cue.sourceTextSnapshot === originalCue.sourceTextSnapshot;
+        });
+        if (!safe.length) return current;
+        const writes = automaticTranslationCueWrites({
+          captions: safe,
+          translatedById: batch.captions,
+          previousById: new Map(currentTrack.cues.map((cue) => [cue.sourceCaptionId, cue.text])),
+          needsReviewById: batch.needsReview,
+          targetLanguage: track.languageTag,
+        });
+        const withProvider = setTranslationTrackProvider(current, trackId, batch.provider, sourceLanguage, new Date().toISOString());
+        return commitTranslationAttempt(withProvider, trackId, safe, writes, batch.failureReasons);
+      });
+    },
+  });
+  return project;
 }
 
 export function useProjectCaptionTranslation(options: ControllerOptions) {
@@ -95,9 +166,21 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
         if (kind !== 'translation' || activeOperationRef.current !== operationId) return;
         activeStageRef.current = nextProgress.stage;
         if (mountedRef.current && activeOperationRef.current === operationId) setProgress(nextProgress);
+      }, async (apply) => {
+        const current = optionsRef.current.getCurrentProject();
+        const updated = apply(current);
+        if (updated !== current) await optionsRef.current.commitProject(current, updated);
       });
       if (!mountedRef.current || activeOperationRef.current !== operationId) return false;
       if (kind === 'translation' && interruptedRef.current) throw new CaptionTranslationCancelledError();
+      if (request.incremental) {
+        const message = completionMessage?.(optionsRef.current.getCurrentProject());
+        if (message) {
+          setError(message);
+          return false;
+        }
+        return true;
+      }
       if (optionsRef.current.getCurrentProject() !== baseline) {
         throw new Error('The project changed while both languages were synchronizing. Save again to avoid overwriting newer edits.');
       }
@@ -113,7 +196,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     } catch (caught) {
       if (mountedRef.current && activeOperationRef.current === operationId && interruptedRef.current) {
         const action = interruptedOperationLabel(activeStageRef.current);
-        retryRequestRef.current = request;
+        retryRequestRef.current = request.retryWith?.(optionsRef.current.getCurrentProject()) ?? request;
         setRetryAvailable(true);
         setError(`The ${action} paused because Caption Studio left the foreground. Downloaded model bytes and completed translation checkpoints were kept.`);
       } else if (
@@ -121,6 +204,10 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
         && activeOperationRef.current === operationId
         && !(caught instanceof CaptionTranslationCancelledError)
       ) {
+        if (kind === 'translation') {
+          retryRequestRef.current = request.retryWith?.(optionsRef.current.getCurrentProject()) ?? request;
+          setRetryAvailable(true);
+        }
         setError(caught instanceof Error ? caught.message
           : kind === 'manual-save' ? 'Dual-subtitle edits could not be saved.' : 'Natural caption translation failed.');
       }
@@ -139,12 +226,6 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     }
   }, []);
 
-  const run = useCallback((
-    baseline: CaptionProject,
-    operation: TranslationOperation,
-    completionMessage?: (next: CaptionProject) => string | undefined,
-  ) => execute({ kind: 'translation', baseline, operation, completionMessage }), [execute]);
-
   const retry = useCallback(() => {
     const request = retryRequestRef.current;
     return request ? execute(request) : Promise.resolve(false);
@@ -160,16 +241,23 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     trackId: string,
     sourceCaptionIds: readonly string[],
     baseline = optionsRef.current.getCurrentProject(),
-  ) => run(
-    baseline,
-    (onProgress) => refreshProjectCaptionTranslation({
-      project: baseline,
-      trackId,
-      sourceCaptionIds,
-      onProgress,
-    }),
-    (next) => translationAttemptMessage(next, trackId, sourceCaptionIds),
-  ), [run]);
+  ) => {
+    const makeRequest = (project: CaptionProject): TranslationRequest => ({
+      kind: 'translation',
+      baseline: project,
+      incremental: true,
+      retryWith: (latest) => makeRequest(latest),
+      operation: (onProgress, onAcceptedBatch) => refreshIncremental(
+        project,
+        trackId,
+        sourceCaptionIds,
+        onProgress,
+        onAcceptedBatch,
+      ),
+      completionMessage: (next) => translationAttemptMessage(next, trackId, sourceCaptionIds),
+    });
+    return execute(makeRequest(baseline));
+  }, [execute]);
 
   const synchronize = useCallback((
     trackId: string,

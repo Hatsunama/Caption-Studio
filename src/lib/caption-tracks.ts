@@ -54,6 +54,9 @@ export type CaptionPair = {
   timelineVisible: boolean;
   source: CaptionBlock;
   translation: TranslationCaptionCue;
+  /** Derived presentation only. Never write this back into a translation cue or draft. */
+  displayText: string;
+  displayProvenance: 'translation' | 'source-fallback' | 'empty';
   style: CaptionStyle;
 };
 
@@ -489,6 +492,10 @@ export function resolveCaptionPairs(project: CaptionProject, trackId: string): C
       timelineVisible: !translation.translationSkipped && (translation.timelineVisible ?? source.timelineVisible !== false),
       source,
       translation,
+      displayText: translation.text.trim() ? translation.text
+        : translation.status === 'failed' ? source.text : '',
+      displayProvenance: translation.text.trim() ? 'translation'
+        : translation.status === 'failed' ? 'source-fallback' : 'empty',
       style,
     };
   });

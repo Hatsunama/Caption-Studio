@@ -1,5 +1,5 @@
 import { normalizedTranslationFailureReason, updatePairedCaptionTexts } from '@/lib/caption-tracks';
-import type { AutomaticTranslationCueWrite } from '@/lib/caption-translation-commit';
+import { usableAutomaticTranslation, type AutomaticTranslationCueWrite } from '@/lib/caption-translation-commit';
 import type { CaptionProject } from '@/types/project';
 
 /** Persist successes and explicit failures together, retaining previous text. */
@@ -10,13 +10,15 @@ export function commitTranslationAttempt(
   writes: readonly AutomaticTranslationCueWrite[],
   failureReasons: ReadonlyMap<string, string> = new Map(),
 ): CaptionProject {
-  if (!project.captionTracks.translations.some((track) => track.id === trackId)) {
+  const targetTrack = project.captionTracks.translations.find((track) => track.id === trackId);
+  if (!targetTrack) {
     throw new Error('The second-language caption track no longer exists.');
   }
   const attempted = new Map(captions.map((caption) => [caption.id, caption.text]));
   if (attempted.size === 0) return project;
   const accepted = writes.filter((write) => attempted.has(write.sourceCaptionId)
-    && write.translationStatus === 'translated' && write.translatedText.trim());
+    && write.translationStatus === 'translated'
+    && usableAutomaticTranslation(attempted.get(write.sourceCaptionId)!, write.translatedText, false, targetTrack.languageTag));
   const successful = new Set(accepted.map((write) => write.sourceCaptionId));
   const next = updatePairedCaptionTexts(project, accepted.map((write) => ({
     trackId,
@@ -46,5 +48,5 @@ export function translationAttemptMessage(project: CaptionProject, trackId: stri
   const selected = new Set(ids);
   const track = project.captionTracks.translations.find((candidate) => candidate.id === trackId);
   const failed = track?.cues.filter((cue) => selected.has(cue.sourceCaptionId) && cue.status === 'failed').length ?? 0;
-  return failed ? `${failed} subtitle translation attempt${failed === 1 ? '' : 's'} failed. Successful translations were saved; existing text was kept. See each failed line for its reason. Refresh any or all failed lines, skip them, or export available text anyway.` : undefined;
+  return failed ? `${failed} subtitle translation attempt${failed === 1 ? '' : 's'} failed. Successful translations were saved; existing text was kept. Failed lines without saved translations show current source text as an unresolved fallback. See each failed line for its reason. Refresh any or all failed lines, skip them, or export available text and source fallbacks anyway.` : undefined;
 }

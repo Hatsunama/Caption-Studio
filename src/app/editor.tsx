@@ -173,7 +173,7 @@ function confirmOptionalTranslationExport(project: CaptionProject, video: boolea
   if (!missing && !needsReview) return Promise.resolve(true);
   return new Promise((resolve) => Alert.alert(
     'Export with unfinished translations?',
-    `${missing} second-language lines are missing. ${needsReview} existing translations may need review.\n\nExport anyway keeps available text and omits empty second-language lines. Original captions and saved projects are unchanged. You can refresh or skip lines later.`,
+    `${missing} second-language lines have no saved translation. ${needsReview} existing translations may need review.\n\nExport anyway keeps available translations and uses current source text for failed lines without a saved translation. These source fallbacks remain unresolved. Other empty second-language lines are omitted. Original captions and saved projects are unchanged. You can refresh or skip lines later.`,
     [
       { text: 'Back to editing', style: 'cancel', onPress: () => resolve(false) },
       { text: 'Export anyway', onPress: () => resolve(true) },
@@ -645,7 +645,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     : activeCaption;
   const displayTranslationPairs = useMemo(
     () => translationTimelineTracks.flatMap((track) => track.visible
-      ? track.pairs.filter((pair) => pair.translation.text.trim()
+      ? track.pairs.filter((pair) => pair.displayText.trim()
         && currentMs >= pair.startMs && currentMs < pair.endMs)
       : []),
     [currentMs, translationTimelineTracks],
@@ -1900,9 +1900,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     if (!active.length && !selected) return null;
                     return active.map((pair) => <CaptionOverlay
                       key={pair.translation.id}
-                      caption={{ id: pair.translation.id, text: pair.translation.text,
+                      caption={{ id: pair.translation.id, text: pair.displayText,
                         startMs: pair.startMs, endMs: pair.endMs, wordIds: [], styleOverride: pair.style }}
-                      selectionCaption={selected?.source.id === pair.source.id ? { id: pair.translation.id, text: pair.translation.text,
+                      selectionCaption={selected?.source.id === pair.source.id ? { id: pair.translation.id, text: pair.displayText,
                         startMs: pair.startMs, endMs: pair.endMs, wordIds: [] } : undefined}
                       selectionStyle={selected?.source.id === pair.source.id ? selected.style : undefined}
                       geometry={previewGeometryFor(`translation:${pair.trackId}:${pair.source.id}`, pair.style)}
@@ -2376,7 +2376,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       <ExtractAudioBusyOverlay visible={extractAudioBusy} />
       <FontBrowser
         visible={fontBrowserOpen}
-        previewText={selectedTextLayer?.text ?? selectedTranslationPair?.translation.text ?? selectedCaption?.text ?? activeCaption?.text ?? 'Make every word count'}
+        previewText={selectedTextLayer?.text ?? selectedTranslationPair?.displayText ?? selectedCaption?.text ?? activeCaption?.text ?? 'Make every word count'}
         onClose={() => setFontBrowserOpen(false)}
         onSelect={chooseFont}
         onBackRequestChange={registerFontBrowserBackRequest}

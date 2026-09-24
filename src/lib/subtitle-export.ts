@@ -19,17 +19,17 @@ export function serializeSrt(project: CaptionProject, allowIncompleteTranslation
     return [{
       startMs: timing.startMs,
       endMs: timing.endMs,
-      text: [normalizeLineEndings(caption.text).trim(), ...aligned.map((pair) => normalizeLineEndings(pair.translation.text).trim())].join('\n'),
+      text: [normalizeLineEndings(caption.text).trim(), ...aligned.map((pair) => normalizeLineEndings(pair.displayText).trim())].join('\n'),
     }, ...independent.map((pair) => ({
       ...srtRange(pair.startMs, pair.endMs),
-      text: normalizeLineEndings(pair.translation.text).trim(),
+      text: normalizeLineEndings(pair.displayText).trim(),
     }))];
   }).sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
   const primaryIds = new Set(visibleCaptions(project).map((caption) => caption.id));
   for (const [id, pairs] of translations) {
     if (primaryIds.has(id)) continue;
     pairs.forEach((pair) => events.push({ ...srtRange(pair.startMs, pair.endMs),
-      text: normalizeLineEndings(pair.translation.text).trim() }));
+      text: normalizeLineEndings(pair.displayText).trim() }));
   }
   events.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
   return events.length > 0 ? `${events.map((event, index) => [
@@ -71,7 +71,7 @@ export function serializeAss(project: CaptionProject, allowIncompleteTranslation
         width,
         height,
         scale,
-        assText(transformText(normalizeLineEndings(pair.translation.text).trim(), pair.style.textTransform)),
+        assText(transformText(normalizeLineEndings(pair.displayText).trim(), pair.style.textTransform)),
       )),
     ];
   });
@@ -80,7 +80,7 @@ export function serializeAss(project: CaptionProject, allowIncompleteTranslation
     if (primaryIds.has(id)) continue;
     pairs.forEach((pair, index) => events.push(assDialogue(index + 1,
       assRange(pair.startMs, pair.endMs), pair.style, width, height, scale,
-      assText(transformText(normalizeLineEndings(pair.translation.text).trim(), pair.style.textTransform)))));
+      assText(transformText(normalizeLineEndings(pair.displayText).trim(), pair.style.textTransform)))));
   }
   return [...header, ...events, ''].join('\n');
 }

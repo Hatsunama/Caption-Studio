@@ -70,6 +70,98 @@ public final class TranslationCheckpointResumeTest {
     }
   }
 
+  @Test public void nextBatchProceedsWithoutAcknowledgementAndCancellationKeepsCheckpoint() throws Exception {
+    File directory = temporary.newFolder();
+    File model = temporary.newFile("ack-model.litertlm");
+    Files.write(model.toPath(), new byte[] { 1 });
+    TranslationEnvironment environment = new TranslationEnvironment() {
+      public File prepareCacheDirectory() { return directory; }
+      public File prepareCheckpointDirectory() { return directory; }
+      public void verifyDeviceCapacity(File file) { }
+    };
+    FakeFactory interrupted = new FakeFactory(true);
+    try (NaturalCaptionTranslator worker = worker(environment, interrupted)) {
+      CountDownLatch firstAccepted = new CountDownLatch(1);
+      Result result = new Result() {
+        @Override public void onBatchAccepted(Map<String, Object> batch) {
+          assertEquals(0, batch.get("batchIndex"));
+          assertEquals("request", batch.get("requestId"));
+          assertEquals(1, ((List<?>) batch.get("captions")).size());
+          firstAccepted.countDown();
+        }
+      };
+      Map<String, Object> request = new LinkedHashMap<>(request(true));
+      request.put("requestId", "request");
+      worker.start(model.getAbsolutePath(), request, result);
+      assertTrue(firstAccepted.await(10, TimeUnit.SECONDS));
+      assertTrue(interrupted.secondStarted.await(10, TimeUnit.SECONDS));
+      assertEquals(1, interrupted.opened.get());
+      worker.cancel();
+      result.await();
+      assertEquals(NaturalCaptionTranslator.CANCELLED, result.error);
+    }
+    FakeFactory resumed = new FakeFactory(false);
+    try (NaturalCaptionTranslator worker = worker(environment, resumed)) {
+      Result result = new Result();
+      worker.start(model.getAbsolutePath(), request(true), result);
+      result.await();
+      assertNull(result.error);
+      assertEquals(1, resumed.generated.get());
+      assertEquals(1, resumed.opened.get());
+    }
+  }
+
+  @Test public void lostBatchEventAndSameRequestReplayFinishWithoutAcknowledgement() throws Exception {
+    File directory = temporary.newFolder();
+    File model = temporary.newFile("lost-event-model.litertlm");
+    Files.write(model.toPath(), new byte[] { 1 });
+    TranslationEnvironment environment = environment(directory);
+    Map<String, Object> request = new LinkedHashMap<>(request(true));
+    request.put("requestId", "request");
+    FakeFactory factory = new FakeFactory(false);
+    try (NaturalCaptionTranslator worker = worker(environment, factory)) {
+      Result first = new Result(); // Deliberately drops every batch event.
+      worker.start(model.getAbsolutePath(), request, first);
+      first.await();
+      assertNull(first.error);
+      assertEquals(2, worker.getAcceptedBatches("request").size());
+      Result replay = new Result();
+      worker.start(model.getAbsolutePath(), request, replay);
+      replay.await();
+      assertNull(replay.error);
+      assertEquals(2, factory.generated.get());
+      assertEquals(2, worker.getAcceptedBatches("request").size());
+    }
+  }
+
+  @Test public void terminalErrorRetainsEarlierAcceptedBatch() throws Exception {
+    File directory = temporary.newFolder();
+    File model = temporary.newFile("partial-error-model.litertlm");
+    Files.write(model.toPath(), new byte[] { 1 });
+    Map<String, Object> request = new LinkedHashMap<>(request(true));
+    request.put("requestId", "request");
+    try (NaturalCaptionTranslator worker = worker(environment(directory), new FakeFactory(false))) {
+      Result result = new Result() {
+        @Override public void onBatchAccepted(Map<String, Object> batch) {
+          if (Integer.valueOf(1).equals(batch.get("batchIndex"))) throw new IllegalStateException("bridge failed");
+        }
+      };
+      worker.start(model.getAbsolutePath(), request, result);
+      result.await();
+      assertNotNull(result.error);
+      assertEquals(2, worker.getAcceptedBatches("request").size());
+      assertEquals(0, worker.getAcceptedBatches("request").get(0).get("batchIndex"));
+    }
+  }
+
+  private TranslationEnvironment environment(File directory) {
+    return new TranslationEnvironment() {
+      public File prepareCacheDirectory() { return directory; }
+      public File prepareCheckpointDirectory() { return directory; }
+      public void verifyDeviceCapacity(File file) { }
+    };
+  }
+
   private NaturalCaptionTranslator worker(TranslationEnvironment environment, FakeFactory factory) {
     return new NaturalCaptionTranslator(environment, factory, (file, cancelled, progress) -> { },
         Executors.newSingleThreadExecutor());
@@ -118,7 +210,7 @@ public final class TranslationCheckpointResumeTest {
     assertTrue(NaturalCaptionTranslator.CHECKPOINT_PROFILE.startsWith("v8;"));
   }
 
-  private static final class Result implements NaturalCaptionTranslator.Callback {
+  private static class Result implements NaturalCaptionTranslator.Callback {
     final CountDownLatch done = new CountDownLatch(1);
     Map<String, Object> value;
     String error;

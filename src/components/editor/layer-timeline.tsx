@@ -543,7 +543,7 @@ export function LayerTimeline(props: {
                       <TimedBlock
                         key={pair.translation.id}
                         onTouchLock={timelineTouchLock}
-                        label={pair.translation.text || 'Translation pending'}
+                        label={pair.displayProvenance === 'source-fallback' ? `${pair.displayText} (source fallback)` : pair.displayText || 'Translation pending'}
                         startMs={pair.startMs}
                         endMs={pair.endMs}
                         durationMs={duration}

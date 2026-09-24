@@ -221,7 +221,7 @@ public final class TranslationRuntimeReliabilityTest {
         if (payload.has("retry")) {
           assertTrue(payload.get("retry").getAsBoolean());
           assertEquals(Integer.valueOf(1), repairs.merge(cueId, 1, Integer::sum));
-          assertEquals(failures == 1 ? null : Integer.valueOf(1), singleAttempts.get(cueId));
+          assertNull(singleAttempts.get(cueId));
           return response(cueId, "Bonjour");
         }
         assertEquals(Integer.valueOf(1), singleAttempts.merge(cueId, 1, Integer::sum));
@@ -236,8 +236,8 @@ public final class TranslationRuntimeReliabilityTest {
           assertEquals("Bonjour", cue(first, i).get("text"));
         }
         assertEquals(failures, repairs.size());
-        assertEquals(failures == 1 ? 0 : failures, singleAttempts.size());
-        int expectedCalls = failures == 1 ? 2 : 1 + failures * 2;
+        assertEquals(0, singleAttempts.size());
+        int expectedCalls = 1 + failures;
         assertEquals(expectedCalls, calls.get());
         Result restored = run(worker, model, input);
         assertNull(restored.error);
