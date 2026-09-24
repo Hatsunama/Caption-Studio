@@ -169,7 +169,7 @@ public final class TranslationRepairTest {
         var result = run(translator, model, input);
         assertEquals(Boolean.TRUE, cue(result, 0).get("valid"));
         assertEquals(Boolean.TRUE, cue(result, 1).get("valid"));
-        assertEquals(repair ? 5 : 3, prompts.size());
+        assertEquals(3, prompts.size());
         for (int index = 1; index < prompts.size(); index++) {
           JsonObject prompt = JsonParser.parseString(prompts.get(index)).getAsJsonObject();
           assertEquals(1, prompt.getAsJsonArray("captions").size());
@@ -180,8 +180,8 @@ public final class TranslationRepairTest {
               prompt.getAsJsonObject("sourceNeighbors").get("before").getAsString());
           assertEquals(id.equals("c1") ? "World\nAfter" : "After",
               prompt.getAsJsonObject("sourceNeighbors").get("after").getAsString());
-          assertEquals(index <= (repair ? 2 : 1) ? "c1" : "c2", id);
-          assertEquals(repair && index % 2 == 0, prompt.has("retry"));
+          assertEquals(index == 1 ? "c1" : "c2", id);
+          assertEquals(repair, prompt.has("retry"));
         }
       }
     }

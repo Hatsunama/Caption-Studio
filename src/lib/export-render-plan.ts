@@ -156,7 +156,7 @@ export function buildTimelineRenderPlan(
   for (const pair of captionsEnabled ? exportCaptionPairs(project, allowIncompleteTranslations) : []) {
     const interval = boundedInterval(pair.startMs, pair.endMs, durationMs);
     if (!interval) continue;
-    captions.push({ id: pair.translation.id, text: pair.translation.text, ...interval,
+    captions.push({ id: pair.translation.id, text: pair.displayText, ...interval,
       style: renderStyle(pair.style), words: [] });
   }
 

@@ -19,6 +19,7 @@ class CaptionTranslationModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("CaptionTranslation")
+    Events("onNaturalCaptionBatchAccepted")
 
     Constants(
       "limits" to mapOf(
@@ -48,6 +49,10 @@ class CaptionTranslationModule : Module() {
           modelFile,
           request,
           object : NaturalCaptionTranslator.Callback {
+            override fun onBatchAccepted(batch: Map<String, Any>) {
+              sendEvent("onNaturalCaptionBatchAccepted", batch)
+            }
+
             override fun onSuccess(result: Map<String, Any?>) {
               promise.resolve(result)
             }
@@ -62,6 +67,10 @@ class CaptionTranslationModule : Module() {
 
     AsyncFunction("cancelNaturalCaptionTranslation") {
       synchronized(lifecycleLock) { translator }?.cancel()
+    }
+
+    AsyncFunction("getNaturalCaptionAcceptedBatches") { requestId: String ->
+      synchronized(lifecycleLock) { translator }?.getAcceptedBatches(requestId) ?: emptyList<Map<String, Any>>()
     }
 
     AsyncFunction("getNaturalCaptionTranslationProgress") {

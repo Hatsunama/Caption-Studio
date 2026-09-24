@@ -1,3 +1,5 @@
+import { TRANSLATION_RELEASE_CONTRACT } from './TranslationReleaseContract.generated';
+
 export type NaturalCaptionLanguage =
   | 'en' | 'zh-Hans' | 'zh-Hant' | 'hi' | 'es' | 'fr' | 'ar' | 'bn' | 'pt' | 'ru'
   | 'ur' | 'id' | 'de' | 'ja' | 'ko' | 'tr' | 'vi' | 'th' | 'it' | 'pl';
@@ -32,6 +34,7 @@ export type NaturalCaptionTranslationOperation = {
 
 export type NaturalCaptionTranslationRequest = {
   operations: NaturalCaptionTranslationOperation[];
+  requestId?: string;
   runtimeBackend?: 'auto' | 'cpu' | 'gpu';
   benchmarkNoCheckpoints?: boolean;
   reuseCheckpoints?: boolean;
@@ -43,6 +46,12 @@ export type NaturalCaptionTranslationOutput = {
   text: string;
   valid?: boolean;
   failureReason?: string;
+};
+
+export type NaturalCaptionTranslationAcceptedBatch = {
+  requestId: string;
+  batchIndex: number;
+  captions: NaturalCaptionTranslationOutput[];
 };
 
 export type NaturalCaptionTranslationOperationResult = {
@@ -115,4 +124,3 @@ export type NaturalCaptionTranslationErrorCode =
   | 'E_TRANSLATION_UNSUPPORTED'
   | 'E_TRANSLATION_FAILED'
   | 'E_TRANSLATION_RELEASED';
-import { TRANSLATION_RELEASE_CONTRACT } from './TranslationReleaseContract.generated';

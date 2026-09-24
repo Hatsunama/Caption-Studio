@@ -2,17 +2,21 @@ import { NativeModule, requireNativeModule } from 'expo';
 
 import type {
   NaturalCaptionTranslationLimits,
+  NaturalCaptionTranslationAcceptedBatch,
   NaturalCaptionTranslationProgress,
   NaturalCaptionTranslationRequest,
   NaturalCaptionTranslationResult,
 } from './CaptionTranslation.types';
 
-declare class CaptionTranslationModule extends NativeModule<Record<never, never>> {
+declare class CaptionTranslationModule extends NativeModule<{
+  onNaturalCaptionBatchAccepted: (event: NaturalCaptionTranslationAcceptedBatch) => void;
+}> {
   readonly limits: NaturalCaptionTranslationLimits;
   translateNaturalCaptions(
     modelFile: string,
     request: NaturalCaptionTranslationRequest,
   ): Promise<NaturalCaptionTranslationResult>;
+  getNaturalCaptionAcceptedBatches(requestId: string): Promise<NaturalCaptionTranslationAcceptedBatch[]>;
   cancelNaturalCaptionTranslation(): Promise<void>;
   getNaturalCaptionTranslationProgress(): Promise<NaturalCaptionTranslationProgress>;
 }

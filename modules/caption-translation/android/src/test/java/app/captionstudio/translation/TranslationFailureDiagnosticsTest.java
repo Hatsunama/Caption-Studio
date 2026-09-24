@@ -48,6 +48,7 @@ public final class TranslationFailureDiagnosticsTest {
       assertTrue(entry[1] + ": " + logs, logs.get(0).contains("failure=" + entry[1] + " "));
       assertEquals(false, cue(result, 0).get("valid"));
       assertEquals("", cue(result, 0).get("text"));
+      assertEquals(entry[1], cue(result, 0).get("failureReason"));
       assertSafe(logs);
     }
   }
@@ -59,20 +60,16 @@ public final class TranslationFailureDiagnosticsTest {
         Map.of("id", "second-private-id", "text", "Hello")), true, prompt -> {
           switch (calls.incrementAndGet()) {
             case 1: return "[]";
-            case 2: return response(ID, "");
-            case 3: return response(ID, "bonjour");
-            case 4: return response("second-private-id", "<|private|>");
+            case 2: return response(ID, "bonjour");
             default: return response("second-private-id", "\u4f60\u597d");
           }
         }, logs::add, false);
-    assertEquals(5, calls.get());
-    assertEquals(4, logs.size());
+    assertEquals(3, calls.get());
+    assertEquals(2, logs.size());
     assertTrue(logs.get(0).contains("attempt=1 stage=INITIAL phase=PARSE failure=ITEM_COUNT"));
     assertTrue(logs.get(0).contains("expected=2 actual=0"));
-    assertTrue(logs.get(1).contains("attempt=2 stage=SINGLETON phase=PARSE failure=BLANK_TEXT"));
-    assertTrue(logs.get(2).contains("attempt=3 stage=REPAIR phase=QUALITY failure=QUALITY_REVIEW"));
-    assertTrue(logs.get(3).contains("attempt=4 stage=SINGLETON phase=PARSE failure=CHAT_DELIMITER"));
-    assertEquals("output-needs-review", cue(result, 0).get("failureReason"));
+    assertTrue(logs.get(1).contains("attempt=2 stage=REPAIR phase=QUALITY failure=QUALITY_REVIEW"));
+    assertEquals("QUALITY_REVIEW", cue(result, 0).get("failureReason"));
     assertEquals(true, cue(result, 1).get("valid"));
     assertSafe(logs);
   }

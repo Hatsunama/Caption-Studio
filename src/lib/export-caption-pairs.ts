@@ -8,9 +8,9 @@ export function exportCaptionPairs(project: CaptionProject, allowIncomplete = fa
   const pairs = eligibleExportCaptionPairs(project);
   const unresolved = pairs.filter((pair) => !['translated', 'reviewed'].includes(pair.translation.status) || !pair.translation.text.trim());
   if (!allowIncomplete && unresolved.length) throw new Error(
-    `${unresolved.length} subtitles need translation or review. Refresh them, or choose Export anyway to use available text.`,
+    `${unresolved.length} subtitles need translation or review. Refresh them, or choose Export anyway to use available text, including current source text for failed lines without saved translations.`,
   );
-  return pairs.filter((pair) => pair.translation.text.trim());
+  return pairs.filter((pair) => pair.displayText.trim());
 }
 
 export function exportTranslationSummary(project: CaptionProject) {

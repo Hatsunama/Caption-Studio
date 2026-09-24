@@ -87,6 +87,8 @@ internal class LiteRtLmTranslationRuntime(
   private val cancelled = AtomicBoolean(false)
   private val closed = AtomicBoolean(false)
 
+  override fun supportsStructuredOutput(): Boolean = true
+
   @Throws(Exception::class)
   override fun translate(prompt: String): String = translate(prompt, 1_536)
 

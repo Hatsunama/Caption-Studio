@@ -36,6 +36,8 @@ import java.util.regex.Pattern;
 
 public final class NaturalCaptionTranslator implements AutoCloseable {
   public interface Callback {
+    default void onBatchAccepted(Map<String, Object> batch) { }
+
     void onSuccess(Map<String, Object> result);
 
     void onError(String code, String message, Throwable cause);
@@ -93,6 +95,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   private final Object stateLock = new Object();
   private ProgressSnapshot progress = ProgressSnapshot.idle();
   private ActiveRun activeRun;
+  private String acceptedRequestId;
+  private final LinkedHashMap<Integer, Map<String, Object>> acceptedBatches = new LinkedHashMap<>();
   private boolean closed;
   private boolean poisoned;
 
@@ -149,6 +153,12 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
             null
         );
       } else {
+        Object requestId = rawRequest.get("requestId");
+        String nextRequestId = requestId instanceof String ? (String) requestId : null;
+        if (!Objects.equals(acceptedRequestId, nextRequestId)) {
+          acceptedBatches.clear();
+          acceptedRequestId = nextRequestId;
+        }
         run = new ActiveRun(modelLocation, rawRequest, callback);
         activeRun = run;
         progress = new ProgressSnapshot(
@@ -221,6 +231,13 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     signalCancellation(run);
   }
 
+  public List<Map<String, Object>> getAcceptedBatches(String requestId) {
+    synchronized (stateLock) {
+      if (!Objects.equals(acceptedRequestId, requestId) || requestId == null) return List.of();
+      return new ArrayList<>(acceptedBatches.values());
+    }
+  }
+
   public Map<String, Object> getProgress() {
     synchronized (stateLock) {
       return progress.toMap();
@@ -256,6 +273,10 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       if (future != null) future.cancel(true);
     }
     worker.shutdownNow();
+    synchronized (stateLock) {
+      acceptedBatches.clear();
+      acceptedRequestId = null;
+    }
     if (run != null && !run.started.get()) {
       finish(
           run,
@@ -433,6 +454,27 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           batchResult.add(preparedCue.finish(request.targetLanguage));
         }
         checkCancelled(run);
+        Object requestId = run.rawRequest.get("requestId");
+        if (requestId instanceof String && !((String) requestId).isEmpty()) {
+          LinkedHashMap<String, Object> acceptedBatch = new LinkedHashMap<>();
+          acceptedBatch.put("requestId", requestId);
+          acceptedBatch.put("batchIndex", batchIndex);
+          List<Map<String, Object>> acceptedCaptions = new ArrayList<>(batchResult.size());
+          for (Caption caption : batchResult) {
+            LinkedHashMap<String, Object> item = new LinkedHashMap<>();
+            item.put("id", caption.id);
+            item.put("text", caption.text);
+            item.put("valid", caption.valid);
+            if (!caption.valid) item.put("failureReason", caption.failureReason);
+            acceptedCaptions.add(item);
+          }
+          acceptedBatch.put("captions", acceptedCaptions);
+          synchronized (stateLock) {
+            if (Objects.equals(acceptedRequestId, requestId)) acceptedBatches.put(batchIndex, acceptedBatch);
+          }
+          run.callback.onBatchAccepted(acceptedBatch);
+          checkCancelled(run);
+        }
         translated.addAll(batchResult);
         updateProgress(
             run,
@@ -580,7 +622,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         if (candidate.valid) diagnostic.emit(FailurePhase.QUALITY, FailureClass.QUALITY_REVIEW,
             index, candidate.text.length());
         run.batchMetrics.reject(candidate.valid);
-        fragment.failureReason = candidate.valid ? "output-needs-review" : "invalid-output";
+        fragment.failureReason = candidate.valid ? FailureClass.QUALITY_REVIEW.name() : candidate.failureReason;
         rejected.add(fragment);
       }
     }
@@ -595,9 +637,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     );
     if (rejected.isEmpty()) return;
     checkCancelled(run);
-    if (rejected.size() > 1) {
-      // Only rejected fragments get one singleton attempt and, if enabled, one repair.
-      // Singleton calls cannot re-enter this branch; no rejection tree is generated.
+    if (!repairOutputs && rejected.size() > 1) {
+      // With repair disabled, isolate rejected items once using the normal contract.
+      // Singleton calls cannot re-enter this branch.
       for (FragmentWork fragment : rejected) {
         translateFragmentGroup(run, runtime, checkpoints, List.of(fragment),
             batchCues,
@@ -606,8 +648,13 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       }
       return;
     }
-    FragmentWork fragment = rejected.get(0);
     if (!repairOutputs) return;
+    // A rejected item gets exactly one recovery generation, directly using the repair
+    // contract. Never spend an unconstrained singleton call before that repair.
+    // Each generated group therefore costs at most 1 + group size calls, including
+    // malformed envelopes. Accepted items and their checkpoints are never regenerated.
+    for (FragmentWork fragment : rejected) {
+    checkCancelled(run);
     updateProgress(
         run,
         "validating-output",
@@ -647,7 +694,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       if (candidate.valid) repairDiagnostic.emit(FailurePhase.QUALITY, FailureClass.QUALITY_REVIEW,
           0, candidate.text.length());
       run.batchMetrics.reject(candidate.valid);
-      fragment.failureReason = candidate.valid ? "output-needs-review" : "invalid-output";
+      fragment.failureReason = candidate.valid ? FailureClass.QUALITY_REVIEW.name() : candidate.failureReason;
+    }
     }
   }
 
@@ -1353,7 +1401,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
                 ? FailureClass.IMPLAUSIBLE_LENGTH : null;
         if (textFailure != null) {
           if (diagnostic != null) diagnostic.reject(textFailure, itemCount - 1, normalized.length());
-          accepted.put(id, new Caption(id, "", false));
+          accepted.put(id, new Caption(id, "", false, textFailure.name()));
           continue;
         }
         totalCharacters += textCharacterCount(normalized);
@@ -1383,7 +1431,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   private static List<Caption> diagnosticFallback(List<Caption> expected,
       AttemptDiagnostic diagnostic, FailureClass failure) {
     if (diagnostic != null) diagnostic.reject(failure, -1, -1);
-    return emptyFallback(expected);
+    List<Caption> rejected = new ArrayList<>(expected.size());
+    for (Caption caption : expected) rejected.add(new Caption(caption.id, "", false, failure.name()));
+    return rejected;
   }
 
   static Caption parseSingleCaptionRetryResponse(String response, Caption expected)
@@ -1680,7 +1730,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       }
       String text = joinFragments(parts, outputs, targetLanguage);
       if (!TranslationOutputQuality.isPlausibleCueTranslation(source.text, text)) {
-        return new Caption(source.id, "", false, "output-needs-review");
+        return new Caption(source.id, "", false, FailureClass.QUALITY_REVIEW.name());
       }
       return new Caption(source.id, text, true);
     }

@@ -134,6 +134,7 @@ public final class TranslationBatchMetricsTest {
     List<Boolean> structured = new ArrayList<>();
     try (NaturalCaptionTranslator translator = translator((file, cache, threads, instruction) ->
         new TranslationRuntime() {
+          public boolean supportsStructuredOutput() { return true; }
           public String translate(String prompt) { throw new AssertionError("Expected per-request settings"); }
           public String translate(String prompt, int tokens, boolean requireStructuredOutput) {
             structured.add(requireStructuredOutput);
