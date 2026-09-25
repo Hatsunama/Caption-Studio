@@ -107,6 +107,15 @@ test('lost source access fails before rendering or publishing a video', async ()
   assert.deepEqual(service.calls.cleanup, []);
 });
 
+test('a failed share sheet reports a warning while preserving the published export', async () => {
+  const service = loadService({ share: async () => { throw Error('No share target'); } });
+  const result = await service.exportProjectVideo(project);
+  assert.equal(result.mediaUri, published.mediaUri);
+  assert.match(result.sharingWarning, /No share target/);
+  assert.match(result.sharingWarning, /Movies\/Caption Studio/);
+  assert.deepEqual(service.calls.cleanup, [outputUri]);
+});
+
 for (const [name, overrides, expectedShares] of [
   ['successful sharing', {}, 1],
   ['unavailable sharing', { isAvailable: async () => false }, 0],
@@ -120,7 +129,10 @@ for (const [name, overrides, expectedShares] of [
 ]) {
   test(`published video succeeds exactly once despite ${name}`, async () => {
     const service = loadService(overrides);
-    assert.deepEqual(await service.exportProjectVideo(project), published);
+    const result = await service.exportProjectVideo(project);
+    assert.equal(result.mediaUri, published.mediaUri);
+    if (name === 'successful sharing') assert.deepEqual(result, published);
+    else assert.match(result.sharingWarning, /Movies\/Caption Studio/);
     assert.equal(service.calls.native, 1);
     assert.equal(service.calls.share.length, expectedShares);
     assert.deepEqual(service.calls.cleanup, [outputUri]);
@@ -143,7 +155,7 @@ test('cancellation while sharing cannot undo publication or remove the in-use ca
   assert.equal(service.calls.released, 0);
   assert.equal(await service.cancelProjectVideoExport(), false);
   sharing.reject(Error('Share cancelled'));
-  assert.deepEqual(await exporting, published);
+  assert.match((await exporting).sharingWarning, /Share cancelled/);
   assert.equal(service.calls.native, 1);
   assert.deepEqual(service.calls.cleanup, [outputUri]);
   assert.equal(service.calls.released, 1);

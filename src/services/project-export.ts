@@ -3,7 +3,7 @@ import { assertExportSourcesAvailable } from '@/lib/export-source-availability';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import CaptionMedia from 'caption-media';
-import type { TimelineVideoExportProgress } from 'caption-media';
+import type { TimelineVideoExportProgress, TimelineVideoExportResult } from 'caption-media';
 
 import { buildTimelineRenderPlan, collectUnresolvedFontFamilies, toNativeRenderPlan } from '@/lib/export-render-plan';
 import { serializeAss, serializeSrt, visibleCaptions } from '@/lib/subtitle-export';
@@ -23,7 +23,7 @@ import type { CaptionProject } from '@/types/project';
 
 const videoExportSession = createVideoExportSession(() => CaptionMedia.cancelTimelineVideoExport());
 
-export async function exportProjectVideo(project: CaptionProject, allowIncompleteTranslations = false) {
+export async function exportProjectVideo(project: CaptionProject, allowIncompleteTranslations = false): Promise<TimelineVideoExportResult & { sharingWarning?: string }> {
   return videoExportSession.run(async (session) => {
     if (!FileSystem.cacheDirectory) throw new Error('Export storage is unavailable on this device.');
     const unresolvedPlan = buildTimelineRenderPlan(project, undefined, allowIncompleteTranslations);
@@ -52,8 +52,8 @@ export async function exportProjectVideo(project: CaptionProject, allowIncomplet
       const delivered = assertVideoExportDelivery(nativeResult);
       // Native delivery already verified the published MediaStore copy. Optional
       // sharing must not turn that success into a failed or cancelled export.
-      await deliverExportedVideo(outputUri, delivered.sizeBytes);
-      return delivered;
+      const sharingWarning = await deliverExportedVideo(outputUri, delivered.sizeBytes);
+      return sharingWarning ? { ...delivered, sharingWarning } : delivered;
     } finally {
       try {
         await removeTemporaryVideoExportArtifacts(outputUri);
@@ -123,15 +123,16 @@ async function confirmLocalExportFile(outputUri: string, sizeBytes: number) {
 
 async function deliverExportedVideo(outputUri: string, sizeBytes: number) {
   try {
-    if (!await Sharing.isAvailableAsync()) return;
+    if (!await Sharing.isAvailableAsync()) {
+      return 'Sharing is unavailable on this device. The video remains saved in Movies/Caption Studio.';
+    }
     await confirmLocalExportFile(outputUri, sizeBytes);
     await Sharing.shareAsync(outputUri, {
       mimeType: 'video/mp4',
       dialogTitle: 'Share exported video',
       UTI: 'public.mpeg-4',
     });
-  } catch {
-    // The cache copy and share sheet are best-effort. The user can still open
-    // or share the published video from Movies/Caption Studio.
+  } catch (caught) {
+    return `The share sheet could not open: ${userFacingExportError(caught)}. The video remains saved in Movies/Caption Studio.`;
   }
 }
