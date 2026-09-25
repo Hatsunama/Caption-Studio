@@ -222,7 +222,7 @@ test('selected timeline items expose direct edges without an attached control ra
 
 test('downloaded transcription models are pinned by SHA-256', () => {
   const transcription = readFileSync(new URL('../src/services/transcription.ts', import.meta.url), 'utf8');
-  assert.equal((transcription.match(/sha256: '[0-9a-f]{64}'/g) ?? []).length, 4);
+  assert.equal((transcription.match(/sha256: '[0-9a-f]{64}'/g) ?? []).length, 2);
   assert.match(transcription, /CaptionMedia\.sha256/);
   assert.match(transcription, /\.download/);
   assert.doesNotMatch(transcription, /huggingface\.co\/[^'"`]+\/resolve\/main\//);

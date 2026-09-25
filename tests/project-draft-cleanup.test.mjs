@@ -124,6 +124,7 @@ function harness(options = {}) {
       async retryPendingReadPermissionReleases() {},
     },
     '@/services/media-import': { async pickLinkedVideos() { return null; } },
+    '@/services/transcription': { CAPTION_TRANSCRIPTION_MODEL_ID: 'fast' },
     '@/services/project-transcription': {
       async generateProjectCaptions(project, model, progress, save, session) {
         await options.generate?.(session); return project;
