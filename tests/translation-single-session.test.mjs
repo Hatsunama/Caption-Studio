@@ -26,8 +26,9 @@ async function serviceFixture(failSecond = false) {
       this.lastModified = 200;
       this.creationTime = 100;
     }
-    async text() { return encodeModelVerificationMarker({ fileName: this.name,
-      sizeBytes: this.size, modifiedAtMs: this.lastModified, createdAtMs: this.creationTime }, contract.sha256); }
+    async text() { return encodeModelVerificationMarker({ fileName: contract.fileName,
+      sizeBytes: contract.downloadBytes, modifiedAtMs: this.lastModified,
+      createdAtMs: this.creationTime }, contract.sha256); }
     write() {}
   }
   const native = {
