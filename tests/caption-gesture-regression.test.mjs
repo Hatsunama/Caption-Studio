@@ -154,11 +154,20 @@ test('video trim handles use the same timing gesture controller as every other e
   assert.doesNotMatch(videoGrip, /PanResponder\.create/);
 });
 
-test('video trim markers live outside the clip just like every other timeline item', () => {
+test('selected video trim handles stay visible outside clipped artwork', () => {
   const source = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
+  const videoBlock = source.slice(source.indexOf('function VideoClipBlock'), source.indexOf('function ClipFrameThumb'));
+  const shell = videoBlock.slice(videoBlock.indexOf('<View\n      style={{'), videoBlock.indexOf('<View\n        pointerEvents="none"'));
+  const artwork = videoBlock.slice(videoBlock.indexOf('<View\n        pointerEvents="none"'), videoBlock.indexOf('<VideoMoveGrip'));
+
+  assert.match(shell, /overflow:\s*'visible'/);
+  assert.match(artwork, /overflow:\s*'hidden'/);
+  assert.match(videoBlock, /const showTrimGrips = props\.selected && !props\.reordering && !props\.filmstrip/);
+  assert.match(videoBlock, /<VideoTrimGrip \{\.\.\.props\} side="start" gripLeft=\{handleLayout\.startGripLeft\}/);
+  assert.match(videoBlock, /<VideoTrimGrip \{\.\.\.props\} side="end" gripLeft=\{handleLayout\.endGripLeft\}/);
+
   const videoGrip = source.slice(source.indexOf('function VideoTrimGrip'), source.indexOf('function VideoMoveGrip'));
-  assert.match(videoGrip, /timelineOutsideHandleOffset\(props\.side, TIMELINE_EDGE_HANDLE_WIDTH\)/);
-  assert.doesNotMatch(videoGrip, /\[props\.side === 'start' \? 'left' : 'right'\]: 0/);
+  assert.match(videoGrip, /left:\s*props\.gripLeft/);
 });
 
 test('the timeline source contains no attached timing buttons, rails, or alternate cue editor', () => {

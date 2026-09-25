@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { timelineHandleLayout, timelineHandleMarkerLayout, timelineOutsideHandleOffset } from '../src/lib/timeline-handle-layout.ts';
+import { timelineHandleLayout, timelineHandleMarkerLayout, timelineVideoHandleLayout } from '../src/lib/timeline-handle-layout.ts';
 
 test('timeline trim grips are selected-only and remain visible at every positive width', () => {
   assert.deepEqual(timelineHandleLayout(false, 240), {
@@ -37,9 +37,27 @@ test('timeline trim markers remain outside the item at every zoom width', () => 
   }
 });
 
-test('standalone video grips use the same outside-edge contract', () => {
-  assert.deepEqual(timelineOutsideHandleOffset('start', 24), { left: -24 });
-  assert.deepEqual(timelineOutsideHandleOffset('end', 24), { right: -24 });
+test('selected video grips sit outside the artwork inside a touchable interaction shell', () => {
+  for (const width of [2, 8, 24, 240]) {
+    const layout = timelineVideoHandleLayout(100, width, 400, true);
+    assert.equal(layout.left, 76);
+    assert.equal(layout.width, width + 48);
+    assert.equal(layout.visualLeft, 24);
+    assert.equal(layout.startGripLeft, 0);
+    assert.equal(layout.endGripLeft, width + 24);
+  }
+  assert.deepEqual(timelineVideoHandleLayout(100, 80, 400, false), {
+    left: 100, width: 80, visualLeft: 0, visualWidth: 80, startGripLeft: 0, endGripLeft: 56,
+  });
+  assert.equal(timelineVideoHandleLayout(0, 80, 400, true).startGripLeft, 0);
+  assert.equal(timelineVideoHandleLayout(320, 80, 400, true).endGripLeft, 80);
+
+  const source = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
+  const videoBlock = source.slice(source.indexOf('function VideoClipBlock('), source.indexOf('function ClipFrameThumb('));
+  assert.match(videoBlock, /overflow: 'visible'/);
+  assert.match(videoBlock, /pointerEvents="none"[\s\S]*overflow: 'hidden'/);
+  assert.match(videoBlock, /VideoMoveGrip \{\.\.\.props\} bodyLeft=\{handleLayout\.visualLeft\}/);
+  assert.match(videoBlock, /showTrimGrips \? \(/);
 });
 
 test('animation browser exposes one live line-spacing control through the existing caption scopes', () => {
