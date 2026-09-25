@@ -15,8 +15,8 @@ export function assertDualCaptionEditsStillCurrent(
   const previousTrack = baseline.captionTracks.translations.find((track) => track.id === trackId);
   const currentTrack = current.captionTracks.translations.find((track) => track.id === trackId);
   const conflict = (): never => { throw new Error('A subtitle changed while these edits were saving. Review the current text and save again.'); };
-  if (!previousTrack || !currentTrack
-    || previousTrack.languageTag !== currentTrack.languageTag
+  if (!previousTrack || !currentTrack) throw new Error('A subtitle changed while these edits were saving. Review the current text and save again.');
+  if (previousTrack.languageTag !== currentTrack.languageTag
     || previousTrack.sourceLanguageTag !== currentTrack.sourceLanguageTag) conflict();
   for (const edit of edits) {
     const previousSource = baseline.captions.find((caption) => caption.id === edit.sourceCaptionId);
