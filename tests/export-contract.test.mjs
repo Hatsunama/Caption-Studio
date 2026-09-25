@@ -91,6 +91,25 @@ test('render plans are pure, detached, inherited, and exclude trim-hidden conten
   assert.equal(plan.videoTransform.position.x, 0.5);
 });
 
+test('original resolution scales large sources without changing canvas shape', () => {
+  for (const [width, height, expected] of [
+    [7680, 4320, [3840, 2160]],
+    [5120, 2880, [3840, 2160]],
+    [3840, 2160, [3840, 2160]],
+    [4320, 7680, [2160, 3840]],
+    [5760, 1080, [3840, 720]],
+  ]) {
+    const base = exportProject();
+    const plan = buildTimelineRenderPlan({
+      ...base,
+      sources: [{ ...base.sources[0], width, height }],
+      canvas: { ...base.canvas, aspectWidth: width, aspectHeight: height },
+      export: { ...base.export, resolution: 'original' },
+    });
+    assert.deepEqual([plan.width, plan.height], expected, `${width}x${height}`);
+  }
+});
+
 test('SRT and ASS preserve visible Unicode multiline captions and nonzero timing', () => {
   const project = exportProject({
     canvas: { preset: '16:9', aspectWidth: 16, aspectHeight: 9, backgroundColor: '#000000' },
