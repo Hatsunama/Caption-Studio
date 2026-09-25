@@ -10,7 +10,7 @@ Previously published APKs are immutable and may still use an older ID. The Windo
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.96) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.97) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -29,7 +29,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.96/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.97/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -89,7 +89,7 @@ Never uninstall or clear any of these apps to bypass an installation failure. Ke
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.96** (`v1.4.96`, Android version code 108).
+Current Android build: **1.4.97** (`v1.4.97`, Android version code 109).
 
 ## What the current Android build includes
 
@@ -115,7 +115,7 @@ Current Android build: **1.4.96** (`v1.4.96`, Android version code 108).
 - Optional second-language subtitle tracks for every language in the in-app language picker, generated entirely on-device after one approximately 1.6 GB Qwen model download
 - A centered model-download and translation dialog that explains the one-time local-AI setup clearly; leaving the app cancels safely and produces a plain-English retry message instead of exposing a native error
 - Independently owned language tracks: editing, moving, or trimming one translated cue does not rewrite or reposition its primary cue or neighboring translated cues; explicit AI Refresh replaces only the requested translated lines
-- Caption grouping from word timestamps
+- Caption grouping from word timestamps with canonical source timing; accepted translation batches persist durably, while incomplete batches remain available for retry
 - A fixed-scale layered timeline: trimming either video edge visibly replaces removed source time with playable black space instead of rescaling the ruler or snapping the clip back to zero
 - Magnetic clip packing by default, explicit removable gaps when wanted, hold-then-drag filmstrip tile reorder for video clips, CLIP # plus first-frame thumbs, audio waveforms, and reorderable caption, added-text, and image/sticker tracks
 - Automatic playhead-follow scrolling, fractional-second ruler markings, pinch/buttons for much wider zoom ranges, and a visible zoom percentage
