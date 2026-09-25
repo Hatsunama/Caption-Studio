@@ -49,7 +49,6 @@ export function createCaptionGenerationSession(cancelNativeExtraction: () => Pro
       try {
         return await work(context);
       } catch (error) {
-        throwIfCancelled();
         throw error;
       } finally {
         attempt.stoppers.clear();
