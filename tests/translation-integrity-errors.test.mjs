@@ -97,6 +97,7 @@ test('translation style save rejection is shown ahead of the existing editor ban
   const source = await read('src/app/editor.tsx');
   const errors = [];
   const sandbox = {
+    Error,
     workspaceMountedRef: { current: true },
     commitEditorProject: async () => { throw new Error('disk full'); },
     setTranslationStyleSaveError: (message) => errors.push(message),
