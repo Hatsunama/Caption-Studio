@@ -231,10 +231,10 @@ private fun parseVideoTransform(value: Map<String, Any>): VideoTransform {
   return VideoTransform(
     fit = fit,
     positionX = position.numberOr("x", 0.5).toFloat().also {
-      require(it in 0f..1f) { "Video position x must be between 0 and 1" }
+      require(it.isFinite() && it in -4f..4f) { "Video position x must be between -4 and 4" }
     },
     positionY = position.numberOr("y", 0.5).toFloat().also {
-      require(it in 0f..1f) { "Video position y must be between 0 and 1" }
+      require(it.isFinite() && it in -4f..4f) { "Video position y must be between -4 and 4" }
     },
     scale = value.numberOr("scale", 1).toFloat().coerceIn(0.05f, 20f),
     scaleX = value.positiveScale("scaleX"),
