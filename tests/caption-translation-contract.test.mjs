@@ -110,9 +110,9 @@ test('one generated local-model contract owns every supported multilingual direc
   assert.match(service, /result\.promptContract !== NATURAL_TRANSLATION_MODEL\.promptContract/);
   assert.doesNotMatch(service, /com\.google\.mlkit|Google Translate|translation API/i);
   assert.match(catalog, /ggml-tiny-q5_1\.bin/);
-  assert.match(catalog, /ggml-base-q5_1\.bin/);
-  assert.match(catalog, /ggml-small-q5_1\.bin/);
-  assert.doesNotMatch(catalog.match(/TRANSCRIPTION_MODELS[\s\S]*/)?.[0] ?? '', /fileName: 'ggml-[^']+\.en-/);
+  assert.doesNotMatch(catalog, /downloadUrl:.*ggml-(?:base|small)-q5_1\.bin/);
+  assert.match(catalog, /OBSOLETE_TRANSCRIPTION_MODEL_FILES/);
+  assert.match(catalog, /isCaptionModelReady/);
 });
 
 test('release CI enforces native translation unit tests and retains their reports', async () => {

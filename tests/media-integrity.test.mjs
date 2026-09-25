@@ -37,8 +37,8 @@ test('video import validation distinguishes audio-only and undecodable video tra
 
 test('model marker is bound to the verified file identity rather than size alone', () => {
   const identity = {
-    fileName: 'ggml-base-q5_1.bin',
-    sizeBytes: 59_707_625,
+    fileName: 'ggml-tiny-q5_1.bin',
+    sizeBytes: 32_152_673,
     modifiedAtMs: 1_777_777,
     createdAtMs: 1_666_666,
   };

@@ -151,11 +151,7 @@ import {
 } from '@/services/project-persistence';
 import { VideoExportCancelledError } from '@/services/video-export-session';
 import { chrome } from '@/lib/ui-theme';
-import {
-  TRANSCRIPTION_MODEL_OPTIONS,
-  type TranscriptionModelId,
-  type TranscriptionProgress,
-} from '@/services/transcription';
+import { isCaptionModelReady, type TranscriptionProgress } from '@/services/transcription';
 import {
   type CaptionAnimationId,
   type CaptionProject,
@@ -802,12 +798,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     persistProjectInBackground();
   };
 
-  const generateCaptions = async (modelId: TranscriptionModelId) => {
+  const generateCaptions = async () => {
     setError(undefined);
     setTranscriptionCancelling(false);
     try {
       const receipt = await commitEditorProject((before) => generateAndSaveProjectCaptions(
-        before, modelId,
+        before,
         (nextProgress) => { if (workspaceMountedRef.current) setProgress(nextProgress); },
       ), true);
       if (!receipt || !editorSession.isCurrent(receipt)) return;
@@ -847,7 +843,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const captionInterruptionMessage = !captionInterruption
     ? undefined
     : captionInterruption.stage === 'downloading-model' && !captionInterruption.interruptionError
-      ? 'The caption-model download paused because Caption Studio left the foreground. Downloaded model bytes were saved. Keep this screen open and the phone unlocked, then choose the same quality to resume.'
+      ? 'The caption-model download paused because Caption Studio left the foreground. Downloaded model bytes were saved. Keep this screen open and the phone unlocked, then retry caption generation to resume.'
       : captionInterruption.interruptionError
         ? `Caption generation stopped when Caption Studio left the foreground, but Android could not preserve the active transfer: ${captionInterruption.interruptionError}`
         : 'Caption generation stopped because Caption Studio left the foreground. The project and previously saved captions were left unchanged. Keep this screen open and the phone unlocked, then try again.';
@@ -859,19 +855,41 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     ]);
   }, [captionForeground.clearInterruption, captionInterruptionMessage]);
 
-  const chooseCaptionQuality = (replacingExisting: boolean) => {
-    const modelDescription = TRANSCRIPTION_MODEL_OPTIONS
-      .map((model) => `${model.label} · ${formatMegabytes(model.downloadBytes)} download\n${model.description}`)
-      .join('\n\n');
-    Alert.alert(
-      replacingExisting ? 'Replace captions with which quality?' : 'Choose caption quality',
-      `${replacingExisting ? 'This replaces the current caption text and timing. Styles and extra layers stay unchanged.\n\n' : ''}${modelDescription}\n\nKeep Caption Studio open and the phone unlocked until caption generation finishes. If Android interrupts a model download, downloaded bytes are saved and choosing the same quality resumes it.`,
-      TRANSCRIPTION_MODEL_OPTIONS.map((model) => ({
-        text: model.id === 'balanced' ? `${model.label} (recommended)` : model.label,
-        onPress: () => { void generateCaptions(model.id); },
-      })),
-      { cancelable: true },
-    );
+  const requestCaptionGeneration = (replacingExisting: boolean) => {
+    const begin = async () => {
+      try {
+        if (await isCaptionModelReady()) {
+          await generateCaptions();
+          return;
+        }
+        Alert.alert(
+          'Download the caption model',
+          'Caption Studio needs a one-time download to create captions. Download speeds vary depending on device restrictions. I really tried to speed this up. Keep this screen open until it finishes. Your video and audio stay on your phone.',
+          [
+            { text: 'Not now', style: 'cancel' },
+            { text: 'Download model', onPress: () => { void generateCaptions(); } },
+          ],
+          { cancelable: true },
+        );
+      } catch (caught) {
+        const message = caught instanceof Error ? caught.message : 'The caption model could not be checked. Try again.';
+        setError(message);
+        Alert.alert('Caption model unavailable', message);
+      }
+    };
+    if (replacingExisting) {
+      Alert.alert(
+        'Replace existing captions?',
+        'This replaces the current caption text and timing. Styles and extra layers stay unchanged.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Replace captions', onPress: () => { void begin(); } },
+        ],
+        { cancelable: true },
+      );
+      return;
+    }
+    void begin();
   };
 
   const chooseStyleScope = async (scope: StyleScope) => {
@@ -2051,7 +2069,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           </View>
           {project.captions.length === 0 ? (
             <Pressable
-              onPress={() => chooseCaptionQuality(false)}
+              onPress={() => requestCaptionGeneration(false)}
               style={{ paddingHorizontal: 16, paddingVertical: 11, borderRadius: chrome.radius.pill, backgroundColor: palette.accent }}>
               <Text style={{ color: chrome.accentInk, fontWeight: '700' }}>Generate captions</Text>
             </Pressable>
@@ -2063,7 +2081,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Generate captions again"
-                onPress={() => chooseCaptionQuality(true)}
+                onPress={() => requestCaptionGeneration(true)}
                 hitSlop={10}>
                 <Text style={{ color: palette.text, fontSize: 12, fontWeight: '700', textDecorationLine: 'underline' }}>
                   Generate again
@@ -2735,10 +2753,6 @@ function formatTime(ms: number) {
 
 function formatSeconds(ms: number) {
   return `${(Math.max(0, ms) / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
-}
-
-function formatMegabytes(bytes: number) {
-  return `${Math.ceil(bytes / (1024 * 1024))} MB`;
 }
 
 const VOICEOVER_RECORDING_OPTIONS = {

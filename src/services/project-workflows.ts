@@ -53,7 +53,7 @@ import {
   releaseUnreferencedReadPermissions,
   retryPendingReadPermissionReleases,
 } from '@/services/media-permissions';
-import type { TranscriptionModelId, TranscriptionProgress } from '@/services/transcription';
+import { CAPTION_TRANSCRIPTION_MODEL_ID, type TranscriptionProgress } from '@/services/transcription';
 import type { CaptionProject, ProjectAudioSource } from '@/types/project';
 import type { ProjectLibraryProject, ProjectRecordSummary } from '@/types/project-library';
 
@@ -191,7 +191,6 @@ export async function appendRecordedAudioToProject(
 
 export async function generateAndSaveProjectCaptions(
   project: CaptionProject,
-  modelId: TranscriptionModelId,
   onProgress?: (progress: TranscriptionProgress) => void,
 ) {
   onProgress?.({
@@ -203,7 +202,7 @@ export async function generateAndSaveProjectCaptions(
     const guardedProgress = (progress: TranscriptionProgress) => {
       if (!session.isCancelled()) onProgress?.(progress);
     };
-    const generated = await generateProjectCaptions(project, modelId, guardedProgress, saveProject, session);
+    const generated = await generateProjectCaptions(project, CAPTION_TRANSCRIPTION_MODEL_ID, guardedProgress, saveProject, session);
     session.throwIfCancelled();
     await saveProject(generated);
     session.throwIfCancelled();

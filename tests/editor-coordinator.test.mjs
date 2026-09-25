@@ -338,7 +338,7 @@ function mount(initialProject = fixture()) {
     discardEditorSession: async (_initial, latest) => { calls.exits.push(['discard', latest]); disk = _initial; },
     cancelProjectCaptionGeneration: async () => true, cancelProjectVideoExport: async () => {},
     validateProjectSources: async () => {},
-    TRANSCRIPTION_MODEL_OPTIONS: [], NATURAL_TRANSLATION_MODEL_LABEL: 'Test',
+    isCaptionModelReady: async () => true, NATURAL_TRANSLATION_MODEL_LABEL: 'Test',
     registerCaptionTranslationResources: () => () => {},
     ProjectPersistenceError: class ProjectPersistenceError extends Error {},
     CaptionGenerationCancelledError: class CaptionGenerationCancelledError extends Error {},

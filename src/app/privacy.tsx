@@ -54,17 +54,17 @@ export default function PrivacyScreen() {
   const removeOfflineModels = () => {
     const size = formatStorage(downloadedModels.reduce((total, model) => total + model.sizeBytes, 0));
     Alert.alert(
-      'Remove offline transcription models?',
-      `This frees about ${size}. Saved captions and projects stay intact. A model will download again the next time you generate captions with it.`,
+      'Remove caption model?',
+      `This frees about ${size}. Saved captions and projects stay intact. The caption model downloads again only when you generate captions.`,
       [
-        { text: 'Keep models', style: 'cancel' },
+        { text: 'Keep model', style: 'cancel' },
         {
-          text: 'Remove models',
+          text: 'Remove model',
           style: 'destructive',
           onPress: () => {
             void removeDownloadedTranscriptionModels()
               .then(() => setDownloadedModels([]))
-              .catch((error) => Alert.alert('Could not remove models', error instanceof Error ? error.message : 'Try again.'));
+              .catch((error) => Alert.alert('Could not remove caption model', error instanceof Error ? error.message : 'Try again.'));
           },
         },
       ],
@@ -105,9 +105,9 @@ export default function PrivacyScreen() {
         does not include advertising, first-party analytics, tracking, or cloud transcription SDKs.
       </PolicySection>
       <PolicySection title="Model downloads">
-        When you first choose a transcription model, the app downloads the selected Whisper model
-        and its speech detector from Hugging Face. Optional natural English–Chinese translation uses
-        one separate, approximately 1.6 GB Qwen model for both directions and both Chinese scripts.
+        When you first generate captions, the app downloads one Whisper caption model
+        and its speech detector from Hugging Face. Optional natural translation uses
+        one separate, approximately 1.6 GB Qwen model for supported language pairs.
         These requests necessarily reveal ordinary network information such as your IP address to
         Hugging Face. Your media, transcript, and translation are not part of a model request.
         Downloaded files are verified by exact size and SHA-256 before use, and inference stays local.
@@ -119,7 +119,7 @@ export default function PrivacyScreen() {
       </PolicySection>
       <PolicySection title="Retention and deletion">
         Project data remains on the device until you delete the project, clear app storage, or uninstall
-        the app. Downloaded transcription and translation models can also be removed below. Deleting a project removes
+        the app. The caption and translation models can also be removed below. Deleting a project removes
         Caption Studio-managed project files but never deletes the original media you selected. A recovery
         copy is staged in private cache only while Android&apos;s share sheet is open and is then deleted;
         interrupted staging files are removed after 24 hours when the project library opens. Exported files
@@ -147,12 +147,12 @@ export default function PrivacyScreen() {
       <View style={{ gap: 10 }}>
         {downloadedModels.length > 0 ? (
           <PolicyAction
-            label={`Remove offline models · ${formatStorage(downloadedModels.reduce((total, model) => total + model.sizeBytes, 0))}`}
+            label={`Remove caption model · ${formatStorage(downloadedModels.reduce((total, model) => total + model.sizeBytes, 0))}`}
             onPress={removeOfflineModels}
           />
         ) : (
         <View style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: chrome.radius.md, backgroundColor: chrome.surface }}>
-            <Text style={{ color: chrome.muted, fontSize: 14, fontWeight: '600' }}>No transcription models are currently downloaded</Text>
+            <Text style={{ color: chrome.muted, fontSize: 14, fontWeight: '600' }}>Caption model is not downloaded</Text>
           </View>
         )}
         {translationModels.length > 0 ? (

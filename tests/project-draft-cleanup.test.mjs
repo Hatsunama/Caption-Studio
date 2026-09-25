@@ -124,6 +124,7 @@ function harness(options = {}) {
       async retryPendingReadPermissionReleases() {},
     },
     '@/services/media-import': { async pickLinkedVideos() { return null; } },
+    '@/services/transcription': { CAPTION_TRANSCRIPTION_MODEL_ID: 'fast' },
     '@/services/project-transcription': {
       async generateProjectCaptions(project, model, progress, save, session) {
         await options.generate?.(session); return project;
@@ -215,7 +216,7 @@ test('cancelling active caption generation preserves recovery journals', async (
   const started = deferred(); const finish = deferred();
   const h = harness({ generate: async () => { started.resolve(); await finish.promise; } });
   await h.seed(); const before = [...h.files];
-  const generating = h.workflows.generateAndSaveProjectCaptions(fixture(), 'balanced');
+  const generating = h.workflows.generateAndSaveProjectCaptions(fixture());
   const rejected = assert.rejects(generating, /Caption generation cancelled/);
   await started.promise;
   assert.equal(await h.workflows.cancelProjectCaptionGeneration(), true);
