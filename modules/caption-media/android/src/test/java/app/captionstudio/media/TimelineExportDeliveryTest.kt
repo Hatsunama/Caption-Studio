@@ -55,6 +55,26 @@ class TimelineExportDeliveryTest {
   }
 
   @Test
+  fun deliveredMediaMustMatchThePlannedShapeAndAudioIntent() {
+    val withAudio = VerifiedRenderedVideo(
+      sizeBytes = 12_345L,
+      durationMs = 4_000L,
+      width = 3_840,
+      height = 2_160,
+      hasAudioTrack = true,
+    )
+    assertEquals(withAudio, requireExpectedOutput(withAudio, 3_840, 2_160, audioExpected = true))
+    assertThrows(IllegalStateException::class.java) {
+      requireExpectedOutput(withAudio, 3_840, 3_840, audioExpected = true)
+    }
+    val withoutAudio = withAudio.copy(hasAudioTrack = false)
+    assertThrows(IllegalStateException::class.java) {
+      requireExpectedOutput(withoutAudio, 3_840, 2_160, audioExpected = true)
+    }
+    assertEquals(withoutAudio, requireExpectedOutput(withoutAudio, 3_840, 2_160, audioExpected = false))
+  }
+
+  @Test
   fun finishedMediaStoreValuesMakeTheCopyVisibleAndPlayable() {
     val verified = VerifiedRenderedVideo(sizeBytes = 12_345L, durationMs = 4_000L, width = 720, height = 1_280)
     val pending = pendingVideoContentValues("caption-studio-export.mp4")
