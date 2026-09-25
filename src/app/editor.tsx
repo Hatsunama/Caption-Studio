@@ -295,6 +295,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [exporting, setExporting] = useState(false);
   const [exportKind, setExportKind] = useState<'video' | 'subtitle'>('video');
   const [exportProgress, setExportProgress] = useState<ProjectVideoExportProgress>();
+  const [exportProgressPollError, setExportProgressPollError] = useState<string>();
   const [animationScope, setAnimationScope] = useState<StyleScope>('caption');
   const [extractAudioOpen, setExtractAudioOpen] = useState(false);
   const [watermarkOpen, setWatermarkOpen] = useState(false);
@@ -348,16 +349,14 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       try {
         const next = await getProjectVideoExportProgress();
         if (active) {
+          setExportProgressPollError(undefined);
           setExportProgress((current) => {
             if (next.stage !== 'idle') return next;
-            if (current?.stage === 'rendering' || current?.stage === 'publishing') {
-              return { stage: 'publishing', percent: 99 };
-            }
-            return current ?? next;
+            return current ?? { stage: 'preparing', percent: 0 };
           });
         }
-      } catch {
-        if (active) setExportProgress({ stage: 'rendering', percent: null });
+      } catch (caught) {
+        if (active) setExportProgressPollError(caught instanceof Error ? caught.message : 'Export progress is temporarily unavailable.');
       } finally {
         if (active) timer = setTimeout(poll, 500);
       }
@@ -1698,11 +1697,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setError(undefined);
     setExportKind('video');
     setExportProgress({ stage: 'preparing', percent: 0 });
+    setExportProgressPollError(undefined);
     setExporting(true);
     try {
       if (!await confirmOptionalTranslationExport(snapshot, true)) return;
       const result = await exportProjectVideo(snapshot, true);
-      Alert.alert('Export complete', `Saved to Movies/Caption Studio.\n${result.width} × ${result.height}`);
+      Alert.alert('Export complete', `Saved to Movies/Caption Studio.\n${result.width} × ${result.height}${result.sharingWarning ? `\n\n${result.sharingWarning}` : ''}`);
     } catch (caught) {
       if (!(caught instanceof VideoExportCancelledError)) {
         const message = userFacingExportError(caught);
@@ -2547,11 +2547,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             <View style={{ width: '100%', maxWidth: 380, gap: 14, padding: 22, borderRadius: 20, backgroundColor: palette.surfaceRaised }}>
               <ActivityIndicator color={palette.accent} size="large" />
               <Text style={{ color: palette.text, textAlign: 'center', fontSize: 18, fontWeight: '900' }}>
-                {exportKind === 'video' ? 'Rendering on this phone' : 'Preparing subtitle file'}
+                {exportKind === 'video' ? 'Exporting on this phone' : 'Preparing subtitle file'}
               </Text>
               <Text style={{ color: palette.muted, textAlign: 'center', lineHeight: 20 }}>
                 {exportKind === 'video'
-                  ? 'Compositing clips, captions, layers, transitions, audio, and any replacement background into the final MP4. Keep Caption Studio open.'
+                  ? 'Preparing the export, then rendering the final MP4 and saving it to Movies. Keep Caption Studio open.'
                   : 'Creating the subtitle file and opening Android’s save or share choices.'}
               </Text>
               {exportKind === 'video' && exportProgress ? (
@@ -2562,6 +2562,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   <Text style={{ color: palette.text, textAlign: 'center', fontVariant: ['tabular-nums'] }}>
                     {exportProgressLabel(exportProgress)}
                   </Text>
+                  {exportProgressPollError ? <Text style={{ color: '#FFBBC8', textAlign: 'center' }}>Progress unavailable: {exportProgressPollError}</Text> : null}
                 </View>
               ) : null}
               {exportKind === 'video' ? (
@@ -2828,7 +2829,8 @@ function translationProgressLabel(progress?: CaptionTranslationProgress) {
 
 function exportProgressLabel(progress: ProjectVideoExportProgress) {
   if (progress.stage === 'publishing') return 'Saving to media library · 99%';
-  if (progress.stage === 'preparing') return 'Preparing renderer';
+  if (progress.stage === 'idle') return 'Preparing export';
+  if (progress.stage === 'preparing') return 'Preparing export';
   if (progress.percent == null) return 'Rendering video';
   return `Rendering video · ${progress.percent}%`;
 }
