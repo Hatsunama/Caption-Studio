@@ -767,7 +767,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const finishHistoryInteraction = () => {
     const snapshot = interactionStartRef.current;
     interactionStartRef.current = undefined;
-    if (snapshot && snapshot !== editorSession.current()) pushUndo(snapshot);
+    if (snapshot === editorSession.current()) return;
+    if (snapshot) pushUndo(snapshot);
     persistProjectInBackground();
   };
 

@@ -40,6 +40,13 @@ test('mixed results persist reasons and retain saved text without source fallbac
   assert.equal(original.captionTracks.translations[0].cues[2].status, 'pending');
 });
 
+test('selected pending translations prevent a success message', () => {
+  const original = fixture();
+  const trackId = original.captionTracks.translations[0].id;
+  assert.match(translationAttemptMessage(original, trackId, ['c3']), /1 subtitle translation.*pending/i);
+  assert.equal(translationAttemptMessage(original, trackId, ['c1']), undefined);
+});
+
 test('individual, selected and unfinished retries preserve successes outside the request', () => {
   const original = fixture();
   const trackId = original.captionTracks.translations[0].id;

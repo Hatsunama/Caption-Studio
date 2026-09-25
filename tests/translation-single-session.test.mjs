@@ -105,3 +105,11 @@ test('a later native failure keeps the earlier accepted batch', async () => {
   assert.equal(calls.length, 1);
   assert.deepEqual(committed, [['first']]);
 });
+
+test('a native batch is not acknowledged when the project commit was skipped', async () => {
+  const { service } = await serviceFixture();
+  await assert.rejects(service.translateNaturalCaptionBatch({
+    sourceLanguage: 'en', targetLanguage: 'fr', captions,
+    onAcceptedBatch: async () => false,
+  }), /project changed|not saved|commit/i);
+});

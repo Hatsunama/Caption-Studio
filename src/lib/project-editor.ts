@@ -24,8 +24,8 @@ import {
   sourceTimeAt,
   timelineTimeAt,
   totalClipDuration,
+  translationReorderMapping,
   translationSpliceMapping,
-  type TranslationTimeMapping,
 } from '@/lib/video-timeline';
 import {
   DEFAULT_CAPTION_STYLE,
@@ -39,6 +39,7 @@ import {
 import { editCanvasTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
 import { editProjectTimelineRange, timelineArtifactEditLimit } from '@/lib/timeline-edit-bounds';
 import { normalizeLayerGeometry } from '@/lib/layer-geometry';
+import { hasCanonicalSourceWords } from '@/lib/primary-caption-timing';
 
 export function setCaptionTexts(project: CaptionProject, changes: CaptionTextChanges) {
   const changed = applyCaptionTextChanges(project.captions, changes);
@@ -96,10 +97,31 @@ export function setCaptionTiming(
   const selected = project.captions.find((caption) => caption.id === captionId);
   if (!selected || selected.timelineVisible === false) return project;
   const { startMs: safeStartMs, endMs: safeEndMs } = editProjectTimelineRange(project, selected, edge, startMs, endMs);
-  if (safeStartMs === selected.startMs && safeEndMs === selected.endMs) return project;
+  const ordered = project.captions
+    .filter((caption) => caption.timelineVisible !== false)
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+  const index = ordered.findIndex((caption) => caption.id === captionId);
+  const earliestStartMs = index > 0 ? ordered[index - 1].endMs : 0;
+  const latestEndMs = index < ordered.length - 1 ? ordered[index + 1].startMs : Number.POSITIVE_INFINITY;
+  if (latestEndMs - earliestStartMs < 80) return project;
+  let nextStartMs = safeStartMs;
+  let nextEndMs = safeEndMs;
+  if (edge === 'start') {
+    if (safeEndMs > latestEndMs || safeEndMs - earliestStartMs < 80) return project;
+    nextStartMs = Math.max(earliestStartMs, safeStartMs);
+  } else if (edge === 'end') {
+    if (safeStartMs < earliestStartMs || latestEndMs - safeStartMs < 80) return project;
+    nextEndMs = Math.min(latestEndMs, safeEndMs);
+  } else {
+    const durationMs = safeEndMs - safeStartMs;
+    if (durationMs > latestEndMs - earliestStartMs) return project;
+    nextStartMs = Math.max(earliestStartMs, Math.min(safeStartMs, latestEndMs - durationMs));
+    nextEndMs = nextStartMs + durationMs;
+  }
+  if (nextStartMs === selected.startMs && nextEndMs === selected.endMs) return project;
   const captions = project.captions
     .map((caption) => caption.id === captionId
-      ? withTimelineCaptionTiming(caption, entries, safeStartMs, safeEndMs)
+      ? withTimelineCaptionTiming(caption, entries, nextStartMs, nextEndMs)
       : caption)
     .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
   return updateProject(project, {
@@ -157,6 +179,24 @@ export function replaceVisibleCaptionScript(project: CaptionProject, captions: C
       || (!unchangedTiming && caption.endMs - caption.startMs < 80)
     ) throw new Error('Caption edits were not saved. Each caption needs unique identity, text, and valid timing; new or retimed captions must last at least 0.08 seconds.');
     ids.add(caption.id);
+  }
+  const changedTimingIds = new Set(captions.filter((caption) => {
+    const current = currentById.get(caption.id);
+    return !current || current.startMs !== caption.startMs || current.endMs !== caption.endMs;
+  }).map((caption) => caption.id));
+  if (changedTimingIds.size > 0) {
+    let furthestEndMs = Number.NEGATIVE_INFINITY;
+    let furthestCueId = '';
+    for (const caption of [...captions].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs)) {
+      if (caption.startMs < furthestEndMs
+        && (changedTimingIds.has(caption.id) || changedTimingIds.has(furthestCueId))) {
+        throw new Error('Caption edits were not saved. Subtitle times cannot overlap.');
+      }
+      if (caption.endMs > furthestEndMs) {
+        furthestEndMs = caption.endMs;
+        furthestCueId = caption.id;
+      }
+    }
   }
   // JSON recovery, sorting and geometry reconciliation create new objects. A
   // semantic no-op must retain the project identity that gates history and I/O.
@@ -416,35 +456,6 @@ export function reorderVideoClip(project: CaptionProject, clipId: string, toInde
   return { project: next, seekMs: entry?.startMs ?? 0 };
 }
 
-function translationReorderMapping(before: VideoClip[], after: VideoClip[]): TranslationTimeMapping {
-  const oldEntries = buildClipTimeline(before);
-  const nextById = new Map(buildClipTimeline(after).map((entry) => [entry.clip.id, entry]));
-  return {
-    operation: 'reorder',
-    durationMs: totalClipDuration(after),
-    mapRange: (range, beforeCaption) => {
-      // One cue stores one interval. Choose its owner by media overlap, excluding
-      // gaps; the primary anchor breaks ties, then prior timeline order does.
-      let owner: (typeof oldEntries)[number] | undefined;
-      let maximumOverlap = 0;
-      for (const entry of oldEntries) {
-        const overlap = Math.min(range.endMs, entry.endMs) - Math.max(range.startMs, entry.startMs);
-        if (overlap > 0 && (overlap > maximumOverlap
-          || (overlap === maximumOverlap && entry.clip.id === beforeCaption.sourceAnchor?.clipId))) {
-          owner = entry;
-          maximumOverlap = overlap;
-        }
-      }
-      // Gap-only/out-of-media intervals have no owner: retain absolute timing.
-      // The track remapper clamps to timeline bounds and hides only empty ranges.
-      if (!owner) return range;
-      const next = nextById.get(owner.clip.id);
-      if (!next) throw new Error('Translation reorder mapping lost a clip.');
-      const delta = next.startMs - owner.startMs;
-      return { startMs: range.startMs + delta, endMs: range.endMs + delta };
-    },
-  };
-}
 export function deleteVideoClip(project: CaptionProject, clipId: string) {
   const entry = buildClipTimeline(project.clips).find((candidate) => candidate.clip.id === clipId);
   if (!entry) return null;
@@ -664,7 +675,9 @@ function rebuildAfterLayoutEdit(
   const sourceWords = Object.fromEntries(
     Object.entries(project.transcription.sourceResults).map(([sourceId, result]) => [sourceId, result.words]),
   );
-  const hasCanonicalWords = project.transcription.wordTiming !== 'timeline' && Object.keys(sourceWords).length > 0;
+  const hasCanonicalWords = project.transcription.wordTiming !== 'timeline'
+    && Object.keys(sourceWords).length > 0
+    && Object.values(project.transcription.sourceResults).every((result) => hasCanonicalSourceWords(result.words));
   const currentWords = hasCanonicalWords
     ? mapSourceWordsToTimeline(project.clips, sourceWords)
     : project.transcription.words;

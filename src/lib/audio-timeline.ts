@@ -214,7 +214,7 @@ export function constrainAudioClips(audioClips: AudioClip[] | undefined, timelin
     if (clip.startMs >= timelineDurationMs) return [];
     const maximumDuration = timelineDurationMs - clip.startMs;
     const sourceEndMs = Math.min(clip.sourceEndMs, clip.sourceStartMs + maximumDuration);
-    return sourceEndMs - clip.sourceStartMs >= MINIMUM_AUDIO_CLIP_MS
+    return sourceEndMs > clip.sourceStartMs
       ? [clampAudioFades({ ...clip, sourceEndMs })]
       : [];
   });

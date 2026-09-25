@@ -19,6 +19,7 @@ import {
   timelineZoomPercent,
 } from '@/lib/timeline-scale';
 import { buildClipTimeline, remapCaptionsToTimeline } from '@/lib/video-timeline';
+import { mapPreviewTranslationTracks } from '@/lib/translation-preview-timeline';
 import { audioClipEnd } from '@/lib/audio-timeline';
 import { audioWaveformWindow } from '@/lib/audio-waveform';
 import { adjustTimelineTiming, TIMELINE_ACCESSIBILITY_ACTIONS, timelineTimingLabel, createTimelineTimingGesture, timelineVisibleTrackBounds, type TimelineTimingGestureOwner } from '@/lib/timeline-gesture';
@@ -94,17 +95,12 @@ export function LayerTimeline(props: {
     () => clipPreview ? remapCaptionsToTimeline(props.captions, previewClips, []) : props.captions,
     [clipPreview, previewClips, props.captions],
   );
-  const displayTranslationTracks = useMemo(() => {
-    if (!clipPreview) return props.translationTracks;
-    const byId = new Map(displayCaptions.map((caption) => [caption.id, caption]));
-    return props.translationTracks.map((track) => ({
-      ...track,
-      pairs: track.pairs.map((pair) => {
-        const caption = byId.get(pair.source.id);
-        return caption ? { ...pair, startMs: caption.startMs, endMs: caption.endMs } : pair;
-      }),
-    }));
-  }, [clipPreview, displayCaptions, props.translationTracks]);
+  const displayTranslationTracks = useMemo(
+    () => clipPreview && props.clips?.length
+      ? mapPreviewTranslationTracks(props.translationTracks, props.clips, clipPreview, displayCaptions)
+      : props.translationTracks,
+    [clipPreview, props.translationTracks, props.clips, displayCaptions],
+  );
   const duration = Math.max(1, props.durationMs, clipPositions.at(-1)?.afterGapEndMs ?? 0);
   const minimumScale = minimumTimelineScale(duration, Math.max(1, viewportWidth - LABEL_WIDTH));
   const [pixelsPerSecond, setPixelsPerSecond] = useState(() => Math.max(16, minimumScale));
@@ -512,7 +508,6 @@ export function LayerTimeline(props: {
                   trackWidth={trackWidth}
                   height={isCaptions ? captionRowHeight : visualRowHeight()}
                   controls={<View style={{ gap: 2 }}>
-                    {isCaptions && captionLayout.laneCount > 1 ? <Text style={{ color: '#19D98B', fontSize: 7, fontWeight: '800' }}>{captionLayout.laneCount} AUTO LANES</Text> : null}
                     <View style={{ flexDirection: 'row', gap: 2 }}>
                       <TinyButton label="↑" disabled={layerIndex === 0} onPress={() => props.onMoveLayer(layer.id, -1)} />
                       <TinyButton label="↓" disabled={layerIndex === displayLayers.length - 1} onPress={() => props.onMoveLayer(layer.id, 1)} />

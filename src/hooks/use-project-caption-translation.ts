@@ -25,7 +25,7 @@ type ControllerOptions = {
 
 type TranslationOperation = (
   onProgress: (next: CaptionTranslationProgress) => void,
-  onAcceptedBatch: (apply: (current: CaptionProject) => CaptionProject) => Promise<void>,
+  onAcceptedBatch: (apply: (current: CaptionProject) => CaptionProject) => Promise<boolean>,
 ) => Promise<CaptionProject>;
 
 type TranslationRequest = {
@@ -46,7 +46,7 @@ async function refreshIncremental(
   trackId: string,
   sourceCaptionIds: readonly string[],
   onProgress: (progress: CaptionTranslationProgress) => void,
-  onAcceptedBatch: (apply: (current: CaptionProject) => CaptionProject) => Promise<void>,
+  onAcceptedBatch: (apply: (current: CaptionProject) => CaptionProject) => Promise<boolean>,
 ) {
   const track = project.captionTracks.translations.find((candidate) => candidate.id === trackId);
   if (!track) throw new Error('The second-language caption track no longer exists.');
@@ -71,7 +71,10 @@ async function refreshIncremental(
     onProgress,
     onAcceptedBatch: async (batch) => {
       const batchCaptions = captions.filter((caption) => batch.captions.has(caption.id));
-      await onAcceptedBatch((current) => {
+      if (batchCaptions.length !== batch.captions.size) {
+        throw new Error('The translation batch no longer matches the selected subtitles. Refresh to retry.');
+      }
+      const committed = await onAcceptedBatch((current) => {
         const currentTrack = current.captionTracks.translations.find((candidate) => candidate.id === trackId);
         if (!currentTrack || currentTrack.languageTag !== track.languageTag
           || currentTrack.sourceLanguageTag !== track.sourceLanguageTag
@@ -89,7 +92,7 @@ async function refreshIncremental(
             && cue.status === originalCue.status && cue.reviewed === originalCue.reviewed
             && cue.sourceTextSnapshot === originalCue.sourceTextSnapshot;
         });
-        if (!safe.length) return current;
+        if (safe.length !== batchCaptions.length) return current;
         const writes = automaticTranslationCueWrites({
           captions: safe,
           translatedById: batch.captions,
@@ -100,6 +103,7 @@ async function refreshIncremental(
         const withProvider = setTranslationTrackProvider(current, trackId, batch.provider, sourceLanguage, new Date().toISOString());
         return commitTranslationAttempt(withProvider, trackId, safe, writes, batch.failureReasons);
       });
+      if (!committed) throw new Error('The project changed before the translation batch was saved. Refresh to retry without overwriting newer edits.');
     },
   });
   return project;
@@ -171,7 +175,9 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
       }, async (apply) => {
         const current = optionsRef.current.getCurrentProject();
         const updated = apply(current);
-        if (updated !== current) await optionsRef.current.commitProject(current, updated);
+        if (updated === current) return false;
+        await optionsRef.current.commitProject(current, updated);
+        return true;
       });
       if (!mountedRef.current || activeOperationRef.current !== operationId) return false;
       if (kind === 'translation' && interruptedRef.current) throw new CaptionTranslationCancelledError();
@@ -179,6 +185,8 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
         const message = completionMessage?.(optionsRef.current.getCurrentProject());
         if (message) {
           setWarning(message);
+          retryRequestRef.current = request.retryWith?.(optionsRef.current.getCurrentProject()) ?? request;
+          setRetryAvailable(true);
           return false;
         }
         return true;
