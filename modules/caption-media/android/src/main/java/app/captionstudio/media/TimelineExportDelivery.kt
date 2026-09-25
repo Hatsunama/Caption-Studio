@@ -16,7 +16,21 @@ internal data class VerifiedRenderedVideo(
   val durationMs: Long,
   val width: Int,
   val height: Int,
+  val hasAudioTrack: Boolean = false,
 )
+
+internal fun requireExpectedOutput(
+  verified: VerifiedRenderedVideo,
+  expectedWidth: Int,
+  expectedHeight: Int,
+  audioExpected: Boolean,
+): VerifiedRenderedVideo {
+  check(verified.width == expectedWidth && verified.height == expectedHeight) {
+    "The rendered video dimensions do not match the requested canvas"
+  }
+  check(!audioExpected || verified.hasAudioTrack) { "The exported video has no audio track" }
+  return verified
+}
 
 internal fun requireRenderedVideoFile(file: File): Long {
   check(file.isFile) { "The rendered video file is missing" }
@@ -50,12 +64,14 @@ internal fun inspectRenderedVideo(
   try {
     setRenderedVideoDataSource(context, extractor, retriever, uri)
     var hasVideo = false
+    var hasAudio = false
     var width = 0
     var height = 0
     var durationMs = 0L
     for (index in 0 until extractor.trackCount) {
       val format = extractor.getTrackFormat(index)
       val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
+      if (mime.startsWith("audio/")) hasAudio = true
       if (!mime.startsWith("video/")) continue
       hasVideo = true
       width = mediaFormatInt(format, MediaFormat.KEY_WIDTH)
@@ -78,7 +94,7 @@ internal fun inspectRenderedVideo(
     check(width in 2..3840 && height in 2..3840 && width % 2 == 0 && height % 2 == 0) {
       "The export dimensions are invalid"
     }
-    return VerifiedRenderedVideo(expectedSize, durationMs, width, height)
+    return VerifiedRenderedVideo(expectedSize, durationMs, width, height, hasAudio)
   } finally {
     extractor.release()
     retriever.release()
