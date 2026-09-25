@@ -27,6 +27,7 @@ type Props = {
   slots: readonly [TimelineVideoSlot, TimelineVideoSlot];
   activeSlot: 0 | 1;
   currentTransform: VideoTransform;
+  currentClipId?: string;
   onFirstFrameRender: (slot: 0 | 1, token: number) => void;
 };
 
@@ -38,10 +39,17 @@ export function VideoTransitionOverlay(props: Props) {
     () => buildVideoTransitionPreviewWindows(props.entries, props.sources),
     [props.entries, props.sources],
   );
-  const frame = useMemo(
+  const sourceFrame = useMemo(
     () => videoTransitionPreviewFrameAt(windows, props.timelineMs),
     [props.timelineMs, windows],
   );
+  const frame = sourceFrame && props.currentClipId ? {
+    ...sourceFrame,
+    outgoing: sourceFrame.outgoing?.clipId === props.currentClipId
+      ? { ...sourceFrame.outgoing, transform: props.currentTransform } : sourceFrame.outgoing,
+    incoming: sourceFrame.incoming?.clipId === props.currentClipId
+      ? { ...sourceFrame.incoming, transform: props.currentTransform } : sourceFrame.incoming,
+  } : sourceFrame;
   if (!props.admitted) return null;
   const transitionReady = props.visible && props.transportReady && frame?.key !== failedPreviewKey;
   return (
@@ -423,7 +431,8 @@ function transformStyle(transform: VideoTransform, width: number, height: number
   return [
     { translateX: (transform.position.x - 0.5) * width },
     { translateY: (transform.position.y - 0.5) * height },
-    { scale: transform.scale },
     { rotate: `${transform.rotation}deg` as `${number}deg` },
+    { scaleX: transform.scale * (transform.scaleX ?? 1) },
+    { scaleY: transform.scale * (transform.scaleY ?? 1) },
   ];
 }

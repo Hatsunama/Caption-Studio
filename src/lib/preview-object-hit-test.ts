@@ -12,6 +12,7 @@ export type PreviewObjectTarget<T> = {
   selection: T;
   geometry: LayerGeometryInput;
   order: number;
+  yieldToForeground?: boolean;
 };
 
 export function previewObjectAtPoint<T>(
@@ -57,11 +58,15 @@ export function previewInteractionAtPoint<T>(
   deletable = false,
 ): PreviewInteraction<T> | undefined {
   const selected = selectedKey ? targets.find((target) => target.key === selectedKey) : undefined;
+  const front = previewObjectAtPoint(targets, point, size);
+  if (selected?.yieldToForeground && front && front.key !== selected.key && front.order > selected.order) {
+    return { target: front, mode: 'move' };
+  }
   if (selected) {
     const selectedMode = selectedChromeMode(selected.geometry, point, size, deletable);
     if (selectedMode && selectedMode !== 'move') return { target: selected, mode: selectedMode };
   }
-  const target = previewObjectAtPoint(targets, point, size);
+  const target = front;
   if (!target) return undefined;
   return {
     target,

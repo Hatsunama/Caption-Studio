@@ -24,6 +24,8 @@ internal data class VideoTransform(
   val positionX: Float,
   val positionY: Float,
   val scale: Float,
+  val scaleX: Float,
+  val scaleY: Float,
   val rotation: Float,
 )
 
@@ -234,7 +236,9 @@ private fun parseVideoTransform(value: Map<String, Any>): VideoTransform {
     positionY = position.numberOr("y", 0.5).toFloat().also {
       require(it in 0f..1f) { "Video position y must be between 0 and 1" }
     },
-    scale = value.numberOr("scale", 1).toFloat().coerceIn(0.05f, 12f),
+    scale = value.numberOr("scale", 1).toFloat().coerceIn(0.05f, 20f),
+    scaleX = value.positiveScale("scaleX"),
+    scaleY = value.positiveScale("scaleY"),
     rotation = value.numberOr("rotation", 0).toFloat(),
   )
 }

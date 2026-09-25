@@ -558,7 +558,7 @@ internal class TimelineVideoCompositorSettings(
         transform.positionX * 2f - 1f,
         1f - transform.positionY * 2f,
       )
-      .setScale(transform.scale, transform.scale)
+      .setScale(transform.scale * transform.scaleX, transform.scale * transform.scaleY)
       .setRotationDegrees(-transform.rotation)
       .build()
   }
@@ -622,6 +622,8 @@ internal class TimelineBitmapOverlay(
       transform.positionY,
       transform.scale,
       transform.rotation,
+      transform.scaleX,
+      transform.scaleY,
     )
     canvas.drawBitmap(bitmap, matrix, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
   }
