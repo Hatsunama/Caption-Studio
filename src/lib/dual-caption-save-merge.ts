@@ -1,11 +1,16 @@
-import type { DualCaptionTextEdit } from '@/services/project-caption-translation';
 import type { CaptionProject } from '@/types/project';
+
+type EditedCaptionFields = {
+  sourceCaptionId: string;
+  primaryChanged: boolean;
+  translatedChanged: boolean;
+};
 
 export function assertDualCaptionEditsStillCurrent(
   baseline: CaptionProject,
   current: CaptionProject,
   trackId: string,
-  edits: readonly DualCaptionTextEdit[],
+  edits: readonly EditedCaptionFields[],
 ) {
   const previousTrack = baseline.captionTracks.translations.find((track) => track.id === trackId);
   const currentTrack = current.captionTracks.translations.find((track) => track.id === trackId);
