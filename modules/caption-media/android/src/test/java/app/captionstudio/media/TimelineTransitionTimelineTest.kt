@@ -235,6 +235,6 @@ class TimelineTransitionTimelineTest {
     fadeOutMs = 0,
     transitionType = if (transitionDurationMs > 0) "crossfade" else "none",
     transitionDurationMs = transitionDurationMs,
-    transform = VideoTransform("fit", 0.5f, 0.5f, 1f, 0f),
+    transform = VideoTransform("fit", 0.5f, 0.5f, 1f, 1f, 1f, 0f),
   )
 }

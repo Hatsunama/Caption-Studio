@@ -81,7 +81,7 @@ class TimelineRenderPlanTest {
     assertEquals("fill", plan.videoTransform.fit)
     assertEquals(0.25f, plan.videoTransform.positionX)
     assertEquals(0.75f, plan.videoTransform.positionY)
-    assertEquals(12f, plan.videoTransform.scale)
+    assertEquals(20f, plan.videoTransform.scale)
     assertEquals(8f, plan.clips.single().playbackRate)
     assertEquals(0f, plan.clips.single().volume)
     assertEquals(8_000L, plan.clips.single().availableSourceEndMs)

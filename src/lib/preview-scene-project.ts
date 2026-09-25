@@ -1,6 +1,7 @@
 import { resolveCaptionPairs, setTranslationCueStyle } from '@/lib/caption-tracks';
 import { sameLayerGeometry, type LayerGeometry } from '@/lib/layer-geometry';
-import { setImageLayer, setTextLayerStyle } from '@/lib/project-editor';
+import { setImageLayer, setTextLayerStyle, setVideoClipTransform } from '@/lib/project-editor';
+import { videoClipPreviewGeometry } from '@/lib/video-transform';
 import { applyStylePatch, resolveCaptionStyle } from '@/lib/style-resolver';
 import type { EditorSelection } from '@/lib/editor-selection';
 import type { PreviewSceneTarget } from '@/lib/preview-scene-controller';
@@ -11,6 +12,15 @@ import type { CaptionProject } from '@/types/project';
  */
 export function applyPreviewSceneGeometry(project: CaptionProject, target: PreviewSceneTarget<EditorSelection>, geometry: LayerGeometry) {
   const selection = target.selection;
+  if (selection.kind === 'video') {
+    const current = videoClipPreviewGeometry(project, selection.id);
+    if (!current || !sameLayerGeometry(current, target.geometry)
+      || sameLayerGeometry(target.geometry, geometry)) return project;
+    return setVideoClipTransform(project, selection.id, {
+      position: geometry.position, scale: geometry.scale,
+      scaleX: geometry.scaleX, scaleY: geometry.scaleY, rotation: geometry.rotation,
+    });
+  }
   if (selection.kind === 'captions') {
     const cue = project.captions.find((caption) => caption.id === selection.captionId);
     if (!cue || !sameLayerGeometry(resolveCaptionStyle(project.projectStyle, cue), target.geometry)

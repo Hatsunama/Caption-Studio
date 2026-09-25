@@ -69,7 +69,7 @@ export function VideoTools(props: {
       </PersistedHorizontalScroll>
 
       <Text style={{ color: chrome.muted, fontSize: 11 }}>
-        On the preview: drag to move, pinch to resize, and twist with two fingers to rotate.
+        On the preview: drag to move, use an edge or corner to resize, pinch to scale, and twist to rotate.
       </Text>
 
       <RotationModal

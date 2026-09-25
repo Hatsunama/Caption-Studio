@@ -282,6 +282,8 @@ export type VideoTransform = {
   fit: 'fit' | 'fill';
   position: { x: number; y: number };
   scale: number;
+  scaleX?: number;
+  scaleY?: number;
   rotation: number;
 };
 
@@ -422,6 +424,8 @@ export const DEFAULT_VIDEO_TRANSFORM: VideoTransform = {
   fit: 'fit',
   position: { x: 0.5, y: 0.5 },
   scale: 1,
+  scaleX: 1,
+  scaleY: 1,
   rotation: 0,
 };
 

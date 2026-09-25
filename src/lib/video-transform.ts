@@ -1,5 +1,7 @@
+import { resolveLayerGeometry, type LayerGeometry } from '@/lib/layer-geometry';
 import {
   DEFAULT_VIDEO_TRANSFORM,
+  type CaptionProject,
   type VideoTransform,
   type VideoTransformPatch,
 } from '@/types/project';
@@ -30,6 +32,8 @@ export function mergeVideoTransform(
       y: boundedFinite(position?.y, current.position.y, -4, 4),
     },
     scale: boundedFinite(patch.scale, current.scale, 0.05, 20),
+    scaleX: boundedFinite(patch.scaleX, current.scaleX ?? 1, 0.001, 200),
+    scaleY: boundedFinite(patch.scaleY, current.scaleY ?? 1, 0.001, 200),
     rotation: normalizeDegrees(finiteOr(patch.rotation, current.rotation)),
   };
 }
@@ -39,7 +43,30 @@ export function sameVideoTransform(left: VideoTransform, right: VideoTransform) 
     && left.position.x === right.position.x
     && left.position.y === right.position.y
     && left.scale === right.scale
+    && (left.scaleX ?? 1) === (right.scaleX ?? 1)
+    && (left.scaleY ?? 1) === (right.scaleY ?? 1)
     && left.rotation === right.rotation;
+}
+
+export function videoClipPreviewGeometry(project: CaptionProject, clipId: string): LayerGeometry | undefined {
+  const clip = project.clips.find((candidate) => candidate.id === clipId);
+  if (!clip) return undefined;
+  const source = project.sources.find((candidate) => candidate.id === clip.sourceId);
+  if (!source) return undefined;
+  const transform = resolveVideoTransform(clip.transform, project.videoTransform);
+  const turned = Math.abs(source.rotation) % 180 === 90;
+  const sourceAspect = Math.max(1, turned ? source.height : source.width)
+    / Math.max(1, turned ? source.width : source.height);
+  const canvasAspect = Math.max(1, project.canvas.aspectWidth) / Math.max(1, project.canvas.aspectHeight);
+  const box = transform.fit === 'fill' ? { width: 1, height: 1 }
+    : sourceAspect >= canvasAspect
+      ? { width: 1, height: canvasAspect / sourceAspect }
+      : { width: sourceAspect / canvasAspect, height: 1 };
+  return resolveLayerGeometry({
+    position: transform.position, box, scale: transform.scale,
+    scaleX: transform.scaleX ?? 1, scaleY: transform.scaleY ?? 1,
+    rotation: transform.rotation,
+  });
 }
 
 function boundedFinite(value: number | undefined, fallback: number, minimum: number, maximum: number) {

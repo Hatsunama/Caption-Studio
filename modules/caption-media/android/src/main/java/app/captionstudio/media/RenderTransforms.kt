@@ -14,6 +14,8 @@ internal fun contentMatrix(
   positionY: Float,
   scale: Float,
   rotation: Float,
+  scaleX: Float = 1f,
+  scaleY: Float = 1f,
 ): Matrix {
   val fitScale = if (fit == "fill") {
     max(targetWidth / sourceWidth.toFloat(), targetHeight / sourceHeight.toFloat())
@@ -22,7 +24,7 @@ internal fun contentMatrix(
   }
   return Matrix().apply {
     postTranslate(-sourceWidth / 2f, -sourceHeight / 2f)
-    postScale(fitScale * scale, fitScale * scale)
+    postScale(fitScale * scale * scaleX, fitScale * scale * scaleY)
     postRotate(rotation)
     postTranslate(positionX * targetWidth, positionY * targetHeight)
   }

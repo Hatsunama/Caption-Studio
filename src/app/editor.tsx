@@ -3,6 +3,7 @@ import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type 
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
 import { usePreviewSceneGesture, type PreviewSceneTarget } from '@/hooks/use-preview-scene-gesture';
 import { applyPreviewSceneGeometry } from '@/lib/preview-scene-project';
+import { videoClipPreviewGeometry } from '@/lib/video-transform';
 import { LayerTransformOverlay } from '@/components/editor/layer-transform-overlay';
 import { captionPreviewState, projectHasEditorLayer } from '@/lib/caption-preview';
 import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
@@ -41,7 +42,6 @@ import { PlaybackLoadingOverlay } from '@/components/editor/playback-loading-ove
 import { ScopeSheet } from '@/components/editor/scope-sheet';
 import { ScriptEditor } from '@/components/editor/script-editor';
 import { VideoTools } from '@/components/editor/video-tools';
-import { VideoTransformOverlay } from '@/components/editor/video-transform-overlay';
 import { VideoTransitionOverlay } from '@/components/editor/video-transition-overlay';
 import { useTimelineVideoController } from '@/hooks/use-timeline-video-controller';
 import { useTimelineAudioController } from '@/hooks/use-timeline-audio-controller';
@@ -1783,7 +1783,16 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
-  const previewSceneTargets: PreviewSceneTarget<EditorSelection>[] = [];
+  const activeVideoGeometry = currentClipEntry && !transport.isGap
+    ? videoClipPreviewGeometry(project, currentClipEntry.clip.id) : undefined;
+  const previewSceneTargets: PreviewSceneTarget<EditorSelection>[] = activeVideoGeometry && currentClipEntry ? [{
+    key: `video:${currentClipEntry.clip.id}`,
+    selection: { kind: 'video', id: currentClipEntry.clip.id },
+    geometry: activeVideoGeometry,
+    order: -1,
+    deletable: false,
+    yieldToForeground: true,
+  }] : [];
   let previewOrder = 0;
   for (const layer of timelineLayers) {
     if (!layer.visible) continue;
@@ -1820,7 +1829,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       ? `translation:${selectedTranslationPair.trackId}:${selectedTranslationPair.source.id}`
       : selectedTextLayer || selectedImageLayer
         ? `layer:${selectedLayerId}`
-        : undefined;
+        : selectedClipId && currentClipEntry?.clip.id === selectedClipId
+          ? `video:${selectedClipId}` : undefined;
   const {
     canvasRef: previewCanvasRef,
     onLayout: onPreviewCanvasLayout,
@@ -1830,7 +1840,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   } = usePreviewSceneGesture({
     targets: previewSceneTargets,
     selectedKey: selectedPreviewObjectKey,
-    enabled: activeTool !== 'video' && !blockingUi && !finishingSession,
+    enabled: !blockingUi && !finishingSession,
     contextKey: `${project.id}:${scriptCropActive}:${canvasWidth}:${canvasHeight}`,
     onSelect: selectEditorObject,
     onClearSelection: clearEditorSelection,
@@ -1852,6 +1862,16 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     onInteractionEnd: () => {},
   });
   const selectedPreviewTarget = previewSceneTargets.find((target) => target.key === sceneSelectedKey);
+  const previewVideoGeometry = activeVideoGeometry && currentClipEntry
+    ? previewGeometryFor(`video:${currentClipEntry.clip.id}`, activeVideoGeometry) : undefined;
+  const previewVideoTransform = previewVideoGeometry ? {
+    ...currentVideoTransform,
+    position: previewVideoGeometry.position,
+    scale: previewVideoGeometry.scale ?? 1,
+    scaleX: previewVideoGeometry.scaleX ?? 1,
+    scaleY: previewVideoGeometry.scaleY ?? 1,
+    rotation: previewVideoGeometry.rotation,
+  } : currentVideoTransform;
 
   return (
     <PersistedHorizontalScrollScope id={project.id}>
@@ -1894,18 +1914,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             overflow: 'hidden',
             backgroundColor: project.canvas.backgroundColor,
           }}>
-          <View
-            style={{
-              position: 'absolute',
-              inset: 0,
-              transform: [
-                { translateX: (currentVideoTransform.position.x - 0.5) * canvasSize.width },
-                { translateY: (currentVideoTransform.position.y - 0.5) * canvasSize.height },
-                { scale: currentVideoTransform.scale },
-                { rotate: `${currentVideoTransform.rotation}deg` },
-              ],
-            }}>
-          </View>
           {transport.isGap ? (
             <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: project.canvas.backgroundColor }}>
             </View>
@@ -1924,18 +1932,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             players={transport.players}
             slots={transport.slots}
             activeSlot={transport.activeSlot}
-            currentTransform={currentVideoTransform}
+            currentTransform={previewVideoTransform}
+            currentClipId={currentClipEntry?.clip.id}
             onFirstFrameRender={transport.markFirstFrame}
           />
-          {activeTool === 'video' && currentClipEntry ? (
-            <VideoTransformOverlay
-              id={currentClipEntry.clip.id}
-              transform={currentVideoTransform}
-              onInteractionStart={() => { transport.pause(); beginHistoryInteraction(); }}
-              onChange={(patch) => updateVideoTransform(patch, currentClipEntry.clip.id)}
-              onEnd={finishHistoryInteraction}
-            />
-          ) : null}
           {timelineLayers.map((layer) => {
             if (!layer.visible) return null;
             if (layer.kind === 'captions') {
@@ -1956,7 +1956,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     words={project.transcription.words}
                     projectStyle={project.projectStyle}
                     currentMs={currentMs}
-                    selected={activeTool !== 'video' && selectedLayerId === 'captions' && Boolean(selectedCaption)
+                    selected={selectedLayerId === 'captions' && Boolean(selectedCaption)
                       && (scriptEditorOpen || activeCaptions.some((caption) => caption.id === selectedCaption?.id))}
                     deletable={Boolean(selectedCaptionId)}
                   />
@@ -1977,7 +1977,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                       words={[]}
                       projectStyle={pair.style}
                       currentMs={currentMs}
-                      selected={activeTool !== 'video' && selected?.source.id === pair.source.id}
+                      selected={selected?.source.id === pair.source.id}
                     />);
                   })}
                 </View>
@@ -1993,7 +1993,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                     projectStyle={layer.style}
                     geometry={previewGeometryFor(`layer:${layer.id}`, layer.style)}
                     currentMs={currentMs}
-                    selected={activeTool !== 'video' && selectedLayerId === layer.id}
+                    selected={selectedLayerId === layer.id}
                     deletable
                     preserveLineBreaks
                   />
@@ -2004,19 +2004,19 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 key={layer.id}
                 layer={layer}
                 geometry={previewGeometryFor(`layer:${layer.id}`, layer)}
-                selected={activeTool !== 'video' && selectedLayerId === layer.id}
+                selected={selectedLayerId === layer.id}
                 deletable
               />
             );
           })}
-          {activeTool !== 'video' && selectedPreviewTarget ? <LayerTransformOverlay
+          {selectedPreviewTarget ? <LayerTransformOverlay
             geometry={previewGeometryFor(selectedPreviewTarget.key, selectedPreviewTarget.geometry)}
             selected deletable={selectedPreviewTarget.deletable} /> : null}
           <View
             testID="preview-scene-input"
             ref={previewCanvasRef}
             collapsable={false}
-            pointerEvents={activeTool !== 'video' && !blockingUi && !finishingSession ? 'auto' : 'none'}
+            pointerEvents={!blockingUi && !finishingSession ? 'auto' : 'none'}
             onLayout={onPreviewCanvasLayout}
             {...previewSceneResponders}
             style={{ position: 'absolute', inset: 0 }}
@@ -2232,7 +2232,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               onRotation={(rotation) => { beginHistoryInteraction(); updateVideoTransform({ rotation }); }}
               onReset={() => {
                 beginHistoryInteraction();
-                updateVideoTransform({ fit: 'fit', position: { x: 0.5, y: 0.5 }, scale: 1, rotation: 0 });
+                updateVideoTransform({ fit: 'fit', position: { x: 0.5, y: 0.5 }, scale: 1, scaleX: 1, scaleY: 1, rotation: 0 });
                 queueMicrotask(finishHistoryInteraction);
               }}
               onTransformEnd={finishHistoryInteraction}

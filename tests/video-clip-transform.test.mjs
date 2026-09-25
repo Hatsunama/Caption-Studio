@@ -61,6 +61,8 @@ test('transform editing mutates only the addressed clip and split clips retain d
     fit: 'fill',
     position: { x: 0.18, y: 0.5 },
     scale: 2.25,
+    scaleX: 1,
+    scaleY: 1,
     rotation: -125,
   });
 
@@ -131,7 +133,8 @@ test('editor preview and controls resolve a concrete current or selected clip tr
   assert.match(editor, /currentVideoTransform = currentClipEntry\?\.clip\.transform \?\? project\.videoTransform/);
   assert.match(editor, /editableVideoClip = currentClipEntry\?\.clip \?\? selectedClip/);
   assert.match(editor, /setVideoClipTransform\(current, clipId, patch\)/);
-  assert.match(editor, /transform=\{currentVideoTransform\}/);
+  assert.match(editor, /currentTransform=\{previewVideoTransform\}/);
+  assert.match(editor, /selection: \{ kind: 'video', id: currentClipEntry\.clip\.id \}/);
   assert.match(editor, /transform=\{editableVideoTransform\}/);
   assert.doesNotMatch(tools, /project\.videoTransform/);
   assert.doesNotMatch(projectEditor, /export function setVideoTransform\(/);

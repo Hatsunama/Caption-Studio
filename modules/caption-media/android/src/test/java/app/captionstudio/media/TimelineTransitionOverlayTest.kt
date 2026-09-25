@@ -72,7 +72,7 @@ class TimelineTransitionOverlayTest {
   }
 
   private fun overlay(type: String, durationMs: Long = 1_000): TimelineBitmapOverlay {
-    val transform = VideoTransform("fit", 0.5f, 0.5f, 1f, 0f)
+    val transform = VideoTransform("fit", 0.5f, 0.5f, 1f, 1f, 1f, 0f)
     val outgoing = RenderVideoClip(
       id = "outgoing",
       uri = "content://outgoing",
