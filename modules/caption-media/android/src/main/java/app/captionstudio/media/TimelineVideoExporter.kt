@@ -96,7 +96,7 @@ internal class TimelineVideoExporter(private val context: Context) {
     }
 
     try {
-      val composition = buildComposition(plan, task)
+      val preparedComposition = buildComposition(plan, task)
 
       mainHandler.post {
         if (!isActive(task)) return@post
@@ -118,9 +118,15 @@ internal class TimelineVideoExporter(private val context: Context) {
                   try {
                     ensureActive(task)
                     val sizeBytes = requireRenderedVideoFile(task.output)
-                    val verified = inspectRenderedVideo(context, Uri.fromFile(task.output), sizeBytes, plan.durationMs, plan.frameRate)
+                    val verified = requireExpectedOutput(
+                      inspectRenderedVideo(context, Uri.fromFile(task.output), sizeBytes, plan.durationMs, plan.frameRate),
+                      plan.width, plan.height, preparedComposition.audioExpected,
+                    )
                     val mediaUri = publishToMediaLibrary(task, verified)
-                    inspectRenderedVideo(context, mediaUri, verified.sizeBytes, plan.durationMs, plan.frameRate)
+                    requireExpectedOutput(
+                      inspectRenderedVideo(context, mediaUri, verified.sizeBytes, plan.durationMs, plan.frameRate),
+                      plan.width, plan.height, preparedComposition.audioExpected,
+                    )
                     synchronized(stateLock) {
                       // Commit verification under the same lock as cancellation.
                       // Whichever wins decides the promise and artifact lifetime.
@@ -175,7 +181,7 @@ internal class TimelineVideoExporter(private val context: Context) {
             .build()
           task.transformer = transformer
           task.stage = ExportStage.RENDERING
-          transformer.start(composition, task.output.absolutePath)
+          transformer.start(preparedComposition.composition, task.output.absolutePath)
         } catch (error: Throwable) {
           fail(task, "E_VIDEO_EXPORT", error.message ?: "Video export failed", error)
         }
@@ -226,7 +232,7 @@ internal class TimelineVideoExporter(private val context: Context) {
     }
   }
 
-  private fun buildComposition(plan: TimelineRenderPlan, task: ActiveExport): Composition {
+  private fun buildComposition(plan: TimelineRenderPlan, task: ActiveExport): PreparedComposition {
     val baseVideoItem = MediaItem.Builder()
       .setUri(Uri.fromFile(task.baseFrame))
       .setMimeType(MimeTypes.IMAGE_PNG)
@@ -239,12 +245,17 @@ internal class TimelineVideoExporter(private val context: Context) {
     val sequences = mutableListOf<EditedMediaItemSequence>()
     if (plan.clips.isNotEmpty()) sequences += buildNativeVideoSequence(plan)
     sequences += EditedMediaItemSequence.withVideoFrom(listOf(baseVideo))
-    sequences += buildOriginalAudioSequences(plan, task)
-    plan.audioClips.mapNotNull { buildInsertedAudioSequence(it) }.forEach(sequences::add)
-    return Composition.Builder(sequences)
-      .setVideoCompositorSettings(TimelineVideoCompositorSettings(plan))
-      .setEffects(Effects(emptyList(), listOf(OverlayEffect(listOf(task.overlay)))))
-      .build()
+    val originalAudio = buildOriginalAudioSequences(plan, task)
+    val insertedAudio = plan.audioClips.mapNotNull { buildInsertedAudioSequence(it) }
+    sequences += originalAudio
+    sequences += insertedAudio
+    return PreparedComposition(
+      Composition.Builder(sequences)
+        .setVideoCompositorSettings(TimelineVideoCompositorSettings(plan))
+        .setEffects(Effects(emptyList(), listOf(OverlayEffect(listOf(task.overlay)))))
+        .build(),
+      audioExpected = originalAudio.isNotEmpty() || insertedAudio.isNotEmpty(),
+    )
   }
 
   private fun buildNativeVideoSequence(plan: TimelineRenderPlan): EditedMediaItemSequence {
@@ -296,7 +307,8 @@ internal class TimelineVideoExporter(private val context: Context) {
 
   private fun buildInsertedAudioSequence(clip: RenderAudioClip): EditedMediaItemSequence? {
     val sourceEndMs = clip.sourceEndMs
-    if (clip.muted || clip.volume <= 0f || sourceEndMs <= clip.sourceStartMs || !hasAudioTrack(clip.uri)) return null
+    if (clip.muted || clip.volume <= 0f || sourceEndMs <= clip.sourceStartMs) return null
+    check(hasAudioTrack(clip.uri)) { "An added audio clip has no readable audio track" }
     val builder = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
     if (clip.startMs > 0) builder.addGap(clip.startMs * 1_000L)
     val durationMs = sourceEndMs - clip.sourceStartMs
@@ -534,6 +546,8 @@ internal class TimelineVideoExporter(private val context: Context) {
   )
 
   private enum class ExportStage { PREPARING, RENDERING, PUBLISHING }
+
+  private data class PreparedComposition(val composition: Composition, val audioExpected: Boolean)
 
   private data class MediaSourceInfo(val durationMs: Long, val hasAudio: Boolean)
 }
