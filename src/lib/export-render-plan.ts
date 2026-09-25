@@ -328,6 +328,7 @@ function activeProjectVideoSources(project: CaptionProject) {
 
 function outputDimensions(project: CaptionProject, activeSources: CaptionProject['sources']) {
   const aspect = project.canvas.aspectWidth / project.canvas.aspectHeight;
+  if (!Number.isFinite(aspect) || aspect <= 0) throw new Error('The export canvas aspect is invalid.');
   let shortEdge = project.export.resolution === '720p' ? 720 : 1080;
   if (project.export.resolution === 'original' && activeSources.length > 0) {
     shortEdge = Math.max(...activeSources.map((source) => {
@@ -336,9 +337,10 @@ function outputDimensions(project: CaptionProject, activeSources: CaptionProject
       return Math.min(sourceWidth, sourceHeight);
     }));
   }
-  const width = aspect >= 1 ? shortEdge / Math.min(1, 1 / aspect) : shortEdge;
+  const width = aspect >= 1 ? shortEdge * aspect : shortEdge;
   const height = aspect >= 1 ? shortEdge : shortEdge / aspect;
-  return { width: even(width), height: even(height) };
+  const scale = Math.min(1, 3840 / Math.max(width, height));
+  return { width: even(width * scale), height: even(height * scale) };
 }
 
 function even(value: number) {
