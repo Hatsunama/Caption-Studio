@@ -23,7 +23,7 @@ import { mapPreviewTranslationTracks } from '@/lib/translation-preview-timeline'
 import { audioClipEnd } from '@/lib/audio-timeline';
 import { audioWaveformWindow } from '@/lib/audio-waveform';
 import { adjustTimelineTiming, TIMELINE_ACCESSIBILITY_ACTIONS, timelineTimingLabel, createTimelineTimingGesture, timelineVisibleTrackBounds, type TimelineTimingGestureOwner } from '@/lib/timeline-gesture';
-import { timelineHandleLayout, timelineHandleMarkerLayout, timelineOutsideHandleOffset } from '@/lib/timeline-handle-layout';
+import { timelineHandleLayout, timelineHandleMarkerLayout, timelineVideoHandleLayout } from '@/lib/timeline-handle-layout';
 import { ensureClipFrameThumbnail } from '@/services/project-media';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import type { TimelineItemReference, TimelineTimingEdge } from '@/lib/timeline-item-editor';
@@ -652,62 +652,75 @@ function VideoClipBlock(props: {
   const clipDuration = Math.max(120, props.endMs - props.startMs);
   const tile = props.tileSize ?? REORDER_TILE;
   const gap = props.tileGap ?? REORDER_GAP;
-  const left = props.filmstrip
+  const blockLeft = props.filmstrip
     ? props.clipIndex * (tile + gap)
     : props.startMs / props.durationMs * props.trackWidth;
-  const width = props.filmstrip
+  const blockWidth = props.filmstrip
     ? tile
     : Math.max(2, clipDuration / props.durationMs * props.trackWidth - 2);
+  const showTrimGrips = props.selected && !props.reordering && !props.filmstrip;
+  const handleLayout = timelineVideoHandleLayout(blockLeft, blockWidth, props.trackWidth, showTrimGrips);
   return (
     <View
       style={{
         position: 'absolute',
-        left,
-        width,
+        left: handleLayout.left,
+        width: handleLayout.width,
         top: props.filmstrip || props.reordering ? 4 : 3,
         bottom: props.filmstrip || props.reordering ? 4 : 3,
         zIndex: props.reordering ? 8 : props.selected ? 5 : 1,
-        justifyContent: props.filmstrip ? 'flex-end' : 'center',
-        paddingHorizontal: props.filmstrip ? 4 : 10,
-        paddingBottom: props.filmstrip ? 4 : 0,
-        overflow: 'hidden',
-        borderRadius: props.filmstrip ? 10 : chrome.radius.sm,
-        borderWidth: props.selected || props.reordering ? 2 : props.filmstrip ? 1 : 0,
-        borderColor: props.reordering ? '#FFFFFF' : props.selected ? chrome.accent : '#2A323A',
-        backgroundColor: props.color,
-        opacity: props.reordering ? 0.98 : 1,
+        overflow: 'visible',
         transform: props.reordering ? [{ scale: 1.04 }] : undefined,
       }}>
-      {props.filmstrip ? (
-        <ClipFrameThumb
-          projectId={props.projectId}
-          clipId={props.clip.id}
-          sourceUri={props.sourceUri}
-          fallbackUri={props.fallbackThumbUri}
-          sourceStartMs={props.clip.sourceStartMs}
-          style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}
-          contentFit="cover"
-        />
-      ) : null}
-      <View pointerEvents="none" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, zIndex: 2 }}>
-        <Text numberOfLines={1} style={{ color: '#F7F8FA', fontSize: props.filmstrip ? 9 : 8, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.75)', textShadowRadius: 3 }}>{props.label}</Text>
-        {!props.filmstrip ? (
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: handleLayout.visualLeft,
+          width: handleLayout.visualWidth,
+          top: 0,
+          bottom: 0,
+          justifyContent: props.filmstrip ? 'flex-end' : 'center',
+          paddingHorizontal: props.filmstrip ? 4 : 10,
+          paddingBottom: props.filmstrip ? 4 : 0,
+          overflow: 'hidden',
+          borderRadius: props.filmstrip ? 10 : chrome.radius.sm,
+          borderWidth: props.selected || props.reordering ? 2 : props.filmstrip ? 1 : 0,
+          borderColor: props.reordering ? '#FFFFFF' : props.selected ? chrome.accent : '#2A323A',
+          backgroundColor: props.color,
+          opacity: props.reordering ? 0.98 : 1,
+        }}>
+        {props.filmstrip ? (
           <ClipFrameThumb
             projectId={props.projectId}
             clipId={props.clip.id}
             sourceUri={props.sourceUri}
             fallbackUri={props.fallbackThumbUri}
             sourceStartMs={props.clip.sourceStartMs}
-            style={{ width: 18, height: 18, borderRadius: 3, backgroundColor: '#12161B' }}
+            style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}
             contentFit="cover"
           />
         ) : null}
+        <View pointerEvents="none" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, zIndex: 2 }}>
+          <Text numberOfLines={1} style={{ color: '#F7F8FA', fontSize: props.filmstrip ? 9 : 8, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.75)', textShadowRadius: 3 }}>{props.label}</Text>
+          {!props.filmstrip ? (
+            <ClipFrameThumb
+              projectId={props.projectId}
+              clipId={props.clip.id}
+              sourceUri={props.sourceUri}
+              fallbackUri={props.fallbackThumbUri}
+              sourceStartMs={props.clip.sourceStartMs}
+              style={{ width: 18, height: 18, borderRadius: 3, backgroundColor: '#12161B' }}
+              contentFit="cover"
+            />
+          ) : null}
+        </View>
       </View>
-      <VideoMoveGrip {...props} />
-      {props.selected && !props.reordering && !props.filmstrip ? (
+      <VideoMoveGrip {...props} bodyLeft={handleLayout.visualLeft} bodyWidth={handleLayout.visualWidth} />
+      {showTrimGrips ? (
         <>
-          <VideoTrimGrip side="start" {...props} />
-          <VideoTrimGrip side="end" {...props} />
+          <VideoTrimGrip {...props} side="start" gripLeft={handleLayout.startGripLeft} />
+          <VideoTrimGrip {...props} side="end" gripLeft={handleLayout.endGripLeft} />
         </>
       ) : null}
     </View>
@@ -745,7 +758,7 @@ function ClipFrameThumb(props: {
   return <Image source={{ uri }} contentFit={props.contentFit} style={props.style} />;
 }
 
-function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'start' | 'end' }) {
+function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'start' | 'end'; gripLeft: number }) {
   const propsRef = useRef(props);
   propsRef.current = props;
   const targetRef = useRef(props.side === 'start' ? props.clip.sourceStartMs : props.clip.sourceEndMs);
@@ -791,19 +804,18 @@ function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'st
       current.onTrimCommit(current.side, targetRef.current);
     },
   }, props.side, props.onGestureLock);
-  const outsideOffset = timelineOutsideHandleOffset(props.side, TIMELINE_EDGE_HANDLE_WIDTH);
   return (
     <View
       {...panHandlers}
       accessibilityRole="adjustable"
       accessibilityLabel={`${props.side === 'start' ? 'Start' : 'End'} trim handle`}
-      style={{ position: 'absolute', ...outsideOffset, top: -3, bottom: -3, width: TIMELINE_EDGE_HANDLE_WIDTH, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: TIMELINE_EDGE_HANDLE_COLOR }}>
+      style={{ position: 'absolute', left: props.gripLeft, top: -3, bottom: -3, width: TIMELINE_EDGE_HANDLE_WIDTH, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: TIMELINE_EDGE_HANDLE_COLOR }}>
       <View pointerEvents="none" style={{ width: 3, height: 18, borderRadius: 2, backgroundColor: TIMELINE_EDGE_HANDLE_BAR_COLOR }} />
     </View>
   );
 }
 
-function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0]) {
+function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft: number; bodyWidth: number }) {
   const propsRef = useRef(props);
   propsRef.current = props;
   const gapRef = useRef(props.leadingGapMs);
@@ -892,13 +904,16 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0]) {
     longPressTimerRef.current = null;
   }, []);
 
+  const moveWidth = props.selected && !props.reordering && !props.filmstrip
+    ? Math.max(8, props.bodyWidth - 32) : props.bodyWidth;
+  const moveLeft = props.bodyLeft + (props.bodyWidth - moveWidth) / 2;
   return (
     <View
       {...responder.panHandlers}
       accessible
       accessibilityRole="adjustable"
       accessibilityLabel={`${props.label}. Tap to select. Hold then drag to reorder. Drag horizontally to add or remove empty space before this clip.`}
-      style={{ position: 'absolute', left: props.selected ? 16 : 0, right: props.selected ? 16 : 0, top: 0, bottom: 0 }}
+      style={{ position: 'absolute', left: moveLeft, width: moveWidth, top: 0, bottom: 0 }}
     />
   );
 }
