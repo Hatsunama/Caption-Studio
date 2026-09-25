@@ -158,7 +158,7 @@ export async function translateNaturalCaptionBatch(options: {
   captions: NaturalTranslationUnit[];
   allCaptions?: NaturalTranslationUnit[];
   onProgress?: (progress: CaptionTranslationProgress) => void;
-  onAcceptedBatch?: (batch: NaturalCaptionTranslation) => Promise<void>;
+  onAcceptedBatch?: (batch: NaturalCaptionTranslation) => Promise<void | boolean>;
 }): Promise<NaturalCaptionTranslation> {
   const operationId = 'caption-translation';
   const session = await translateNaturalCaptionOperations({
@@ -171,7 +171,7 @@ export async function translateNaturalCaptionBatch(options: {
     }],
     onProgress: options.onProgress,
     onAcceptedBatch: options.onAcceptedBatch
-      ? async (_id, batch) => { await options.onAcceptedBatch!(batch); }
+      ? async (_id, batch) => options.onAcceptedBatch!(batch)
       : undefined,
   });
   const captions = session.operations.get(operationId);
@@ -187,7 +187,7 @@ export async function translateNaturalCaptionBatch(options: {
 export async function translateNaturalCaptionOperations(options: {
   operations: NaturalCaptionTranslationOperation[];
   onProgress?: (progress: CaptionTranslationProgress) => void;
-  onAcceptedBatch?: (operationId: string, batch: NaturalCaptionTranslation) => Promise<void>;
+  onAcceptedBatch?: (operationId: string, batch: NaturalCaptionTranslation) => Promise<void | boolean>;
 }): Promise<NaturalCaptionTranslationSession> {
   const limits = requireNaturalCaptionTranslationLimits(CaptionTranslation.limits);
   if (activeTranslation) throw new Error('Another caption translation is already running.');
@@ -303,7 +303,8 @@ export async function translateNaturalCaptionOperations(options: {
         failureReasons.set(originalId, failureByKey.get(caption.id) ?? 'output-needs-review');
       }
     }
-    await options.onAcceptedBatch(operation.id, { captions, needsReview, failureReasons, provider });
+    const committed = await options.onAcceptedBatch(operation.id, { captions, needsReview, failureReasons, provider });
+    if (committed === false) throw new Error('The translation batch was not saved to the project. Refresh to retry.');
     committedBatches.add(batchIndex);
   };
   const queueBatch = (event: NaturalCaptionTranslationAcceptedBatch) => {

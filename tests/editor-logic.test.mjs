@@ -1097,7 +1097,26 @@ test('adjusting one subtitle leaves neighboring subtitles where they are', () =>
   const shifted = setCaptionTiming(project, 'right', 'move', 1_200, 2_200);
   assert.deepEqual(shifted.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_000], [1_200, 2_200]]);
   const overlapped = setCaptionTiming(project, 'left', 'end', 0, 1_500);
-  assert.deepEqual(overlapped.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_500], [1_000, 2_000]]);
+  assert.deepEqual(overlapped.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_000], [1_000, 2_000]]);
+  const startedIntoNeighbor = setCaptionTiming(project, 'right', 'start', 500, 2_000);
+  assert.deepEqual(startedIntoNeighbor.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_000], [1_000, 2_000]]);
+  const movedIntoNeighbor = setCaptionTiming(project, 'right', 'move', 500, 1_500);
+  assert.deepEqual(movedIntoNeighbor.captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 1_000], [1_000, 2_000]]);
+});
+
+test('retiming a legacy long cue stops at the next spoken cue without changing its neighbor', () => {
+  const project = projectFixture({
+    clips: [clip({ id: 'clip', sourceEndMs: 20_000, availableSourceEndMs: 20_000 })],
+    captions: [
+      { id: 'long', text: 'my top 10 tips for how to', startMs: 373, endMs: 14_502, wordIds: [], timelineVisible: true },
+      { id: 'next', text: 'use your AI agent', startMs: 2_193, endMs: 4_243, wordIds: [], timelineVisible: true },
+    ],
+  });
+  const edited = setCaptionTiming(project, 'long', 'end', 373, 2_500);
+  assert.deepEqual(edited.captions.map(({ id, startMs, endMs }) => [id, startMs, endMs]), [
+    ['long', 373, 2_193],
+    ['next', 2_193, 4_243],
+  ]);
 });
 
 test('manual caption timing can cross cuts and re-anchors only inside one clip', () => {

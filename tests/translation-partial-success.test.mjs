@@ -12,3 +12,9 @@ test('accepted batches use the durable project commit callback', async () => {
   assert.match(hook, /onAcceptedBatch: async \(batch\)/);
   assert.match(hook, /await optionsRef\.current\.commitProject\(current, updated\)/);
 });
+
+test('incremental refresh rejects a batch when any source or cue changed', async () => {
+  const hook = await readFile(new URL('src/hooks/use-project-caption-translation.ts', root), 'utf8');
+  assert.match(hook, /safe\.length !== batchCaptions\.length/);
+  assert.match(hook, /if \(!committed\) throw new Error/);
+});

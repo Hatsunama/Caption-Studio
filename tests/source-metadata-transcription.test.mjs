@@ -76,12 +76,34 @@ test('source-transcription reuse requires the same SHA-256 fingerprint and model
     words: [],
   };
 
-  assert.equal(fingerprint.digest, 'a'.repeat(64));
+  assert.equal(fingerprint.digest, 'b'.repeat(64));
   assert.equal(canReuseSourceTranscription(matching, 'balanced', fingerprint), true);
   assert.equal(canReuseSourceTranscription({ ...matching, sourceFingerprint: undefined }, 'balanced', fingerprint), false);
   assert.equal(canReuseSourceTranscription(matching, 'accurate', fingerprint), false);
   assert.equal(canReuseSourceTranscription(matching, 'balanced', createSourceTranscriptionFingerprint('b'.repeat(64))), false);
+  assert.equal(canReuseSourceTranscription({ ...matching, words: [
+    { id: 'first', text: 'First', startMs: 100, endMs: 300 },
+    { id: 'second', text: 'Second', startMs: 200, endMs: 400 },
+  ] }, 'balanced', fingerprint), false);
   assert.throws(() => createSourceTranscriptionFingerprint('not-a-digest'), /fingerprint is invalid/);
+});
+
+test('source-transcription cache invalidates across alignment and VAD revisions without changing media digest', () => {
+  const mediaDigest = 'a'.repeat(64);
+  const previous = createSourceTranscriptionFingerprint(mediaDigest, '0'.repeat(64));
+  const current = createSourceTranscriptionFingerprint(mediaDigest, '1'.repeat(64));
+  const result = {
+    language: 'en',
+    modelId: 'balanced',
+    generatedAt: '2026-08-27T00:00:00.000Z',
+    sourceFingerprint: previous,
+    words: [],
+  };
+
+  assert.notEqual(current.digest, previous.digest);
+  assert.equal(canReuseSourceTranscription(result, 'balanced', current), false);
+  assert.equal(canReuseSourceTranscription(result, 'balanced', previous), true);
+  assert.notEqual(createSourceTranscriptionFingerprint(mediaDigest).digest, mediaDigest);
 });
 
 test('fingerprints persist canonically while legacy results remain intentionally non-reusable', () => {
@@ -122,7 +144,8 @@ test('native probing, import, and generation retain one explicit metadata and ca
   assert.match(importer, /frameRate: info\.frameRate/);
   assert.match(pipeline, /CaptionMedia\.sha256\(source\.uri\)/);
   assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint\)/);
-  assert.match(pipeline, /sourceFingerprint,[\s\S]*words: result\.words/);
+  assert.match(pipeline, /canonicalizeSourceWords\(result\.words, source\.durationMs\)/);
+  assert.match(pipeline, /sourceFingerprint,[\s\S]*words: canonicalWords/);
 });
 
 test('video validation rejects invalid probed frame rates without rejecting a legacy omission', () => {

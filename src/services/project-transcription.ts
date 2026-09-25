@@ -9,6 +9,7 @@ import {
   createSourceTranscriptionFingerprint,
 } from '@/lib/source-transcription-fingerprint';
 import { anchorCaptionsToClips, mapSourceWordsToTimeline } from '@/lib/video-timeline';
+import { canonicalizeSourceWords } from '@/lib/primary-caption-timing';
 import {
   transcribeVideoLocally,
   type TranscriptionModelId,
@@ -66,29 +67,14 @@ async function generateProjectCaptionsFromSources(
       session,
     });
     session?.throwIfCancelled();
+    const canonicalWords = canonicalizeSourceWords(result.words, source.durationMs);
     sourceResults[sourceId] = {
       language: result.language,
       modelId,
       generatedAt: new Date().toISOString(),
       sourceFingerprint,
-      words: result.words,
+      words: canonicalWords,
     };
-    if (onCheckpoint) {
-      session?.throwIfCancelled();
-      const allSourcesReady = sourceIds.every((sourceId) => sourceResults[sourceId]?.language);
-      await onCheckpoint({
-        ...project,
-        updatedAt: new Date().toISOString(),
-        transcription: {
-          ...project.transcription,
-          sourceResults: { ...sourceResults },
-          ...(allSourcesReady
-            ? { language: canonicalCaptionLanguageTag(sourceResults[sourceIds[0]]!.language) }
-            : {}),
-        },
-      });
-      session?.throwIfCancelled();
-    }
   }
 
   const sourceWords: Record<string, WordToken[]> = {};
@@ -127,10 +113,16 @@ async function generateProjectCaptionsFromSources(
     },
     captions,
   } satisfies CaptionProject;
-  return {
+  const completed = {
     ...generated,
     captionTracks: synchronizeCaptionTracksAfterTranscription(project, generated),
   };
+  if (onCheckpoint) {
+    session?.throwIfCancelled();
+    await onCheckpoint(completed);
+    session?.throwIfCancelled();
+  }
+  return completed;
 }
 export async function generateProjectCaptions(
   ...args: Parameters<typeof generateProjectCaptionsFromSources>

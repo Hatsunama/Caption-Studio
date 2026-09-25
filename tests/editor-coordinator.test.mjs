@@ -119,7 +119,13 @@ for (const legacyDuration of [0, 1, 40, 79]) test(`no-op script save after trans
 
 for (const kind of ['caption', 'translation']) for (const edge of ['move', 'start', 'end']) {
   for (const action of ['increment', 'decrement']) test(`${kind} ${edge} ${action} accessibility command persists once with real workspace undo/redo`, async () => {
-    const h = mount(), before = h.project;
+    const needsEarlierRoom = kind === 'caption' && action === 'decrement' && (edge === 'move' || edge === 'start');
+    const h = needsEarlierRoom ? (() => {
+      const project = fixture();
+      project.captions[0].endMs = 900;
+      return mount(project);
+    })() : mount();
+    const before = h.project;
     const timeline = h.all((node) => node.type === 'LayerTimeline')[0].props;
     const cue = kind === 'caption' ? before.captions[1] : resolveCaptionPairs(before, 'fr')[1];
     const item = kind === 'caption' ? { kind, captionId: 'cue-1' } : { kind, trackId: 'fr', sourceCaptionId: 'cue-1' };
@@ -140,6 +146,29 @@ for (const kind of ['caption', 'translation']) for (const edge of ['move', 'star
     h.unmount();
   });
 }
+
+for (const edge of ['move', 'start']) test(`caption ${edge} decrement at a touching boundary is a no-op without persistence or history`, async () => {
+  const h = mount();
+  const before = h.project;
+  const writesBefore = h.calls.writes.length;
+  const timeline = h.all((node) => node.type === 'LayerTimeline')[0].props;
+  const cue = before.captions[1];
+  adjustTimelineTiming({ startMs: cue.startMs, endMs: cue.endMs, durationMs: 6000, trackWidth: 300,
+    onPress: () => {},
+    onChangeStart: timeline.onTimingChangeStart,
+    onChange: (side, start, end) => timeline.onItemTimingChange({ kind: 'caption', captionId: 'cue-1' }, side, start, end),
+    onEnd: timeline.onTimingChangeEnd,
+  }, edge, 'decrement');
+  await h.flush();
+  assert.equal(h.project, before);
+  assert.equal(h.calls.writes.length, writesBefore);
+  h.actions.undo(); await h.flush();
+  assert.equal(h.project, before);
+  h.actions.redo(); await h.flush();
+  assert.equal(h.project, before);
+  assert.equal(h.calls.writes.length, writesBefore);
+  h.unmount();
+});
 
 test('workspace sends every overlapping active primary and translated cue to preview in export order', () => {
   const project = fixture();

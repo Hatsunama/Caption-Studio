@@ -4,6 +4,7 @@ import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/ca
 import { captionLayoutText } from '@/lib/caption-text-breaks';
 import { effectiveVideoTransition } from '@/lib/video-transitions';
 import { isProjectIdentifier } from '@/lib/project-identifiers';
+import { primaryCaptionSurvives, primaryCaptionVisible } from '@/lib/primary-caption-timing';
 
 export const MINIMUM_CLIP_TIMELINE_MS = 120;
 
@@ -64,6 +65,44 @@ export function buildClipTimeline(clips: VideoClip[]): ClipTimelineEntry[] {
     cursor += validGap(clip.gapAfterMs);
     return { clip, gapStartMs, startMs, endMs, afterGapEndMs: cursor };
   });
+}
+
+/** A secondary cue belongs to the clip covering most of its own interval. */
+export function dominantMediaOwner(
+  entries: ClipTimelineEntry[],
+  range: { startMs: number; endMs: number },
+  primaryClipId?: string,
+): ClipTimelineEntry | undefined {
+  let owner: ClipTimelineEntry | undefined;
+  let maximumOverlap = 0;
+  for (const entry of entries) {
+    const overlap = Math.min(range.endMs, entry.endMs) - Math.max(range.startMs, entry.startMs);
+    if (overlap > 0 && (overlap > maximumOverlap
+      || (overlap === maximumOverlap && entry.clip.id === primaryClipId))) {
+      owner = entry;
+      maximumOverlap = overlap;
+    }
+  }
+  return owner;
+}
+
+export function translationReorderMapping(before: VideoClip[], after: VideoClip[]): TranslationTimeMapping {
+  const oldEntries = buildClipTimeline(before);
+  const nextById = new Map(buildClipTimeline(after).map((entry) => [entry.clip.id, entry]));
+  return {
+    operation: 'reorder',
+    durationMs: totalClipDuration(after),
+    mapRange: (range, beforeCaption) => {
+      // Gap-only and out-of-media cues retain absolute timing. The track
+      // remapper clamps the result to timeline bounds and hides empty ranges.
+      const owner = dominantMediaOwner(oldEntries, range, beforeCaption.sourceAnchor?.clipId);
+      if (!owner) return range;
+      const next = nextById.get(owner.clip.id);
+      if (!next) throw new Error('Translation reorder mapping lost a clip.');
+      const delta = next.startMs - owner.startMs;
+      return { startMs: range.startMs + delta, endMs: range.endMs + delta };
+    },
+  };
 }
 
 export function timelineEntryAt(entries: ClipTimelineEntry[], timelineMs: number) {
@@ -269,7 +308,7 @@ export function anchorCaptionsToClips(
         startMs: owner.startMs,
         endMs: owner.endMs,
         wordIds: owner.wordIds,
-        timelineVisible: owner.endMs - owner.startMs >= 80,
+        timelineVisible: primaryCaptionVisible(caption, owner.startMs, owner.endMs),
         sourceAnchor: {
           clipId: owner.entry.clip.id,
           sourceStartMs: sourceTimeAt(owner.entry, owner.startMs),
@@ -296,7 +335,10 @@ export function remapCaptionsToTimeline(
     if (!entry) return { ...caption, timelineVisible: false };
     const visibleSourceStart = Math.max(anchor.sourceStartMs, entry.clip.sourceStartMs);
     const visibleSourceEnd = Math.min(anchor.sourceEndMs, entry.clip.sourceEndMs);
-    if (visibleSourceEnd <= visibleSourceStart) return { ...caption, timelineVisible: false };
+    if (visibleSourceEnd <= visibleSourceStart) {
+      const boundaryMs = timelineTimeAt(entry, anchor.sourceStartMs);
+      return { ...caption, startMs: boundaryMs, endMs: boundaryMs, timelineVisible: false };
+    }
     const startMs = timelineTimeAt(entry, visibleSourceStart);
     const endMs = timelineTimeAt(entry, visibleSourceEnd);
     const keepExistingWords = timelineWords.length === 0;
@@ -308,7 +350,11 @@ export function remapCaptionsToTimeline(
       endMs,
       wordIds,
       text: caption.textMode === 'automatic' && automaticText ? automaticText : caption.text,
-      timelineVisible: endMs - startMs >= 80,
+      timelineVisible: caption.timelineVisible === false
+        && caption.startMs === caption.endMs
+        && anchor.sourceEndMs > anchor.sourceStartMs
+        ? endMs > startMs
+        : primaryCaptionVisible(caption, startMs, endMs),
     };
   });
 }
@@ -338,7 +384,7 @@ export function rippleTimedContent(project: CaptionProject, cutStartMs: number, 
   const wordMap = new Map(words.map((word) => [word.id, word]));
   const captions = project.captions
     .map((caption) => {
-      const range = rippleRange(caption.startMs, caption.endMs, cutStartMs, cutEndMs);
+      const range = rippleRange(caption.startMs, caption.endMs, cutStartMs, cutEndMs, primaryCaptionSurvives);
       if (!range) return undefined;
       const wordIds = caption.wordIds.filter((id) => wordMap.has(id));
       const text = caption.textMode === 'manual' || wordIds.length === 0
@@ -411,18 +457,24 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
   };
 }
 
-function rippleRange(startMs: number, endMs: number, cutStartMs: number, cutEndMs: number) {
+function rippleRange(
+  startMs: number,
+  endMs: number,
+  cutStartMs: number,
+  cutEndMs: number,
+  survives: (startMs: number, endMs: number) => boolean = (start, end) => end - start >= 80,
+) {
   const removed = Math.max(0, cutEndMs - cutStartMs);
   if (endMs <= cutStartMs) return { startMs, endMs };
   if (startMs >= cutEndMs) return { startMs: startMs - removed, endMs: endMs - removed };
   if (startMs < cutStartMs && endMs > cutEndMs) return { startMs, endMs: endMs - removed };
   if (startMs < cutStartMs) {
     const next = { startMs, endMs: cutStartMs };
-    return next.endMs - next.startMs >= 80 ? next : undefined;
+    return survives(next.startMs, next.endMs) ? next : undefined;
   }
   if (endMs > cutEndMs) {
     const next = { startMs: cutStartMs, endMs: endMs - removed };
-    return next.endMs - next.startMs >= 80 ? next : undefined;
+    return survives(next.startMs, next.endMs) ? next : undefined;
   }
   return undefined;
 }

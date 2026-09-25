@@ -5,6 +5,7 @@ import {
   captionTextLength,
 } from '@/lib/caption-text-breaks';
 import type { CaptionBlock, WordToken } from '@/types/project';
+import { normalizeProjectedPrimaryWords, sequenceGeneratedPrimaryCaptions } from '@/lib/primary-caption-timing';
 
 export type CaptionGroupingOptions = {
   maxWords: number;
@@ -43,6 +44,20 @@ function isUnspacedNonHangulToken(text: string) {
   return UNSPACED_NON_HANGUL.test(text);
 }
 
+function normalizeCaptionTimings(
+  captions: CaptionBlock[], words: WordToken[], options: CaptionGroupingOptions,
+): CaptionBlock[] {
+  const wordById = new Map(words.map((word) => [word.id, word]));
+  const fitsTextBudget = (caption: CaptionBlock) => {
+    const cueWords = caption.wordIds.map((id) => wordById.get(id));
+    if (cueWords.some((word) => !word)) return false;
+    return cueWords.filter((word) => !isUnspacedNonHangulToken(word!.text)).length <= options.maxWords
+      && captionTextLength(caption.text) <= options.maxCharacters
+      && captionCjkCharacterCount(caption.text) <= options.maxCjkCharacters;
+  };
+  return sequenceGeneratedPrimaryCaptions(captions, options.maxDurationMs, fitsTextBudget);
+}
+
 export function groupWordsIntoCaptions(
   words: WordToken[],
   options: CaptionGroupingOptions = DEFAULT_GROUPING_OPTIONS,
@@ -79,15 +94,15 @@ export function groupWordsIntoCaptions(
 
   flush();
 
-  return groups.map((group, index) => ({
+  return normalizeCaptionTimings(groups.map((group, index) => ({
     id: `caption-${index + 1}`,
     text: joinWords(group),
-    startMs: group[0].startMs,
-    endMs: group.at(-1)!.endMs,
+    startMs: group.reduce((start, word) => Math.min(start, word.startMs), Infinity),
+    endMs: group.reduce((end, word) => Math.max(end, word.endMs), -Infinity),
     wordIds: group.map((word) => word.id),
     textMode: 'automatic',
     timelineVisible: true,
-  }));
+  })), words, options);
 }
 
 export function groupTimelineWordsByClip(
@@ -95,10 +110,26 @@ export function groupTimelineWordsByClip(
   clipIds: string[],
   options: CaptionGroupingOptions | ((clipId: string) => CaptionGroupingOptions) = DEFAULT_GROUPING_OPTIONS,
 ) {
-  return clipIds.flatMap((clipId) => groupWordsIntoCaptions(
-    words.filter((word) => word.id.startsWith(`${clipId}-`)),
-    typeof options === 'function' ? options(clipId) : options,
-  ).map((caption, index) => ({ ...caption, id: `caption-${clipId}-${index + 1}` })));
+  let previousClipEndMs = -Infinity;
+  const captions = clipIds.flatMap((clipId) => {
+    const clipWords = words.filter((word) => word.id.startsWith(`${clipId}-`));
+    if (clipWords.length === 0) return [];
+    const normalizedWords = normalizeProjectedPrimaryWords(
+      clipWords,
+      clipId,
+      Math.max(previousClipEndMs, clipWords[0].startMs),
+      Math.max(...clipWords.map((word) => word.endMs)),
+    );
+    previousClipEndMs = normalizedWords.at(-1)!.endMs;
+    return groupWordsIntoCaptions(normalizedWords, typeof options === 'function' ? options(clipId) : options)
+      .map((caption, index) => ({ ...caption, id: `caption-${clipId}-${index + 1}` }));
+  });
+  for (let index = 1; index < captions.length; index += 1) {
+    if (captions[index].startMs < captions[index - 1].endMs) {
+      throw new Error(`Primary caption timing quality failure: clip groups overlap at ${captions[index].id}`);
+    }
+  }
+  return captions;
 }
 
 export function joinWords(words: WordToken[]): string {

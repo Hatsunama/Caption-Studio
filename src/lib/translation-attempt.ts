@@ -48,5 +48,10 @@ export function translationAttemptMessage(project: CaptionProject, trackId: stri
   const selected = new Set(ids);
   const track = project.captionTracks.translations.find((candidate) => candidate.id === trackId);
   const failed = track?.cues.filter((cue) => selected.has(cue.sourceCaptionId) && cue.status === 'failed').length ?? 0;
-  return failed ? `${failed} subtitle translation attempt${failed === 1 ? '' : 's'} failed. Refresh any or all failed lines, skip them, or export available text and source fallbacks anyway.` : undefined;
+  const pending = track?.cues.filter((cue) => selected.has(cue.sourceCaptionId) && cue.status === 'pending').length ?? 0;
+  if (!failed && !pending) return undefined;
+  const failures = failed ? `${failed} subtitle translation attempt${failed === 1 ? '' : 's'} failed. ` : '';
+  const unfinished = pending ? `${pending} subtitle translation${pending === 1 ? '' : 's'} remain${pending === 1 ? 's' : ''} pending. ` : '';
+  const refreshAction = failed && !pending ? 'Refresh any or all failed lines' : 'Refresh any or all unfinished lines';
+  return `${failures}${unfinished}${refreshAction}, skip them, or export available text and source fallbacks anyway.`;
 }
