@@ -10,7 +10,7 @@ Previously published APKs are immutable and may still use an older ID. The Windo
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.97) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.98) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -29,7 +29,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.97/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.98/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -89,7 +89,7 @@ Never uninstall or clear any of these apps to bypass an installation failure. Ke
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.97** (`v1.4.97`, Android version code 109).
+Current Android build: **1.4.98** (`v1.4.98`, Android version code 110).
 
 ## What the current Android build includes
 
@@ -111,7 +111,7 @@ Current Android build: **1.4.97** (`v1.4.97`, Android version code 109).
 - Presentation-timestamp-aware audio extraction plus on-device Silero voice-activity detection, so Whisper tokens inside opening or interior silence are rejected instead of becoming early captions
 - Responsive preparation feedback that reaches 5% after 3 seconds, advances from 6% through 10% in 22-second steps, then follows real decoding progress
 - Safe **Generate again** control for replacing caption text/timing while preserving the project style and added layers
-- One downloadable on-device Whisper caption model; obsolete caption-model downloads are removed from app storage on the next caption use
+- One verified downloadable Fast Whisper caption model; obsolete caption-model downloads are retired from the app cache
 - Optional second-language subtitle tracks for every language in the in-app language picker, generated entirely on-device after one approximately 1.6 GB Qwen model download
 - A centered model-download and translation dialog that explains the one-time local-AI setup clearly; leaving the app cancels safely and produces a plain-English retry message instead of exposing a native error
 - Independently owned language tracks: editing, moving, or trimming one translated cue does not rewrite or reposition its primary cue or neighboring translated cues; explicit AI Refresh replaces only the requested translated lines
