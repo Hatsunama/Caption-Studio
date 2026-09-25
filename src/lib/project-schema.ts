@@ -272,7 +272,7 @@ function decodeTranscription(value: unknown, fallbackGeneratedAt: string): Capti
   }
   return {
     language: optionalNonEmptyString(transcription.language, 'transcription language') ?? 'en',
-    modelId: optionalNonEmptyString(transcription.modelId, 'transcription model') ?? 'balanced',
+    modelId: optionalNonEmptyString(transcription.modelId, 'transcription model') ?? 'fast',
     generatedAt: optionalDateString(transcription.generatedAt, 'transcription generation date'),
     wordTiming: optionalEnum(transcription.wordTiming, ['source', 'timeline'] as const, 'transcription word timing'),
     words,

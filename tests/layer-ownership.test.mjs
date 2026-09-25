@@ -68,12 +68,12 @@ test('UI sees presentation metadata while provider and native layers own release
     }
   }
   assert.match(editor, /NATURAL_TRANSLATION_MODEL_LABEL/);
-  assert.match(editor, /TRANSCRIPTION_MODEL_OPTIONS/);
+  assert.match(editor, /isCaptionModelReady/);
   assert.doesNotMatch(editor, /TRANSCRIPTION_MODELS|downloadUrl|sha256|modelRevision|ggml-/);
   assert.doesNotMatch(provider, /export const NATURAL_TRANSLATION_MODEL\s*=/);
   assert.match(provider, /const NATURAL_TRANSLATION_MODEL\s*=/);
-  assert.match(transcription, /const TRANSCRIPTION_MODELS:/);
-  assert.doesNotMatch(transcription, /export const TRANSCRIPTION_MODELS/);
+  assert.match(transcription, /const CAPTION_MODEL:/);
+  assert.doesNotMatch(transcription, /export const CAPTION_MODEL/);
   assert.equal(existsSync(join(root, 'src', 'lib', 'model-catalog.ts')), false);
   assert.doesNotMatch(provider, /availMem|lowMemory|isLowRamDevice/);
   assert.match(environment, /isLowRamDevice/);

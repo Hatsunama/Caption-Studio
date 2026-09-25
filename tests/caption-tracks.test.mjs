@@ -243,7 +243,7 @@ test('completed sourceResults win over a stale same-family project language', ()
       sourceResults: {
         [base.clips[0].sourceId]: {
           language: 'yue',
-          modelId: 'balanced',
+          modelId: 'fast',
           generatedAt: '2026-08-27T12:00:00.000Z',
           words: [],
         },
@@ -638,7 +638,7 @@ function multiSourceProject(languages) {
       language: languages[0],
       sourceResults: Object.fromEntries(sources.map((source, index) => [source.id, {
         language: languages[index],
-        modelId: 'balanced',
+        modelId: 'fast',
         generatedAt: '2026-08-27T12:00:00.000Z',
         words: [],
       }])),

@@ -70,21 +70,21 @@ test('source-transcription reuse requires the same SHA-256 fingerprint and model
   const fingerprint = createSourceTranscriptionFingerprint('A'.repeat(64));
   const matching = {
     language: 'en',
-    modelId: 'balanced',
+    modelId: 'fast',
     generatedAt: '2026-08-27T00:00:00.000Z',
     sourceFingerprint: fingerprint,
     words: [],
   };
 
   assert.equal(fingerprint.digest, 'b'.repeat(64));
-  assert.equal(canReuseSourceTranscription(matching, 'balanced', fingerprint), true);
-  assert.equal(canReuseSourceTranscription({ ...matching, sourceFingerprint: undefined }, 'balanced', fingerprint), false);
-  assert.equal(canReuseSourceTranscription(matching, 'accurate', fingerprint), false);
-  assert.equal(canReuseSourceTranscription(matching, 'balanced', createSourceTranscriptionFingerprint('b'.repeat(64))), false);
+  assert.equal(canReuseSourceTranscription(matching, 'fast', fingerprint), true);
+  assert.equal(canReuseSourceTranscription({ ...matching, sourceFingerprint: undefined }, 'fast', fingerprint), false);
+  assert.equal(canReuseSourceTranscription(matching, 'retired-model', fingerprint), false);
+  assert.equal(canReuseSourceTranscription(matching, 'fast', createSourceTranscriptionFingerprint('b'.repeat(64))), false);
   assert.equal(canReuseSourceTranscription({ ...matching, words: [
     { id: 'first', text: 'First', startMs: 100, endMs: 300 },
     { id: 'second', text: 'Second', startMs: 200, endMs: 400 },
-  ] }, 'balanced', fingerprint), false);
+  ] }, 'fast', fingerprint), false);
   assert.throws(() => createSourceTranscriptionFingerprint('not-a-digest'), /fingerprint is invalid/);
 });
 
@@ -94,15 +94,15 @@ test('source-transcription cache invalidates across alignment and VAD revisions 
   const current = createSourceTranscriptionFingerprint(mediaDigest, '1'.repeat(64));
   const result = {
     language: 'en',
-    modelId: 'balanced',
+    modelId: 'fast',
     generatedAt: '2026-08-27T00:00:00.000Z',
     sourceFingerprint: previous,
     words: [],
   };
 
   assert.notEqual(current.digest, previous.digest);
-  assert.equal(canReuseSourceTranscription(result, 'balanced', current), false);
-  assert.equal(canReuseSourceTranscription(result, 'balanced', previous), true);
+  assert.equal(canReuseSourceTranscription(result, 'fast', current), false);
+  assert.equal(canReuseSourceTranscription(result, 'fast', previous), true);
   assert.notEqual(createSourceTranscriptionFingerprint(mediaDigest).digest, mediaDigest);
 });
 
@@ -114,7 +114,7 @@ test('fingerprints persist canonically while legacy results remain intentionally
   });
   project.transcription.sourceResults.source = {
     language: 'en',
-    modelId: 'balanced',
+    modelId: 'fast',
     generatedAt: '2026-08-27T00:00:00.000Z',
     sourceFingerprint: { algorithm: 'sha256', digest: 'A'.repeat(64) },
     words: [],

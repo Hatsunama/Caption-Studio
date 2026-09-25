@@ -24,7 +24,7 @@
     ],
     "transcription": {
       "language": "en",
-      "modelId": "balanced",
+      "modelId": "fast",
       "words": [],
       "sourceResults": {}
     },

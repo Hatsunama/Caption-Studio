@@ -250,15 +250,20 @@ test('Whisper token pieces become human words without losing their timing', () =
   );
 });
 
-test('caption quality is chosen explicitly and the requested model owns generation', () => {
+test('one verified caption model owns generation and first-use consent', () => {
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   const pipeline = readFileSync(new URL('../src/services/project-transcription.ts', import.meta.url), 'utf8');
   const workflows = readFileSync(new URL('../src/services/project-workflows.ts', import.meta.url), 'utf8');
-  assert.match(editor, /TRANSCRIPTION_MODEL_OPTIONS\.map/);
-  assert.match(editor, /model\.id === 'balanced'[\s\S]*recommended/);
+  assert.doesNotMatch(editor, /TRANSCRIPTION_MODEL_OPTIONS|chooseCaptionQuality/);
+  assert.match(editor, /isCaptionModelReady/);
+  assert.match(editor, /Download the caption model/);
+  assert.match(editor, /Download speeds vary depending on device restrictions\. I really tried to speed this up\./);
+  assert.match(editor, /Your video and audio stay on your phone\./);
+  assert.match(editor, /text: 'Not now'/);
+  assert.match(editor, /text: 'Download model'/);
   assert.match(editor, /Alert\.alert\('Caption generation failed', message\)/);
   assert.match(pipeline, /modelId: TranscriptionModelId/);
-  assert.doesNotMatch(pipeline, /modelId: 'fast'/);
+  assert.match(workflows, /CAPTION_TRANSCRIPTION_MODEL_ID/);
   assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint\)/);
   assert.match(pipeline, /CaptionMedia\.sha256\(source\.uri\)/);
   assert.ok(

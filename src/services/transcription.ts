@@ -22,72 +22,35 @@ import {
 } from '@/services/verified-model-download';
 import type { WordToken } from '@/types/project';
 
-export type TranscriptionModelId = 'fast' | 'balanced' | 'accurate';
+export const CAPTION_TRANSCRIPTION_MODEL_ID = 'fast' as const;
+export type TranscriptionModelId = typeof CAPTION_TRANSCRIPTION_MODEL_ID;
 
-export type TranscriptionModelOption = Readonly<{
+type TranscriptionModel = Readonly<{
   id: TranscriptionModelId;
   label: string;
-  description: string;
-  downloadBytes: number;
-}>;
-
-type TranscriptionModel = TranscriptionModelOption & Readonly<{
   fileName: string;
   downloadUrl: string;
+  downloadBytes: number;
   sha256: string;
 }>;
 
 const MODEL_REVISION = 'c521a4b02f422512d734391fdf08bb08c0862f68';
 const MODEL_ROOT = `https://huggingface.co/ggerganov/whisper.cpp/resolve/${MODEL_REVISION}`;
-const LEGACY_ENGLISH_MODEL_FILES = [
+const OBSOLETE_TRANSCRIPTION_MODEL_FILES = [
+  'ggml-base-q5_1.bin',
+  'ggml-small-q5_1.bin',
   'ggml-tiny.en-q5_1.bin',
   'ggml-base.en-q5_1.bin',
   'ggml-small.en-q5_1.bin',
 ] as const;
-const TRANSCRIPTION_MODELS: readonly TranscriptionModel[] = [
-  {
-    id: 'fast',
-    label: 'Fast',
-    description: 'Tiny multilingual, best for quick drafts and lower-memory phones.',
-    fileName: 'ggml-tiny-q5_1.bin',
-    downloadUrl: `${MODEL_ROOT}/ggml-tiny-q5_1.bin`,
-    downloadBytes: 32_152_673,
-    sha256: '818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7',
-  },
-  {
-    id: 'balanced',
-    label: 'Balanced',
-    description: 'Base multilingual, the default quality/speed choice.',
-    fileName: 'ggml-base-q5_1.bin',
-    downloadUrl: `${MODEL_ROOT}/ggml-base-q5_1.bin`,
-    downloadBytes: 59_707_625,
-    sha256: '422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898',
-  },
-  {
-    id: 'accurate',
-    label: 'Accurate',
-    description: 'Small multilingual, slower and intended for higher-memory phones.',
-    fileName: 'ggml-small-q5_1.bin',
-    downloadUrl: `${MODEL_ROOT}/ggml-small-q5_1.bin`,
-    downloadBytes: 190_085_487,
-    sha256: 'ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb',
-  },
-];
-
-export const TRANSCRIPTION_MODEL_OPTIONS: readonly TranscriptionModelOption[] = Object.freeze(
-  TRANSCRIPTION_MODELS.map(({ id, label, description, downloadBytes }) => Object.freeze({
-    id,
-    label,
-    description,
-    downloadBytes,
-  })),
-);
-
-function getModel(modelId: TranscriptionModelId) {
-  const model = TRANSCRIPTION_MODELS.find((item) => item.id === modelId);
-  if (!model) throw new Error(`Unknown transcription model: ${modelId}`);
-  return model;
-}
+const CAPTION_MODEL: TranscriptionModel = {
+  id: CAPTION_TRANSCRIPTION_MODEL_ID,
+  label: 'Caption',
+  fileName: 'ggml-tiny-q5_1.bin',
+  downloadUrl: `${MODEL_ROOT}/ggml-tiny-q5_1.bin`,
+  downloadBytes: 32_152_673,
+  sha256: '818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7',
+};
 
 export type TranscriptionStage =
   | 'preparing-audio'
@@ -107,7 +70,7 @@ export type LocalTranscriptionResult = {
   words: WordToken[];
 };
 
-const activeModelDownloads = new Map<string, Promise<File>>();
+let activeModelDownload: Promise<File> | undefined;
 let activeModelUsers = 0;
 const MODEL_REPLACEMENT_HEADROOM_BYTES = 64 * 1024 * 1024;
 
@@ -133,58 +96,91 @@ export type DownloadedTranscriptionModel = {
   sizeBytes: number;
 };
 
-export async function listDownloadedTranscriptionModels(): Promise<DownloadedTranscriptionModel[]> {
+const MODEL_FILE_SUFFIXES = [
+  '', '.sha256', '.sha256.download', '.download',
+  '.download.resume.json', '.download.resume.json.writing',
+] as const;
+let obsoleteModelsPruned = false;
+
+function deleteModelArtifacts(directory: Directory, fileName: string) {
+  for (const suffix of MODEL_FILE_SUFFIXES) {
+    const file = new File(directory, `${fileName}${suffix}`);
+    if (file.exists) file.delete();
+  }
+}
+
+function pruneObsoleteModelFiles() {
+  if (obsoleteModelsPruned) return;
   const directory = new Directory(Paths.document, 'models');
-  const downloaded: DownloadedTranscriptionModel[] = [];
-  for (const model of TRANSCRIPTION_MODELS) {
-    const file = new File(directory, model.fileName);
-    if (await verifyModelFile(file, model.downloadBytes, model.sha256)) {
-      downloaded.push({ id: model.id, label: model.label, sizeBytes: model.downloadBytes });
+  let complete = true;
+  for (const fileName of OBSOLETE_TRANSCRIPTION_MODEL_FILES) {
+    try {
+      deleteModelArtifacts(directory, fileName);
+    } catch (error) {
+      complete = false;
+      console.warn('Could not remove obsolete caption model: ' + fileName, error);
     }
   }
-  return downloaded;
+  obsoleteModelsPruned = complete;
+}
+
+export async function isCaptionModelReady(): Promise<boolean> {
+  pruneObsoleteModelFiles();
+  const directory = new Directory(Paths.document, 'models');
+  return (await verifyModelFile(
+    new File(directory, CAPTION_MODEL.fileName),
+    CAPTION_MODEL.downloadBytes,
+    CAPTION_MODEL.sha256,
+  )) && (await verifyModelFile(
+    new File(directory, VAD_MODEL.fileName),
+    VAD_MODEL.downloadBytes,
+    VAD_MODEL.sha256,
+  ));
+}
+
+export async function listDownloadedTranscriptionModels(): Promise<DownloadedTranscriptionModel[]> {
+  pruneObsoleteModelFiles();
+  const directory = new Directory(Paths.document, 'models');
+  const modelFile = new File(directory, CAPTION_MODEL.fileName);
+  if (!(await verifyModelFile(modelFile, CAPTION_MODEL.downloadBytes, CAPTION_MODEL.sha256))) return [];
+  const vadFile = new File(directory, VAD_MODEL.fileName);
+  const vadBytes = await verifyModelFile(vadFile, VAD_MODEL.downloadBytes, VAD_MODEL.sha256)
+    ? VAD_MODEL.downloadBytes
+    : 0;
+  return [{ id: CAPTION_MODEL.id, label: CAPTION_MODEL.label, sizeBytes: CAPTION_MODEL.downloadBytes + vadBytes }];
 }
 
 export async function removeDownloadedTranscriptionModels() {
-  if (activeModelUsers > 0 || activeModelDownloads.size > 0) {
+  if (activeModelUsers > 0 || activeModelDownload) {
     throw new Error('Wait for caption generation to finish or stop before removing offline models.');
   }
   const directory = new Directory(Paths.document, 'models');
-  const fileNames = [
-    ...TRANSCRIPTION_MODELS.map((model) => model.fileName),
-    ...LEGACY_ENGLISH_MODEL_FILES,
-    VAD_MODEL.fileName,
-  ];
-  for (const fileName of fileNames) {
-    for (const suffix of ['', '.sha256', '.sha256.download', '.download', '.download.resume.json', '.download.resume.json.writing']) {
-      const file = new File(directory, `${fileName}${suffix}`);
-      if (file.exists) file.delete();
-    }
+  for (const fileName of [CAPTION_MODEL.fileName, ...OBSOLETE_TRANSCRIPTION_MODEL_FILES, VAD_MODEL.fileName]) {
+    deleteModelArtifacts(directory, fileName);
   }
+  obsoleteModelsPruned = true;
 }
 
-export async function ensureModel(
-  modelId: TranscriptionModelId,
+async function ensureModel(
   onProgress?: (progress: TranscriptionProgress) => void,
   session?: CaptionGenerationSessionContext,
 ): Promise<File> {
-  const activeDownload = activeModelDownloads.get(modelId);
-  if (activeDownload) return activeDownload;
-  const operation = downloadModel(modelId, onProgress, session);
-  activeModelDownloads.set(modelId, operation);
+  pruneObsoleteModelFiles();
+  if (activeModelDownload) return activeModelDownload;
+  const operation = downloadModel(onProgress, session);
+  activeModelDownload = operation;
   try {
     return await operation;
   } finally {
-    if (activeModelDownloads.get(modelId) === operation) activeModelDownloads.delete(modelId);
+    if (activeModelDownload === operation) activeModelDownload = undefined;
   }
 }
 
 async function downloadModel(
-  modelId: TranscriptionModelId,
   onProgress?: (progress: TranscriptionProgress) => void,
   session?: CaptionGenerationSessionContext,
 ): Promise<File> {
-  const model = getModel(modelId);
+  const model = CAPTION_MODEL;
   const modelDirectory = new Directory(Paths.document, 'models');
   modelDirectory.create({ idempotent: true, intermediates: true });
   const modelFile = new File(modelDirectory, model.fileName);
@@ -345,20 +341,19 @@ async function modelReplacementReservation(
 export async function transcribeVideoLocally(options: {
   projectId: string;
   videoUri: string;
-  modelId: TranscriptionModelId;
   durationMs: number;
   language?: string;
   onProgress?: (progress: TranscriptionProgress) => void;
   session?: CaptionGenerationSessionContext;
 }): Promise<LocalTranscriptionResult> {
-  const { projectId, videoUri, modelId, onProgress, session } = options;
+  const { projectId, videoUri, onProgress, session } = options;
   session?.throwIfCancelled();
   assertCaptionAudioAvailable(await CaptionMedia.getMediaInfo(videoUri));
   session?.throwIfCancelled();
   const audioDirectory = new Directory(Paths.cache, 'caption-audio');
   audioDirectory.create({ idempotent: true, intermediates: true });
   const audioFile = new File(audioDirectory, `${projectId}.wav`);
-  const model = getModel(modelId);
+  const model = CAPTION_MODEL;
   const modelFile = new File(new Directory(Paths.document, 'models'), model.fileName);
   const vadModelFile = new File(new Directory(Paths.document, 'models'), VAD_MODEL.fileName);
   const estimatedWavBytes = Math.ceil(Math.max(0, options.durationMs) / 1000) * 32_000 + 44;
@@ -409,7 +404,7 @@ export async function transcribeVideoLocally(options: {
   });
 
   const [modelFile, vadModelFile] = await Promise.all([
-    ensureModel(modelId, onProgress, session),
+    ensureModel(onProgress, session),
     ensureVadModel(onProgress, session),
   ]);
   session?.throwIfCancelled();
@@ -452,8 +447,8 @@ export async function transcribeVideoLocally(options: {
       wordThold: 0.01,
       temperature: 0,
       temperatureInc: 0.2,
-      beamSize: modelId === 'fast' ? -1 : 5,
-      bestOf: modelId === 'fast' ? 3 : 5,
+      beamSize: -1,
+      bestOf: 3,
       onProgress: (value: number) =>
         onProgress?.({
           stage: 'transcribing',
@@ -473,7 +468,7 @@ export async function transcribeVideoLocally(options: {
 
     const words = alignWordsToSpeech(coalesceWhisperWords(result.segments), speechSegments);
     if (words.length === 0) {
-      throw new Error('Speech was detected, but no reliable words were found. Try the Balanced model or clearer audio.');
+      throw new Error('Speech was detected, but no reliable words were found. Try clearer audio or a different recording.');
     }
     const language = result.language || options.language || 'en';
 

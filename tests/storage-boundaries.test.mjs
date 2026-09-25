@@ -145,7 +145,7 @@ function projectFixture(overrides = {}) {
       height: 1920,
       rotation: 0,
     }],
-    transcription: { language: 'en', modelId: 'balanced', words: [], sourceResults: {} },
+    transcription: { language: 'en', modelId: 'fast', words: [], sourceResults: {} },
     captions: [],
     projectStyle: {
       font: { id: 'inter-bold', family: 'sans-serif', source: 'built-in' },

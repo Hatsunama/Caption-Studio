@@ -16,7 +16,7 @@ import { alignWordsToSpeech } from '../src/lib/speech-alignment.ts';
 
 const sourceId = 'source-1789220397255-tx9f59cd-0';
 const word = (id, startMs, endMs, text = 'spoken') => ({ id, text, startMs, endMs, confidence: undefined, styleOverride: undefined });
-const sourceResult = (words) => ({ language: 'en', modelId: 'balanced', generatedAt: '2026-09-12T00:00:00.000Z', words });
+const sourceResult = (words) => ({ language: 'en', modelId: 'fast', generatedAt: '2026-09-12T00:00:00.000Z', words });
 
 function fixture() {
   const project = createCaptionProject({

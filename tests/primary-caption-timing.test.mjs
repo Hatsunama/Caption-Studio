@@ -23,7 +23,7 @@ test('canonical source words survive checkpoint projection and a clip edit witho
   ], 1_000);
   assert.deepEqual(canonical.map(({ startMs, endMs }) => [startMs, endMs]), [[100, 150], [150, 600]]);
   project.transcription.sourceResults[sourceId] = {
-    language: 'en', modelId: 'balanced', generatedAt: '2026-09-24T00:00:00.000Z', words: canonical,
+    language: 'en', modelId: 'fast', generatedAt: '2026-09-24T00:00:00.000Z', words: canonical,
   };
   project.transcription.words = mapSourceWordsToTimeline(project.clips, { [sourceId]: canonical });
   const edited = setVideoClipLeadingGap(project, project.clips[0].id, 100).project;

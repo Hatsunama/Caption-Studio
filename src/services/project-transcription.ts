@@ -56,7 +56,6 @@ async function generateProjectCaptionsFromSources(
     const result = await transcribeVideoLocally({
       projectId: `${project.id}-${sourceId}`,
       videoUri: source.uri,
-      modelId,
       durationMs: source.durationMs,
       onProgress: (progress) => onProgress?.({
         ...progress,

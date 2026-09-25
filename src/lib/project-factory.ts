@@ -32,7 +32,7 @@ export function createCaptionProject(options: {
     sources,
     transcription: {
       language: 'en',
-      modelId: 'balanced',
+      modelId: 'fast',
       words: [],
       sourceResults: {},
     },

@@ -111,7 +111,7 @@ Current Android build: **1.4.97** (`v1.4.97`, Android version code 109).
 - Presentation-timestamp-aware audio extraction plus on-device Silero voice-activity detection, so Whisper tokens inside opening or interior silence are rejected instead of becoming early captions
 - Responsive preparation feedback that reaches 5% after 3 seconds, advances from 6% through 10% in 22-second steps, then follows real decoding progress
 - Safe **Generate again** control for replacing caption text/timing while preserving the project style and added layers
-- Downloadable Fast, Balanced, and Accurate Whisper model tiers
+- One downloadable on-device Whisper caption model; obsolete caption-model downloads are removed from app storage on the next caption use
 - Optional second-language subtitle tracks for every language in the in-app language picker, generated entirely on-device after one approximately 1.6 GB Qwen model download
 - A centered model-download and translation dialog that explains the one-time local-AI setup clearly; leaving the app cancels safely and produces a plain-English retry message instead of exposing a native error
 - Independently owned language tracks: editing, moving, or trimming one translated cue does not rewrite or reposition its primary cue or neighboring translated cues; explicit AI Refresh replaces only the requested translated lines
