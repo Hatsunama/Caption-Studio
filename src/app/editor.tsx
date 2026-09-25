@@ -249,6 +249,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [mediaProgress, setMediaProgress] = useState<MediaImportProgress>();
   const [error, setError] = useState<string>();
   const [persistenceError, setPersistenceError] = useState<string>();
+  const [translationStyleSaveError, setTranslationStyleSaveError] = useState<string>();
   const [fontBrowserOpen, setFontBrowserOpen] = useState(false);
   const [pendingChange, setPendingChange] = useState<PendingStyleChange>();
   const [editingText, setEditingText] = useState<string>();
@@ -1259,7 +1260,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const commitTranslationTrackPatch = (operation: EditorProjectOperation) => {
-    void commitEditorProject(operation).catch(() => undefined);
+    setTranslationStyleSaveError(undefined);
+    void commitEditorProject(operation).catch((caught) => {
+      if (workspaceMountedRef.current) {
+        const reason = caught instanceof Error ? caught.message : 'The style change could not be saved.';
+        setTranslationStyleSaveError(`Second-language style not saved: ${reason}`);
+      }
+    });
   };
 
   const adjustTranslationGap = (delta: number) => {
@@ -2390,9 +2397,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           </View>
         )}
 
-        {captionInterruptionMessage || error || persistenceError || translationController.error ? (
+        {translationStyleSaveError || captionInterruptionMessage || error || persistenceError || translationController.error ? (
           <View style={{ padding: 12, borderRadius: 13, backgroundColor: '#351D24' }}>
-            <Text selectable accessibilityRole="alert" style={{ color: '#FFBBC8', fontSize: 13 }}>{captionInterruptionMessage ?? error ?? persistenceError ?? translationController.error}</Text>
+            <Text selectable accessibilityRole="alert" style={{ color: '#FFBBC8', fontSize: 13 }}>{translationStyleSaveError ?? captionInterruptionMessage ?? error ?? persistenceError ?? translationController.error}</Text>
           </View>
         ) : null}
 

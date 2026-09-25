@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { transform } from 'esbuild';
 import test from 'node:test';
+import { encodeModelVerificationMarker, modelVerificationMarkerMatches } from '../src/lib/model-verification.ts';
 
 async function serviceFixture(failSecond = false) {
   const source = await readFile(new URL('../src/services/caption-translation.ts', import.meta.url), 'utf8');
@@ -22,8 +23,12 @@ async function serviceFixture(failSecond = false) {
       this.uri = `file:///${name}`;
       this.exists = true;
       this.size = 1;
+      this.lastModified = 200;
+      this.creationTime = 100;
     }
-    async text() { return 'hash'; }
+    async text() { return encodeModelVerificationMarker({ fileName: contract.fileName,
+      sizeBytes: contract.downloadBytes, modifiedAtMs: this.lastModified,
+      createdAtMs: this.creationTime }, contract.sha256); }
     write() {}
   }
   const native = {
@@ -69,6 +74,7 @@ async function serviceFixture(failSecond = false) {
       resolveCaptionLanguage: (tag) => ({ tag, automaticTranslation: true }),
       isLikelyUntranslatedCaption: () => false },
     '@/lib/caption-text-breaks': { captionTextHead: (text) => text, captionTextTail: (text) => text },
+    '@/lib/model-verification': { encodeModelVerificationMarker, modelVerificationMarkerMatches },
     '@/lib/translation-batching': { createTranslationBatches: (captions) => captions.map((caption) => [caption]) },
     '@/lib/contextual-translation-batching': { splitBatchesByContext: (batches) => batches },
     '@/lib/translation-input': { validateTranslationUnits: (captions) => captions },

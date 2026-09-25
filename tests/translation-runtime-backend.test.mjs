@@ -17,7 +17,10 @@ function harness(setting, overrides = {}) {
   const contract = { id: 'model', promptContract: 'contract', sha256: 'hash', downloadBytes: 1, fileName: 'model' };
   class File {
     exists = true; size = 1; uri = 'model'; name = 'model'; parentDirectory = {};
-    async text() { return 'hash'; }
+    lastModified = 200; creationTime = 100;
+    async text() { return JSON.stringify({ schemaVersion: 1, fileName: this.name,
+      sizeBytes: this.size, sha256: contract.sha256, modifiedAtMs: this.lastModified,
+      createdAtMs: this.creationTime }); }
   }
   const backend = setting === 'gpu' ? 'gpu' : 'cpu';
   const metric = { batchIndex: 0, captionCount: 1, backend, initializationFallback: false,

@@ -20,6 +20,11 @@ import {
   captionTextTail,
 } from '@/lib/caption-text-breaks';
 import { createTranslationBatches } from '@/lib/translation-batching';
+import {
+  encodeModelVerificationMarker,
+  modelVerificationMarkerMatches,
+  type ModelFileIdentity,
+} from '@/lib/model-verification';
 import { splitBatchesByContext } from '@/lib/contextual-translation-batching';
 import { validateTranslationUnits } from '@/lib/translation-input';
 import {
@@ -146,7 +151,7 @@ export async function removeDownloadedNaturalTranslationModel() {
     throw new Error('Wait for caption translation to finish or cancel it before removing the language model.');
   }
   const directory = translationModelDirectory();
-  for (const suffix of ['', '.sha256', '.download', '.download.resume.json', '.download.resume.json.writing']) {
+  for (const suffix of ['', '.sha256', '.sha256.download', '.download', '.download.resume.json', '.download.resume.json.writing']) {
     const file = new File(directory, `${NATURAL_TRANSLATION_MODEL.fileName}${suffix}`);
     if (file.exists) file.delete();
   }
@@ -513,16 +518,49 @@ async function downloadNaturalTranslationModel(
     throw new CaptionTranslationDownloadError();
   }
   throwIfCancelled(run);
-  new File(directory, `${NATURAL_TRANSLATION_MODEL.fileName}.sha256`).write(NATURAL_TRANSLATION_MODEL.sha256);
+  await writeTranslationModelVerificationMarker(target, NATURAL_TRANSLATION_MODEL.sha256);
   return target;
+}
+
+function modelFileIdentity(file: File): ModelFileIdentity {
+  return {
+    fileName: file.name,
+    sizeBytes: file.size,
+    modifiedAtMs: file.lastModified,
+    createdAtMs: file.creationTime,
+  };
+}
+
+async function writeTranslationModelVerificationMarker(file: File, sha256: string) {
+  const marker = new File(file.parentDirectory, `${file.name}.sha256`);
+  const contents = encodeModelVerificationMarker(modelFileIdentity(file), sha256);
+  if (!contents) {
+    if (marker.exists) marker.delete();
+    return;
+  }
+  const staging = new File(file.parentDirectory, `${file.name}.sha256.download`);
+  if (staging.exists) staging.delete();
+  staging.write(contents);
+  let moved = false;
+  try {
+    await staging.move(marker, { overwrite: true });
+    moved = true;
+  } finally {
+    if (!moved && staging.exists) staging.delete();
+  }
 }
 
 async function verifyTranslationModel(file: File) {
   if (!file.exists || file.size !== NATURAL_TRANSLATION_MODEL.downloadBytes) return false;
   const marker = new File(file.parentDirectory, `${file.name}.sha256`);
-  if (marker.exists && (await marker.text()).trim() === NATURAL_TRANSLATION_MODEL.sha256) return true;
-  if (await CaptionMedia.sha256(file.uri) !== NATURAL_TRANSLATION_MODEL.sha256) return false;
-  marker.write(NATURAL_TRANSLATION_MODEL.sha256);
+  if (marker.exists && modelVerificationMarkerMatches(
+    await marker.text(), modelFileIdentity(file), NATURAL_TRANSLATION_MODEL.sha256,
+  )) return true;
+  if (await CaptionMedia.sha256(file.uri) !== NATURAL_TRANSLATION_MODEL.sha256) {
+    if (marker.exists) marker.delete();
+    return false;
+  }
+  await writeTranslationModelVerificationMarker(file, NATURAL_TRANSLATION_MODEL.sha256);
   return true;
 }
 
@@ -728,13 +766,23 @@ function pollNativeProgress(
 ) {
   let polling = false;
   let stopped = false;
+  let pollFailureReported = false;
   const interval = setInterval(() => {
     if (stopped || run.cancelled || polling) return;
     polling = true;
     void CaptionTranslation.getNaturalCaptionTranslationProgress().then((native) => {
       if (stopped || run.cancelled || activeTranslation?.id !== run.id) return;
+      pollFailureReported = false;
       onProgress?.(captionTranslationProgress(native));
-    }).catch(() => undefined).finally(() => { polling = false; });
+    }).catch(() => {
+      if (stopped || run.cancelled || activeTranslation?.id !== run.id || pollFailureReported) return;
+      pollFailureReported = true;
+      onProgress?.({
+        stage: 'translating',
+        progress: null,
+        detail: 'Translation progress is temporarily unavailable; local translation is continuing.',
+      });
+    }).finally(() => { polling = false; });
   }, 500);
   return () => {
     stopped = true;
