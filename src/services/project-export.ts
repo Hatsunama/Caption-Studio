@@ -133,6 +133,9 @@ async function deliverExportedVideo(outputUri: string, sizeBytes: number) {
       UTI: 'public.mpeg-4',
     });
   } catch (caught) {
-    return `The share sheet could not open: ${userFacingExportError(caught)}. The video remains saved in Movies/Caption Studio.`;
+    const reason = caught && typeof caught === 'object' && 'message' in caught && typeof caught.message === 'string'
+      ? caught.message
+      : 'Sharing failed';
+    return `The share sheet could not open: ${reason}. The video remains saved in Movies/Caption Studio.`;
   }
 }
