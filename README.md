@@ -10,7 +10,7 @@ Previously published APKs are immutable and may still use an older ID. The Windo
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.98) on the phone.
+1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.100) on the phone.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -29,7 +29,7 @@ pkg update
 pkg install curl
 termux-setup-storage
 curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.98/caption-studio-android.apk
+  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.100/caption-studio-android.apk
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -89,7 +89,7 @@ Never uninstall or clear any of these apps to bypass an installation failure. Ke
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.98** (`v1.4.98`, Android version code 110).
+Current Android build: **1.4.100** (`v1.4.100`, Android version code 112).
 
 ## What the current Android build includes
 
