@@ -4,6 +4,7 @@ import { initWhisper, initWhisperVad } from 'whisper.rn/index';
 import CaptionMedia from 'caption-media';
 import { assertCaptionAudioAvailable } from '@/lib/media-validation';
 import { alignWordsToSpeech } from '@/lib/speech-alignment';
+import { requireDetectedCaptionLanguage } from '@/lib/transcription-language';
 import { PREPARING_AUDIO_CUES } from '@/lib/transcription-progress';
 import { coalesceWhisperWords } from '@/lib/whisper-words';
 import {
@@ -470,7 +471,7 @@ export async function transcribeVideoLocally(options: {
     if (words.length === 0) {
       throw new Error('Speech was detected, but no reliable words were found. Try clearer audio or a different recording.');
     }
-    const language = result.language || options.language || 'en';
+    const language = requireDetectedCaptionLanguage(result.language);
 
     return {
       language,

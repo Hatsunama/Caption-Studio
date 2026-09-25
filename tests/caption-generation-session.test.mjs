@@ -50,3 +50,16 @@ test('a completed or cancelled caption session never poisons the next generation
 
   assert.equal(await session.run(async () => 2), 2);
 });
+
+test('a real work failure remains visible when cancellation races with it', async () => {
+  let failWork;
+  const pending = new Promise((_resolve, reject) => { failWork = reject; });
+  const failure = new Error('Model download checksum failed');
+  const session = createCaptionGenerationSession(async () => undefined);
+  const running = session.run(async () => pending);
+  const rejection = assert.rejects(running, (error) => error === failure);
+  await session.cancel();
+  failWork(failure);
+  await rejection;
+  assert.equal(await session.run(async () => 'next attempt'), 'next attempt');
+});
