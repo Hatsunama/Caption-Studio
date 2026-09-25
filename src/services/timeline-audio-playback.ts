@@ -17,6 +17,36 @@ export type TimelineAudioPlaybackTarget = {
   playing: boolean;
 };
 
+export type TimelineAudioPlaybackPhase = 'create' | 'seek' | 'prepare' | 'play';
+
+export class TimelineAudioPlaybackError extends Error {
+  readonly phase: TimelineAudioPlaybackPhase;
+  readonly cause: unknown;
+
+  constructor(phase: TimelineAudioPlaybackPhase, cause: unknown) {
+    super(`Timeline audio preview failed during ${phase}.`);
+    this.name = 'TimelineAudioPlaybackError';
+    this.phase = phase;
+    this.cause = cause;
+  }
+}
+
+export function timelineAudioErrorMessage(error: unknown): string {
+  if (!(error instanceof TimelineAudioPlaybackError)) {
+    return 'Timeline audio preview could not continue playback.';
+  }
+  switch (error.phase) {
+    case 'create':
+      return 'Timeline audio preview could not load this audio source.';
+    case 'seek':
+      return 'Timeline audio preview could not seek this audio source.';
+    case 'prepare':
+      return 'Timeline audio preview could not configure playback.';
+    case 'play':
+      return 'Timeline audio preview could not play this audio source.';
+  }
+}
+
 export type TimelineAudioPlaybackDependencies = {
   createPlayer: (uri: string) => TimelineAudioPlayer;
   preparePlayback?: () => Promise<void>;
@@ -88,7 +118,7 @@ export class TimelineAudioPlaybackController {
           };
           this.players.set(target.clipId, managed);
         } catch (error) {
-          this.onError(error);
+          this.onError(new TimelineAudioPlaybackError('create', error));
           continue;
         }
       }
@@ -154,7 +184,11 @@ export class TimelineAudioPlaybackController {
         || playbackStateChanged
         || target.requiresSeek;
       if (needsSeek) {
-        await managed.player.seekTo(target.targetSeconds);
+        try {
+          await managed.player.seekTo(target.targetSeconds);
+        } catch (error) {
+          throw new TimelineAudioPlaybackError('seek', error);
+        }
         if (managed.disposed || this.disposed) return;
         managed.positioned = true;
         const latestDesired = managed.desired as ManagedAudioPlayer['desired'];
@@ -165,14 +199,22 @@ export class TimelineAudioPlaybackController {
       }
 
       if (target.playing && !managed.playing) {
-        await this.preparePlayback();
+        try {
+          await this.preparePlayback();
+        } catch (error) {
+          throw new TimelineAudioPlaybackError('prepare', error);
+        }
         if (managed.disposed || this.disposed) return;
         const latestDesired = managed.desired as ManagedAudioPlayer['desired'];
         if (latestDesired) {
           managed.desired = { ...latestDesired, requiresSeek: true };
           continue;
         }
-        managed.player.play();
+        try {
+          managed.player.play();
+        } catch (error) {
+          throw new TimelineAudioPlaybackError('play', error);
+        }
         managed.playing = true;
       }
     }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 
 import { audioClipEnd, audioClipVolume } from '@/lib/audio-timeline';
-import { TimelineAudioPlaybackController } from '@/services/timeline-audio-playback';
+import { TimelineAudioPlaybackController, timelineAudioErrorMessage } from '@/services/timeline-audio-playback';
 import { createTimelineAudioPlayer, prepareTimelineAudioRuntime } from '@/services/timeline-audio-runtime';
 import type { CaptionProject } from '@/types/project';
 
@@ -39,7 +39,7 @@ export function useTimelineAudioController(
     const controller = new TimelineAudioPlaybackController({
       createPlayer: createTimelineAudioPlayer,
       preparePlayback: prepareTimelineAudioRuntime,
-      onError: () => onError('Timeline audio preview could not start. Android could not configure shared video and audio playback. The exported audio is unchanged.'),
+      onError: (error) => onError(timelineAudioErrorMessage(error)),
     });
     controllerRef.current = controller;
     return () => {
