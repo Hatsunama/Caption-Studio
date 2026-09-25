@@ -21,6 +21,7 @@ import type { CaptionProject } from '@/types/project';
 type ControllerOptions = {
   getCurrentProject: () => CaptionProject;
   commitProject: (baseline: CaptionProject, next: CaptionProject) => Promise<void>;
+  commitManualEdits: (baseline: CaptionProject, trackId: string, edits: readonly DualCaptionTextEdit[]) => Promise<void>;
 };
 
 type TranslationOperation = (
@@ -34,6 +35,7 @@ type TranslationRequest = {
   operation: TranslationOperation;
   completionMessage?: (next: CaptionProject) => string | undefined;
   incremental?: boolean;
+  manualEdits?: { trackId: string; edits: readonly DualCaptionTextEdit[] };
   retryWith?: (project: CaptionProject) => TranslationRequest;
 };
 
@@ -191,12 +193,16 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
         }
         return true;
       }
-      if (optionsRef.current.getCurrentProject() !== baseline) {
-        throw new Error('The project changed while both languages were synchronizing. Save again to avoid overwriting newer edits.');
-      }
       // A durable commit is not a cancellable native translation operation.
       activeKindRef.current = 'manual-save';
-      if (next !== baseline) await optionsRef.current.commitProject(baseline, next);
+      if (request.manualEdits) {
+        await optionsRef.current.commitManualEdits(baseline, request.manualEdits.trackId, request.manualEdits.edits);
+      } else {
+        if (optionsRef.current.getCurrentProject() !== baseline) {
+          throw new Error('The project changed while both languages were synchronizing. Save again to avoid overwriting newer edits.');
+        }
+        if (next !== baseline) await optionsRef.current.commitProject(baseline, next);
+      }
       const message = completionMessage?.(next);
       if (message && mountedRef.current) {
         setWarning(message);
@@ -277,6 +283,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
   ) => execute({
     kind: 'manual-save',
     baseline,
+    manualEdits: { trackId, edits },
     operation: () => synchronizeProjectDualCaptionEdits({
       project: baseline,
       trackId,

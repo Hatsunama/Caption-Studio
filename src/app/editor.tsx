@@ -26,6 +26,8 @@ import {
 import { AnimationBrowser } from '@/components/editor/animation-browser';
 import { projectMediaRecoveryPrompts } from '@/components/editor/project-media-recovery-prompts';
 import { PersistedHorizontalScroll, PersistedHorizontalScrollScope } from '@/components/editor/persisted-horizontal-scroll';
+import { assertDualCaptionEditsStillCurrent } from '@/lib/dual-caption-save-merge';
+import { synchronizeProjectDualCaptionEdits } from '@/services/project-caption-translation';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
 import { DualLanguagePicker } from '@/components/editor/dual-language-picker';
@@ -745,6 +747,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const translationController = useProjectCaptionTranslation({
     getCurrentProject: () => editorSession.current(),
+    commitManualEdits: async (baseline, trackId, edits) => {
+      await commitEditorProject((current) => {
+        assertDualCaptionEditsStillCurrent(baseline, current, trackId, edits);
+        return synchronizeProjectDualCaptionEdits({ project: current, trackId, edits });
+      });
+    },
     commitProject: async (baseline, next) => {
       await commitEditorProject((current) => {
         if (current !== baseline) {

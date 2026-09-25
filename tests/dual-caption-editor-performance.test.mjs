@@ -371,7 +371,7 @@ test('a rejected dual-caption save shows an error beside the retained draft', as
   await h.flush(); h.edit(0, 'Keep this'); h.press('Save dual subtitle edits'); await h.flush();
   assert.equal(h.input(0).props.value, 'Keep this');
   assert.ok(h.all((node) => node.props.accessibilityRole === 'alert'
-    && /could not be saved/i.test(h.all((child) => child === node)[0]?.props.children ?? '')).length > 0);
+    && /could not be saved/i.test(node.props.children ?? '')).length > 0);
   assert.equal(h.button('Save dual subtitle edits').props.disabled, false);
 });
 
