@@ -3,7 +3,7 @@ import { assertExportSourcesAvailable } from '@/lib/export-source-availability';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import CaptionMedia from 'caption-media';
-import type { TimelineVideoExportProgress, TimelineVideoExportResult } from 'caption-media';
+import type { TimelineVideoExportProgress } from 'caption-media';
 
 import { buildTimelineRenderPlan, collectUnresolvedFontFamilies, toNativeRenderPlan } from '@/lib/export-render-plan';
 import { serializeAss, serializeSrt, visibleCaptions } from '@/lib/subtitle-export';
@@ -23,7 +23,7 @@ import type { CaptionProject } from '@/types/project';
 
 const videoExportSession = createVideoExportSession(() => CaptionMedia.cancelTimelineVideoExport());
 
-export async function exportProjectVideo(project: CaptionProject, allowIncompleteTranslations = false): Promise<TimelineVideoExportResult & { sharingWarning?: string }> {
+export async function exportProjectVideo(project: CaptionProject, allowIncompleteTranslations = false): Promise<ReturnType<typeof assertVideoExportDelivery> & { sharingWarning?: string }> {
   return videoExportSession.run(async (session) => {
     if (!FileSystem.cacheDirectory) throw new Error('Export storage is unavailable on this device.');
     const unresolvedPlan = buildTimelineRenderPlan(project, undefined, allowIncompleteTranslations);
