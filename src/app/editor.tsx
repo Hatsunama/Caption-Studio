@@ -138,6 +138,7 @@ import { createEditorSession, type EditorProjectOperation } from '@/services/edi
 import { CaptionGenerationCancelledError } from '@/services/caption-generation-session';
 import {
   NATURAL_TRANSLATION_MODEL_LABEL,
+  listDownloadedNaturalTranslationModel,
   registerCaptionTranslationResources,
   type CaptionTranslationProgress,
 } from '@/services/caption-translation';
@@ -1056,9 +1057,25 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     );
   };
 
+  const confirmTranslationModelDownload = async (): Promise<boolean> => {
+    if ((await listDownloadedNaturalTranslationModel()).length > 0) return true;
+    return new Promise<boolean>((resolve) => {
+      Alert.alert(
+        'Download the translation model',
+        'Caption Studio needs a one-time download to translate captions. Download speeds vary depending on device restrictions. I really tried to speed this up. Keep this screen open until it finishes. Your video and audio stay on your phone.',
+        [
+          { text: 'Not now', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Download model', onPress: () => resolve(true) },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) },
+      );
+    });
+  };
+
   const enableDualCaptions = async (targetLanguage: CaptionLanguageTag) => {
     let prepared: ReturnType<typeof prepareOptionalDualCaptionTrack> | undefined;
     try {
+      if (canAutomaticallyTranslatePair(primaryCaptionLanguage, targetLanguage) && !(await confirmTranslationModelDownload())) return;
       const receipt = await commitEditorProject((before) => {
         prepared = prepareOptionalDualCaptionTrack(before, targetLanguage);
         return prepared.project;
@@ -1101,9 +1118,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       return;
     }
     const refresh = () => {
-      setSelectedTranslationTrackId(track.id);
-      setDualCaptionEditorOpen(true);
-      void translationController.refresh(track.id, sourceCaptionIds);
+      void (async () => {
+        if (!(await confirmTranslationModelDownload())) return;
+        setSelectedTranslationTrackId(track.id);
+        setDualCaptionEditorOpen(true);
+        await translationController.refresh(track.id, sourceCaptionIds);
+      })().catch((caught) => setError(caught instanceof Error ? caught.message : 'The translation model could not be checked.'));
     };
     const reviewed = track.cues.filter((cue) => sourceCaptionIds.includes(cue.sourceCaptionId) && cue.reviewed);
     if (reviewed.length > 0) {
@@ -2475,7 +2495,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         warningMessage={translationController.warning}
         retryErrorAvailable={translationController.retryAvailable}
         onDismissError={translationController.clearError}
-        onRetryError={() => { void translationController.retry(); }}
+        onRetryError={() => {
+          void (async () => {
+            if (await confirmTranslationModelDownload()) await translationController.retry();
+          })().catch((caught) => setError(caught instanceof Error ? caught.message : 'The translation model could not be checked.'));
+        }}
         onBackRequestChange={registerDualCaptionBackRequest}
         onClose={() => {
           if (!translationProgress && !translationCancelling) setDualCaptionEditorOpen(false);
