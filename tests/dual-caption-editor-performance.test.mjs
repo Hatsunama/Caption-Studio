@@ -366,6 +366,15 @@ test('failed save and journal failures retain typing and expose accessible error
   assert.equal(h.button('Save dual subtitle edits').props.disabled, false);
 });
 
+test('a rejected dual-caption save shows an error beside the retained draft', async () => {
+  const h = mount({ onSave: async () => false });
+  await h.flush(); h.edit(0, 'Keep this'); h.press('Save dual subtitle edits'); await h.flush();
+  assert.equal(h.input(0).props.value, 'Keep this');
+  assert.ok(h.all((node) => node.props.accessibilityRole === 'alert'
+    && /could not be saved/i.test(node.props.children ?? '')).length > 0);
+  assert.equal(h.button('Save dual subtitle edits').props.disabled, false);
+});
+
 test('selection, refresh, skip, visibility and removal preserve their action contracts', async () => {
   const data = pairs(); data[1].translation.status = 'stale'; data[2].translation.translationSkipped = true;
   const h = mount({ pairs: data }); await h.flush();

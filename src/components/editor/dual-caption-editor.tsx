@@ -83,6 +83,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const [saving, setSaving] = useState(false);
   const [closing, setClosing] = useState(false);
   const [journalError, setJournalError] = useState<string>();
+  const [saveError, setSaveError] = useState<string>();
   const [journalRecovery, setJournalRecovery] = useState<EditorDraftJournalRecovery>();
   const journalProtected = !!journalRecovery?.failures.length;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -222,10 +223,13 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     if (edits.length === 0) return;
     stopJournalRef.current?.();
     setSaving(true);
+    setSaveError(undefined);
     try {
-      if (await props.onSave(edits) && journalReady && !journalProtected) await clearEditorDraftJournal(props.projectId, journalKind);
+      const saved = await props.onSave(edits);
+      if (!saved) setSaveError('Dual-subtitle edits could not be saved. Your changes are still here. Try again.');
+      else if (journalReady && !journalProtected) await clearEditorDraftJournal(props.projectId, journalKind);
     } catch (caught) {
-      setJournalError(caught instanceof Error ? caught.message : 'These edits could not be saved. They are still in this editor.');
+      setSaveError(caught instanceof Error ? caught.message : 'These edits could not be saved. They are still in this editor.');
     } finally {
       setSaving(false);
     }
@@ -337,6 +341,11 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           {journalError ? (
             <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
               {journalError}
+            </Text>
+          ) : null}
+          {saveError ? (
+            <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
+              {saveError}
             </Text>
           ) : null}
           {!props.busy ? (
