@@ -24,7 +24,7 @@ export function assertDualCaptionEditsStillCurrent(
     const previousCue = previousTrack.cues.find((cue) => cue.sourceCaptionId === edit.sourceCaptionId);
     const currentCue = currentTrack.cues.find((cue) => cue.sourceCaptionId === edit.sourceCaptionId);
     if (!previousSource || !currentSource || !previousCue || !currentCue
-      || (edit.primaryChanged && previousSource.text !== currentSource.text)
+      || ((edit.primaryChanged || edit.translatedChanged) && previousSource.text !== currentSource.text)
       || (edit.translatedChanged && previousCue.text !== currentCue.text)) conflict();
   }
 }
