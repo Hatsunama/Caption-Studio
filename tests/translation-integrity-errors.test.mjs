@@ -19,7 +19,7 @@ function executableSection(source, start, end, sandbox, exportedName) {
   }).outputText;
   const context = vm.createContext(sandbox);
   vm.runInContext(compiled, context);
-  return context[exportedName];
+  return vm.runInContext(exportedName, context);
 }
 
 test('translation marker cannot trust a same-sized changed model and is rebound after hashing', async () => {
