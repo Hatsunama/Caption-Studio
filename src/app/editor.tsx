@@ -789,6 +789,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setSelectedCaptionId((id) => previous.captions.some((caption) => caption.id === id) ? id : undefined);
     setSelectedLayerId((id) => projectHasEditorLayer(previous, id) ? id : undefined);
     setSelectedTranslationTrackId((id) => previous.captionTracks.translations.some((track) => track.id === id) ? id : undefined);
+    setSelectedClipId((id) => previous.clips.some((clip) => clip.id === id) ? id : undefined);
+    setSelectedAudioClipId((id) => previous.audioClips.some((clip) => clip.id === id) ? id : undefined);
     persistProjectInBackground();
   };
 
@@ -804,6 +806,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setSelectedCaptionId((id) => next.captions.some((caption) => caption.id === id) ? id : undefined);
     setSelectedLayerId((id) => projectHasEditorLayer(next, id) ? id : undefined);
     setSelectedTranslationTrackId((id) => next.captionTracks.translations.some((track) => track.id === id) ? id : undefined);
+    setSelectedClipId((id) => next.clips.some((clip) => clip.id === id) ? id : undefined);
+    setSelectedAudioClipId((id) => next.audioClips.some((clip) => clip.id === id) ? id : undefined);
     persistProjectInBackground();
   };
 
@@ -1715,9 +1719,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setExportKind('video');
     setExportProgress({ stage: 'preparing', percent: 0 });
     setExportProgressPollError(undefined);
-    setExporting(true);
     try {
       if (!await confirmOptionalTranslationExport(snapshot, true)) return;
+      setExporting(true);
       const result = await exportProjectVideo(snapshot, true);
       Alert.alert('Export complete', `Saved to Movies/Caption Studio.\n${result.width} × ${result.height}${result.sharingWarning ? `\n\n${result.sharingWarning}` : ''}`);
     } catch (caught) {
@@ -1738,9 +1742,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setError(undefined);
     setExportKind('subtitle');
     setExportProgress(undefined);
-    setExporting(true);
     try {
       if (!await confirmOptionalTranslationExport(snapshot, false)) return;
+      setExporting(true);
       await exportSubtitleFile(snapshot, format, true);
     } catch (caught) {
       const message = userFacingExportError(caught, 'The subtitle file could not be exported.');

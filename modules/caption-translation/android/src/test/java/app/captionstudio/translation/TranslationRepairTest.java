@@ -104,6 +104,14 @@ public final class TranslationRepairTest {
     assertFalse(TranslationOutputQuality.needsReview(source, "积极回应", "zh-Hans"));
   }
 
+  @Test public void qualityKeepsTraditionalTaiAndRejectsBorrowedOkForLongerCues() {
+    assertFalse(TranslationOutputQuality.needsReview("I live in Taiwan", "我住在台灣", "zh-Hant"));
+    assertFalse(TranslationOutputQuality.needsReview("Five kilometers", "五公里", "zh-Hant"));
+    assertTrue(TranslationOutputQuality.needsReview("Please bring the documents tomorrow", "OK", "fr"));
+    assertFalse(TranslationOutputQuality.needsReview("Okay.", "OK!", "fr"));
+    assertFalse(TranslationOutputQuality.needsReview("Meet OK Go tonight", "Rencontrez OK Go ce soir", "fr"));
+  }
+
   @Test public void changedContextOrNeighborRegeneratesButRenamedIdsRestoreDistinctPositions() throws Exception {
     File model = directory.newFile("context-model.litertlm");
     Files.write(model.toPath(), new byte[] { 1 });

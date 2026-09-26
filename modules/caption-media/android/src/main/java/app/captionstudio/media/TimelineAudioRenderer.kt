@@ -10,9 +10,11 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.SpeedProvider
+import androidx.media3.common.audio.GainProcessor
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
@@ -97,6 +99,32 @@ private class ConstantTimelineSpeed(private val speed: Float) : SpeedProvider {
   override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
 }
 
+internal class TimelineAudioGainProvider(private val volume: Float) : GainProcessor.GainProvider {
+  override fun getGainFactorAtSamplePosition(samplePosition: Long, sampleRate: Int): Float = volume
+  override fun isUnityUntil(samplePosition: Long, sampleRate: Int): Long =
+    dynamicUnityRegionEnd(samplePosition, volume)
+}
+
+internal fun selectAudibleTimelineSegments(
+  plan: TimelineAudioPlan,
+  hasAudioTrack: (String) -> Boolean,
+): List<TimelineAudioSegment> {
+  val audioState = mutableMapOf<String, Boolean>()
+  val candidates = plan.videoClips.map { it to false } + plan.audioClips.map { it to true }
+  return candidates.mapNotNull { (segment, insertedAudio) ->
+    if (segment.muted || segment.volume <= 0f) return@mapNotNull null
+    val hasAudio = try {
+      audioState.getOrPut(segment.sourceUri) { hasAudioTrack(segment.sourceUri) }
+    } catch (error: Exception) {
+      throw IllegalStateException("Timeline audio source ${segment.sourceUri} is unavailable", error)
+    }
+    if (!hasAudio && insertedAudio) {
+      throw IllegalStateException("Added timeline audio source ${segment.sourceUri} has no readable audio track")
+    }
+    segment.takeIf { hasAudio }
+  }
+}
+
 internal object TimelineAudioRenderer {
   private data class ActiveRender(
     val transformer: Transformer,
@@ -155,6 +183,7 @@ internal object TimelineAudioRenderer {
         active = ActiveRender(transformer, output, promise)
         transformer.start(composition, output.absolutePath)
       } catch (error: Throwable) {
+        active = null
         output.delete()
         promise.reject(
           "E_TIMELINE_AUDIO_PREPARE",
@@ -183,19 +212,7 @@ internal object TimelineAudioRenderer {
   }
 
   private fun buildComposition(context: Context, plan: TimelineAudioPlan): Composition {
-    val unreadableSources = mutableSetOf<String>()
-    val audioState = mutableMapOf<String, Boolean?>()
-    val sequences = (plan.videoClips + plan.audioClips).mapNotNull { segment ->
-      if (segment.muted || segment.volume <= 0f) return@mapNotNull null
-      val hasAudio = audioState.getOrPut(segment.sourceUri) {
-        try {
-          mediaHasAudioTrack(context, segment.sourceUri)
-        } catch (_: Throwable) {
-          unreadableSources += segment.sourceUri
-          null
-        }
-      }
-      if (hasAudio != true) return@mapNotNull null
+    val sequences = selectAudibleTimelineSegments(plan) { mediaHasAudioTrack(context, it) }.map { segment ->
       val clipping = MediaItem.ClippingConfiguration.Builder()
         .setStartPositionMs(segment.sourceStartMs)
         .setEndPositionMs(segment.sourceEndMs)
@@ -207,6 +224,7 @@ internal object TimelineAudioRenderer {
       val edited = EditedMediaItem.Builder(mediaItem)
         .setRemoveVideo(true)
         .setSpeed(ConstantTimelineSpeed(segment.playbackRate))
+        .setEffects(Effects(listOf(GainProcessor(TimelineAudioGainProvider(segment.volume))), emptyList()))
         .build()
       EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).apply {
         if (segment.timelineStartMs > 0L) addGap(segment.timelineStartMs * 1_000L)
@@ -214,9 +232,6 @@ internal object TimelineAudioRenderer {
       }.build()
     }
     if (sequences.isEmpty()) {
-      if (unreadableSources.isNotEmpty()) {
-        throw IllegalStateException("One or more timeline audio sources are unavailable")
-      }
       throw IllegalArgumentException("No audible audio is available on this timeline")
     }
     return Composition.Builder(sequences).build()

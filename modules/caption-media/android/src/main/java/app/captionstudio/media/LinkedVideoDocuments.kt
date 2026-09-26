@@ -50,10 +50,13 @@ internal class LinkedVideoDocuments(private val context: Context) {
       }
       check(uris.isNotEmpty() && (allowMultiple || uris.size == 1)) { "Select the original video document." }
       val access = DocumentReadAccess(context.contentResolver)
-      // If a later document fails, retain earlier grants: they may belong to another project.
-      // Never revoke provider access speculatively from the picker.
-      uris.forEach { access.retainResult(it, intent.flags) }
-      val assets = uris.map(::details)
+      val assets = withRetainedDocumentResults(
+        uris.toList(),
+        isRetained = access::retained,
+        retain = { access.retainResult(it, intent.flags) },
+        release = access::release,
+        details = ::details,
+      )
       promise.resolve(mapOf("canceled" to false, "assets" to assets))
     } catch (error: Exception) {
       promise.reject("E_DOCUMENT_ACCESS", error.message ?: "Lasting video access was not granted. Select the original file again.", error)
@@ -77,5 +80,31 @@ internal class LinkedVideoDocuments(private val context: Context) {
 
   companion object {
     private const val REQUEST_CODE = 48173
+  }
+}
+
+internal fun <U, D> withRetainedDocumentResults(
+  uris: List<U>,
+  isRetained: (U) -> Boolean,
+  retain: (U) -> Unit,
+  release: (U) -> Unit,
+  details: (U) -> D,
+): List<D> {
+  val newlyAcquired = mutableListOf<U>()
+  try {
+    uris.forEach { uri ->
+      if (!isRetained(uri)) newlyAcquired += uri
+      retain(uri)
+    }
+    return uris.map(details)
+  } catch (failure: Exception) {
+    newlyAcquired.asReversed().forEach { uri ->
+      try {
+        if (isRetained(uri)) release(uri)
+      } catch (cleanup: Exception) {
+        failure.addSuppressed(cleanup)
+      }
+    }
+    throw failure
   }
 }

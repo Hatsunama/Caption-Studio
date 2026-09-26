@@ -442,7 +442,7 @@ export function ScriptEditor(props: {
   };
 
   const save = async () => {
-    if (saving || closing) return;
+    if (saving || closing || !journalReady) return;
     const empty = draftCaptions.find((caption) => !caption.text.trim());
     if (empty) {
       focusCaption(empty.id, draftCaptions);
@@ -550,7 +550,7 @@ export function ScriptEditor(props: {
             <Text style={{ color: chrome.text, fontSize: 17, fontWeight: '700' }}>Edit captions</Text>
             <Text style={{ color: chrome.muted, fontSize: 12 }}>{draftCaptions.length} subtitle blocks</Text>
           </View>
-          <Pressable accessibilityRole="button" accessibilityLabel="Save all caption edits" disabled={saving || closing} hitSlop={10} onPress={() => { void save(); }} style={{ minWidth: 60, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' }}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Save all caption edits" disabled={saving || closing || !journalReady} hitSlop={10} onPress={() => { void save(); }} style={{ minWidth: 60, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' }}>
             <Text style={{ color: chrome.accent, fontSize: 17, fontWeight: '700', opacity: saving ? 0.45 : 1 }}>Done</Text>
           </Pressable>
         </View>
@@ -642,7 +642,7 @@ export function ScriptEditor(props: {
                       <TextInput
                         ref={(input) => { inputRefs.current[item.id] = input; }}
                         multiline
-                        editable={!saving && !closing}
+                        editable={!saving && !closing && journalReady}
                         scrollEnabled={false}
                         submitBehavior="newline"
                         value={item.text}

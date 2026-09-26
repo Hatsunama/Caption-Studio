@@ -1,6 +1,7 @@
 import CaptionMedia from 'caption-media';
 import { recoverProjectVideoAccess } from '@/services/project-media-recovery';
 import { saveProject } from '@/services/database';
+import { releaseUnreferencedReadPermissions } from '@/services/media-permissions';
 import type { CaptionProject } from '@/types/project';
 import type { ProjectMediaRecoveryPrompts } from '@/types/project-media-recovery';
 
@@ -19,6 +20,7 @@ export function ensureProjectVideoAccess(project: CaptionProject, prompts: Proje
     },
     confirm: (source, document) => prompts.confirmOriginal(source, document),
     persist: saveProject,
+    releaseUnused: releaseUnreferencedReadPermissions,
   }).finally(() => pending.delete(project.id));
   pending.set(project.id, operation);
   return operation;

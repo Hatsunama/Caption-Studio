@@ -727,7 +727,7 @@ internal class TimelineBitmapOverlay(
       "slide-down" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, 1f, translateY = -plan.height * (1f - phase))
       "zoom-in" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase, scaleX = 0.35f + phase * 0.65f, scaleY = 0.35f + phase * 0.65f)
       "zoom-out" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase, scaleX = 1.8f - phase * 0.8f, scaleY = 1.8f - phase * 0.8f)
-      "spin" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase, scaleX = 0.4f + phase * 0.6f, scaleY = 0.4f + phase * 0.6f, rotation = (1f - phase) * 280f)
+      "spin" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase, scaleX = spinTransitionScale(phase), scaleY = spinTransitionScale(phase), rotation = (1f - phase) * 280f)
       "fold-horizontal" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase, scaleY = max(0.015f, phase))
       "fold-vertical" -> drawTransitionSnapshot(canvas, transition.incoming, incomingSourceTimeMs, timeMs, phase, scaleX = max(0.015f, phase))
       "iris-circle" -> {
@@ -738,11 +738,12 @@ internal class TimelineBitmapOverlay(
       "iris-diamond" -> {
         val centerX = plan.width / 2f
         val centerY = plan.height / 2f
+        val halfDiagonal = diamondIrisHalfDiagonal(plan.width, plan.height, phase)
         val path = Path().apply {
-          moveTo(centerX, centerY - plan.height * phase)
-          lineTo(centerX + plan.width * phase, centerY)
-          lineTo(centerX, centerY + plan.height * phase)
-          lineTo(centerX - plan.width * phase, centerY)
+          moveTo(centerX, centerY - halfDiagonal)
+          lineTo(centerX + halfDiagonal, centerY)
+          lineTo(centerX, centerY + halfDiagonal)
+          lineTo(centerX - halfDiagonal, centerY)
           close()
         }
         drawMaskedTransitionSnapshot(canvas, transition, incomingSourceTimeMs, timeMs, path)
@@ -893,6 +894,11 @@ internal class TimelineBitmapOverlay(
     const val MAX_CACHED_IMAGE_BYTES = 48 * 1024 * 1024
   }
 }
+
+internal fun spinTransitionScale(phase: Float): Float = 0.35f + phase * 0.65f
+
+internal fun diamondIrisHalfDiagonal(width: Int, height: Int, phase: Float): Float =
+  (width + height) * phase / 2f
 
 private class ClosingRetrieverCache(private val maximumEntries: Int) : AutoCloseable {
   private val entries = LinkedHashMap<String, ManagedRetriever>(maximumEntries, 0.75f, true)

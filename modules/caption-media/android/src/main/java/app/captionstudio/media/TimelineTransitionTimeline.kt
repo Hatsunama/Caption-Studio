@@ -137,6 +137,12 @@ internal class TimelineTransitionTimeline private constructor(
         require(outgoing.sourceEndMs <= outgoingAvailableEndMs) {
           "Clip ${outgoing.id} ends after its readable source media"
         }
+        require(outgoing.sourceStartMs >= outgoing.availableSourceStartMs) {
+          "Clip ${outgoing.id} starts before its recoverable source media"
+        }
+        require(incoming.sourceStartMs >= incomingAvailableStartMs) {
+          "Clip ${incoming.id} starts before its recoverable source media"
+        }
         require(incoming.sourceEndMs <= incomingAvailableEndMs) {
           "Clip ${incoming.id} ends after its readable source media"
         }

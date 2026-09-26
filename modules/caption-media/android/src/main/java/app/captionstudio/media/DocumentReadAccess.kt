@@ -27,6 +27,12 @@ internal class DocumentReadAccess(private val resolver: ContentResolver) {
     retain(uri)
   }
 
+  fun release(uri: Uri) {
+    check(releasePersistedReadPermission(uri, ::retained) {
+      resolver.releasePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }) { "Android did not release the failed selection's read grant." }
+  }
+
   fun check(input: String): Map<String, Any> {
     val uri = Uri.parse(input)
     return try {

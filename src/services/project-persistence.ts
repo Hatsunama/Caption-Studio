@@ -8,7 +8,9 @@ export class ProjectPersistenceError extends Error {
   readonly cause: unknown;
 
   constructor(cause: unknown) {
-    super('Project changes were not saved. Check available storage and try again.');
+    super(cause && typeof cause === 'object' && 'message' in cause && typeof cause.message === 'string' && cause.message.trim()
+      ? cause.message
+      : 'Project changes were not saved. Check available storage and try again.');
     this.name = 'ProjectPersistenceError';
     this.cause = cause;
   }

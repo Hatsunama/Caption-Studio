@@ -33,9 +33,27 @@ function ports(overrides = {}) {
     probe: async () => info,
     confirm: async () => true,
     persist: async () => {},
+    releaseUnused: async () => {},
     ...overrides,
   };
 }
+
+test('relink releases abandoned grants only after save and unused new grants on cancellation', async () => {
+  const events = [];
+  await recoverProjectVideoAccess(fixture(), ports({
+    persist: async () => { events.push('save'); },
+    releaseUnused: async (uris) => { events.push('release:' + [...uris].join(',')); },
+  }));
+  assert.deepEqual(events, ['save', 'release:' + oldUri]);
+
+  events.length = 0;
+  await assert.rejects(recoverProjectVideoAccess(fixture(), ports({
+    confirm: async () => false,
+    persist: async () => assert.fail('cancelled recovery must not save'),
+    releaseUnused: async (uris) => { events.push('release:' + [...uris].join(',')); },
+  })), /cancelled/i);
+  assert.deepEqual(events, ['release:' + newUri]);
+});
 
 test('re-link preserves every edit, source ID, cached thumbnail and draft base revision', () => {
   const project = fixture();
@@ -161,13 +179,13 @@ test('native contract owns result grants before returning URIs, with read-only a
   const mediaImport = read('src/services/media-import.ts');
   assert.match(picker, /Intent\(Intent.ACTION_OPEN_DOCUMENT\)/);
   assert.match(picker, /Intent.CATEGORY_OPENABLE/);
-  assert.match(picker, /retainResult\(it, intent.flags\)[\s\S]*val assets[\s\S]*promise.resolve/);
+  assert.match(picker, /withRetainedDocumentResults[\s\S]*retainResult\(it, intent.flags\)[\s\S]*promise.resolve/);
   assert.match(picker, /intent.data[\s\S]*intent.clipData/);
   assert.match(picker, /RESULT_CANCELED[\s\S]*"canceled" to true/);
   assert.match(access, /FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION/);
   assert.match(access, /takePersistableUriPermission[\s\S]*retained\(uri\)/);
   assert.match(access, /openAssetFileDescriptor\(uri, "r"\).*use/);
-  assert.doesNotMatch(picker + access, /FLAG_GRANT_WRITE|MANAGE_EXTERNAL_STORAGE|READ_MEDIA_VIDEO|copyTo|releasePersistable/);
+  assert.doesNotMatch(picker + access, /FLAG_GRANT_WRITE|MANAGE_EXTERNAL_STORAGE|READ_MEDIA_VIDEO|copyTo/);
   assert.match(workflow, /project = await ensureProjectVideoAccess\(project, prompts\);[\s\S]*const loadedProject/);
   assert.match(mediaImport, /pickVideoDocuments\(true\)/);
   assert.match(mediaImport, /pickVideoDocuments\(false\)/);
@@ -197,6 +215,7 @@ test('service adapts native access and UI decisions, deduplicates opens, and ret
     } },
     '@/services/project-media-recovery': { recoverProjectVideoAccess },
     '@/services/database': { saveProject: async () => { calls.push('save'); } },
+    '@/services/media-permissions': { releaseUnreferencedReadPermissions: async () => {} },
   });
   const project = fixture();
   const original = structuredClone(project);

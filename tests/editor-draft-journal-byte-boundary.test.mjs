@@ -157,17 +157,35 @@ test('malformed copies report both structured reasons and preserve both files', 
   assert.deepEqual([...h.files], before);
 });
 
-test('a valid primary does not authorize deleting an unreadable previous copy', async () => {
+test('a valid primary isolates an unreadable previous copy before autosave resumes', async () => {
   const h = harness();
   h.files.set(uri, envelope('primary typing'));
-  h.files.set(`${uri}.previous`, '{broken');
-  const before = [...h.files];
+  h.files.set(uri + '.previous', '{broken');
   const recovered = await h.read();
   assert.equal(recovered.payload, 'primary typing');
   assert.equal(recovered.recovery.source, 'primary');
   assert.equal(recovered.recovery.failures[0].source, 'previous');
-  await assert.rejects(h.write('new'), { code: 'corrupt' });
-  assert.deepEqual([...h.files], before);
+  await h.write('new');
+  assert.equal((await h.read()).payload, 'new');
+  assert.equal(h.files.get(uri + '.previous'), undefined);
+  assert.ok([...h.files].some(([path, raw]) => path.startsWith(uri + '.quarantine-') && raw === '{broken'));
+});
+
+test('script editing waits until recovery has been read and resolved', async () => {
+  const pending = new Promise(() => {});
+  const editor = await mountEditor('script', {
+    captions: [{ id: 'cue', text: 'Source', startMs: 0, endMs: 1000, wordIds: [] }],
+    service: { readEditorDraftJournal: () => pending },
+  });
+  const find = (node, predicate) => {
+    if (!node || typeof node !== 'object') return undefined;
+    if (Array.isArray(node)) return node.map((child) => find(child, predicate)).find(Boolean);
+    return predicate(node) ? node : find(node.props?.children, predicate);
+  };
+  const list = find(editor.tree, (node) => node.type === 'FlatList');
+  const firstRow = list.props.renderItem({ item: list.props.data[0], index: 0 });
+  assert.equal(find(firstRow, (node) => node.type === 'TextInput').props.editable, false);
+  assert.equal(find(editor.tree, (node) => node.props?.accessibilityLabel === 'Save all caption edits').props.disabled, true);
 });
 
 test('missing primary uses previous with an explicit interruption warning and permits safe retry', async () => {

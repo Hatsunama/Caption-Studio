@@ -119,3 +119,18 @@ test('a native batch is not acknowledged when the project commit was skipped', a
     onAcceptedBatch: async () => false,
   }), /project changed|not saved|commit/i);
 });
+
+test('a later failure reports that an earlier accepted batch was saved', async () => {
+  const { service } = await serviceFixture(true);
+  const committed = [];
+  await assert.rejects(service.translateNaturalCaptionBatch({
+    sourceLanguage: 'en', targetLanguage: 'fr', captions,
+    onAcceptedBatch: async (batch) => committed.push([...batch.captions.keys()]),
+  }), (error) => {
+    assert.match(error.message, /Later native batch failed/);
+    assert.match(error.message, /1.*(?:batch|caption).*saved/i);
+    assert.doesNotMatch(error.message, /No captions were changed/);
+    return true;
+  });
+  assert.deepEqual(committed, [['first']]);
+});
