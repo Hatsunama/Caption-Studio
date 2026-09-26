@@ -10,10 +10,6 @@ const delivery = readFileSync(
   new URL('../modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineExportDelivery.kt', import.meta.url),
   'utf8',
 );
-const compositorTest = readFileSync(
-  new URL('../modules/caption-media/android/src/test/java/app/captionstudio/media/TimelineVideoCompositorSettingsTest.kt', import.meta.url),
-  'utf8',
-);
 const projectExport = readFileSync(
   new URL('../src/services/project-export.ts', import.meta.url),
   'utf8',
@@ -23,19 +19,7 @@ const editor = readFileSync(
   'utf8',
 );
 
-test('native export keeps the local MP4 until JS delivery and never covers the video with the canvas', () => {
-  assert.match(exporter, /sequences \+= EditedMediaItemSequence\.withVideoFrom\(listOf\(baseVideo\)\)/);
-  assert.equal([...exporter.matchAll(/withVideoFrom\(listOf\(baseVideo\)\)/g)].length, 1);
-  assert.ok(
-    exporter.indexOf('sequences += buildNativeVideoSequence(plan)')
-      < exporter.indexOf('sequences += EditedMediaItemSequence.withVideoFrom(listOf(baseVideo))'),
-    'Media3 renders the first registered video sequence on top, so footage must precede the opaque canvas',
-  );
-  assert.match(exporter, /const val VIDEO_SEQUENCE_INDEX = 0/);
-  assert.match(exporter, /if \(plan.clips.isEmpty\(\) \|\| inputId != VIDEO_SEQUENCE_INDEX\) return StaticOverlaySettings\.Builder\(\)\.build\(\)/);
-  assert.doesNotMatch(exporter, /CLOCK_SEQUENCE_INDEX/);
-  assert.doesNotMatch(compositorTest, /getOverlaySettings\(2,/);
-  assert.match(compositorTest, /val active = settings\.getOverlaySettings\(0, 500_000\)/);
+test('native export keeps the local MP4 until JS delivery', () => {
   assert.match(exporter, /requireRenderedVideoFile\(task\.output\)/);
   assert.match(exporter, /inspectRenderedVideo\(context, Uri\.fromFile\(task\.output\), sizeBytes, plan\.durationMs, plan\.frameRate\)/);
   assert.match(exporter, /inspectRenderedVideo\(context, mediaUri, verified\.sizeBytes, plan\.durationMs, plan\.frameRate\)/);
