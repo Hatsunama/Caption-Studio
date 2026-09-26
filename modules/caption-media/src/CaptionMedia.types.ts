@@ -70,6 +70,12 @@ export type AudioTrackExtractionResult = {
   mimeType: string;
 };
 
+export type TimelineAudioRenderResult = {
+  outputUri: string;
+  sizeBytes: number;
+  durationMs: number;
+};
+
 export type TimelineVideoExportResult = {
   outputUri: string;
   mediaUri: string;

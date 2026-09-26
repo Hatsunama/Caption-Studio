@@ -22,12 +22,21 @@ export function createMediaPermissionReleaseLedger(
 export function decodeMediaPermissionReleaseLedger(
   value: unknown,
 ): MediaPermissionReleaseLedger {
-  if (!value || typeof value !== 'object') return createMediaPermissionReleaseLedger([]);
+  if (!value || typeof value !== 'object') {
+    throw new TypeError('Invalid Android media-access cleanup ledger.');
+  }
   const candidate = value as { version?: unknown; uris?: unknown };
   if (
     candidate.version !== MEDIA_PERMISSION_RELEASE_LEDGER_VERSION
     || !Array.isArray(candidate.uris)
-  ) return createMediaPermissionReleaseLedger([]);
+    || candidate.uris.some((uri) => (
+      typeof uri !== 'string'
+      || !uri.startsWith('content:')
+      || uri.length > 16_384
+    ))
+  ) {
+    throw new TypeError('Invalid Android media-access cleanup ledger.');
+  }
   return createMediaPermissionReleaseLedger(candidate.uris);
 }
 

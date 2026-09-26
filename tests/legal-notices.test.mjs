@@ -19,7 +19,14 @@ test('transcription runtime and downloaded model provenance are distributable of
   const notices = readFileSync(new URL('../src/services/legal-notices.ts', import.meta.url), 'utf8');
   const models = readFileSync(new URL('../MODEL_NOTICES.md', import.meta.url), 'utf8');
   const mit = readFileSync(new URL('../third-party/licenses/MIT-component-notices.txt', import.meta.url), 'utf8');
-  assert.match(notices, /whisper\.rn 0\.7\.0/);
+  const thirdParty = readFileSync(new URL('../THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8');
+  const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
+  assert.equal(lock.packages['node_modules/whisper.rn'].version, '0.7.4');
+  for (const surface of [notices, models, thirdParty, mit]) assert.match(surface, /whisper\.rn(?:`)? 0\.7\.4/);
+  assert.match(notices, /Whisper ggml tiny multilingual caption model/);
+  assert.doesNotMatch(notices, /tiny, base, and small/);
+  assert.match(models, /one multilingual Whisper tiny model and a Silero VAD/);
+  assert.doesNotMatch(models, /ggml-(?:base|small)-q5_1\.bin|Fast,|Balanced,|Accurate,/);
   assert.match(notices, /Silero VAD v6\.2/);
   assert.match(models, /c521a4b02f422512d734391fdf08bb08c0862f68/);
   assert.match(models, /9ffd54a1e1ee413ddf265af9913beaf518d1639b/);
