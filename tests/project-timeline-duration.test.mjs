@@ -109,7 +109,5 @@ test('preview and native composition consume the project extent and preserve can
   assert.doesNotMatch(controller, /entriesRef.current.at\(-1\)\?\.afterGapEndMs/);
   const native = read('modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineVideoExporter.kt');
   assert.match(native, /setImageDurationMs\(plan.durationMs\)/);
-  assert.match(native, /if \(plan.clips.isNotEmpty\(\)\) sequences \+= buildNativeVideoSequence\(plan\)/);
-  assert.match(native, /plan.clips.isEmpty\(\) \|\| inputId != VIDEO_SEQUENCE_INDEX/);
   assert.match(native, /val sourceEndMs = clip.sourceEndMs/);
 });

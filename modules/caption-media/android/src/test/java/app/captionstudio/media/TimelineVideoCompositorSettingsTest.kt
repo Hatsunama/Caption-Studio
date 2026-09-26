@@ -1,7 +1,11 @@
 package app.captionstudio.media
 
+import androidx.media3.common.MediaItem
 import androidx.media3.common.util.Size
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -36,14 +40,30 @@ class TimelineVideoCompositorSettingsTest {
     val settings = TimelineVideoCompositorSettings(plan)
 
     assertEquals(Size(720, 1_280), settings.getOutputSize(listOf(Size(10, 10))))
-    val active = settings.getOverlaySettings(0, 500_000)
+    assertEquals(0f, settings.getOverlaySettings(0, 500_000).alphaScale)
+    val active = settings.getOverlaySettings(1, 500_000)
     assertEquals(1f, active.alphaScale)
     assertEquals(0.5f, active.backgroundFrameAnchor.first)
     assertEquals(0.5f, active.backgroundFrameAnchor.second)
     assertEquals(1.5f, active.scale.first)
     assertEquals(-30f, active.rotationDegrees)
-    assertEquals(0f, settings.getOverlaySettings(0, 1_500_000).alphaScale)
-    assertEquals(1f, settings.getOverlaySettings(1, 1_500_000).alphaScale)
+    assertEquals(0f, settings.getOverlaySettings(1, 1_500_000).alphaScale)
+    assertEquals(1f, settings.getOverlaySettings(2, 1_500_000).alphaScale)
+  }
+
+  @Test
+  fun canvasClockOwnsTimestampsWhileFootageRendersAboveBackground() {
+    val base = EditedMediaItem.Builder(MediaItem.Builder().setUri("file:///canvas.png").setImageDurationMs(2_000).build())
+      .setFrameRate(30).build()
+    val footage = EditedMediaItemSequence.withVideoFrom(listOf(
+      EditedMediaItem.Builder(MediaItem.fromUri("file:///footage.mp4")).build(),
+    ))
+    val sequences = clockedVideoSequences(base, footage)
+    assertEquals(3, sequences.size)
+    assertSame(base, sequences[0].editedMediaItems.single())
+    assertSame(footage, sequences[1])
+    assertSame(base, sequences[2].editedMediaItems.single())
+    assertEquals(1, clockedVideoSequences(base, null).size)
   }
 
   private fun transform(x: Double, y: Double, scale: Double, rotation: Double) = mapOf<String, Any>(

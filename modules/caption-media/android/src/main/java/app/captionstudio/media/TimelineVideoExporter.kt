@@ -244,9 +244,10 @@ internal class TimelineVideoExporter(private val context: Context) {
       .setFrameRate(plan.frameRate)
       .setRemoveAudio(true)
       .build()
-    val sequences = mutableListOf<EditedMediaItemSequence>()
-    if (plan.clips.isNotEmpty()) sequences += buildNativeVideoSequence(plan)
-    sequences += EditedMediaItemSequence.withVideoFrom(listOf(baseVideo))
+    val sequences = clockedVideoSequences(
+      baseVideo,
+      if (plan.clips.isNotEmpty()) buildNativeVideoSequence(plan) else null,
+    ).toMutableList()
     val originalAudio = buildOriginalAudioSequences(plan, task)
     val insertedAudio = plan.audioClips.mapNotNull { buildInsertedAudioSequence(it) }
     sequences += originalAudio
@@ -582,6 +583,15 @@ internal fun selectSourceTrackTimings(tracks: List<SourceTrackTiming>): SourceTr
   return SourceTrackTimings(videoDurationMs, audioTracks.maxOfOrNull { it.durationMs } ?: 0L, audioTracks.isNotEmpty())
 }
 
+internal fun clockedVideoSequences(
+  baseVideo: EditedMediaItem,
+  footage: EditedMediaItemSequence?,
+): List<EditedMediaItemSequence> {
+  val clock = EditedMediaItemSequence.withVideoFrom(listOf(baseVideo))
+  if (footage == null) return listOf(clock)
+  return listOf(clock, footage, EditedMediaItemSequence.withVideoFrom(listOf(baseVideo)))
+}
+
 internal data class TimelineExportProgress(val stage: String, val percent: Int?)
 
 internal class TimelineVideoCompositorSettings(
@@ -590,6 +600,9 @@ internal class TimelineVideoCompositorSettings(
   override fun getOutputSize(inputSizes: List<Size>) = Size(plan.width, plan.height)
 
   override fun getOverlaySettings(inputId: Int, presentationTimeUs: Long): OverlaySettings {
+    if (plan.clips.isNotEmpty() && inputId == CLOCK_SEQUENCE_INDEX) {
+      return StaticOverlaySettings.Builder().setAlphaScale(0f).build()
+    }
     if (plan.clips.isEmpty() || inputId != VIDEO_SEQUENCE_INDEX) return StaticOverlaySettings.Builder().build()
     val timeMs = (presentationTimeUs / 1_000L).coerceIn(0L, plan.durationMs)
     val clip = plan.clips.firstOrNull { timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs }
@@ -608,7 +621,8 @@ internal class TimelineVideoCompositorSettings(
   }
 
   private companion object {
-    const val VIDEO_SEQUENCE_INDEX = 0
+    const val CLOCK_SEQUENCE_INDEX = 0
+    const val VIDEO_SEQUENCE_INDEX = 1
   }
 }
 
