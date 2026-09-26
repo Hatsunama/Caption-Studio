@@ -20,6 +20,7 @@ import {
   captionTextTail,
 } from '@/lib/caption-text-breaks';
 import { createTranslationBatches } from '@/lib/translation-batching';
+import { removeModelArtifacts, storedModelBytes } from '@/lib/model-artifact-lifecycle';
 import {
   encodeModelVerificationMarker,
   modelVerificationMarkerMatches,
@@ -91,6 +92,7 @@ export type DownloadedNaturalTranslationModel = {
   id: typeof NATURAL_TRANSLATION_MODEL.id;
   label: string;
   sizeBytes: number;
+  status: 'ready' | 'incomplete';
 };
 
 export class CaptionTranslationCancelledError extends Error {
@@ -141,8 +143,13 @@ export function normalizeNaturalCaptionLanguage(languageTag: string): CaptionLan
 
 export async function listDownloadedNaturalTranslationModel(): Promise<DownloadedNaturalTranslationModel[]> {
   const file = translationModelFile();
-  return await verifyTranslationModel(file)
-    ? [{ id: NATURAL_TRANSLATION_MODEL.id, label: NATURAL_TRANSLATION_MODEL.label, sizeBytes: NATURAL_TRANSLATION_MODEL.downloadBytes }]
+  const ready = await verifyTranslationModel(file);
+  const sizeBytes = storedModelBytes(
+    NATURAL_TRANSLATION_MODEL.fileName,
+    (name) => new File(translationModelDirectory(), name),
+  );
+  return sizeBytes > 0
+    ? [{ id: NATURAL_TRANSLATION_MODEL.id, label: NATURAL_TRANSLATION_MODEL.label, sizeBytes, status: ready ? 'ready' : 'incomplete' }]
     : [];
 }
 
@@ -151,10 +158,7 @@ export async function removeDownloadedNaturalTranslationModel() {
     throw new Error('Wait for caption translation to finish or cancel it before removing the language model.');
   }
   const directory = translationModelDirectory();
-  for (const suffix of ['', '.sha256', '.sha256.download', '.download', '.download.resume.json', '.download.resume.json.writing']) {
-    const file = new File(directory, `${NATURAL_TRANSLATION_MODEL.fileName}${suffix}`);
-    if (file.exists) file.delete();
-  }
+  removeModelArtifacts(NATURAL_TRANSLATION_MODEL.fileName, (name) => new File(directory, name));
 }
 
 export async function translateNaturalCaptionBatch(options: {

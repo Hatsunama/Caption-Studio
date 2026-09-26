@@ -11,6 +11,7 @@ import {
   remainingModelDownloadBytes,
   type ModelDownloadResumeIdentity,
 } from '@/lib/model-download-resume';
+import { removeModelArtifacts, RESUMABLE_MODEL_SUFFIXES } from '@/lib/model-artifact-lifecycle';
 
 export type VerifiedModelDescriptor = {
   downloadUrl: string;
@@ -159,12 +160,11 @@ export async function resumableModelDownloadReservation(
 }
 
 export function removeResumableModelDownloadArtifacts(target: File) {
-  deleteIfPresent(temporaryFile(target));
-  deleteIfPresent(chunkFile(target));
-  deleteIfPresent(chunkMarkerFile(target));
-  const state = resumeStateFile(target);
-  deleteIfPresent(state);
-  deleteIfPresent(new File(state.parentDirectory, `${state.name}.writing`));
+  removeModelArtifacts(
+    target.name,
+    (name) => new File(target.parentDirectory, name),
+    RESUMABLE_MODEL_SUFFIXES,
+  );
 }
 
 async function readValidCheckpoint(

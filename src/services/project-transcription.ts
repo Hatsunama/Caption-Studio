@@ -10,6 +10,7 @@ import {
 } from '@/lib/source-transcription-fingerprint';
 import { anchorCaptionsToClips, mapSourceWordsToTimeline } from '@/lib/video-timeline';
 import { canonicalizeSourceWords } from '@/lib/primary-caption-timing';
+import { shouldTranscribeAudibleTimeline } from '@/lib/caption-audio-route';
 import {
   transcribeVideoLocally,
   type TranscriptionModelId,
@@ -127,8 +128,7 @@ export async function generateProjectCaptions(
   ...args: Parameters<typeof generateProjectCaptionsFromSources>
 ): Promise<Awaited<ReturnType<typeof generateProjectCaptionsFromSources>>> {
   const [project] = args;
-  const usesTimelineComposition = project.clips.length > 1
-    || project.audioClips.some((clip) => !clip.muted && clip.volume > 0);
+  const usesTimelineComposition = shouldTranscribeAudibleTimeline(project);
   if (!usesTimelineComposition) return generateProjectCaptionsFromSources(...args);
 
   args[2]?.({

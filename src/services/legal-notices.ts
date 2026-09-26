@@ -66,11 +66,11 @@ Native media and machine-learning components
 • Expo, React Native, and React Navigation components — MIT License
 
 Local transcription runtime
-• whisper.rn 0.7.0 — MIT License, Copyright © 2023 Jhen-Jie Hong
+• whisper.rn 0.7.4 — MIT License, Copyright © 2023 Jhen-Jie Hong
 • whisper.cpp and ggml native sources — MIT License, Copyright © 2023–2026 The ggml authors
 
 Optional transcription models
-• OpenAI Whisper ggml tiny, base, and small multilingual models — MIT License, Copyright © 2022 OpenAI
+• OpenAI Whisper ggml tiny multilingual caption model — MIT License, Copyright © 2022 OpenAI
 • Silero VAD v6.2 ggml model — MIT License, Copyright © 2020–present Silero Team
 Whisper revision: c521a4b02f422512d734391fdf08bb08c0862f68
 Silero VAD revision: 9ffd54a1e1ee413ddf265af9913beaf518d1639b

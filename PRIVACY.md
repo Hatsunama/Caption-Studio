@@ -10,9 +10,9 @@ Videos, audio, images, imported fonts, transcripts, projects, and exports are pr
 
 ## Optional model downloads
 
-When a user first chooses a transcription model, Caption Studio downloads that model and a speech-detection model from Hugging Face. The network request necessarily exposes ordinary connection information, such as the user's IP address, to Hugging Face under its own policies. The user's media and transcript are not sent with the request. Caption Studio verifies each model's exact file size and SHA-256 digest before using it.
+When a user first generates captions, Caption Studio downloads one multilingual Whisper tiny model and a Silero VAD speech-detection model from Hugging Face. The network request necessarily exposes ordinary connection information, such as the user's IP address, to Hugging Face under its own policies. The user's media and transcript are not sent with the request. Caption Studio verifies each model's exact file size and SHA-256 digest before using it.
 
-Dual-language subtitles are off by default. If the user requests natural English–Chinese translation, Caption Studio downloads one optional Qwen language model of approximately 1.6 GB from Hugging Face. The same model handles English to Simplified Chinese, English to Traditional Chinese, and Chinese to English. Caption text is processed locally after the download and is not sent to Hugging Face or Hatsunama. AI translation can be inaccurate and remains editable; the app identifies translations that need refresh or human review. Removing the model does not remove saved projects or translated text.
+Dual-language subtitles are off by default. If the user requests natural translation for a supported caption-language pair, Caption Studio downloads one optional Qwen language model of approximately 1.6 GB from Hugging Face. The same model handles supported multilingual pairs. Caption text is processed locally after the download and is not sent to Hugging Face or Hatsunama. AI translation can be inaccurate and remains editable; the app identifies translations that need refresh or human review. Removing the model does not remove saved projects or translated text.
 
 ## Media access and sharing
 

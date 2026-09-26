@@ -1,6 +1,10 @@
 import { getDatabase } from '@/services/database';
 
-export async function readPreference<T>(key: string, fallback: T): Promise<T> {
+export async function readPreference<T>(
+  key: string,
+  fallback: T,
+  options?: { strictJson?: boolean },
+): Promise<T> {
   const database = await getDatabase();
   const row = await database.getFirstAsync<{ value_json: string }>(
     'SELECT value_json FROM preferences WHERE key = ?',
@@ -9,7 +13,8 @@ export async function readPreference<T>(key: string, fallback: T): Promise<T> {
   if (!row) return fallback;
   try {
     return JSON.parse(row.value_json) as T;
-  } catch {
+  } catch (error) {
+    if (options?.strictJson) throw error;
     return fallback;
   }
 }

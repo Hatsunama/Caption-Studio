@@ -6,6 +6,7 @@ import { assertCaptionAudioAvailable } from '@/lib/media-validation';
 import { alignWordsToSpeech } from '@/lib/speech-alignment';
 import { requireDetectedCaptionLanguage } from '@/lib/transcription-language';
 import { PREPARING_AUDIO_CUES } from '@/lib/transcription-progress';
+import { removeModelArtifacts, storedModelBytes } from '@/lib/model-artifact-lifecycle';
 import { coalesceWhisperWords } from '@/lib/whisper-words';
 import {
   encodeModelVerificationMarker,
@@ -95,19 +96,13 @@ export type DownloadedTranscriptionModel = {
   id: TranscriptionModelId;
   label: string;
   sizeBytes: number;
+  status: 'ready' | 'incomplete';
 };
 
-const MODEL_FILE_SUFFIXES = [
-  '', '.sha256', '.sha256.download', '.download',
-  '.download.resume.json', '.download.resume.json.writing',
-] as const;
 let obsoleteModelsPruned = false;
 
 function deleteModelArtifacts(directory: Directory, fileName: string) {
-  for (const suffix of MODEL_FILE_SUFFIXES) {
-    const file = new File(directory, `${fileName}${suffix}`);
-    if (file.exists) file.delete();
-  }
+  removeModelArtifacts(fileName, (name) => new File(directory, name));
 }
 
 function pruneObsoleteModelFiles() {
@@ -143,12 +138,15 @@ export async function listDownloadedTranscriptionModels(): Promise<DownloadedTra
   pruneObsoleteModelFiles();
   const directory = new Directory(Paths.document, 'models');
   const modelFile = new File(directory, CAPTION_MODEL.fileName);
-  if (!(await verifyModelFile(modelFile, CAPTION_MODEL.downloadBytes, CAPTION_MODEL.sha256))) return [];
+  const modelReady = await verifyModelFile(modelFile, CAPTION_MODEL.downloadBytes, CAPTION_MODEL.sha256);
   const vadFile = new File(directory, VAD_MODEL.fileName);
-  const vadBytes = await verifyModelFile(vadFile, VAD_MODEL.downloadBytes, VAD_MODEL.sha256)
-    ? VAD_MODEL.downloadBytes
-    : 0;
-  return [{ id: CAPTION_MODEL.id, label: CAPTION_MODEL.label, sizeBytes: CAPTION_MODEL.downloadBytes + vadBytes }];
+  const vadReady = await verifyModelFile(vadFile, VAD_MODEL.downloadBytes, VAD_MODEL.sha256);
+  const resolve = (name: string) => new File(directory, name);
+  const sizeBytes = storedModelBytes(CAPTION_MODEL.fileName, resolve)
+    + storedModelBytes(VAD_MODEL.fileName, resolve);
+  return sizeBytes > 0
+    ? [{ id: CAPTION_MODEL.id, label: CAPTION_MODEL.label, sizeBytes, status: modelReady && vadReady ? 'ready' : 'incomplete' }]
+    : [];
 }
 
 export async function removeDownloadedTranscriptionModels() {

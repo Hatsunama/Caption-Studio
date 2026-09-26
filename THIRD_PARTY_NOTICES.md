@@ -4,9 +4,9 @@ Caption Studio distributes or loads the following principal third-party runtimes
 
 ## MIT components
 
-- `whisper.rn` 0.7.0, including its React Native bindings: MIT, Copyright © 2023 Jhen-Jie Hong.
+- `whisper.rn` 0.7.4, including its React Native bindings: MIT, Copyright © 2023 Jhen-Jie Hong.
 - Vendored `whisper.cpp` and `ggml` native sources used by `whisper.rn`: MIT, Copyright © 2023–2026 The ggml authors.
-- OpenAI Whisper code and model weights represented by the optional converted ggml model downloads: MIT, Copyright © 2022 OpenAI.
+- OpenAI Whisper code and model weights represented by the optional converted ggml tiny model download: MIT, Copyright © 2022 OpenAI.
 - Silero VAD code and model represented by the optional converted ggml VAD download: MIT, Copyright © 2020–present Silero Team.
 - Expo SDK and Expo modules: MIT, Copyright © 2015–present 650 Industries, Inc. (aka Expo).
 - React Native and related Meta runtime components: MIT, Copyright © Meta Platforms, Inc. and affiliates.

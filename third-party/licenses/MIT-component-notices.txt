@@ -1,6 +1,6 @@
 MIT-licensed component notices
 
-whisper.rn 0.7.0
+whisper.rn 0.7.4
 Copyright (c) 2023 Jhen-Jie Hong
 
 whisper.cpp and ggml

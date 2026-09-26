@@ -35,7 +35,7 @@ export default function PrivacyScreen() {
     const size = formatStorage(translationModels.reduce((total, model) => total + model.sizeBytes, 0));
     Alert.alert(
       'Remove natural translation model?',
-      `This frees about ${size}. Saved English and Chinese subtitles stay intact. The model downloads again only if you request another automatic translation.`,
+      `This removes about ${size} of model files, including any unfinished download. Saved subtitles stay intact. The model downloads again only if you request another automatic translation.`,
       [
         { text: 'Keep model', style: 'cancel' },
         {
@@ -55,7 +55,7 @@ export default function PrivacyScreen() {
     const size = formatStorage(downloadedModels.reduce((total, model) => total + model.sizeBytes, 0));
     Alert.alert(
       'Remove caption model?',
-      `This frees about ${size}. Saved captions and projects stay intact. The caption model downloads again only when you generate captions.`,
+      `This removes about ${size} of model files, including any unfinished download. Saved captions and projects stay intact. The caption model downloads again only when you generate captions.`,
       [
         { text: 'Keep model', style: 'cancel' },
         {
@@ -147,7 +147,7 @@ export default function PrivacyScreen() {
       <View style={{ gap: 10 }}>
         {downloadedModels.length > 0 ? (
           <PolicyAction
-            label={`Remove caption model · ${formatStorage(downloadedModels.reduce((total, model) => total + model.sizeBytes, 0))}`}
+            label={`Remove caption model${downloadedModels.some((model) => model.status === 'incomplete') ? ' / unfinished download' : ''} · ${formatStorage(downloadedModels.reduce((total, model) => total + model.sizeBytes, 0))}`}
             onPress={removeOfflineModels}
           />
         ) : (
@@ -157,7 +157,7 @@ export default function PrivacyScreen() {
         )}
         {translationModels.length > 0 ? (
           <PolicyAction
-            label={`Remove natural translation model · ${formatStorage(translationModels.reduce((total, model) => total + model.sizeBytes, 0))}`}
+            label={`Remove natural translation model${translationModels.some((model) => model.status === 'incomplete') ? ' / unfinished download' : ''} · ${formatStorage(translationModels.reduce((total, model) => total + model.sizeBytes, 0))}`}
             onPress={removeTranslationModel}
           />
         ) : (
