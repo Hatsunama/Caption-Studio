@@ -714,7 +714,12 @@ test('failed text layer save keeps the draft open, explains the failure, and can
 });
 
 test('failed text layer save after editor unmount does not alert over another screen', async () => {
-  const h = mount(), gate = h.holdWrite();
+  const project = fixture();
+  project.layers.push({
+    id: 'title', kind: 'text', name: 'Title', text: 'Old title', startMs: 0, endMs: 5000,
+    style: project.projectStyle, visible: true,
+  });
+  const h = mount(project), gate = h.holdWrite();
   h.actions.setEditingLayerId('title');
   h.actions.setEditingText('New title');
   h.render();
