@@ -11,7 +11,7 @@ import {
   settleMediaPermissionReleaseAttempts,
   type MediaPermissionReleaseAttempt,
 } from '@/lib/media-permission-release-ledger';
-import { listProjectsStrict } from '@/services/database';
+import { inspectProjectPermissionReferences } from '@/services/database';
 import { readPreference, writePreference } from '@/services/preferences';
 
 export const linkedMediaUris = collectLinkedMediaUris;
@@ -58,14 +58,22 @@ async function processPendingReadPermissionReleases(candidates: string[]) {
     console.warn('Could not persist the Android media-access cleanup ledger; access was retained.', error);
     return;
   }
-  let projects;
+  let references;
   try {
-    projects = await listProjectsStrict();
+    references = await inspectProjectPermissionReferences();
   } catch (error) {
     console.warn('Could not verify whether Android media access is still in use; access was retained.', error);
     return;
   }
-  const releasable = unreferencedLinkedMediaUris(pending.uris, projects);
+  if (!references.complete) {
+    console.warn('An unreadable project could still use Android media access; cleanup remains queued.');
+    return;
+  }
+  const releasable = unreferencedLinkedMediaUris(
+    pending.uris,
+    references.projects,
+    references.protectedUris,
+  );
   const results = await Promise.allSettled(
     releasable.map((uri) => Promise.resolve().then(() => CaptionMedia.releaseReadPermission(uri))),
   );

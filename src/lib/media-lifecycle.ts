@@ -87,9 +87,10 @@ export function abandonedLinkedMediaPermissions(
 export function unreferencedLinkedMediaUris(
   candidates: Iterable<string>,
   projects: Iterable<CaptionProject>,
+  protectedUris: Iterable<string> = [],
 ): string[] {
   const referenced = new Set(
-    [...projects].flatMap((project) => collectLinkedMediaUris(project)),
+    [...protectedUris, ...[...projects].flatMap((project) => collectLinkedMediaUris(project))],
   );
   return uniqueUris(candidates)
     .filter(isAndroidContentUri)

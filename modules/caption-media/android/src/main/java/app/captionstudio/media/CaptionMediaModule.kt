@@ -201,15 +201,9 @@ class CaptionMediaModule : Module() {
     val uri = Uri.parse(input)
     if (uri.scheme != "content") return true
     val resolver = context.contentResolver
-    val persisted = resolver.persistedUriPermissions.any { permission ->
-      permission.uri == uri && permission.isReadPermission
-    }
-    if (!persisted) return false
-    return try {
+    val access = DocumentReadAccess(resolver)
+    return releasePersistedReadPermission(uri, access::retained) {
       resolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      true
-    } catch (_: SecurityException) {
-      false
     }
   }
 
