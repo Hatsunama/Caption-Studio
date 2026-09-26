@@ -6,13 +6,6 @@ import { buildClipTimeline } from '@/lib/video-timeline';
 import { restoreTimelineTranscription } from '@/lib/timeline-transcription';
 import type { CaptionProject } from '@/types/project';
 
-type TimelineAudioNativeModule = typeof CaptionMedia & {
-  renderTimelineAudio: (
-    outputUri: string,
-    plan: ReturnType<typeof buildTimelineAudioRenderPlan>,
-  ) => Promise<{ outputUri: string; sizeBytes: number; durationMs: number }>;
-};
-
 export type TimelineTranscriptionSession = {
   project: CaptionProject;
   restore: <T extends CaptionProject>(generated: T) => T;
@@ -41,7 +34,7 @@ export async function createTimelineTranscriptionSession(
   );
   removeTemporaryAudio(output);
   try {
-    const rendered = await (CaptionMedia as TimelineAudioNativeModule).renderTimelineAudio(output.uri, plan);
+    const rendered = await CaptionMedia.renderTimelineAudio(output.uri, plan);
     if (!output.exists || rendered.sizeBytes <= 0) {
       throw new Error('The audible timeline could not be prepared for captioning.');
     }

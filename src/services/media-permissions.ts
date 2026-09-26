@@ -41,10 +41,12 @@ async function processPendingReadPermissionReleases(candidates: string[]) {
   let persisted = createMediaPermissionReleaseLedger([]);
   try {
     persisted = decodeMediaPermissionReleaseLedger(
-      await readPreference<unknown>(RELEASE_LEDGER_PREFERENCE, persisted),
+      await readPreference<unknown>(RELEASE_LEDGER_PREFERENCE, persisted, { strictJson: true }),
     );
   } catch (error) {
-    console.warn('Could not read the Android media-access cleanup ledger.', error);
+    volatilePending = mergeMediaPermissionReleaseLedger(volatilePending, candidates);
+    console.warn('Could not read the Android media-access cleanup ledger; access was retained and cleanup remains queued.', error);
+    return;
   }
   const pending = mergeMediaPermissionReleaseLedger(
     mergeMediaPermissionReleaseLedger(persisted, volatilePending.uris),

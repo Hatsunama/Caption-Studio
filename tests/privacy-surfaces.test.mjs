@@ -14,6 +14,23 @@ test('public and in-app privacy surfaces state the shipped local runtime, backup
   }
 });
 
+test('public and store copy describe one caption model and supported multilingual translation', () => {
+  const markdown = readFileSync(new URL('../PRIVACY.md', import.meta.url), 'utf8');
+  const publicHtml = readFileSync(new URL('../docs/privacy/index.html', import.meta.url), 'utf8');
+  const listing = readFileSync(new URL('../play-store/listing.md', import.meta.url), 'utf8');
+  const safety = readFileSync(new URL('../play-store/data-safety-notes.md', import.meta.url), 'utf8');
+  for (const policy of [markdown, publicHtml]) {
+    assert.match(policy, /one multilingual Whisper tiny model and a Silero VAD/);
+    assert.match(policy, /supported caption-language pair/);
+    assert.doesNotMatch(policy, /first choose|English.Chinese translation/);
+  }
+  assert.match(listing, /one downloadable Whisper tiny model and speech detection/);
+  assert.doesNotMatch(listing, /Fast, Balanced, and Accurate|selected model|English.Chinese translation/);
+  assert.match(safety, /one immutable, hash-pinned multilingual Whisper tiny model and one Silero VAD/);
+  assert.match(safety, /supported caption-language pairs/);
+  assert.doesNotMatch(safety, /first transcription-model selection|English.Chinese translation/);
+});
+
 test('GitHub Pages publishes only the public privacy surface while the app stays local-only', () => {
   const workflow = readFileSync(new URL('../.github/workflows/pages.yml', import.meta.url), 'utf8');
   const inApp = readFileSync(new URL('../src/app/privacy.tsx', import.meta.url), 'utf8');

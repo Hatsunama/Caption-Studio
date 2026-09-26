@@ -16,8 +16,8 @@ Import one video or a whole sequence, generate multilingual captions on your pho
 
 CAPTIONS THAT STAY EDITABLE
 
-• Generate multilingual captions locally with downloadable Fast, Balanced, and Accurate models
-• Optionally show English and Simplified or Traditional Chinese at the same time
+• Generate multilingual captions locally with one downloadable Whisper tiny model and speech detection
+• Optionally show a second language from the supported caption languages
 • Keep paired lines linked when either language is edited, with local refresh and human-review status
 • Edit the complete timestamped script
 • Split, join, delete, and resize caption blocks on a layered timeline
@@ -51,7 +51,7 @@ VIDEO AND AUDIO EDITING
 
 Caption Studio has no watermark, export quota, font pack paywall, or transcription-credit system. Projects are nondestructive, so your original selected media is never deleted or modified.
 
-Requires Android 7.0 or newer. Optional natural English–Chinese translation uses one additional approximately 1.6 GB local model, is not available until the user enables it, and can still require human review. Performance depends on video resolution, duration, selected model, and phone hardware.
+Requires Android 7.0 or newer. Optional natural multilingual translation uses one additional approximately 1.6 GB local model, is not available until the user enables it, and can still require human review. Performance depends on video resolution, duration, and phone hardware.
 
 ## Category
 

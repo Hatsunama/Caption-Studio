@@ -23,15 +23,10 @@ test('release ledger preserves exact URI identity and rejects invalid values', (
 });
 
 test('release ledger rejects malformed or unknown persisted schemas', () => {
-  assert.deepEqual(decodeMediaPermissionReleaseLedger(null), { version: 1, uris: [] });
-  assert.deepEqual(
-    decodeMediaPermissionReleaseLedger({ version: 2, uris: ['content://provider/item/1'] }),
-    { version: 1, uris: [] },
-  );
-  assert.deepEqual(
-    decodeMediaPermissionReleaseLedger({ version: 1, uris: 'content://provider/item/1' }),
-    { version: 1, uris: [] },
-  );
+  assert.throws(() => decodeMediaPermissionReleaseLedger(null), TypeError);
+  assert.throws(() => decodeMediaPermissionReleaseLedger({ version: 2, uris: ['content://provider/item/1'] }), TypeError);
+  assert.throws(() => decodeMediaPermissionReleaseLedger({ version: 1, uris: 'content://provider/item/1' }), TypeError);
+  assert.throws(() => decodeMediaPermissionReleaseLedger({ version: 1, uris: [42] }), TypeError);
 });
 
 test('release ledger merges durable and newly abandoned permissions without normalization', () => {

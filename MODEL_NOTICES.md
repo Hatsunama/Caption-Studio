@@ -2,18 +2,16 @@
 
 ## Whisper transcription runtime
 
-Caption Studio uses `whisper.rn` 0.7.0, which incorporates `whisper.cpp` and `ggml` native sources. `whisper.rn` is MIT-licensed, Copyright © 2023 Jhen-Jie Hong. `whisper.cpp` and `ggml` are MIT-licensed, Copyright © 2023–2026 The ggml authors. The required license terms and notices are preserved in [MIT-component-notices.txt](third-party/licenses/MIT-component-notices.txt).
+Caption Studio uses `whisper.rn` 0.7.4, which incorporates `whisper.cpp` and `ggml` native sources. `whisper.rn` is MIT-licensed, Copyright © 2023 Jhen-Jie Hong. `whisper.cpp` and `ggml` are MIT-licensed, Copyright © 2023–2026 The ggml authors. The required license terms and notices are preserved in [MIT-component-notices.txt](third-party/licenses/MIT-component-notices.txt).
 
 - `whisper.rn` source: `https://github.com/mybigday/whisper.rn`
 - `whisper.cpp` source: `https://github.com/ggerganov/whisper.cpp`
 
-## Optional multilingual Whisper models
+## Optional multilingual Whisper caption model
 
-Caption Studio downloads one converted ggml Whisper model only after the user chooses a transcription quality. The Hugging Face distribution identifies these model files as MIT-licensed conversions of OpenAI Whisper models. OpenAI's Whisper repository publishes its code and model weights under the MIT License, Copyright © 2022 OpenAI. All downloads use immutable revision `c521a4b02f422512d734391fdf08bb08c0862f68` and are verified before use.
+Caption Studio downloads one multilingual Whisper tiny model and a Silero VAD speech-detection model when the user first generates captions. The Hugging Face distribution identifies the converted ggml Whisper model as MIT-licensed. OpenAI's Whisper repository publishes its code and model weights under the MIT License, Copyright © 2022 OpenAI. The Whisper download uses immutable revision `c521a4b02f422512d734391fdf08bb08c0862f68` and is verified before use.
 
-- Fast, `ggml-tiny-q5_1.bin`: 32,152,673 bytes; SHA-256 `818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7`.
-- Balanced, `ggml-base-q5_1.bin`: 59,707,625 bytes; SHA-256 `422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898`.
-- Accurate, `ggml-small-q5_1.bin`: 190,085,487 bytes; SHA-256 `ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb`.
+- Caption model, `ggml-tiny-q5_1.bin`: 32,152,673 bytes; SHA-256 `818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7`.
 
 - Distribution: `https://huggingface.co/ggerganov/whisper.cpp`
 - Upstream model: `https://github.com/openai/whisper`
@@ -21,7 +19,7 @@ Caption Studio downloads one converted ggml Whisper model only after the user ch
 
 ## Optional Silero voice-activity model
 
-Caption Studio downloads `ggml-silero-v6.2.0.bin` with the selected Whisper model so silence can be detected before transcription. The ggml distribution declares the converted model MIT-licensed; upstream Silero VAD is MIT-licensed, Copyright © 2020–present Silero Team.
+Caption Studio downloads `ggml-silero-v6.2.0.bin` with the Whisper caption model so silence can be detected before transcription. The ggml distribution declares the converted model MIT-licensed; upstream Silero VAD is MIT-licensed, Copyright © 2020–present Silero Team.
 
 - Distribution: `https://huggingface.co/ggml-org/whisper-vad`
 - Upstream: `https://github.com/snakers4/silero-vad`
@@ -32,7 +30,7 @@ Caption Studio downloads `ggml-silero-v6.2.0.bin` with the selected Whisper mode
 
 ## Qwen2.5 1.5B Instruct for optional natural translation
 
-Caption Studio can download `Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm` only when a user enables natural English–Chinese dual subtitles. One model handles English to Simplified Chinese, English to Traditional Chinese, and Chinese to English. It is not bundled in the APK or AAB and runs locally through LiteRT-LM after download.
+Caption Studio can download `Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm` when a user enables natural translation for a supported caption-language pair. One model handles the supported multilingual pairs. It is not bundled in the APK or AAB and runs locally through LiteRT-LM after download.
 
 - Distribution: `https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct`
 - Upstream model: `https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct`
