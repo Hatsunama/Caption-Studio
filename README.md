@@ -89,7 +89,7 @@ Never uninstall or clear any of these apps to bypass an installation failure. Ke
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.101** (`v1.4.101`, Android version code 113).
+Current Android build: **1.4.105** (`v1.4.105`, Android version code 117).
 
 ## What the current Android build includes
 

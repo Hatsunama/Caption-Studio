@@ -1,6 +1,6 @@
 # Caption Studio Data Safety notes
 
-These notes describe the audited version 1.4.0 codebase and are not a substitute for answering the live Play Console form.
+These notes describe the audited version 1.4.105 codebase and are not a substitute for answering the live Play Console form.
 
 - No user account or account identifiers.
 - No advertising or Advertising ID use.

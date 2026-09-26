@@ -57,6 +57,6 @@ Requires Android 7.0 or newer. Optional natural multilingual translation uses on
 
 Video Players & Editors
 
-## Release notes — 1.4.0
+## Release notes — 1.4.105
 
-Commercial export pipeline with multi-clip timelines, intentional gaps, speed-aware audio, inserted audio, burned captions and overlays, 43 video transitions, optional linked multilingual subtitles, multilingual transcription, SRT and ASS export, improved media lifecycle safety, cancellable caption generation and export, and Android 7–15 media publishing support.
+Multi-clip export timing is more reliable. Unfinished offline-model downloads can now be found and removed in Privacy. Caption generation follows muted or volume-adjusted timeline audio. Media-access cleanup retains corrupt ledger data instead of silently releasing or discarding it.
