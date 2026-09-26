@@ -13,6 +13,7 @@ import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.net.Uri
@@ -21,6 +22,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import androidx.media3.common.C
@@ -360,7 +362,25 @@ internal class TimelineVideoExporter(private val context: Context) {
     } finally {
       retriever.release()
     }
-    return MediaSourceInfo(durationMs, hasAudioTrack(uri))
+    val extractor = MediaExtractor()
+    val trackTimings = try {
+      val parsed = Uri.parse(uri)
+      if (parsed.scheme.isNullOrEmpty() || parsed.scheme == "file") extractor.setDataSource(parsed.path ?: uri)
+      else extractor.setDataSource(context, parsed, null)
+      selectSourceTrackTimings((0 until extractor.trackCount).map { index ->
+        val format = extractor.getTrackFormat(index)
+        SourceTrackTiming(
+          format.getString(MediaFormat.KEY_MIME).orEmpty(),
+          if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION).coerceAtLeast(0L) / 1_000L else 0L,
+        )
+      })
+    } catch (error: Throwable) {
+      throw IllegalArgumentException("A video source could not be inspected", error)
+    } finally {
+      extractor.release()
+    }
+    Log.i("CaptionStudioExport", "source timing: container=${durationMs}ms video=${trackTimings.videoDurationMs}ms audio=${trackTimings.audioDurationMs}ms")
+    return MediaSourceInfo(durationMs, trackTimings.hasAudio)
   }
 
   private fun setRetrieverDataSource(retriever: MediaMetadataRetriever, value: String) {
@@ -550,6 +570,16 @@ internal class TimelineVideoExporter(private val context: Context) {
   private data class PreparedComposition(val composition: Composition, val audioExpected: Boolean)
 
   private data class MediaSourceInfo(val durationMs: Long, val hasAudio: Boolean)
+}
+
+internal data class SourceTrackTiming(val mime: String, val durationMs: Long)
+
+internal data class SourceTrackTimings(val videoDurationMs: Long, val audioDurationMs: Long, val hasAudio: Boolean)
+
+internal fun selectSourceTrackTimings(tracks: List<SourceTrackTiming>): SourceTrackTimings {
+  val videoDurationMs = tracks.firstOrNull { it.mime.startsWith("video/") }?.durationMs ?: 0L
+  val audioTracks = tracks.filter { it.mime.startsWith("audio/") }
+  return SourceTrackTimings(videoDurationMs, audioTracks.maxOfOrNull { it.durationMs } ?: 0L, audioTracks.isNotEmpty())
 }
 
 internal data class TimelineExportProgress(val stage: String, val percent: Int?)
