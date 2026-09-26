@@ -152,7 +152,8 @@ internal fun requireMatchingVideoTrackDuration(videoTrackDurationMs: Long, expec
   check(videoTrackDurationMs > 0L) { "The export has no readable video-track duration" }
   val toleranceMs = (2_000L + frameRate - 1) / frameRate + 20L
   check(abs(videoTrackDurationMs - expectedDurationMs) <= toleranceMs) {
-    "The exported video track duration does not match the requested render duration"
+    "The exported video track duration does not match the requested render duration " +
+      "(video=${videoTrackDurationMs}ms, requested=${expectedDurationMs}ms, tolerance=${toleranceMs}ms)"
   }
   return videoTrackDurationMs
 }
