@@ -26,7 +26,7 @@ internal fun requireExpectedOutput(
   audioExpected: Boolean,
 ): VerifiedRenderedVideo {
   check(verified.width == expectedWidth && verified.height == expectedHeight) {
-    "The rendered video dimensions do not match the requested canvas"
+    "The rendered video is ${verified.width}x${verified.height}, not the requested ${expectedWidth}x${expectedHeight} canvas"
   }
   check(!audioExpected || verified.hasAudioTrack) { "The exported video has no audio track" }
   return verified
@@ -67,6 +67,11 @@ internal fun inspectRenderedVideo(
     var hasAudio = false
     var width = 0
     var height = 0
+    var cropLeft: Int? = null
+    var cropTop: Int? = null
+    var cropRight: Int? = null
+    var cropBottom: Int? = null
+    var trackRotation = 0
     var durationMs = 0L
     for (index in 0 until extractor.trackCount) {
       val format = extractor.getTrackFormat(index)
@@ -76,6 +81,11 @@ internal fun inspectRenderedVideo(
       hasVideo = true
       width = mediaFormatInt(format, MediaFormat.KEY_WIDTH)
       height = mediaFormatInt(format, MediaFormat.KEY_HEIGHT)
+      cropLeft = mediaFormatOptionalInt(format, MediaFormat.KEY_CROP_LEFT)
+      cropTop = mediaFormatOptionalInt(format, MediaFormat.KEY_CROP_TOP)
+      cropRight = mediaFormatOptionalInt(format, MediaFormat.KEY_CROP_RIGHT)
+      cropBottom = mediaFormatOptionalInt(format, MediaFormat.KEY_CROP_BOTTOM)
+      trackRotation = mediaFormatInt(format, MediaFormat.KEY_ROTATION)
       val videoTrackDurationMs = if (format.containsKey(MediaFormat.KEY_DURATION)) {
         format.getLong(MediaFormat.KEY_DURATION) / 1_000L
       } else 0L
@@ -91,6 +101,11 @@ internal fun inspectRenderedVideo(
     val retrieverHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
     width = width.takeIf { it > 0 } ?: retrieverWidth
     height = height.takeIf { it > 0 } ?: retrieverHeight
+    val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull()
+      ?: trackRotation
+    val visible = visibleVideoDimensions(width, height, cropLeft, cropTop, cropRight, cropBottom, rotation)
+    width = visible.first
+    height = visible.second
     check(width in 2..3840 && height in 2..3840 && width % 2 == 0 && height % 2 == 0) {
       "The export dimensions are invalid"
     }
@@ -98,6 +113,37 @@ internal fun inspectRenderedVideo(
   } finally {
     extractor.release()
     retriever.release()
+  }
+}
+
+internal fun visibleVideoDimensions(
+  width: Int,
+  height: Int,
+  cropLeft: Int? = null,
+  cropTop: Int? = null,
+  cropRight: Int? = null,
+  cropBottom: Int? = null,
+  rotationDegrees: Int = 0,
+): Pair<Int, Int> {
+  check(width > 0 && height > 0) { "The encoded video dimensions are invalid" }
+  val crop = listOf(cropLeft, cropTop, cropRight, cropBottom)
+  check(crop.all { it == null } || crop.all { it != null }) { "The encoded video crop is incomplete" }
+  val visibleWidth: Int
+  val visibleHeight: Int
+  if (cropLeft != null && cropTop != null && cropRight != null && cropBottom != null) {
+    check(cropLeft >= 0 && cropTop >= 0 && cropRight in cropLeft until width && cropBottom in cropTop until height) {
+      "The encoded video crop is invalid"
+    }
+    visibleWidth = cropRight - cropLeft + 1
+    visibleHeight = cropBottom - cropTop + 1
+  } else {
+    visibleWidth = width
+    visibleHeight = height
+  }
+  return when (rotationDegrees) {
+    0, 180 -> Pair(visibleWidth, visibleHeight)
+    90, 270 -> Pair(visibleHeight, visibleWidth)
+    else -> throw IllegalStateException("The encoded video rotation is invalid")
   }
 }
 
@@ -153,4 +199,8 @@ private fun setRenderedVideoDataSource(
 
 private fun mediaFormatInt(format: MediaFormat, key: String): Int {
   return if (format.containsKey(key)) format.getInteger(key) else 0
+}
+
+private fun mediaFormatOptionalInt(format: MediaFormat, key: String): Int? {
+  return if (format.containsKey(key)) format.getInteger(key) else null
 }

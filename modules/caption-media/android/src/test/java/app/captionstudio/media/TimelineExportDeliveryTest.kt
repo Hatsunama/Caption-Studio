@@ -75,6 +75,26 @@ class TimelineExportDeliveryTest {
   }
 
   @Test
+  fun visibleDimensionsAccountForRotationAndEncodedCrop() {
+    assertEquals(Pair(1_080, 1_920), visibleVideoDimensions(1_920, 1_080, rotationDegrees = 90))
+    assertEquals(Pair(1_080, 1_920), visibleVideoDimensions(1_088, 1_920, cropLeft = 0, cropTop = 0, cropRight = 1_079, cropBottom = 1_919))
+    assertEquals(Pair(1_080, 1_920), visibleVideoDimensions(1_920, 1_088, cropLeft = 0, cropTop = 0, cropRight = 1_919, cropBottom = 1_079, rotationDegrees = 270))
+  }
+
+  @Test
+  fun visibleDimensionsRejectIncompleteOrInvalidMetadata() {
+    assertThrows(IllegalStateException::class.java) {
+      visibleVideoDimensions(1_088, 1_920, cropLeft = 0, cropTop = 0, cropRight = 1_079)
+    }
+    assertThrows(IllegalStateException::class.java) {
+      visibleVideoDimensions(1_088, 1_920, cropLeft = 0, cropTop = 0, cropRight = 1_099, cropBottom = 1_919)
+    }
+    assertThrows(IllegalStateException::class.java) {
+      visibleVideoDimensions(1_920, 1_080, rotationDegrees = 45)
+    }
+  }
+
+  @Test
   fun finishedMediaStoreValuesMakeTheCopyVisibleAndPlayable() {
     val verified = VerifiedRenderedVideo(sizeBytes = 12_345L, durationMs = 4_000L, width = 720, height = 1_280)
     val pending = pendingVideoContentValues("caption-studio-export.mp4")
