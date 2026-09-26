@@ -30,9 +30,11 @@ class TimelineExportDeliveryTest {
   @Test
   fun acceptsVideoTrackWithinFrameToleranceButRejectsLargerMismatch() {
     assertEquals(3_967L, requireMatchingVideoTrackDuration(3_967L, expectedDurationMs = 4_000L, frameRate = 30))
-    assertThrows(IllegalStateException::class.java) {
+    val mismatch = assertThrows(IllegalStateException::class.java) {
       requireMatchingVideoTrackDuration(3_900L, expectedDurationMs = 4_000L, frameRate = 30)
     }
+    assertTrue(mismatch.message.orEmpty().contains("3900"))
+    assertTrue(mismatch.message.orEmpty().contains("4000"))
     assertThrows(IllegalStateException::class.java) {
       requireMatchingVideoTrackDuration(0L, expectedDurationMs = 4_000L, frameRate = 30)
     }
