@@ -64,3 +64,13 @@ test('a nested serialized content URI is too ambiguous to release any grant', ()
     { project_json: JSON.stringify({ valid: false, raw: JSON.stringify({ source: corruptRetained }) }) },
   ]), { complete: false, uris: [] });
 });
+
+
+test('unreadable project deletion still discovers exact URIs among ambiguous text', () => {
+  const raw = JSON.stringify({
+    source: corruptRetained,
+    note: 'unrelated text mentioning content://provider/other',
+  });
+  assert.deepEqual(persistence.extractPersistedContentUris(raw), [corruptRetained]);
+  assert.equal(releasable([{ project_json: raw }]).complete, false);
+});
