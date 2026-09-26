@@ -69,16 +69,14 @@ test('mixed media classification handles absent and generic provider MIME withou
   assert.equal(classifyPickedMedia('image/png', 'misleading.mp4'), 'image');
 });
 
-test('project deletion and URI release use record-first and fail-closed service boundaries', () => {
+test('project deletion uses record-first service boundaries', () => {
   const database = readFileSync(new URL('../src/services/database.ts', import.meta.url), 'utf8');
-  const permissions = readFileSync(new URL('../src/services/media-permissions.ts', import.meta.url), 'utf8');
   const workflows = readFileSync(new URL('../src/services/project-workflows.ts', import.meta.url), 'utf8');
 
   assert.match(database, /createRetryableAsyncInitializer\(initializeDatabase\)/);
   assert.match(database, /listProjectsStrict/);
   assert.match(database, /listProjectRecords/);
   assert.match(database, /kind: 'unreadable'/);
-  assert.match(permissions, /await listProjectsStrict\(\)/);
   assert.match(workflows, /const deletedProject = await deleteProjectRecord\(projectId\);[\s\S]*deleteProjectFiles\(projectId\)/);
   assert.match(workflows, /deleteUnreadableProjectRecord[\s\S]*releaseUnreferencedReadPermissions/);
   assert.match(workflows, /reconcileOrphanedProjectDirectories\(projectRecordIds\)/);

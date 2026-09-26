@@ -58,3 +58,9 @@ test('unparseable project data prevents every release', () => {
     { project_json: '{"source":"content://provider/video/unknown"' },
   ]), { complete: false, uris: [] });
 });
+
+test('a nested serialized content URI is too ambiguous to release any grant', () => {
+  assert.deepEqual(releasable([
+    { project_json: JSON.stringify({ valid: false, raw: JSON.stringify({ source: corruptRetained }) }) },
+  ]), { complete: false, uris: [] });
+});

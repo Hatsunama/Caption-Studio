@@ -73,6 +73,8 @@ function inspectPersistedContentUris(value: string | null): string[] | null {
     const candidate = pending.pop();
     inspected += 1;
     if (typeof candidate === 'string') {
+      if (candidate.includes('content:') &&
+          (!candidate.startsWith('content:') || candidate.indexOf('content:', 1) >= 0)) return null;
       if (candidate.startsWith('content:')) uris.add(candidate);
     } else if (Array.isArray(candidate)) {
       pending.push(...candidate);
