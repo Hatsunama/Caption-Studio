@@ -231,7 +231,7 @@ const returnNode = workspace.body.statements.find(ts.isReturnStatement);
 // Execute the complete workspace. Capture its actual event handlers before JSX
 // returns; production code has no test exports or alternate implementation.
 const captured = [
-  'project', 'editorSession', 'scriptEditorOpen', 'setProject', 'setPendingChange',
+  'project', 'editorSession', 'scriptEditorOpen', 'editingLayerId', 'editingText', 'setProject', 'setPendingChange',
   'setSelectedLayerId', 'setSelectedCaptionId', 'setEditingLayerId', 'setEditingText',
   'setScriptDraftCaptions', 'setScriptKeyboardOpen', 'setFontBrowserOpen',
   'commitCaptionScript', 'commitTextLayerText', 'chooseStyleScope', 'queueCaptionStyleChange',
@@ -682,6 +682,36 @@ for (const [label, invoke] of Object.entries(persistedActions)) {
     if (label === 'primary script') assert.equal(h.actions.scriptEditorOpen, true, 'conflict must leave the draft editor open');
   });
 }
+
+test('failed text layer save keeps the draft open, explains the failure, and can be retried', async () => {
+  const project = fixture();
+  project.layers.push({
+    id: 'title', kind: 'text', name: 'Title', text: 'Old title', startMs: 0, endMs: 5000,
+    style: project.projectStyle, visible: true,
+  });
+  const h = mount(project), gate = h.holdWrite();
+  h.actions.setEditingLayerId('title');
+  h.actions.setEditingText('New title');
+  h.render();
+
+  const pending = h.actions.commitTextLayerText();
+  await h.flush();
+  gate.reject(new Error('Storage full'));
+  await pending;
+  await h.flush();
+
+  assert.equal(h.actions.editingLayerId, 'title');
+  assert.equal(h.actions.editingText, 'New title');
+  assert.equal(h.project.layers.find((layer) => layer.id === 'title').text, 'Old title');
+  assert.ok(h.calls.alerts.some(([title, message]) =>
+    title === 'Text layer not saved' && String(message).includes('Storage full') && String(message).includes('Try saving again')));
+
+  await h.actions.commitTextLayerText();
+  await h.flush();
+  assert.equal(h.project.layers.find((layer) => layer.id === 'title').text, 'New title');
+  assert.equal(h.actions.editingLayerId, undefined);
+  assert.equal(h.actions.editingText, undefined);
+});
 
 for (const kind of ['videos', 'audio', 'extracted audio', 'generation']) {
   test('actual ' + kind + ' workflow is serialized and cannot overwrite edits made while it persists', async () => {

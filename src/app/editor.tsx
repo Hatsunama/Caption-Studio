@@ -1016,8 +1016,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       if (!editorSession.isCurrent(receipt)) return;
       setEditingLayerId(undefined);
       setEditingText(undefined);
-    } catch {
-      return;
+    } catch (caught) {
+      const reason = caught instanceof Error ? caught.message : 'The text layer could not be saved.';
+      Alert.alert('Text layer not saved', `${reason} Your text is still here. Try saving again.`);
     }
   };
 
