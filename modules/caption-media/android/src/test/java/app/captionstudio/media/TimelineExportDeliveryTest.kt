@@ -15,6 +15,17 @@ import java.io.File
 @Config(sdk = [29], manifest = Config.NONE)
 class TimelineExportDeliveryTest {
   @Test
+  fun sourceTimingKeepsVideoAndAudioTrackLengthsSeparate() {
+    val timing = selectSourceTrackTimings(listOf(
+      SourceTrackTiming("video/avc", 69_005L),
+      SourceTrackTiming("audio/mp4a-latm", 69_140L),
+    ))
+    assertEquals(69_005L, timing.videoDurationMs)
+    assertEquals(69_140L, timing.audioDurationMs)
+    assertTrue(timing.hasAudio)
+  }
+
+  @Test
   fun rejectsShortVideoTrackEvenWhenContainerDurationMatchesRender() {
     // A non-empty MP4 can have a valid video track and dimensions while audio
     // extends the container to the requested four-second duration.
