@@ -713,6 +713,19 @@ test('failed text layer save keeps the draft open, explains the failure, and can
   assert.equal(h.actions.editingText, undefined);
 });
 
+test('failed text layer save after editor unmount does not alert over another screen', async () => {
+  const h = mount(), gate = h.holdWrite();
+  h.actions.setEditingLayerId('title');
+  h.actions.setEditingText('New title');
+  h.render();
+  const pending = h.actions.commitTextLayerText();
+  await h.flush();
+  h.unmount();
+  gate.reject(new Error('Storage full'));
+  await pending;
+  assert.equal(h.calls.alerts.length, 0);
+});
+
 for (const kind of ['videos', 'audio', 'extracted audio', 'generation']) {
   test('actual ' + kind + ' workflow is serialized and cannot overwrite edits made while it persists', async () => {
     const h = mount(), gate = deferred();
