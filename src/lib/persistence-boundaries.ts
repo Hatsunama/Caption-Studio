@@ -31,7 +31,7 @@ export function inspectProjectRowsForMediaPermissionRelease<
     try {
       projects.push(decode(row));
     } catch {
-      const uris = inspectPersistedContentUris(row.project_json);
+      const uris = inspectPersistedContentUris(row.project_json, true);
       if (uris === null) {
         complete = false;
       } else {
@@ -53,11 +53,10 @@ export async function publishAfterDurableWrite<T>(
 }
 
 export function extractPersistedContentUris(value: string | null) {
-  return (inspectPersistedContentUris(value) ?? [])
-    .filter((uri) => uri.startsWith('content://') && uri.length <= 16_384);
+  return inspectPersistedContentUris(value, false) ?? [];
 }
 
-function inspectPersistedContentUris(value: string | null): string[] | null {
+function inspectPersistedContentUris(value: string | null, strict: boolean): string[] | null {
   if (!value || value.length > 64 * 1024 * 1024) return null;
   let parsed: unknown;
   try {
@@ -69,13 +68,19 @@ function inspectPersistedContentUris(value: string | null): string[] | null {
   const pending: unknown[] = [parsed];
   let inspected = 0;
   while (pending.length > 0) {
-    if (inspected >= 1_000_000) return null;
+    if (inspected >= 1_000_000) return strict ? null : [...uris];
     const candidate = pending.pop();
     inspected += 1;
     if (typeof candidate === 'string') {
-      if (candidate.includes('content:') &&
+      if (strict && candidate.includes('content:') &&
           (!candidate.startsWith('content:') || candidate.indexOf('content:', 1) >= 0)) return null;
-      if (candidate.startsWith('content:')) uris.add(candidate);
+      if (candidate.startsWith('content:')) {
+        if (strict) {
+          uris.add(candidate);
+        } else if (candidate.startsWith('content://') && candidate.length <= 16_384) {
+          uris.add(candidate);
+        }
+      }
     } else if (Array.isArray(candidate)) {
       pending.push(...candidate);
     } else if (candidate && typeof candidate === 'object') {
