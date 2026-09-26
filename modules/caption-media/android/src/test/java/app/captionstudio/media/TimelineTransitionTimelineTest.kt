@@ -126,6 +126,17 @@ class TimelineTransitionTimelineTest {
   }
 
   @Test
+  fun transitionRejectsSelectedSourceOutsideRecoverableStart() {
+    val outgoing = clip("outgoing", 0, 4_000, 100, 4_100, transitionDurationMs = 600)
+      .copy(availableSourceStartMs = 200)
+    val incoming = clip("incoming", 4_000, 8_000, 0, 4_000)
+    val error = assertThrows(IllegalArgumentException::class.java) {
+      TimelineTransitionTimeline.create(listOf(outgoing, incoming), mapOf(outgoing.uri to 6_000, incoming.uri to 6_000))
+    }
+    assertTrue(error.message.orEmpty().contains("recoverable", ignoreCase = true))
+  }
+
+  @Test
   fun aClipBetweenTwoTransitionsHasContiguousNonRepeatingAudioSegments() {
     val first = clip(
       id = "first",

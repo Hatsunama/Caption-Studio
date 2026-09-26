@@ -425,6 +425,11 @@ export async function translateNaturalCaptionOperations(options: {
       } satisfies NaturalCaptionTranslationSession;
     } catch (error) {
       if (run.cancelled || translationCancelled(error)) throw new CaptionTranslationCancelledError();
+      if (committedBatches.size > 0 && error instanceof Error) {
+        const detail = error.message.replace(/\s*No captions were changed\./g, '').trim();
+        const count = committedBatches.size;
+        throw new Error(`${detail} ${count} translation ${count === 1 ? 'batch was' : 'batches were'} saved to the project. Refresh to retry unfinished captions.`, { cause: error });
+      }
       throw error;
     }
   } finally {

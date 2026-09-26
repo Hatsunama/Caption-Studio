@@ -123,3 +123,10 @@ test('recovery never replaces a committed translation with a source echo after a
   });
   assert.equal(shouldRestoreDualCaptionJournal(recovered, committed), true);
 });
+
+test('borrowed OK from a longer cue needs review without blocking acknowledgements or names', () => {
+  assert.equal(isLikelyUntranslatedCaption('Please bring the documents tomorrow', 'OK', 'fr'), true);
+  assert.equal(isLikelyUntranslatedCaption('Please bring the documents tomorrow', 'OK', 'zh-Hant'), true);
+  assert.equal(isLikelyUntranslatedCaption('Okay.', 'OK!', 'fr'), false);
+  assert.equal(isLikelyUntranslatedCaption('Meet OK Go tonight', 'Rencontrez OK Go ce soir', 'fr'), false);
+});

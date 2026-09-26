@@ -18,12 +18,13 @@ export function decodeCaptionDraft(value: unknown): CaptionBlock[] | null {
   if (!Array.isArray(value) || value.length > 100_000) return null;
   try {
     const ids = new Set<string>();
-    value.forEach((entry, index) => {
+    const captions = value.map((entry, index) => {
       const caption = decodeCaption(entry, index);
       if (ids.has(caption.id)) throw new Error('Duplicate caption identity');
       ids.add(caption.id);
+      return caption;
     });
-    return value as CaptionBlock[];
+    return captions;
   } catch {
     return null;
   }

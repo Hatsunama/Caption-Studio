@@ -85,7 +85,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const [journalError, setJournalError] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [journalRecovery, setJournalRecovery] = useState<EditorDraftJournalRecovery>();
-  const journalProtected = !!journalRecovery?.failures.length;
+  const journalProtected = !!journalRecovery?.failures.some((failure) => journalRecovery.source !== 'primary' || failure.source === 'primary');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const stopJournalRef = useRef<(() => void) | undefined>(undefined);
   const journalKind = `dual-captions-${props.trackId}` as EditorDraftKind;

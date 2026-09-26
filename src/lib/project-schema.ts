@@ -7,6 +7,7 @@ import { emptyCaptionTrackCollection, normalizedTranslationFailureReason, synchr
 import { sameCaptionLanguageFamily } from '@/lib/caption-languages';
 import { hydrateVideoTransition } from '@/lib/video-transitions';
 import { DEFAULT_VIDEO_FRAME_RATE } from '@/lib/video-source-metadata';
+import { MINIMUM_CLIP_TIMELINE_MS } from '@/lib/video-timeline';
 import {
   DEFAULT_CAPTION_STYLE,
   DEFAULT_VIDEO_TRANSFORM,
@@ -74,6 +75,18 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
       ),
     };
   });
+  for (const clip of clips) {
+    const source = sourceById.get(clip.sourceId)!;
+    if (clip.sourceEndMs > source.durationMs + 1
+      || (clip.sourceEndMs - clip.sourceStartMs) / clip.playbackRate < MINIMUM_CLIP_TIMELINE_MS) {
+      throw new Error('A project video clip has invalid source bounds');
+    }
+    if (clip.availableSourceStartMs! > clip.sourceStartMs
+      || clip.availableSourceEndMs! < clip.sourceEndMs
+      || clip.availableSourceEndMs! > source.durationMs + 1) {
+      throw new Error('A project video clip has invalid recoverable handles');
+    }
+  }
   const audioSources = candidate.audioSources === undefined
     ? []
     : decodeArray(candidate.audioSources, 'project audio sources', 5_000, decodeAudioSource);
@@ -81,8 +94,13 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
   const audioClips = candidate.audioClips === undefined
     ? []
     : decodeArray(candidate.audioClips, 'project audio clips', 10_000, decodeAudioClip);
+  uniqueIds(audioClips, 'project audio clips');
   audioClips.forEach((clip) => {
     if (!audioSourceIds.has(clip.sourceId)) throw new Error('A project audio clip references an unknown source');
+    const source = audioSources.find((entry) => entry.id === clip.sourceId)!;
+    if (clip.sourceEndMs > source.durationMs + 1 || clip.sourceEndMs - clip.sourceStartMs < 80) {
+      throw new Error('A project audio clip has invalid bounds');
+    }
   });
   const projectStyle = decodeCaptionStyle(candidate.projectStyle, DEFAULT_CAPTION_STYLE, 'project caption style');
   const layers = decodeLayers(candidate.layers, projectStyle);
@@ -785,6 +803,8 @@ function decodeVideoTransform(
       ? { ...fallback.position }
       : decodePoint(transform.position, `${label} position`, -4, 4),
     scale: optionalNumber(transform.scale, fallback.scale, `${label} scale`, 0.05, 20),
+    ...(transform.scaleX === undefined ? {} : { scaleX: finiteNumber(transform.scaleX, `${label} horizontal scale`, 0.001, 200) }),
+    ...(transform.scaleY === undefined ? {} : { scaleY: finiteNumber(transform.scaleY, `${label} vertical scale`, 0.001, 200) }),
     rotation: optionalNumber(transform.rotation, fallback.rotation, `${label} rotation`, -360_000, 360_000),
   };
 }
@@ -969,12 +989,20 @@ function translationCueIdentifierValue(value: unknown, label: string) {
 function localMediaUri(value: unknown, label: string) {
   const uri = nonEmptyString(value, label);
   if (!uri.startsWith('content://') && !uri.startsWith('file:///')) throw new Error(`${label} is not local media`);
+  if (uri.startsWith('file:///')) return localFileUri(uri, label);
   return uri;
 }
 
 function localFileUri(value: unknown, label: string) {
   const uri = nonEmptyString(value, label);
   if (!uri.startsWith('file:///')) throw new Error(`${label} is not an app-owned file`);
+  if (uri.includes('\\')) throw new Error(`${label} contains an invalid path`);
+  let path: string;
+  try { path = decodeURIComponent(uri.slice('file:///'.length)); }
+  catch { throw new Error(`${label} contains an invalid path`); }
+  if (path.split('/').some((segment) => segment === '.' || segment === '..')) {
+    throw new Error(`${label} contains path traversal`);
+  }
   return uri;
 }
 

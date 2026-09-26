@@ -91,6 +91,9 @@ function recoveredTranslationLooksCommitted(draft: DualCaptionDraft, committed: 
   const translated = comparable(draft.translatedText);
   // A journal can contain the old source in the second field after primary typing.
   // Neither source version is evidence of a recovered translation.
-  return Boolean(translated) && translated !== comparable(draft.primaryText)
-    && translated !== comparable(committed.primaryText);
+  if (!translated) return false;
+  const committedTranslation = comparable(committed.translatedText);
+  if (translated === comparable(committed.primaryText)) return false;
+  if (translated === comparable(draft.primaryText)) return Boolean(committedTranslation) && committedTranslation !== translated;
+  return true;
 }

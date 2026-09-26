@@ -104,8 +104,12 @@ async function readEditorDraftJournalUnqueued(projectId: string, kind: EditorDra
   }
   const source = primary.journal ? 'primary' : 'previous';
   const provenance = source === 'previous' ? 'Recovered the .previous backup because the primary recovery file is missing or unreadable.' : '';
+  const safePreviousFailure = source === 'primary' && failures.every((failure) => failure.source === 'previous');
   const warning = [provenance, failures.length
-    ? `${detail} Both recovery files are preserved; automatic recovery saving and cleanup are paused. Save current edits to the project before closing.` : ''].filter(Boolean).join(' ') || undefined;
+    ? safePreviousFailure
+      ? `${detail} The damaged backup will be isolated before the next recovery save.`
+      : `${detail} Both recovery files are preserved; automatic recovery saving and cleanup are paused. Save current edits to the project before closing.`
+    : ''].filter(Boolean).join(' ') || undefined;
   return { ...journal, recovery: { source, failures, warning } };
 }
 
@@ -130,12 +134,15 @@ async function writeEditorDraftJournalUnqueued(
   // Refuse to replace an unreadable journal even if a caller skipped recovery.
   const existing = await readEditorDraftJournalUnqueued(projectId, kind);
   const recovery = existing?.recovery;
-  const failure = recovery?.failures[0];
-  if (recovery && failure) throw new EditorDraftJournalError(failure.code, recovery.warning ?? failure.message, recovery.failures);
+  const blockingFailure = recovery?.failures.find((failure) => recovery.source !== 'primary' || failure.source === 'primary');
+  if (recovery && blockingFailure) throw new EditorDraftJournalError(blockingFailure.code, recovery.warning ?? blockingFailure.message, recovery.failures);
   await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
   const staging = `${uri}.writing`;
   await FileSystem.writeAsStringAsync(staging, encoded);
   const previous = `${uri}.previous`;
+  if (recovery?.failures.some((failure) => failure.source === 'previous')) {
+    await FileSystem.moveAsync({ from: previous, to: `${uri}.quarantine-${Date.now()}` });
+  }
   // Expo's iOS move removes its destination first. Move only to an empty
   // destination: the project queue gives atomic visibility to live readers,
   // and .previous gives old-or-new recovery across process interruption.
@@ -191,7 +198,7 @@ export function clearProjectEditorDraftJournals(projectId: string) {
     const entries = await FileSystem.readDirectoryAsync(directory);
     const results = await Promise.allSettled(entries
       .filter((name) => name.startsWith(prefix)
-        && /^(caption-script|dual-captions-[a-zA-Z0-9_-]*)\.json(\.(writing|previous))?$/.test(name.slice(prefix.length)))
+        && /^(caption-script|dual-captions-[a-zA-Z0-9_-]*)\.json(\.(writing|previous)|\.quarantine-[0-9]+)?$/.test(name.slice(prefix.length)))
       .map(async (name) => {
         const uri = `${directory}${name}`;
         const entry = await FileSystem.getInfoAsync(uri);

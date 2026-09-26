@@ -210,7 +210,7 @@ function mount(overrides = {}, platform = 'android') {
     edit: (index) => act(() => row(index).props.onPress()),
     input: (index) => find('TextInput', row(index)).props,
     action: (index, label) => act(() => walk(row(index), (node) => node.props?.label === label).props.onPress()),
-    recover: (payload) => act(() => recover({ payload, baseRevision: 'revision' })),
+    recover: (payload) => act(() => recover(payload === null ? null : { payload, baseRevision: 'revision' })),
     failRecovery: () => act(() => recoveryError(new Error('Read failed'))),
     restore: () => act(() => calls.alerts.at(-1)[2].find(({ text }) => text === 'Restore').onPress()),
     button: (label) => walk(tree, (node) => node.props?.accessibilityLabel === label).props,
@@ -374,7 +374,7 @@ test('script input retains explicit whitespace and metadata through typing, Back
     timelineVisible: true,
   };
   const snapshot = structuredClone(original);
-  const h = mount({ captions: [original, cues[1]] }); h.edit(0);
+  const h = mount({ captions: [original, cues[1]] }); h.recover(null); h.edit(0);
   h.calls.seeks.length = 0;
   assert.equal(h.input(0).value, original.text);
   for (const text of ['\n\nLeading  spaces\r\n\nnext\n', '\n\nLeading  spaces\r\n\nnext!\n', '  \n\t\n', 'final\n\n']) {
@@ -404,6 +404,7 @@ test('typing delivered while Save is pending stays open for an explicit second s
     onSave: async (captions) => { h.calls.saves.push(plain(captions)); return pendingSave; },
     onCancel: () => { closes += 1; },
   });
+  h.recover(null);
   h.edit(0);
   h.act(() => h.input(0).onChangeText('first revision'));
   const done = h.find('KeyboardAvoidingView').props.children[0].props.children[2];
@@ -690,7 +691,7 @@ for (const rejection of ['throw', 'false']) test(`rejected script save (${reject
   assert.equal(closes, 0);
   assert.equal(h.calls.journalClears ?? 0, 0);
   assert.deepEqual(h.calls.journals, journals);
-  assert.deepEqual(plain(h.list().data), invalid);
+  assert.deepEqual(plain(h.list().data), plain(scriptMutations.decodeCaptionDraft(invalid)));
   assert.equal(h.button('Save all caption edits').disabled, false);
   assert.equal(serializeProjectSnapshot(project), before);
   h.unmount();
@@ -798,6 +799,7 @@ for (const recovered of [false, true]) test(`script component split -> transform
   project.captions[0].styleOverride = { italic: false, textColor: '#FFFFFF' };
   h.update({ captions: project.captions, baseRevision: 'after-transform' });
   if (recovered) { h.recover(draft); h.restore(); }
+  else h.recover(null);
   const preview = workspaceValue('previewCaptions', {
     project, timelineCaptions: project.captions, scriptDraftCaptions: h.list().data,
   });
@@ -805,7 +807,7 @@ for (const recovered of [false, true]) test(`script component split -> transform
   h.act(() => h.button('Save all caption edits').onPress());
   await settleSave();
   assert.equal(closes, 1);
-  assert.equal(h.calls.journalClears ?? 0, recovered ? 1 : 0, 'saving before recovery finishes must retain the unread journal');
+  assert.equal(h.calls.journalClears ?? 0, 1, 'saving after recovery resolves clears the consumed journal');
   project = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(project)));
   assert.deepEqual(project.captions.map(({ id, text, startMs, endMs, wordIds }) => ({ id, text, startMs, endMs, wordIds })),
     draft.map(({ id, text, startMs, endMs, wordIds }) => ({ id, text, startMs, endMs, wordIds })));
