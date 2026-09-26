@@ -4,6 +4,7 @@ import {
   createRetryableAsyncInitializer,
   decodeEveryPersistedRow,
   extractPersistedContentUris,
+  inspectProjectRowsForMediaPermissionRelease,
 } from '@/lib/persistence-boundaries';
 import { serializeProjectSnapshot } from '@/lib/project-schema';
 import { decodePersistedProject } from '@/lib/project-codec';
@@ -196,6 +197,10 @@ export async function listProjectRecords(): Promise<ProjectRecordSummary[]> {
 
 export async function listProjectsStrict(): Promise<CaptionProject[]> {
   return decodeEveryPersistedRow(await readProjectRows(), decodeProjectRow);
+}
+
+export async function inspectProjectPermissionReferences() {
+  return inspectProjectRowsForMediaPermissionRelease(await readProjectRows(), decodeProjectRow);
 }
 
 export async function listProjectRecordIds(): Promise<string[]> {

@@ -20,6 +20,28 @@ export function decodeEveryPersistedRow<TRow, TValue>(
   return rows.map(decode);
 }
 
+export function inspectProjectRowsForMediaPermissionRelease<
+  TRow extends { project_json: string },
+  TProject,
+>(rows: readonly TRow[], decode: (row: TRow) => TProject) {
+  const projects: TProject[] = [];
+  const protectedUris = new Set<string>();
+  let complete = true;
+  for (const row of rows) {
+    try {
+      projects.push(decode(row));
+    } catch {
+      const uris = inspectPersistedContentUris(row.project_json);
+      if (uris === null) {
+        complete = false;
+      } else {
+        uris.forEach((uri) => protectedUris.add(uri));
+      }
+    }
+  }
+  return { projects, protectedUris: [...protectedUris], complete };
+}
+
 export async function publishAfterDurableWrite<T>(
   value: T,
   write: (candidate: T) => Promise<void>,
@@ -31,21 +53,27 @@ export async function publishAfterDurableWrite<T>(
 }
 
 export function extractPersistedContentUris(value: string | null) {
-  if (!value || value.length > 64 * 1024 * 1024) return [];
+  return (inspectPersistedContentUris(value) ?? [])
+    .filter((uri) => uri.startsWith('content://') && uri.length <= 16_384);
+}
+
+function inspectPersistedContentUris(value: string | null): string[] | null {
+  if (!value || value.length > 64 * 1024 * 1024) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
   } catch {
-    return [];
+    return null;
   }
   const uris = new Set<string>();
   const pending: unknown[] = [parsed];
   let inspected = 0;
-  while (pending.length > 0 && inspected < 1_000_000) {
+  while (pending.length > 0) {
+    if (inspected >= 1_000_000) return null;
     const candidate = pending.pop();
     inspected += 1;
     if (typeof candidate === 'string') {
-      if (candidate.startsWith('content://') && candidate.length <= 16_384) uris.add(candidate);
+      if (candidate.startsWith('content:')) uris.add(candidate);
     } else if (Array.isArray(candidate)) {
       pending.push(...candidate);
     } else if (candidate && typeof candidate === 'object') {

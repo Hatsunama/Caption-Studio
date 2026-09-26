@@ -59,3 +59,17 @@ internal class DocumentReadAccess(private val resolver: ContentResolver) {
 
   private fun result(status: String): Map<String, Any> = mapOf("status" to status)
 }
+
+internal fun releasePersistedReadPermission(
+  uri: Uri,
+  retained: (Uri) -> Boolean,
+  release: (Uri) -> Unit,
+): Boolean {
+  if (!retained(uri)) return true
+  return try {
+    release(uri)
+    !retained(uri)
+  } catch (_: SecurityException) {
+    !retained(uri)
+  }
+}
