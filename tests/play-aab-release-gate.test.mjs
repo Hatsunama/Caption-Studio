@@ -30,7 +30,7 @@ test('approved release identity can override stale source app.json before buildi
   assert.throws(() => validateApproval({ ...metadata, versionCode: 116 }, tag, sourceCommit, '117'), /versionCode/);
 });
 
-test('a manual production-signed Play AAB gate retains only a verified private bundle', async () => {
+test('a manual production-signed Play AAB gate retains only a verified bundle', async () => {
   const workflow = await readFile(workflowUrl, 'utf8');
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /ref: \$\{\{ inputs\.tag \}\}/);
@@ -61,4 +61,10 @@ test('Play gate requires the pinned production signer certificate', () => {
   assert.equal(parseCertificate(valid), 'd02d23b28cbc615e3686d181aedefbbe5de993a0b6ba3f8e4ea2b6160211b35f');
   assert.throws(() => parseCertificate(valid.replace('D0:2D', '00:00')), /production pin/);
   assert.throws(() => parseCertificate(`${valid}\n${valid}`), /exactly one signer/);
+});
+
+test('public repository workflow artifacts are not described as private', async () => {
+  const guide = await readFile(new URL('../docs/play-aab-release-gate.md', import.meta.url), 'utf8');
+  assert.doesNotMatch(guide, /private GitHub Actions artifact/i);
+  assert.match(guide, /read access/i);
 });

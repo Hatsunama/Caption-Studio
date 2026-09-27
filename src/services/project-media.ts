@@ -149,7 +149,6 @@ export async function deleteProjectFiles(projectId: string) {
 
 export async function deleteProjectOwnedFiles(projectId: string, uris: string[]) {
   if (!FileSystem.documentDirectory) return;
-  const projectUri = `${FileSystem.documentDirectory}projects/${safePathSegment(projectId)}/`;
   for (const uri of uris) {
     if (!isProjectOwnedFileUri(projectId, uri)) continue;
     const info = await FileSystem.getInfoAsync(uri);

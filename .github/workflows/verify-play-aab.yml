@@ -133,7 +133,7 @@ jobs:
           node ./scripts/verify-play-aab.mjs --verify \
             release-source dist/play-aab-approval.json "$CAPTION_STUDIO_BUNDLETOOL"
 
-      - name: Retain verified Play bundle and provenance privately
+      - name: Retain verified Play bundle and provenance as Actions artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: caption-studio-play-aab-${{ github.run_id }}-${{ github.run_attempt }}
