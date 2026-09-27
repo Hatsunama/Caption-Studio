@@ -35,17 +35,24 @@ class TextPresentationTest {
     }.toList()
     assertTrue(fonts.size > 50)
     val fits = mutableSetOf<Float>()
-    TimelineTextPainter(RuntimeEnvironment.getApplication()).use { painter ->
+    val context = RuntimeEnvironment.getApplication()
+    TimelineTextPainter(context).use { painter ->
       for (font in fonts) {
-        val text = "AgjQ e\u0301\n\n\u4e16\u754c \u0645\u0631\u062d\u0628\u0627 \ud83d\udc69\ud83c\udffd\u200d\ud83d\udcbb\n"
-        val caption = cue(text, style().copy(fontSource = "imported", fontUri = font.toURI().toString(), maxLines = 1))
-        val fitted = painter.presentationFor(caption, emptyList(), 360, 640, true)
-        assertEquals(font.name, text, fitted.authoredText)
-        assertEquals(font.name, 4, fitted.layout.lineCount)
-        assertTrue(font.name, fitted.fit > 0f && fitted.fit <= 1f)
-        assertTrue(font.name, fitted.bounds.width() * fitted.fit <= 288.01f)
-        assertTrue(font.name, fitted.bounds.height() * fitted.fit <= 384.01f)
-        fits += fitted.fit
+        val storedFont = File.createTempFile("caption-test-font-", ".ttf", context.cacheDir)
+        try {
+          font.copyTo(storedFont, overwrite = true)
+          val text = "AgjQ e\u0301\n\n\u4e16\u754c \u0645\u0631\u062d\u0628\u0627 \ud83d\udc69\ud83c\udffd\u200d\ud83d\udcbb\n"
+          val caption = cue(text, style().copy(fontSource = "imported", fontUri = storedFont.toURI().toString(), maxLines = 1))
+          val fitted = painter.presentationFor(caption, emptyList(), 360, 640, true)
+          assertEquals(font.name, text, fitted.authoredText)
+          assertEquals(font.name, 4, fitted.layout.lineCount)
+          assertTrue(font.name, fitted.fit > 0f && fitted.fit <= 1f)
+          assertTrue(font.name, fitted.bounds.width() * fitted.fit <= 288.01f)
+          assertTrue(font.name, fitted.bounds.height() * fitted.fit <= 384.01f)
+          fits += fitted.fit
+        } finally {
+          storedFont.delete()
+        }
       }
     }
     assertTrue("Fitting must reflect actual typeface metrics", fits.size > 5)
