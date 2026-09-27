@@ -69,13 +69,24 @@ internal class VideoPreviewPreparer(private val context: Context) {
         promise.reject("E_VIDEO_PREVIEW_BUSY", "Another video is already being optimized for editing", null)
         return@post
       }
-      val output = outputFile(outputUri)
+      val input = try {
+        MediaInputPolicy(context).requireInput(inputUri)
+      } catch (error: Exception) {
+        promise.reject("E_VIDEO_PREVIEW_PREPARE", error.message ?: "The editing preview could not be prepared", error)
+        return@post
+      }
+      val output = try {
+        outputFile(outputUri)
+      } catch (error: Exception) {
+        promise.reject("E_VIDEO_PREVIEW_PREPARE", error.message ?: "The editing preview could not be prepared", error)
+        return@post
+      }
       try {
         require(width > 0 && height > 0 && width % 2 == 0 && height % 2 == 0) { "Preview dimensions must be positive even numbers" }
         require(frameRate in 1..30) { "Preview frame rate must be between 1 and 30" }
         output.parentFile?.mkdirs()
         if (output.exists() && !output.delete()) throw IllegalStateException("The previous preview could not be replaced")
-        val edited = EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(inputUri)))
+        val edited = EditedMediaItem.Builder(MediaItem.fromUri(input))
           .setEffects(Effects(emptyList(), listOf(
             Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT),
             FrameDropEffect.createDefaultFrameDropEffect(frameRate.toFloat()),
@@ -134,8 +145,8 @@ internal class VideoPreviewPreparer(private val context: Context) {
   private fun videoFormat(inputUri: String): MediaFormat {
     val extractor = MediaExtractor()
     return try {
-      val uri = Uri.parse(inputUri)
-      if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") extractor.setDataSource(uri.path ?: inputUri)
+      val uri = MediaInputPolicy(context).requireInput(inputUri)
+      if (uri.scheme == "file") extractor.setDataSource(requireNotNull(uri.path))
       else extractor.setDataSource(context, uri, null)
       (0 until extractor.trackCount).map(extractor::getTrackFormat)
         .firstOrNull { it.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
@@ -146,9 +157,7 @@ internal class VideoPreviewPreparer(private val context: Context) {
   }
 
   private fun outputFile(value: String): File {
-    val uri = Uri.parse(value)
-    require(uri.scheme.isNullOrEmpty() || uri.scheme == "file") { "The preview output must use app file storage" }
-    return File(uri.path ?: value)
+    return MediaInputPolicy(context).requireOutput(value)
   }
 
   private data class ActivePreview(val transformer: Transformer, val output: File, val promise: Promise)

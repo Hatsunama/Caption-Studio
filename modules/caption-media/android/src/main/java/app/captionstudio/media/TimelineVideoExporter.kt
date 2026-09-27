@@ -71,6 +71,15 @@ internal class TimelineVideoExporter(private val context: Context) {
   fun start(outputPath: String, plan: TimelineRenderPlan, promise: Promise) {
     val output = File(outputPath)
     val task = try {
+      val policy = MediaInputPolicy(context)
+      plan.clips.forEach { policy.requireInput(it.uri) }
+      plan.audioClips.forEach { policy.requireInput(it.uri) }
+      plan.layers.filterIsInstance<ImageRenderLayer>().forEach { policy.requireInput(it.uri) }
+      plan.layers.filterIsInstance<TextRenderLayer>().forEach { it.style.fontUri?.let(policy::requireInput) }
+      plan.captions.forEach { caption ->
+        caption.style.fontUri?.let(policy::requireInput)
+        caption.words.forEach { it.style.fontUri?.let(policy::requireInput) }
+      }
       synchronized(stateLock) {
         check(activeExport == null) { "An export is already running" }
         output.parentFile?.mkdirs()
@@ -326,7 +335,7 @@ internal class TimelineVideoExporter(private val context: Context) {
   }
 
   private fun clippedMediaItem(uri: String, startMs: Long, endMs: Long) = MediaItem.Builder()
-    .setUri(Uri.parse(uri))
+    .setUri(MediaInputPolicy(context).requireInput(uri))
     .setClippingConfiguration(
       MediaItem.ClippingConfiguration.Builder()
         .setStartPositionMs(startMs)
@@ -338,8 +347,8 @@ internal class TimelineVideoExporter(private val context: Context) {
   private fun hasAudioTrack(uri: String): Boolean {
     val extractor = MediaExtractor()
     return try {
-      val parsed = Uri.parse(uri)
-      if (parsed.scheme.isNullOrEmpty() || parsed.scheme == "file") extractor.setDataSource(parsed.path ?: uri)
+      val parsed = MediaInputPolicy(context).requireInput(uri)
+      if (parsed.scheme == "file") extractor.setDataSource(requireNotNull(parsed.path))
       else extractor.setDataSource(context, parsed, null)
       (0 until extractor.trackCount).any { index ->
         extractor.getTrackFormat(index).getString(android.media.MediaFormat.KEY_MIME)?.startsWith("audio/") == true
@@ -365,8 +374,8 @@ internal class TimelineVideoExporter(private val context: Context) {
     }
     val extractor = MediaExtractor()
     val trackTimings = try {
-      val parsed = Uri.parse(uri)
-      if (parsed.scheme.isNullOrEmpty() || parsed.scheme == "file") extractor.setDataSource(parsed.path ?: uri)
+      val parsed = MediaInputPolicy(context).requireInput(uri)
+      if (parsed.scheme == "file") extractor.setDataSource(requireNotNull(parsed.path))
       else extractor.setDataSource(context, parsed, null)
       selectSourceTrackTimings((0 until extractor.trackCount).map { index ->
         val format = extractor.getTrackFormat(index)
@@ -385,8 +394,8 @@ internal class TimelineVideoExporter(private val context: Context) {
   }
 
   private fun setRetrieverDataSource(retriever: MediaMetadataRetriever, value: String) {
-    val uri = Uri.parse(value)
-    if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") retriever.setDataSource(uri.path ?: value)
+    val uri = MediaInputPolicy(context).requireInput(value)
+    if (uri.scheme == "file") retriever.setDataSource(requireNotNull(uri.path))
     else retriever.setDataSource(context, uri)
   }
 
@@ -888,9 +897,9 @@ internal class TimelineBitmapOverlay(
   }
 
   private fun openImageStream(value: String): InputStream {
-    val uri = Uri.parse(value)
-    return if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") {
-      File(uri.path ?: value).inputStream()
+    val uri = MediaInputPolicy(context).requireInput(value)
+    return if (uri.scheme == "file") {
+      File(requireNotNull(uri.path)).inputStream()
     } else {
       context.contentResolver.openInputStream(uri)
         ?: throw IllegalArgumentException("An overlay image could not be opened")
@@ -999,8 +1008,8 @@ private class ManagedRetriever(context: Context, uri: String) : AutoCloseable {
   init {
     val created = MediaMetadataRetriever()
     try {
-      val parsed = Uri.parse(uri)
-      if (parsed.scheme.isNullOrEmpty() || parsed.scheme == "file") created.setDataSource(parsed.path ?: uri)
+      val parsed = MediaInputPolicy(context).requireInput(uri)
+      if (parsed.scheme == "file") created.setDataSource(requireNotNull(parsed.path))
       else created.setDataSource(context, parsed)
       retriever = created
     } catch (failure: Throwable) {

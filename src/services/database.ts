@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import {
   createRetryableAsyncInitializer,
@@ -7,6 +8,7 @@ import {
   inspectProjectRowsForMediaPermissionRelease,
 } from '@/lib/persistence-boundaries';
 import { serializeProjectSnapshot } from '@/lib/project-schema';
+import { assertProjectMediaReferences } from '@/lib/project-file-uri-boundary';
 import { decodePersistedProject } from '@/lib/project-codec';
 import { applyProjectSourceThumbnail, projectLibraryProject } from '@/lib/project-library';
 import type { CaptionProject } from '@/types/project';
@@ -56,6 +58,7 @@ async function initializeDatabase() {
 
 export async function saveProject(project: CaptionProject) {
   if (deletedProjectIds.has(project.id)) throw new Error('This project has been deleted.');
+  assertTrustedProjectMedia(project);
   const snapshot = serializeProjectSnapshot(project);
   const summary = projectLibraryProject(project);
   await enqueueProjectWrite(project.id, async () => {
@@ -64,7 +67,7 @@ export async function saveProject(project: CaptionProject) {
       `INSERT INTO projects (
          id, name, source_uri, updated_at, project_json, created_at, source_id,
          thumbnail_uri, duration_ms, lifecycle_status, clip_count, caption_count, metadata_version
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name,
          source_uri = excluded.source_uri,
@@ -77,7 +80,7 @@ export async function saveProject(project: CaptionProject) {
          lifecycle_status = excluded.lifecycle_status,
          clip_count = excluded.clip_count,
          caption_count = excluded.caption_count,
-         metadata_version = 1`,
+         metadata_version = 2`,
       project.id,
       project.name,
       summary.sourceUri ?? '',
@@ -111,7 +114,7 @@ export async function updateProjectSourceThumbnail(options: {
         options.projectId,
       );
       if (!row) return;
-      const project = decodePersistedProject(row.project_json);
+      const project = decodeProjectRow(row);
       const prepared = applyProjectSourceThumbnail(
         project,
         options.sourceId,
@@ -119,11 +122,12 @@ export async function updateProjectSourceThumbnail(options: {
         options.thumbnailUri,
       );
       if (!prepared) return;
+      assertTrustedProjectMedia(prepared);
       const summary = projectLibraryProject(prepared);
       await transaction.runAsync(
         `UPDATE projects SET
            project_json = ?, source_uri = ?, source_id = ?, thumbnail_uri = ?,
-           duration_ms = ?, lifecycle_status = ?, clip_count = ?, caption_count = ?, metadata_version = 1
+           duration_ms = ?, lifecycle_status = ?, clip_count = ?, caption_count = ?, metadata_version = 2
          WHERE id = ?`,
         serializeProjectSnapshot(prepared),
         summary.sourceUri ?? '',
@@ -152,7 +156,7 @@ export async function deleteProjectRecord(projectId: string): Promise<CaptionPro
         'SELECT project_json FROM projects WHERE id = ?',
         projectId,
       );
-      deletedProject = row ? decodePersistedProject(row.project_json) : null;
+      deletedProject = row ? decodeProjectRow(row) : null;
       await transaction.runAsync('DELETE FROM projects WHERE id = ?', projectId);
     });
     return deletedProject;
@@ -169,7 +173,7 @@ export async function listProjectRecords(): Promise<ProjectRecordSummary[]> {
             duration_ms, lifecycle_status, clip_count, caption_count, metadata_version
        FROM projects ORDER BY updated_at DESC`,
   );
-  return rows.map((row) => row.metadata_version === 1
+  return rows.map((row) => row.metadata_version === 2
     ? {
         kind: 'project' as const,
         project: {
@@ -217,7 +221,16 @@ async function readProjectRows() {
 }
 
 function decodeProjectRow(row: { project_json: string }) {
-  return decodePersistedProject(row.project_json);
+  const project = decodePersistedProject(row.project_json);
+  assertTrustedProjectMedia(project);
+  return project;
+}
+
+function assertTrustedProjectMedia(project: CaptionProject) {
+  assertProjectMediaReferences(project, {
+    documentDirectory: FileSystem.documentDirectory,
+    cacheDirectory: FileSystem.cacheDirectory,
+  });
 }
 
 async function enqueueProjectWrite<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
@@ -267,15 +280,15 @@ async function ensureProjectLibrarySchema(database: SQLite.SQLiteDatabase) {
 
 async function backfillProjectLibraryMetadata(database: SQLite.SQLiteDatabase) {
   const rows = await database.getAllAsync<{ id: string; project_json: string; metadata_version: number }>(
-    'SELECT id, project_json, metadata_version FROM projects WHERE metadata_version <> 1',
+    'SELECT id, project_json, metadata_version FROM projects WHERE metadata_version <> 2',
   );
   for (const row of rows) {
     try {
-      const project = decodePersistedProject(row.project_json);
+      const project = decodeProjectRow(row);
       const summary = projectLibraryProject(project);
       await database.runAsync(
         `UPDATE projects SET name = ?, source_uri = ?, updated_at = ?, created_at = ?, source_id = ?,
-           thumbnail_uri = ?, duration_ms = ?, lifecycle_status = ?, clip_count = ?, caption_count = ?, metadata_version = 1
+           thumbnail_uri = ?, duration_ms = ?, lifecycle_status = ?, clip_count = ?, caption_count = ?, metadata_version = 2
          WHERE id = ?`,
         project.name,
         summary.sourceUri ?? '',
@@ -332,5 +345,5 @@ export async function getProject(projectId: string): Promise<CaptionProject | nu
     projectId,
   );
   if (!row) return null;
-  return decodePersistedProject(row.project_json);
+  return decodeProjectRow(row);
 }

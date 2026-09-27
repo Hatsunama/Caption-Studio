@@ -440,9 +440,9 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
 
   private fun loadTypeface(uri: String): Typeface {
     try {
-      val parsed = Uri.parse(uri)
-      return if (parsed.scheme.isNullOrEmpty() || parsed.scheme == "file") {
-        val file = File(parsed.path ?: uri)
+      val parsed = MediaInputPolicy(context).requireInput(uri)
+      return if (parsed.scheme == "file") {
+        val file = File(requireNotNull(parsed.path))
         require(file.isFile && file.canRead()) { "The resolved font file is unavailable" }
         Typeface.createFromFile(file)
       } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
