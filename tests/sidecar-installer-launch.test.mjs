@@ -51,7 +51,8 @@ test('installer cleans an interrupted partial download from its owned temp direc
   const script = `$TempDir = $env:CAPTION_STUDIO_TEST_TEMP\n$Apk = Join-Path $TempDir 'caption-studio.apk'\n$OwnsTempDir = $true\ntry {} ${finalizer}`;
 
   try {
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    const powershell = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
+    const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
       encoding: 'utf8',
       env: { ...process.env, CAPTION_STUDIO_TEST_TEMP: tempDir },
     });
