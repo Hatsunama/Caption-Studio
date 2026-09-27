@@ -1,0 +1,7 @@
+# Production-signed Google Play AAB gate
+
+Run **Verify production-signed Google Play AAB** manually on `main` with the exact `app.json` version and Android versionCode. The workflow uses the existing `CAPTION_STUDIO_FIXED_*` GitHub secrets. All four must be available to the job; absent secrets stop the gate. Keep the keystore and passwords in repository secrets, never in Git.
+
+The gate checks the clean native release build, uses the production upload key, validates the AAB with pinned bundletool, reads package/versionCode/versionName from the bundle itself, verifies its JAR signature, and compares its certificate SHA-256 to `config/product-contract.json`. It uploads only the verified AAB and `play-aab-provenance.json` as a private GitHub Actions artifact. The record includes source commit, run ID/attempt, package, version, certificate, and AAB SHA-256. Download the artifact from the successful run and recheck its SHA-256 against the record before any manual Play Console action.
+
+This does not upload to Play or create a public GitHub release. The CI AAB uses an ephemeral test signer and is not a Play release candidate. The public sidecar workflow remains APK-only. A successful local test cannot establish whether GitHub secrets exist, whether the upload certificate is enrolled in Play App Signing, or whether Play will accept a versionCode; confirm those in the protected repository and Play Console. The repository certificate pin is a consistency check, not an independent trust anchor against repository compromise.
