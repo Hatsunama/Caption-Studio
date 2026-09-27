@@ -34,6 +34,16 @@ export function modelVerificationMarkerMatches(
   rawMarker: string,
   identity: ModelFileIdentity,
   expectedSha256: string,
+  actualSha256: string,
+): boolean {
+  if (actualSha256 !== expectedSha256) return false;
+  return modelVerificationMarkerIdentityMatches(rawMarker, identity, expectedSha256);
+}
+
+export function modelVerificationMarkerIdentityMatches(
+  rawMarker: string,
+  identity: ModelFileIdentity,
+  expectedSha256: string,
 ): boolean {
   if (!Number.isFinite(identity.modifiedAtMs)) return false;
   try {

@@ -5,6 +5,7 @@ import test from 'node:test';
 import { assertSupportedVideo } from '../src/lib/media-validation.ts';
 import {
   encodeModelVerificationMarker,
+  modelVerificationMarkerIdentityMatches,
   modelVerificationMarkerMatches,
 } from '../src/lib/model-verification.ts';
 import {
@@ -45,10 +46,12 @@ test('model marker is bound to the verified file identity rather than size alone
   const sha256 = 'a'.repeat(64);
   const marker = encodeModelVerificationMarker(identity, sha256);
   assert.ok(marker);
-  assert.equal(modelVerificationMarkerMatches(marker, identity, sha256), true);
-  assert.equal(modelVerificationMarkerMatches(marker, { ...identity, modifiedAtMs: 1_888_888 }, sha256), false);
-  assert.equal(modelVerificationMarkerMatches(marker, { ...identity, createdAtMs: 1_555_555 }, sha256), false);
-  assert.equal(modelVerificationMarkerMatches(sha256, identity, sha256), false);
+  assert.equal(modelVerificationMarkerIdentityMatches(marker, identity, sha256), true);
+  assert.equal(modelVerificationMarkerIdentityMatches(marker, { ...identity, modifiedAtMs: 1_888_888 }, sha256), false);
+  assert.equal(modelVerificationMarkerIdentityMatches(marker, { ...identity, createdAtMs: 1_555_555 }, sha256), false);
+  assert.equal(modelVerificationMarkerIdentityMatches(sha256, identity, sha256), false);
+  assert.equal(modelVerificationMarkerMatches(marker, identity, sha256, sha256), true);
+  assert.equal(modelVerificationMarkerMatches(marker, identity, sha256, 'b'.repeat(64)), false);
 });
 
 test('cooperative VAD chunks preserve valid WAV headers and bounded overlap', () => {

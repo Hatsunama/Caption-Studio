@@ -23,7 +23,7 @@ import { createTranslationBatches } from '@/lib/translation-batching';
 import { removeModelArtifacts, storedModelBytes } from '@/lib/model-artifact-lifecycle';
 import {
   encodeModelVerificationMarker,
-  modelVerificationMarkerMatches,
+  modelVerificationMarkerIdentityMatches,
   type ModelFileIdentity,
 } from '@/lib/model-verification';
 import { splitBatchesByContext } from '@/lib/contextual-translation-batching';
@@ -562,7 +562,7 @@ async function writeTranslationModelVerificationMarker(file: File, sha256: strin
 async function verifyTranslationModel(file: File) {
   if (!file.exists || file.size !== NATURAL_TRANSLATION_MODEL.downloadBytes) return false;
   const marker = new File(file.parentDirectory, `${file.name}.sha256`);
-  if (marker.exists && modelVerificationMarkerMatches(
+  if (marker.exists && modelVerificationMarkerIdentityMatches(
     await marker.text(), modelFileIdentity(file), NATURAL_TRANSLATION_MODEL.sha256,
   )) return true;
   if (await CaptionMedia.sha256(file.uri) !== NATURAL_TRANSLATION_MODEL.sha256) {

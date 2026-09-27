@@ -28,6 +28,7 @@ import { AnimationBrowser } from '@/components/editor/animation-browser';
 import { projectMediaRecoveryPrompts } from '@/components/editor/project-media-recovery-prompts';
 import { PersistedHorizontalScroll, PersistedHorizontalScrollScope } from '@/components/editor/persisted-horizontal-scroll';
 import { assertDualCaptionEditsStillCurrent } from '@/lib/dual-caption-save-merge';
+import { needsTranslationModelDownloadConsent } from '@/lib/translation-model-availability';
 import { synchronizeProjectDualCaptionEdits } from '@/services/project-caption-translation';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
@@ -1072,7 +1073,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const confirmTranslationModelDownload = async (): Promise<boolean> => {
-    if ((await listDownloadedNaturalTranslationModel()).length > 0) return true;
+    if (!needsTranslationModelDownloadConsent(await listDownloadedNaturalTranslationModel())) return true;
     return new Promise<boolean>((resolve) => {
       Alert.alert(
         'Download the translation model',

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { transform } from 'esbuild';
 import test from 'node:test';
-import { encodeModelVerificationMarker, modelVerificationMarkerMatches } from '../src/lib/model-verification.ts';
+import { encodeModelVerificationMarker, modelVerificationMarkerIdentityMatches } from '../src/lib/model-verification.ts';
 import * as modelArtifacts from '../src/lib/model-artifact-lifecycle.ts';
 
 async function serviceFixture(failSecond = false) {
@@ -75,7 +75,7 @@ async function serviceFixture(failSecond = false) {
       resolveCaptionLanguage: (tag) => ({ tag, automaticTranslation: true }),
       isLikelyUntranslatedCaption: () => false },
     '@/lib/caption-text-breaks': { captionTextHead: (text) => text, captionTextTail: (text) => text },
-    '@/lib/model-verification': { encodeModelVerificationMarker, modelVerificationMarkerMatches },
+    '@/lib/model-verification': { encodeModelVerificationMarker, modelVerificationMarkerIdentityMatches },
     '@/lib/model-artifact-lifecycle': modelArtifacts,
     '@/lib/translation-batching': { createTranslationBatches: (captions) => captions.map((caption) => [caption]) },
     '@/lib/contextual-translation-batching': { splitBatchesByContext: (batches) => batches },

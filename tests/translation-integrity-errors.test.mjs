@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-import { modelVerificationMarkerMatches } from '../src/lib/model-verification.ts';
+import { modelVerificationMarkerIdentityMatches } from '../src/lib/model-verification.ts';
 
 const root = new URL('../', import.meta.url);
 const read = (path) => readFile(new URL(path, root), 'utf8');
@@ -39,7 +39,7 @@ test('translation marker cannot trust a same-sized changed model and is rebound 
     NATURAL_TRANSLATION_MODEL: { downloadBytes: 4, sha256: expectedHash },
     File: class { constructor() { return marker; } },
     CaptionMedia: { sha256: async () => 'b'.repeat(64) },
-    modelVerificationMarkerMatches,
+    modelVerificationMarkerIdentityMatches,
     modelFileIdentity: (file) => ({
       fileName: file.name, sizeBytes: file.size,
       modifiedAtMs: file.lastModified, createdAtMs: file.creationTime,
@@ -59,7 +59,7 @@ test('translation marker cannot trust a same-sized changed model and is rebound 
   marker.raw = expectedHash;
   sandbox.CaptionMedia.sha256 = async () => expectedHash;
   assert.equal(await verify(model), true);
-  assert.equal(modelVerificationMarkerMatches(marker.raw, sandbox.modelFileIdentity(model), expectedHash), true);
+  assert.equal(modelVerificationMarkerIdentityMatches(marker.raw, sandbox.modelFileIdentity(model), expectedHash), true);
 });
 
 test('progress polling reports a read failure while the translation continues', async () => {
