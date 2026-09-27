@@ -3,12 +3,12 @@ name: Verify production-signed Google Play AAB
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Exact app.json versionName to verify
+      tag:
+        description: Existing published Caption Studio release tag (for example v1.4.105)
         required: true
         type: string
       version_code:
-        description: Exact app.json Android versionCode to verify
+        description: Exact versionCode recorded in that release's manifest
         required: true
         type: string
 
@@ -30,6 +30,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check out approved release source separately
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          path: release-source
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.13.1
@@ -40,13 +46,15 @@ jobs:
           java-version: 17
           cache: gradle
 
-      - name: Require exact source version
+      - name: Verify published release approval and configure source checkout
         env:
-          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
           VERSION_CODE: ${{ inputs.version_code }}
-        run: node ./scripts/verify-play-aab.mjs --inputs "$VERSION" "$VERSION_CODE"
+        run: node ./scripts/verify-play-aab.mjs --prepare "$TAG" "$VERSION_CODE" release-source
 
       - name: Install and verify locked project
+        working-directory: release-source
         run: |
           npm ci
           npm run verify:product-contract
@@ -58,6 +66,7 @@ jobs:
           npx --yes expo-doctor@1.20.4
 
       - name: Generate clean Android project
+        working-directory: release-source
         env:
           NODE_ENV: production
           CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE: com.xmilo_at_your_side.caption_studio
@@ -88,7 +97,7 @@ jobs:
           echo "ORG_GRADLE_PROJECT_CAPTION_STUDIO_RELEASE_STORE_FILE=$keystore" >> "$GITHUB_ENV"
 
       - name: Lint and test native release modules
-        working-directory: android
+        working-directory: release-source/android
         env:
           NODE_ENV: production
           ORG_GRADLE_PROJECT_CAPTION_STUDIO_RELEASE_STORE_PASSWORD: ${{ secrets.CAPTION_STUDIO_FIXED_STORE_PASSWORD }}
@@ -99,7 +108,7 @@ jobs:
           ./gradlew :app:testReleaseUnitTest :caption-diagnostics:testReleaseUnitTest :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest --no-daemon --stacktrace --warning-mode all
 
       - name: Build production-signed Play bundle
-        working-directory: android
+        working-directory: release-source/android
         env:
           NODE_ENV: production
           ORG_GRADLE_PROJECT_CAPTION_STUDIO_RELEASE_STORE_PASSWORD: ${{ secrets.CAPTION_STUDIO_FIXED_STORE_PASSWORD }}
@@ -119,12 +128,10 @@ jobs:
 
       - name: Verify bundle identity, signature, and provenance
         env:
-          VERSION: ${{ inputs.version }}
-          VERSION_CODE: ${{ inputs.version_code }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          node ./scripts/verify-play-aab.mjs \
-            android/app/build/outputs/bundle/release/app-release.aab \
-            "$CAPTION_STUDIO_BUNDLETOOL" "$VERSION" "$VERSION_CODE"
+          node ./scripts/verify-play-aab.mjs --verify \
+            release-source dist/play-aab-approval.json "$CAPTION_STUDIO_BUNDLETOOL"
 
       - name: Retain verified Play bundle and provenance privately
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
