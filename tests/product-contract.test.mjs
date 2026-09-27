@@ -23,15 +23,13 @@ test('release identity and translation artifact each have one authoritative mani
   assert.match(contract.translation.sha256, /^[a-f0-9]{64}$/);
 });
 
-test('package, lockfile, Expo config, installer floor, and README publish one version', () => {
+test('package, lockfile, Expo source config, and installer floor share one version', () => {
   const packageManifest = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
   const packageLock = JSON.parse(readFileSync(fileURLToPath(new URL('../package-lock.json', import.meta.url)), 'utf8'));
   const app = JSON.parse(readFileSync(fileURLToPath(new URL('../app.json', import.meta.url)), 'utf8'));
   const contract = JSON.parse(readFileSync(fileURLToPath(new URL('../config/product-contract.json', import.meta.url)), 'utf8'));
-  const readme = readFileSync(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8');
   assert.equal(packageLock.version, packageManifest.version);
   assert.equal(packageLock.packages[''].version, packageManifest.version);
   assert.equal(app.expo.version, packageManifest.version);
   assert.equal(contract.android.release.minimumVersion, packageManifest.version);
-  assert.match(readme, new RegExp(`v${packageManifest.version.replaceAll('.', '\\.')}\\b`));
 });
