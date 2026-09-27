@@ -61,7 +61,9 @@ class CaptionMediaModule : Module() {
     }
 
     AsyncFunction("checkReadAccess") { inputUri: String ->
-      DocumentReadAccess(context.contentResolver).check(inputUri)
+      val approved = runCatching { MediaInputPolicy(context).requireInput(inputUri).toString() }.getOrNull()
+      if (approved == null) mapOf("status" to "unavailable")
+      else DocumentReadAccess(context.contentResolver).check(approved)
     }
 
     View(CaptionPresentationView::class) {
@@ -182,16 +184,16 @@ class CaptionMediaModule : Module() {
   }
 
   private fun openInputStream(input: String, errorMessage: String): InputStream {
-    val uri = Uri.parse(input)
-    return if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") {
-      File(uri.path ?: input).inputStream()
+    val uri = MediaInputPolicy(context).requireInput(input)
+    return if (uri.scheme == "file") {
+      File(requireNotNull(uri.path)).inputStream()
     } else {
       context.contentResolver.openInputStream(uri) ?: throw IllegalArgumentException(errorMessage)
     }
   }
 
   private fun persistReadPermission(input: String): Boolean {
-    val uri = Uri.parse(input)
+    val uri = MediaInputPolicy(context).requireInput(input)
     if (uri.scheme != "content") return true
     DocumentReadAccess(context.contentResolver).retain(uri)
     return true
@@ -208,13 +210,7 @@ class CaptionMediaModule : Module() {
   }
 
   private fun sha256(input: String): String {
-    val uri = Uri.parse(input)
-    val stream = if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") {
-      File(uri.path ?: input).inputStream()
-    } else {
-      context.contentResolver.openInputStream(uri)
-        ?: throw IllegalArgumentException("The selected file could not be opened")
-    }
+    val stream = openInputStream(input, "The selected file could not be opened")
     val digest = MessageDigest.getInstance("SHA-256")
     stream.use { source ->
       val buffer = ByteArray(64 * 1024)
@@ -412,6 +408,7 @@ class CaptionMediaModule : Module() {
   }
 
   private fun validateFontFile(input: String): Map<String, Any> {
+    val localFile = MediaInputPolicy(context).requireFontFile(input)
     val bytes = openInputStream(input, "The selected font could not be opened").use { stream ->
       val output = ByteArrayOutputStream()
       val buffer = ByteArray(64 * 1024)
@@ -429,7 +426,6 @@ class CaptionMediaModule : Module() {
     }
     require(bytes.size >= MIN_IMPORTED_FONT_BYTES) { "The selected font file is incomplete" }
     val fontInfo = SfntFontValidator.validate(bytes)
-    val localFile = outputFile(input)
     try {
       Typeface.createFromFile(localFile)
     } catch (error: RuntimeException) {
@@ -1119,26 +1115,19 @@ class CaptionMediaModule : Module() {
   }
 
   private fun setRetrieverDataSource(retriever: MediaMetadataRetriever, input: String) {
-    val uri = Uri.parse(input)
-    if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") retriever.setDataSource(uri.path ?: input)
+    val uri = MediaInputPolicy(context).requireInput(input)
+    if (uri.scheme == "file") retriever.setDataSource(requireNotNull(uri.path))
     else retriever.setDataSource(context, uri)
   }
 
   private fun setExtractorDataSource(extractor: MediaExtractor, input: String) {
-    val uri = Uri.parse(input)
-    if (uri.scheme.isNullOrEmpty() || uri.scheme == "file") extractor.setDataSource(uri.path ?: input)
+    val uri = MediaInputPolicy(context).requireInput(input)
+    if (uri.scheme == "file") extractor.setDataSource(requireNotNull(uri.path))
     else extractor.setDataSource(context, uri, null)
   }
 
   private fun outputFile(output: String): File {
-    val uri = Uri.parse(output)
-    require(uri.scheme.isNullOrEmpty() || uri.scheme == "file") { "Output must be an app-local file URI" }
-    val target = File(uri.path ?: output).canonicalFile
-    val allowedRoots = listOf(context.filesDir, context.cacheDir, context.noBackupFilesDir).map(File::getCanonicalFile)
-    require(allowedRoots.any { root -> target == root || target.path.startsWith(root.path + File.separator) }) {
-      "Output must stay inside Caption Studio storage"
-    }
-    return target
+    return MediaInputPolicy(context).requireOutput(output)
   }
 
   private inline fun cleanupMediaResource(action: String, cleanup: () -> Unit) {

@@ -175,7 +175,7 @@ internal class AudioWaveformDecoder(private val context: Context) {
   }
 
   private fun setExtractorSource(extractor: MediaExtractor, inputUri: String) {
-    val uri = Uri.parse(inputUri)
+    val uri = MediaInputPolicy(context).requireInput(inputUri)
     when (uri.scheme?.lowercase()) {
       "content" -> context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
         extractor.setDataSource(descriptor.fileDescriptor)
@@ -183,18 +183,18 @@ internal class AudioWaveformDecoder(private val context: Context) {
       "file" -> extractor.setDataSource(
         uri.path ?: throw IllegalArgumentException("The selected audio file path is invalid."),
       )
-      else -> extractor.setDataSource(inputUri)
+      else -> throw IllegalArgumentException("The selected audio URI is invalid.")
     }
   }
 
   private fun setRetrieverSource(retriever: MediaMetadataRetriever, inputUri: String) {
-    val uri = Uri.parse(inputUri)
+    val uri = MediaInputPolicy(context).requireInput(inputUri)
     when (uri.scheme?.lowercase()) {
       "content" -> retriever.setDataSource(context, uri)
       "file" -> retriever.setDataSource(
         uri.path ?: throw IllegalArgumentException("The selected audio file path is invalid."),
       )
-      else -> retriever.setDataSource(inputUri)
+      else -> throw IllegalArgumentException("The selected audio URI is invalid.")
     }
   }
 

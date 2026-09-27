@@ -141,6 +141,13 @@ internal object TimelineAudioRenderer {
         promise.reject("E_TIMELINE_AUDIO_BUSY", "Timeline audio preparation is already running", null)
         return@post
       }
+      try {
+        val policy = MediaInputPolicy(context)
+        (plan.videoClips + plan.audioClips).forEach { policy.requireInput(it.sourceUri) }
+      } catch (error: Exception) {
+        promise.reject("E_TIMELINE_AUDIO_PREPARE", error.message ?: "An audio source is unavailable", error)
+        return@post
+      }
       val output = File(outputPath)
       try {
         output.parentFile?.mkdirs()
@@ -218,7 +225,7 @@ internal object TimelineAudioRenderer {
         .setEndPositionMs(segment.sourceEndMs)
         .build()
       val mediaItem = MediaItem.Builder()
-        .setUri(segment.sourceUri)
+        .setUri(MediaInputPolicy(context).requireInput(segment.sourceUri))
         .setClippingConfiguration(clipping)
         .build()
       val edited = EditedMediaItem.Builder(mediaItem)
@@ -240,11 +247,11 @@ internal object TimelineAudioRenderer {
   private fun mediaHasAudioTrack(context: Context, sourceUri: String): Boolean {
     val extractor = MediaExtractor()
     return try {
-      val uri = Uri.parse(sourceUri)
+      val uri = MediaInputPolicy(context).requireInput(sourceUri)
       when (uri.scheme?.lowercase()) {
-        null, "" -> extractor.setDataSource(sourceUri)
         "file" -> extractor.setDataSource(requireNotNull(uri.path))
-        else -> extractor.setDataSource(context, uri, null)
+        "content" -> extractor.setDataSource(context, uri, null)
+        else -> throw IllegalArgumentException("The audio source URI is invalid")
       }
       (0 until extractor.trackCount).any { index ->
         extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
