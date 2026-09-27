@@ -12,10 +12,7 @@ import {
   translateNaturalCaptionBatch,
   type CaptionTranslationProgress,
 } from '@/services/caption-translation';
-import {
-  synchronizeProjectDualCaptionEdits,
-  type DualCaptionTextEdit,
-} from '@/services/project-caption-translation';
+import type { DualCaptionTextEdit } from '@/services/project-caption-translation';
 import type { CaptionProject } from '@/types/project';
 
 type ControllerOptions = {
@@ -284,11 +281,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     kind: 'manual-save',
     baseline,
     manualEdits: { trackId, edits },
-    operation: () => synchronizeProjectDualCaptionEdits({
-      project: baseline,
-      trackId,
-      edits,
-    }),
+    operation: () => Promise.resolve(baseline),
   }), [execute]);
 
   const cancel = useCallback(async () => {

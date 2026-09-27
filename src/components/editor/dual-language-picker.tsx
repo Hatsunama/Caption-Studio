@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { dualLanguageChoiceCopy } from '@/components/editor/dual-language-choice-copy';
 
 import { dualCaptionLanguageChoices, type DualCaptionLanguageChoice } from '@/lib/caption-languages';
 import { chrome } from '@/lib/ui-theme';
@@ -82,7 +83,7 @@ export function DualLanguagePicker(props: {
                 {pendingTag === choice.tag ? <ActivityIndicator color={chrome.accent} /> : (
                   <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: chrome.radius.pill, backgroundColor: choice.automatic ? chrome.accent : chrome.fill }}>
                     <Text style={{ color: choice.automatic ? chrome.accentInk : chrome.muted, fontSize: 11, fontWeight: '700' }}>
-                      {choice.automatic ? 'On this phone' : 'Unavailable'}
+                      {dualLanguageChoiceCopy(choice.automatic, choice.displayName, props.sourceLanguageLabel, props.automaticModelLabel).badge}
                     </Text>
                   </View>
                 )}
@@ -90,9 +91,7 @@ export function DualLanguagePicker(props: {
               <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 18 }}>
                 {pendingTag === choice.tag
                   ? `Adding ${choice.displayName} to this project…`
-                  : choice.automatic
-                  ? `Uses the ${props.automaticModelLabel} model after a one-time download. Keep this screen open while the whole ${props.sourceLanguageLabel} script is translated.`
-                  : `${choice.displayName} is unavailable for this source language.`}
+                  : dualLanguageChoiceCopy(choice.automatic, choice.displayName, props.sourceLanguageLabel, props.automaticModelLabel).detail}
               </Text>
             </Pressable>
           ))}

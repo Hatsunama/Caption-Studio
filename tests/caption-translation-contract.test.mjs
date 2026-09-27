@@ -189,7 +189,7 @@ test('dual-subtitle language ownership stays canonical and advertises local gene
     readFile(new URL('modules/caption-media/android/src/main/java/app/captionstudio/media/TimelineRenderPlan.kt', repositoryRoot), 'utf8'),
   ]);
 
-  assert.match(picker, /Keep this screen open while the whole/);
+  assert.match(picker, /dualLanguageChoiceCopy/);
   assert.doesNotMatch(picker, /Type or paste/);
   assert.doesNotMatch(picker, /aware subtitle cuts/);
   assert.match(editor, /resolvedProjectCaptionLanguage/);

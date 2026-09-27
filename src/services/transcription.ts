@@ -287,8 +287,9 @@ async function verifyModelFile(file: File, expectedBytes: number, expectedSha256
   if (!file.exists || file.size !== expectedBytes) return false;
   const marker = new File(file.parentDirectory, `${file.name}.sha256`);
   const identity = modelFileIdentity(file);
-  if (marker.exists && modelVerificationMarkerMatches(await marker.text(), identity, expectedSha256)) return true;
-  if (await CaptionMedia.sha256(file.uri) !== expectedSha256) {
+  const actualSha256 = await CaptionMedia.sha256(file.uri);
+  if (marker.exists && modelVerificationMarkerMatches(await marker.text(), identity, expectedSha256, actualSha256)) return true;
+  if (actualSha256 !== expectedSha256) {
     if (marker.exists) marker.delete();
     return false;
   }
@@ -332,8 +333,7 @@ async function modelReplacementReservation(
   if (!file.exists || file.size !== expectedBytes) {
     return resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri));
   }
-  const marker = new File(file.parentDirectory, `${file.name}.sha256`);
-  if (marker.exists && modelVerificationMarkerMatches(await marker.text(), modelFileIdentity(file), expectedSha256)) return 0;
+  if (await verifyModelFile(file, expectedBytes, expectedSha256)) return 0;
   return resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri));
 }
 
