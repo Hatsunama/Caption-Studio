@@ -68,3 +68,11 @@ test('public repository workflow artifacts are not described as private', async 
   assert.doesNotMatch(guide, /private GitHub Actions artifact/i);
   assert.match(guide, /read access/i);
 });
+
+test('Play source version override occurs after source-contract tests and before Android prebuild', async () => {
+  const workflow = await readFile(workflowUrl, 'utf8');
+  const sourceChecks = workflow.indexOf('npm run test:logic');
+  const approvedOverride = workflow.indexOf('verify-play-aab.mjs --prepare');
+  const prebuild = workflow.indexOf('npx expo prebuild');
+  assert.ok(sourceChecks >= 0 && sourceChecks < approvedOverride && approvedOverride < prebuild);
+});

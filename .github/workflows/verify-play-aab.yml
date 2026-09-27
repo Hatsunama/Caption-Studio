@@ -46,13 +46,6 @@ jobs:
           java-version: 17
           cache: gradle
 
-      - name: Verify published release approval and configure source checkout
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
-          VERSION_CODE: ${{ inputs.version_code }}
-        run: node ./scripts/verify-play-aab.mjs --prepare "$TAG" "$VERSION_CODE" release-source
-
       - name: Install and verify locked project
         working-directory: release-source
         run: |
@@ -64,6 +57,13 @@ jobs:
           npm run lint
           npx expo install --check
           npx --yes expo-doctor@1.20.4
+
+      - name: Verify published release approval and configure source checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          VERSION_CODE: ${{ inputs.version_code }}
+        run: node ./scripts/verify-play-aab.mjs --prepare "$TAG" "$VERSION_CODE" release-source
 
       - name: Generate clean Android project
         working-directory: release-source
