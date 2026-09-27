@@ -19,7 +19,8 @@ export async function ensureProjectThumbnail(options: {
   videoUri: string;
   thumbnailUri?: string;
 }): Promise<string | undefined> {
-  if (options.thumbnailUri?.endsWith(`-poster-v${PROJECT_POSTER_VERSION}.jpg`)) {
+  if (options.thumbnailUri?.endsWith(`-poster-v${PROJECT_POSTER_VERSION}.jpg`)
+    && isProjectOwnedFileUri(options.projectId, options.thumbnailUri)) {
     const existing = await FileSystem.getInfoAsync(options.thumbnailUri);
     if (existing.exists && !existing.isDirectory) return options.thumbnailUri;
   }
@@ -28,7 +29,7 @@ export async function ensureProjectThumbnail(options: {
 
 export async function generateProjectThumbnail(projectId: string, sourceId: string, videoUri: string) {
   if (!FileSystem.documentDirectory) return undefined;
-  const outputUri = `${FileSystem.documentDirectory}projects/${projectId}/source-${safePathSegment(sourceId)}-poster-v${PROJECT_POSTER_VERSION}.jpg`;
+  const outputUri = `${FileSystem.documentDirectory}projects/${safePathSegment(projectId)}/source-${safePathSegment(sourceId)}-poster-v${PROJECT_POSTER_VERSION}.jpg`;
   try {
     await CaptionMedia.generateVideoThumbnail(videoUri, outputUri, 0);
     const generated = await FileSystem.getInfoAsync(outputUri);
@@ -45,7 +46,7 @@ export async function ensureProjectVideoPreview(options: {
   onPreparing?: () => void;
 }): Promise<string | undefined> {
   if (!FileSystem.documentDirectory) throw new Error('Permanent app storage is unavailable on this device.');
-  if (options.source.previewUri) {
+  if (options.source.previewUri && isProjectOwnedFileUri(options.projectId, options.source.previewUri)) {
     try {
       const existing = await FileSystem.getInfoAsync(options.source.previewUri);
       if (existing.exists && !existing.isDirectory && existing.size > 0) {
@@ -148,9 +149,8 @@ export async function deleteProjectFiles(projectId: string) {
 
 export async function deleteProjectOwnedFiles(projectId: string, uris: string[]) {
   if (!FileSystem.documentDirectory) return;
-  const projectUri = `${FileSystem.documentDirectory}projects/${safePathSegment(projectId)}/`;
   for (const uri of uris) {
-    if (!uri.startsWith(projectUri)) continue;
+    if (!isProjectOwnedFileUri(projectId, uri)) continue;
     const info = await FileSystem.getInfoAsync(uri);
     if (info.exists && !info.isDirectory) await FileSystem.deleteAsync(uri, { idempotent: true });
   }
@@ -161,7 +161,7 @@ export async function reconcileProjectOwnedFiles(projectId: string, retainedUris
   const projectUri = `${FileSystem.documentDirectory}projects/${safePathSegment(projectId)}/`;
   const projectInfo = await FileSystem.getInfoAsync(projectUri);
   if (!projectInfo.exists || !projectInfo.isDirectory) return;
-  const retained = new Set([...retainedUris].filter((uri) => uri.startsWith(projectUri)));
+  const retained = new Set([...retainedUris].filter((uri) => isProjectOwnedFileUri(projectId, uri)));
   await removeUnreferencedFiles(projectUri, retained);
 }
 
@@ -217,6 +217,25 @@ export async function validateProjectSources(sources: { uri: string; displayName
 
 function safePathSegment(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function isProjectOwnedFileUri(projectId: string, uri: string): boolean {
+  if (!FileSystem.documentDirectory || !uri.startsWith('file:///')) return false;
+  const projectUri = `${FileSystem.documentDirectory}projects/${safePathSegment(projectId)}/`;
+  if (!uri.startsWith(projectUri)) return false;
+  let path = uri.slice(projectUri.length);
+  try {
+    // Decode repeatedly so encoded separators and nested encodings cannot hide traversal.
+    for (let count = 0; count < 16; count += 1) {
+      const decoded = decodeURIComponent(path);
+      if (decoded === path) break;
+      path = decoded;
+    }
+  } catch {
+    return false;
+  }
+  if (!path || /[\\?#\0]/.test(path) || /%[0-9a-fA-F]{2}/.test(path)) return false;
+  return path.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
 }
 
 export async function storeProjectImage(options: {
@@ -288,15 +307,19 @@ export async function storeProjectAudio(options: {
   if (!FileSystem.documentDirectory) throw new Error('Permanent app storage is unavailable on this device.');
   const extension = options.fileName.match(/\.([a-zA-Z0-9]{2,5})$/)?.[1]?.toLowerCase() ?? 'm4a';
   const directory = `${FileSystem.documentDirectory}projects/${safePathSegment(options.projectId)}/audio/`;
-  const destinationUri = `${directory}${safePathSegment(options.audioId)}.${extension}`;
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const stagingUri = `${directory}.staging-${safePathSegment(options.audioId)}-${nonce}`;
+  const destinationUri = `${directory}${safePathSegment(options.audioId)}-${nonce}.${extension}`;
   try {
     await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
-    await FileSystem.copyAsync({ from: options.sourceUri, to: destinationUri });
-    await validateStoredAudio(destinationUri);
+    await FileSystem.copyAsync({ from: options.sourceUri, to: stagingUri });
+    await validateStoredAudio(stagingUri);
+    const existing = await FileSystem.getInfoAsync(destinationUri);
+    if (existing.exists) throw new Error('Caption Studio could not allocate a unique audio file. Try again.');
+    await FileSystem.moveAsync({ from: stagingUri, to: destinationUri });
     return destinationUri;
-  } catch (error) {
-    await FileSystem.deleteAsync(destinationUri, { idempotent: true }).catch(() => undefined);
-    throw error;
+  } finally {
+    await FileSystem.deleteAsync(stagingUri, { idempotent: true }).catch(() => undefined);
   }
 }
 

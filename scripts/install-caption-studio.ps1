@@ -319,10 +319,28 @@ try {
 }
 finally {
     if ($OwnsTempDir) {
-        try {
-            if (Test-Path -LiteralPath $Apk) {
-                Remove-Item -LiteralPath $Apk -Force -ErrorAction Stop
+        # A failed download can leave the partial file behind. Windows may keep
+        # it open briefly after Invoke-WebRequest fails, so retry only our two
+        # known files before removing the directory if it is empty.
+        foreach ($File in @($Apk, "$Apk.partial")) {
+            for ($CleanupAttempt = 1; $CleanupAttempt -le 4; $CleanupAttempt++) {
+                try {
+                    if (Test-Path -LiteralPath $File) {
+                        Remove-Item -LiteralPath $File -Force -ErrorAction Stop
+                    }
+                    break
+                }
+                catch {
+                    if ($CleanupAttempt -eq 4) {
+                        Write-Warning "Temporary cleanup failed at ${File}: $($_.Exception.Message)"
+                    }
+                    else {
+                        Start-Sleep -Milliseconds 250
+                    }
+                }
             }
+        }
+        try {
             # Delete only our empty directory, never a recursive tree.
             [IO.Directory]::Delete($TempDir, $false)
             Write-Host 'Temporary APK and installer download directory removed.'

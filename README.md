@@ -6,11 +6,11 @@ Caption Studio is an Android-only, local-first automatic subtitle editor. Import
 
 The expected Android application ID for source and release builds is `com.xmilo_at_your_side.caption_studio`. It installs in a separate sandbox from `com.hatsunama.captionstudio` and `com.hatsunama.captionstudio.fixed`. Keep those older apps installed: their projects, settings, and downloaded models stay in their own storage and do not automatically appear in the new app. This package change does not migrate data. Only an existing installation of the new ID with compatible signing can be updated in place; never uninstall an app or clear its data to resolve an installation failure.
 
-Previously published APKs are immutable and may still use an older ID. The Windows installer refuses those APKs until a release with the expected ID and pinned signing certificate is available. Existing signing keys and certificate lineage are retained, but a signing lineage cannot move projects between package IDs.
+Do not assume previously published APKs are immutable; repository-level immutable releases are not enabled for those releases. Older APKs may still use a different ID. The Windows installer refuses those APKs until a release with the expected ID and pinned signing certificate is available. Existing signing keys and certificate lineage are retained, but a signing lineage cannot move projects between package IDs.
 
 ### Easiest: download on the phone
 
-1. Open the [latest Caption Studio release](https://github.com/Hatsunama/Caption-Studio/releases/tag/v1.4.101) on the phone.
+1. Open [Caption Studio releases](https://github.com/Hatsunama/Caption-Studio/releases) on the phone and choose the highest published version with `caption-studio-android.apk`.
 2. Tap **caption-studio-android.apk**.
 3. Open the finished download.
 4. If Android asks, allow **Install unknown apps** for the browser or file manager you used.
@@ -26,10 +26,11 @@ This downloads the same release APK; it does not compile the app on the phone.
 
 ```bash
 pkg update
-pkg install curl
+pkg install curl jq
 termux-setup-storage
-curl -L -o ~/storage/downloads/caption-studio-android.apk \
-  https://github.com/Hatsunama/Caption-Studio/releases/download/v1.4.101/caption-studio-android.apk
+apk_url=$(curl -fsSL 'https://api.github.com/repos/Hatsunama/Caption-Studio/releases?per_page=100' | jq -r '[.[] | select(.draft == false) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | select(.assets | any(.name == "caption-studio-android.apk"))] | sort_by(.tag_name[1:] | split(".") | map(tonumber)) | last | .assets[] | select(.name == "caption-studio-android.apk") | .browser_download_url')
+test -n "$apk_url" && test "$apk_url" != null || exit 1
+curl -fL -o ~/storage/downloads/caption-studio-android.apk "$apk_url"
 termux-open ~/storage/downloads/caption-studio-android.apk
 ```
 
@@ -43,7 +44,7 @@ When `termux-setup-storage` runs, tap **Allow**. If `termux-open` shows a choose
 4. Plug in the phone.
 5. Paste the entire block below into Windows PowerShell 5.1 or PowerShell 7 on Windows. It downloads the maintained installer and runs it in a separate PowerShell process, with an execution-policy override limited to that child process (organization-enforced policies still apply). Disconnect other phones and emulators: the installer requires exactly one listed device, authorized, online, and fully booted; an additional unauthorized or offline device also stops installation.
 
-The installer selects the highest semantic version at or above the product contract's minimum from published releases, including prereleases, with the expected APK asset. It does not install an unpublished local test APK or pin the older release linked above. Before installation it checks the APK against GitHub's SHA-256 asset digest, verifies its signature and pinned certificate, requires exactly `com.xmilo_at_your_side.caption_studio`, checks `versionName` against the selected release tag, and validates `versionCode` is in Android's allowed range. After installation it checks the installed `versionName` again. Missing or mismatched metadata stops installation; there is no fallback to an older-package APK. The installer and certificate pin come from this repository, so these are consistency checks, not independent protection against repository compromise.
+The installer selects the highest semantic version at or above the product contract's minimum from published releases, including prereleases, with the expected APK asset. It does not install an unpublished local test APK or pin a particular release. Before installation it checks the APK against GitHub's SHA-256 asset digest, verifies its signature and pinned certificate, requires exactly `com.xmilo_at_your_side.caption_studio`, checks `versionName` against the selected release tag, and validates `versionCode` is in Android's allowed range. After installation it checks the installed `versionName` again. Missing or mismatched metadata stops installation; there is no fallback to an older-package APK. The installer and certificate pin come from this repository, so these are consistency checks, not independent protection against repository compromise.
 
 ```powershell
 & {
@@ -172,9 +173,9 @@ Video and text transforms use normalized coordinates so projects remain portable
 
 The publish workflow uploads `caption-studio-release.json` alongside the APK and checksum in the initial release creation. Schema version 1 records `repository`, `tag`, `sourceCommit`, `package`, `version`, `versionCode`, `signingCertificateSha256`, and `apk` (`name`, `sha256`). The workflow derives APK fields from the packaged, signature-verified APK, checks them against release inputs and the existing package/certificate contract, and records the protected tag's checked commit. Tagged `app.json` is not release evidence: workflow version overrides exist only in the build checkout.
 
-Release ordering reads this manifest, validates its identity and tag, and compares its APK hash with GitHub's asset digest when available. A malformed, unavailable, or inconsistent manifest blocks publication; it never falls back silently. The manifest and APK share the repository release trust boundary, not an independent attestation. Keep immutable releases enabled and restrict release writers and protected tags; the workflow does not enable repository policy itself.
+Release ordering reads this manifest, validates its identity and tag, and compares its APK hash with GitHub's asset digest when available. A malformed, unavailable, or inconsistent manifest blocks publication; it never falls back silently. The manifest and APK share the repository release trust boundary, not an independent attestation. Enable immutable releases for future publications and restrict release writers and protected tags; the workflow does not enable repository policy itself.
 
-Historical releases without a manifest remain untouched. The checker downloads and inspects their actual APKs sequentially, verifies signatures, checks GitHub's digest when available, and removes each temporary download. The expected package must match the pinned certificate and release tag. Only the two recognized historical package IDs (`com.hatsunama.captionstudio` and `com.hatsunama.captionstudio.fixed`) are excluded from the current package's versionCode maximum; their release versions still participate in semantic version ordering. Unknown packages, unavailable APKs, invalid signatures, or inconsistent metadata block publication and require investigation, never a guessed code or edits to immutable releases.
+Historical releases without a manifest remain untouched. The checker downloads and inspects their actual APKs sequentially, verifies signatures, checks GitHub's digest when available, and removes each temporary download. The expected package must match the pinned certificate and release tag. Only the two recognized historical package IDs (`com.hatsunama.captionstudio` and `com.hatsunama.captionstudio.fixed`) are excluded from the current package's versionCode maximum; their release versions still participate in semantic version ordering. Unknown packages, unavailable APKs, invalid signatures, or inconsistent metadata block publication and require investigation, never a guessed code or edits to published releases.
 
 Historical checks require `gh` authentication, Java, network/disk capacity for one APK, and `SIDECAR_BUILD_TOOLS` pointing to an Android SDK build-tools directory containing `aapt` and `apksigner` (configured on the Linux release runner). Releases lacking a GitHub asset digest rely on the downloaded APK's verified signature and repository provenance. Legacy APKs are downloaded again on each check, including the final pre-publication check; no unverified migration ledger or stale cache is used. Both semantic version and versionCode must strictly exceed the applicable published history, including prereleases, and existing release tags (including drafts) cannot be replaced.
 
