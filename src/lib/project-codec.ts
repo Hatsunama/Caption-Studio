@@ -191,12 +191,19 @@ function hydrateAudio(audioSources: ProjectAudioSource[], audioClips: AudioClip[
     const startMs = finiteNumber(clip.startMs, 'audio timeline start');
     const sourceStartMs = finiteNumber(clip.sourceStartMs, 'audio source start');
     const sourceEndMs = finiteNumber(clip.sourceEndMs, 'audio source end');
-    if (startMs < 0 || sourceStartMs < 0 || sourceEndMs > source.durationMs + 1 || sourceEndMs - sourceStartMs < 80) {
+    if (startMs < 0 || sourceStartMs < 0 || sourceEndMs > source.durationMs + 1
+      || (sourceEndMs - sourceStartMs) / (clip.playbackRate ?? 1) < 80) {
       throw new Error('A project audio clip has invalid bounds');
+    }
+    if (clip.anchor !== 'timeline' && clip.anchor !== 'video') {
+      throw new Error('A project audio clip has invalid ownership');
+    }
+    if (clip.anchor === 'video' && !clip.videoClipId) {
+      throw new Error('A project audio clip has lost its video owner');
     }
     return {
       ...clip,
-      anchor: 'timeline' as const,
+      anchor: clip.anchor,
       startMs,
       sourceStartMs,
       sourceEndMs,

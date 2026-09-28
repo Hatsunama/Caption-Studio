@@ -98,8 +98,20 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
   audioClips.forEach((clip) => {
     if (!audioSourceIds.has(clip.sourceId)) throw new Error('A project audio clip references an unknown source');
     const source = audioSources.find((entry) => entry.id === clip.sourceId)!;
-    if (clip.sourceEndMs > source.durationMs + 1 || clip.sourceEndMs - clip.sourceStartMs < 80) {
+    if (clip.sourceEndMs > source.durationMs + 1
+      || (clip.sourceEndMs - clip.sourceStartMs) / (clip.playbackRate ?? 1) < 80) {
       throw new Error('A project audio clip has invalid bounds');
+    }
+    if (clip.anchor === 'video' && (!clip.videoClipId || !clips.some((video) => video.id === clip.videoClipId))) {
+      throw new Error('A project audio clip references an unknown video clip');
+    }
+    if (clip.anchor === 'video' && source.origin !== 'video-audio') {
+      throw new Error('Only extracted video audio can be attached to a video clip');
+    }
+    if (clip.anchor === 'video' && (clip.requestedSourceStartMs == null
+      || clip.requestedSourceEndMs == null || clip.requestedSourceEndMs > source.durationMs + 1
+      || (clip.requestedSourceEndMs - clip.requestedSourceStartMs) / (clip.playbackRate ?? 1) < 80)) {
+      throw new Error('A project audio clip has invalid recoverable bounds');
     }
   });
   const projectStyle = decodeCaptionStyle(candidate.projectStyle, DEFAULT_CAPTION_STYLE, 'project caption style');
@@ -196,7 +208,7 @@ function decodeVideoClip(value: unknown, index: number): Omit<VideoClip, 'availa
     sourceEndMs: finiteNumber(clip.sourceEndMs, `video clip ${index + 1} source end`, 0, Number.MAX_SAFE_INTEGER),
     gapBeforeMs: clip.gapBeforeMs === undefined ? 0 : finiteNumber(clip.gapBeforeMs, `video clip ${index + 1} leading gap`, 0, Number.MAX_SAFE_INTEGER),
     gapAfterMs: clip.gapAfterMs === undefined ? 0 : finiteNumber(clip.gapAfterMs, `video clip ${index + 1} trailing gap`, 0, Number.MAX_SAFE_INTEGER),
-    playbackRate: clip.playbackRate === undefined ? 1 : finiteNumber(clip.playbackRate, `video clip ${index + 1} playback rate`, 0.25, 4),
+    playbackRate: clip.playbackRate === undefined ? 1 : finiteNumber(clip.playbackRate, `video clip ${index + 1} playback rate`, 0.1, 8),
     volume: clip.volume === undefined ? 1 : finiteNumber(clip.volume, `video clip ${index + 1} volume`, 0, 1),
     muted: clip.muted === undefined ? false : booleanValue(clip.muted, `video clip ${index + 1} mute state`),
     fadeInMs: clip.fadeInMs === undefined ? 0 : finiteNumber(clip.fadeInMs, `video clip ${index + 1} fade in`, 0, Number.MAX_SAFE_INTEGER),
@@ -249,7 +261,29 @@ function decodeAudioClip(value: unknown, index: number): AudioClip {
   return {
     id: identifierValue(clip.id, `audio clip ${index + 1} identifier`),
     sourceId: identifierValue(clip.sourceId, `audio clip ${index + 1} source identifier`),
-    anchor: clip.anchor === undefined ? 'timeline' : enumValue(clip.anchor, ['timeline'] as const, `audio clip ${index + 1} anchor`),
+    anchor: clip.anchor === undefined ? 'timeline' : enumValue(clip.anchor, ['timeline', 'video'] as const, `audio clip ${index + 1} anchor`),
+    ...(clip.videoClipId === undefined ? {} : {
+      videoClipId: identifierValue(clip.videoClipId, `audio clip ${index + 1} video owner`),
+    }),
+    ...(clip.requestedSourceStartMs === undefined ? {} : {
+      requestedSourceStartMs: finiteNumber(clip.requestedSourceStartMs,
+        `audio clip ${index + 1} recoverable source start`, 0, Number.MAX_SAFE_INTEGER),
+    }),
+    ...(clip.requestedSourceEndMs === undefined ? {} : {
+      requestedSourceEndMs: finiteNumber(clip.requestedSourceEndMs,
+        `audio clip ${index + 1} recoverable source end`, 0, Number.MAX_SAFE_INTEGER),
+    }),
+    ...(clip.anchorOffsetMs === undefined ? {} : {
+      anchorOffsetMs: finiteNumber(clip.anchorOffsetMs,
+        `audio clip ${index + 1} video offset`, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
+    }),
+    ...(clip.hiddenByVideoTrim === undefined ? {} : {
+      hiddenByVideoTrim: booleanValue(clip.hiddenByVideoTrim, `audio clip ${index + 1} trim visibility`),
+    }),
+    ...(clip.playbackRate === undefined ? {} : {
+      playbackRate: finiteNumber(clip.playbackRate,
+        `audio clip ${index + 1} playback rate`, 0.1, 8),
+    }),
     startMs: finiteNumber(clip.startMs, `audio clip ${index + 1} timeline start`, 0, Number.MAX_SAFE_INTEGER),
     sourceStartMs: finiteNumber(clip.sourceStartMs, `audio clip ${index + 1} source start`, 0, Number.MAX_SAFE_INTEGER),
     sourceEndMs: finiteNumber(clip.sourceEndMs, `audio clip ${index + 1} source end`, 0, Number.MAX_SAFE_INTEGER),

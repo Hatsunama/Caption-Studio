@@ -82,6 +82,11 @@ export function LayerTimeline(props: {
   const verticalRef = useRef<ScrollView>(null);
   const [viewportWidth, setViewportWidth] = useState(360);
   const [clipPreview, setClipPreview] = useState<VideoClip[]>();
+  const [frontTrimPreview, setFrontTrimPreview] = useState<{
+    clipId: string;
+    sourceStartMs: number;
+    progress: number;
+  }>();
   const [reorderDrag, setReorderDrag] = useState<{ clipId: string; toIndex: number }>();
   const [cueChooser, setCueChooser] = useState<{ trackId: string; startMs: number; endMs: number; offset: number }>();
   const [gestureLock, setGestureLock] = useState(false);
@@ -151,7 +156,8 @@ export function LayerTimeline(props: {
   const captionLayout = captionPage.layout;
   const captionRowHeight = captionLayout.laneCount * LANE_HEIGHT + 10;
   const translationRowHeight = (id: string) => translationPages.get(id)!.layout.laneCount * LANE_HEIGHT + 10;
-  const audioLayout = useMemo(() => packTimelineLanes(displayAudioClips.map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [displayAudioClips]);
+  const audioLayout = useMemo(() => packTimelineLanes(displayAudioClips.filter((clip) => !clip.hiddenByVideoTrim)
+    .map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [displayAudioClips]);
   const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10;
   const visualRowHeight = () => 46;
   const videoRowHeight = reorderMode ? REORDER_TILE + 18 : 46;
@@ -204,6 +210,7 @@ export function LayerTimeline(props: {
     setGestureLock(false);
     setReorderDrag(undefined);
     setClipPreview(undefined);
+    setFrontTrimPreview(undefined);
   }, []);
 
   useEffect(() => {
@@ -405,10 +412,17 @@ export function LayerTimeline(props: {
                       setItemGestureLock(true);
                       const preview = previewVideoClipTrim(clip, edge, targetSourceMs);
                       setClipPreview(props.clips.map((candidate) => candidate.id === clip.id ? preview : candidate));
+                      if (edge === 'start') setFrontTrimPreview({
+                        clipId: clip.id,
+                        sourceStartMs: preview.sourceStartMs,
+                        progress: clamp((preview.sourceStartMs - clip.availableSourceStartMs) /
+                          Math.max(1, clip.availableSourceEndMs - clip.availableSourceStartMs), 0, 1),
+                      });
                     }}
                     onTrimCommit={(edge, targetSourceMs) => {
                       setItemGestureLock(false);
                       setClipPreview(undefined);
+                      setFrontTrimPreview(undefined);
                       props.onTrimClip(clip.id, edge, targetSourceMs);
                     }}
                     onGapPreview={(gapBeforeMs) => {
@@ -465,7 +479,7 @@ export function LayerTimeline(props: {
               })}
             </TimelineRow>
             <TimelineRow label={props.voiceoverMode ? "VOICE OVER" : "AUDIO"} labelColor={props.voiceoverMode ? "#FF4D6D" : "#64E8FF"} selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: props.voiceoverMode ? '#FFB8C5' : '#6F7985', fontSize: 8 }}>{props.voiceoverMode ? 'LIVE TAKE' : `${props.audioClips.length} TRACK${props.audioClips.length === 1 ? '' : 'S'}`}</Text>}>
-              {displayAudioClips.filter((clip) => isVisible(clip.startMs, audioClipEnd(clip))).map((clip) => {
+              {displayAudioClips.filter((clip) => !clip.hiddenByVideoTrim && isVisible(clip.startMs, audioClipEnd(clip))).map((clip) => {
                 const source = props.audioSources.find((candidate) => candidate.id === clip.sourceId);
                 return (
                   <TimedBlock
@@ -569,6 +583,14 @@ export function LayerTimeline(props: {
           </ScrollView>
         </View>
       </ScrollView>
+      {frontTrimPreview ? <View testID="front-trim-feedback" pointerEvents="none" style={{ position: 'absolute', left: 8, right: 8, bottom: 8, zIndex: 12, padding: 8, borderRadius: 10, borderWidth: 1, borderColor: '#64D2FF', backgroundColor: 'rgba(8, 16, 22, 0.96)', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <View style={{ flex: 1, gap: 5 }}>
+          <Text style={{ color: '#64D2FF', fontSize: 9, fontWeight: '900' }}>NEW START · {formatRulerTime(frontTrimPreview.sourceStartMs, 100)}</Text>
+          <View style={{ height: 4, borderRadius: 2, backgroundColor: '#384A55', overflow: 'hidden' }}>
+            <View style={{ width: `${frontTrimPreview.progress * 100}%`, height: 4, backgroundColor: '#64D2FF' }} />
+          </View>
+        </View>
+      </View> : null}
       <View pointerEvents="none" style={{ position: 'absolute', left: '50%', top: 36, bottom: 0, width: 2, marginLeft: -1, backgroundColor: '#FF5267' }}>
         <View style={{ position: 'absolute', left: -7, top: 0, width: 0, height: 0, borderLeftWidth: 8, borderRightWidth: 8, borderTopWidth: 11, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: '#FF5267' }} />
       </View>

@@ -778,7 +778,7 @@ test('video layout edits cannot infer ownership or delete timeline-owned audio',
   const gapped = setVideoClipGap(project, 'second', 500);
   assert.ok(gapped);
   assert.deepEqual(identity(gapped.project.audioClips), identity(audioClips));
-  assert.deepEqual(gapped.project.audioClips.map((clip) => clip.startMs), [500, 3_000]);
+  assert.deepEqual(gapped.project.audioClips.map((clip) => clip.startMs), [500, 2_500]);
   const deleted = deleteVideoClip(project, 'first');
   assert.ok(deleted);
   assert.deepEqual(identity(deleted.project.audioClips), identity(audioClips));

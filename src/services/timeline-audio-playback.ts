@@ -1,6 +1,7 @@
 export type TimelineAudioPlayer = {
   muted: boolean;
   volume: number;
+  setPlaybackRate?(rate: number): void;
   seekTo(seconds: number): Promise<void>;
   play(): void;
   pause(): void;
@@ -13,6 +14,7 @@ export type TimelineAudioPlaybackTarget = {
   uri: string;
   targetSeconds: number;
   volume: number;
+  playbackRate?: number;
   muted: boolean;
   playing: boolean;
 };
@@ -65,6 +67,7 @@ type ManagedAudioPlayer = {
   playing: boolean;
   lastMuted?: boolean;
   lastVolume?: number;
+  lastPlaybackRate?: number;
   lastObservedAtMs?: number;
   lastObservedSeconds?: number;
   lastObservedPlaying?: boolean;
@@ -166,6 +169,12 @@ export class TimelineAudioPlaybackController {
     while (managed.desired && !managed.disposed && !this.disposed) {
       const target = managed.desired;
       managed.desired = undefined;
+      const playbackRate = target.playbackRate ?? 1;
+      if (managed.lastPlaybackRate !== playbackRate) {
+        managed.player.setPlaybackRate?.(playbackRate);
+        managed.lastPlaybackRate = playbackRate;
+        managed.positioned = false;
+      }
       if (managed.lastMuted !== target.muted) {
         managed.player.muted = target.muted;
         managed.lastMuted = target.muted;

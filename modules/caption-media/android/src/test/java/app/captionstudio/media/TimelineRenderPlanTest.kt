@@ -337,6 +337,41 @@ class TimelineRenderPlanTest {
     }
   }
 
+  @Test
+  fun audioBoundsUsePlaybackDurationRatherThanSourceDuration() {
+    val value = validPlan().apply {
+      this["audioClips"] = listOf(audioClip("fast", 3_000, 0, 2_000) + ("playbackRate" to 2.0))
+    }
+    assertEquals(2f, parseTimelineRenderPlan(value).audioClips.single().playbackRate)
+
+    assertInvalid("audio clip extends beyond") {
+      validPlan().apply {
+        this["audioClips"] = listOf(audioClip("slow", 1_000, 0, 2_000) + ("playbackRate" to 0.5))
+      }
+    }
+  }
+
+  @Test
+  fun audioSpeedEndpointsArePreservedAndInvalidRatesAreRejected() {
+    for (rate in listOf(0.1, 8.0)) {
+      val value = validPlan().apply {
+        this["audioClips"] = listOf(audioClip("speed", 0, 0, 200) + ("playbackRate" to rate))
+      }
+      assertEquals(rate.toFloat(), parseTimelineRenderPlan(value).audioClips.single().playbackRate)
+    }
+
+    for (rate in listOf(0.0, 0.09, 8.01, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)) {
+      assertInvalid(if (rate.isFinite()) "playback rate" else "must be finite") {
+        validPlan().apply {
+          this["audioClips"] = listOf(audioClip("speed", 0, 0, 200) + ("playbackRate" to rate))
+        }
+      }
+    }
+
+    val legacy = validPlan().apply { this["audioClips"] = listOf(audioClip("legacy", 0, 0, 200)) }
+    assertEquals(1f, parseTimelineRenderPlan(legacy).audioClips.single().playbackRate)
+  }
+
   private fun caption(
     id: String,
     startMs: Long,
