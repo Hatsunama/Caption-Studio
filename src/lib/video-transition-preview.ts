@@ -183,6 +183,66 @@ export function videoTransitionPreloadWindow(
   ));
 }
 
+export function videoTransitionPlaybackTargets(
+  frame: VideoTransitionPreviewFrame,
+  outgoingSlot: 0 | 1,
+  incomingSlot: 0 | 1,
+  activeSlot: 0 | 1,
+) {
+  if (!frame.outgoing || !frame.incoming
+    || frame.outgoingSourceTimeMs == null || frame.incomingSourceTimeMs == null) return [];
+  return [
+    {
+      slot: outgoingSlot,
+      sourceTimeMs: frame.outgoingSourceTimeMs,
+      playbackRate: frame.outgoing.playbackRate,
+      muted: outgoingSlot !== activeSlot,
+    },
+    {
+      slot: incomingSlot,
+      sourceTimeMs: frame.incomingSourceTimeMs,
+      playbackRate: frame.incoming.playbackRate,
+      muted: incomingSlot !== activeSlot,
+    },
+  ];
+}
+
+// The composite can consume hidden handles or change source speed. During its
+// window, native source time must be inverted through that same source clock.
+export function transitionTimelineTimeAt(
+  windows: readonly VideoTransitionPreviewWindow[],
+  clipId: string,
+  currentTimelineMs: number,
+  sourceMs: number,
+  synchronizedWindowKey?: string,
+): number | undefined {
+  if (!synchronizedWindowKey) return undefined;
+  const window = windows.find((candidate) => candidate.mode === 'composite'
+    && candidate.key === synchronizedWindowKey
+    && currentTimelineMs >= candidate.startMs && currentTimelineMs < candidate.endMs
+    && (candidate.outgoing?.clipId === clipId || candidate.incoming?.clipId === clipId));
+  const source = window?.outgoing?.clipId === clipId ? window.outgoing : window?.incoming;
+  if (!window || !source) return undefined;
+  const timelineMs = window.startMs + (sourceMs - source.sourceStartMs) / source.playbackRate;
+  return clamp(Math.max(currentTimelineMs, timelineMs), window.startMs, window.endMs);
+}
+
+export function videoTransitionCompositeState(
+  frame: VideoTransitionPreviewFrame,
+  slots: readonly { preparedClipId?: string; firstFrameReady: boolean; readiness: string }[],
+  failedPreviewKey?: string,
+) {
+  const outgoingSlot = slots.findIndex((slot) => slot.preparedClipId === frame.outgoing?.clipId);
+  const incomingSlot = slots.findIndex((slot) => slot.preparedClipId === frame.incoming?.clipId);
+  const status = frame.unavailableReason || frame.key === failedPreviewKey || !frame.outgoing || !frame.incoming
+    ? 'unavailable'
+    : outgoingSlot < 0 || incomingSlot < 0 || outgoingSlot === incomingSlot
+      || !slots[outgoingSlot].firstFrameReady || !slots[incomingSlot].firstFrameReady
+      || slots[outgoingSlot].readiness !== 'ready' || slots[incomingSlot].readiness !== 'ready'
+      ? 'waiting' : 'ready';
+  return { status, outgoingSlot, incomingSlot };
+}
+
 export function transitionPreviewKind(type: VideoTransitionType) {
   return videoTransitionPreviewKind(type);
 }

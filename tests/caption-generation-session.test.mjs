@@ -23,11 +23,12 @@ test('caption cancellation stops native extraction and the active Whisper operat
   });
 
   await Promise.resolve();
-  assert.equal(await session.cancel(), true);
+  const cancellation = await session.cancel();
+  assert.equal(cancellation.status, 'stopping');
   await assert.rejects(running, CaptionGenerationCancelledError);
   assert.equal(nativeStops, 1);
   assert.equal(whisperStops, 1);
-  assert.equal(await session.cancel(), false);
+  assert.equal((await session.cancel()).status, 'idle');
 });
 
 test('a completed or cancelled caption session never poisons the next generation', async () => {
@@ -62,4 +63,80 @@ test('a real work failure remains visible when cancellation races with it', asyn
   failWork(failure);
   await rejection;
   assert.equal(await session.run(async () => 'next attempt'), 'next attempt');
+});
+
+test('failed native and registered stops are both reported while work remains active', async () => {
+  const nativeFailure = new Error('native stop failed');
+  const stopperFailure = new Error('Whisper stop failed');
+  const calls = [];
+  let releaseWork;
+  const workHeld = new Promise((resolve) => { releaseWork = resolve; });
+  const session = createCaptionGenerationSession(() => {
+    calls.push('native');
+    throw nativeFailure;
+  });
+  const running = session.run(async (context) => {
+    context.registerStopper(() => {
+      calls.push('stopper');
+      throw stopperFailure;
+    });
+    await workHeld;
+    context.throwIfCancelled();
+  });
+
+  const result = await session.cancel();
+  assert.equal(result.status, 'stop-failed');
+  assert.deepEqual(result.failures, [nativeFailure, stopperFailure]);
+  assert.deepEqual(calls, ['native', 'stopper']);
+  let exited = false;
+  void result.finished.then(() => { exited = true; });
+  await Promise.resolve();
+  assert.equal(exited, false);
+  await assert.rejects(session.run(async () => 'too early'), /already underway/);
+
+  const completion = assert.rejects(running, CaptionGenerationCancelledError);
+  releaseWork();
+  await completion;
+  await result.finished;
+  assert.equal(exited, true);
+  assert.equal(await session.run(async () => 'next run'), 'next run');
+});
+
+test('a failed stop can be retried without freeing a still-running session', async () => {
+  let stopAttempts = 0;
+  let releaseWork;
+  const workHeld = new Promise((resolve) => { releaseWork = resolve; });
+  const session = createCaptionGenerationSession(async () => {
+    stopAttempts += 1;
+    if (stopAttempts === 1) throw new Error('temporary native failure');
+  });
+  const running = session.run(async (context) => {
+    await workHeld;
+    context.throwIfCancelled();
+  });
+
+  assert.equal((await session.cancel()).status, 'stop-failed');
+  assert.equal((await session.cancel()).status, 'stopping');
+  assert.equal(stopAttempts, 2);
+  await assert.rejects(session.run(async () => 'too early'), /already underway/);
+  const completion = assert.rejects(running, CaptionGenerationCancelledError);
+  releaseWork();
+  await completion;
+  assert.equal((await session.cancel()).status, 'idle');
+});
+
+test('new work waits for an in-flight native stop after the old work exits', async () => {
+  let finishStop;
+  const stopHeld = new Promise((resolve) => { finishStop = resolve; });
+  let releaseWork;
+  const workHeld = new Promise((resolve) => { releaseWork = resolve; });
+  const session = createCaptionGenerationSession(async () => stopHeld);
+  const running = session.run(async () => workHeld);
+  const cancellation = session.cancel();
+  releaseWork();
+  assert.equal(await running, undefined);
+  await assert.rejects(session.run(async () => 'too early'), /already underway/);
+  finishStop();
+  assert.equal((await cancellation).status, 'stopping');
+  assert.equal(await session.run(async () => 'next run'), 'next run');
 });

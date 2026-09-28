@@ -187,15 +187,3 @@ export function createLayerGesture(initial: LayerGeometryInput) {
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
-
-export function createGeometryFrameQueue<T>(schedule: (callback: () => void) => number, cancel: (id: number) => void, publish: (value: T) => void) {
-  let frame: number | undefined;
-  let latest: T | undefined;
-  return {
-    push(value: T) {
-      latest = value;
-      if (frame === undefined) frame = schedule(() => { frame = undefined; if (latest !== undefined) publish(latest); latest = undefined; });
-    },
-    clear() { if (frame !== undefined) cancel(frame); frame = undefined; latest = undefined; },
-  };
-}

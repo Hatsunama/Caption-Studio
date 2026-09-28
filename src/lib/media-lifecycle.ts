@@ -1,4 +1,5 @@
 import type { CaptionProject } from '@/types/project';
+import { isAndroidContentUri } from '@/lib/project-file-uri-boundary';
 
 export type ProjectOwnedAssetLedger = Readonly<{
   uris: readonly string[];
@@ -99,8 +100,4 @@ export function unreferencedLinkedMediaUris(
 
 function uniqueUris(uris: Iterable<string | undefined>): string[] {
   return [...new Set([...uris].filter((uri): uri is string => Boolean(uri)))];
-}
-
-function isAndroidContentUri(uri: string): boolean {
-  return uri.startsWith('content:');
 }

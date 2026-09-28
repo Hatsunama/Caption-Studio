@@ -267,10 +267,6 @@ test('one verified caption model owns generation and first-use consent', () => {
   assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint\)/);
   assert.match(pipeline, /CaptionMedia\.sha256\(source\.uri\)/);
   assert.ok(
-    workflows.indexOf("detail: 'Starting caption generation'")
-      < workflows.indexOf('captionGenerationSession.run'),
-  );
-  assert.ok(
     pipeline.indexOf("detail: 'Preparing the audible timeline'")
       < pipeline.indexOf('createTimelineTranscriptionSession(project)'),
   );

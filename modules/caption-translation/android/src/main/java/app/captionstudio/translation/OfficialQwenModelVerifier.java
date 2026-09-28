@@ -22,6 +22,9 @@ final class OfficialQwenModelVerifier implements TranslationModelVerifier {
       BooleanSupplier cancelled,
       IntConsumer progress
   ) throws NaturalCaptionTranslator.TranslationFailure {
+    if (!model.isFile() || !model.canRead()) {
+      throw modelReadFailure();
+    }
     if (model.length() != EXPECTED_MODEL_BYTES) {
       throw integrityFailure();
     }
@@ -67,10 +70,7 @@ final class OfficialQwenModelVerifier implements TranslationModelVerifier {
     } catch (CancellationException error) {
       throw error;
     } catch (IOException | SecurityException error) {
-      throw new NaturalCaptionTranslator.TranslationFailure(
-          NaturalCaptionTranslator.INVALID_REQUEST,
-          "The local translation model could not be read."
-      );
+      throw modelReadFailure();
     }
 
     String actualHash = toHex(digest.digest());
@@ -83,6 +83,13 @@ final class OfficialQwenModelVerifier implements TranslationModelVerifier {
     return new NaturalCaptionTranslator.TranslationFailure(
         "E_TRANSLATION_MODEL_INTEGRITY",
         "The selected file is not the supported local Qwen translation model."
+    );
+  }
+
+  private static NaturalCaptionTranslator.TranslationFailure modelReadFailure() {
+    return new NaturalCaptionTranslator.TranslationFailure(
+        "E_TRANSLATION_MODEL_READ",
+        "The local translation model could not be read."
     );
   }
 

@@ -59,12 +59,13 @@ import type { CaptionProject, ProjectAudioSource } from '@/types/project';
 import type { ProjectLibraryProject, ProjectRecordSummary } from '@/types/project-library';
 
 const captionGenerationSession = createCaptionGenerationSession(() => CaptionMedia.cancelAudioExtraction());
+let nextProjectSequence = 0;
 
 export async function importVideoProject(
   onProgress?: (progress: MediaImportProgress) => void,
 ): Promise<CaptionProject | null> {
   const importedAt = Date.now();
-  const projectId = `project-${importedAt}`;
+  const projectId = `project-${importedAt}-${nextProjectSequence++}`;
   const sources = await pickLinkedVideos(projectId, onProgress);
   if (!sources) return null;
   const projectName = humanVideoName(sources[0].displayName, importedAt);
@@ -194,11 +195,6 @@ export async function generateAndSaveProjectCaptions(
   project: CaptionProject,
   onProgress?: (progress: TranscriptionProgress) => void,
 ) {
-  onProgress?.({
-    stage: 'preparing-audio',
-    progress: 0,
-    detail: 'Starting caption generation',
-  });
   return captionGenerationSession.run(async (session) => {
     const guardedProgress = (progress: TranscriptionProgress) => {
       if (!session.isCancelled()) onProgress?.(progress);

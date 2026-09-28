@@ -1,4 +1,5 @@
 import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project-timeline';
+import { buildVideoTransitionPreviewWindows, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
 import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
 import { videoPlaybackUri } from '@/lib/video-playback-source';
 import { useEventListener } from 'expo';
@@ -19,6 +20,7 @@ import type { CaptionProject, ProjectVideoSource } from '@/types/project';
 type Target = { generation: number; timelineMs: number };
 type TransportPhase = 'loading' | 'buffering' | 'ready' | 'gap' | 'ended' | 'error' | 'suspended';
 type SlotIndex = 0 | 1;
+type CompositeClock = { key: string; slot: SlotIndex; prepareToken: number };
 const FIRST_FRAME_TIMEOUT_MS = 5_000;
 
 export type TimelineVideoSlot = {
@@ -50,6 +52,7 @@ function createSlotRuntime(): SlotRuntime {
 
 export function useTimelineVideoController(project: CaptionProject, _onError: (message: string) => void, surfacesAdmitted = true) {
   const entries = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
+  const transitionWindows = useMemo(() => buildVideoTransitionPreviewWindows(entries, project.sources), [entries, project.sources]);
   const playerA = useVideoPlayer(null, configureTimelinePlayer);
   const playerB = useVideoPlayer(null, configureTimelinePlayer);
   const players = useMemo(() => [playerA, playerB] as const, [playerA, playerB]);
@@ -69,10 +72,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const projectRef = useRef(project);
   const entriesRef = useRef(entries);
+  const transitionWindowsRef = useRef(transitionWindows);
   const currentMsRef = useRef(0);
   const playIntentRef = useRef(false);
   const phaseRef = useRef<TransportPhase>(initialPhase);
   const activeSlotRef = useRef<SlotIndex>(0);
+  const compositeClockRef = useRef<CompositeClock | undefined>(undefined);
   const activeClipIdRef = useRef<string | undefined>(undefined);
   const slotRuntimeRef = useRef<[SlotRuntime, SlotRuntime]>([createSlotRuntime(), createSlotRuntime()]);
   const desiredRef = useRef<Target | undefined>(undefined);
@@ -101,8 +106,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   useLayoutEffect(() => {
     projectRef.current = project;
     entriesRef.current = entries;
+    transitionWindowsRef.current = transitionWindows;
     surfacesAdmittedRef.current = surfacesAdmitted;
-  }, [entries, project, surfacesAdmitted]);
+  }, [entries, project, surfacesAdmitted, transitionWindows]);
 
   const publishSlots = useCallback(() => {
     if (!mountedRef.current) return;
@@ -169,6 +175,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const stopTransport = useCallback(() => {
     playIntentRef.current = false;
+    compositeClockRef.current = undefined;
     boundaryClipIdRef.current = undefined;
     cancelGapClock();
     cancelScheduledPreload();
@@ -533,6 +540,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   };
 
   const activateClip = async (entry: ClipTimelineEntry, timelineMs: number, generation: number) => {
+    compositeClockRef.current = undefined;
     cancelGapClock();
     const source = sourceForEntry(entry);
     if (generation === generationRef.current && continuePreparedClip(entry, timelineMs)) return;
@@ -608,6 +616,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   });
 
   const requestTarget = (timelineMs: number) => {
+    compositeClockRef.current = undefined;
     cancelScheduledPreload();
     const targetMs = clamp(timelineMs, 0, projectTimelineDuration(projectRef.current));
     const segment = projectTimelineSegmentAt(projectRef.current, targetMs, entriesRef.current);
@@ -648,6 +657,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const synchronizeProject = useCallback((nextProject: CaptionProject) => {
     projectRef.current = nextProject;
     entriesRef.current = buildClipTimeline(nextProject.clips);
+    transitionWindowsRef.current = buildVideoTransitionPreviewWindows(entriesRef.current, nextProject.sources);
     requestTargetRef.current(clamp(currentMsRef.current, 0, projectTimelineDuration(nextProject)));
   }, []);
 
@@ -676,10 +686,19 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     if (!entry) return;
     const sourceMs = currentTime * 1_000;
     const tolerance = Math.max(4, entry.clip.playbackRate * 12);
-    const timelineMs = clamp(timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
+    const compositeClock = compositeClockRef.current;
+    const runtime = slotRuntimeRef.current[slot];
+    const synchronizedWindowKey = compositeClock?.slot === slot
+      && compositeClock.prepareToken === runtime.prepareToken
+      && runtime.readiness === 'ready' && runtime.preparedClipId === entry.clip.id
+      ? compositeClock.key : undefined;
+    const transitionMs = transitionTimelineTimeAt(
+      transitionWindowsRef.current, entry.clip.id, currentMsRef.current, sourceMs, synchronizedWindowKey,
+    );
+    const timelineMs = clamp(transitionMs ?? timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
     setCurrentMs(timelineMs);
     playerForSlot(slot).volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
-    if (sourceMs >= entry.clip.sourceEndMs - tolerance) advanceFrom(entry);
+    if (timelineMs >= entry.endMs - tolerance) advanceFrom(entry);
   };
 
   const onPlayToEnd = (slot: SlotIndex) => {
@@ -707,6 +726,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       return;
     }
     if (runtime.readiness !== 'ready') return;
+    compositeClockRef.current = undefined;
     const ownsPlayback = slot === activeSlotRef.current && runtime.preparedClipId === activeClipIdRef.current;
     runtime.readiness = 'error';
     runtime.firstFrameReady = false;
@@ -766,6 +786,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     slots,
     activeSlot,
     markFirstFrame,
+    setCompositeClock: (clock?: CompositeClock) => { compositeClockRef.current = clock; },
     hasPresentedFrame,
     currentMs,
     isPlaying,

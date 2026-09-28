@@ -1,6 +1,7 @@
 import { ANIMATION_PRESETS } from '@/lib/animation-presets';
 import { normalizeCaptionLineHeight } from '@/lib/caption-line-spacing';
 import { positiveLayerScale } from '@/lib/layer-geometry';
+import { isAndroidContentUri } from '@/lib/project-file-uri-boundary';
 import { captionTransform } from '@/lib/caption-transform';
 import { isProjectIdentifier, isTranslationCueIdentifier } from '@/lib/project-identifiers';
 import { emptyCaptionTrackCollection, normalizedTranslationFailureReason, synchronizeCaptionTracks } from '@/lib/caption-tracks';
@@ -165,8 +166,8 @@ function decodeVideoSource(value: unknown, index: number): ProjectVideoSource {
   const source = record(value, `video source ${index + 1}`);
   const uri = localMediaUri(source.uri, `video source ${index + 1} URI`);
   const storageMode = optionalEnum(source.storageMode, ['linked', 'copied'] as const, `video source ${index + 1} storage mode`)
-    ?? (uri.startsWith('content:') ? 'linked' : 'copied');
-  if (storageMode === 'linked' && !uri.startsWith('content:')) {
+    ?? (isAndroidContentUri(uri) ? 'linked' : 'copied');
+  if (storageMode === 'linked' && !isAndroidContentUri(uri)) {
     throw new Error(`Video source ${index + 1} has an invalid linked URI`);
   }
   return {
@@ -883,8 +884,8 @@ function decodeBackgroundSource(value: unknown): NonNullable<BackgroundReplaceme
   const source = record(value, 'background replacement source');
   const uri = localMediaUri(source.uri, 'background replacement source URI');
   const storageMode = optionalEnum(source.storageMode, ['linked', 'copied'] as const, 'background replacement storage mode')
-    ?? (uri.startsWith('content:') ? 'linked' : 'copied');
-  if (storageMode === 'linked' && !uri.startsWith('content:')) throw new Error('The linked background has an invalid URI');
+    ?? (isAndroidContentUri(uri) ? 'linked' : 'copied');
+  if (storageMode === 'linked' && !isAndroidContentUri(uri)) throw new Error('The linked background has an invalid URI');
   return {
     kind: enumValue(source.kind, ['image', 'video'] as const, 'background replacement source kind'),
     uri,
@@ -1022,7 +1023,7 @@ function translationCueIdentifierValue(value: unknown, label: string) {
 
 function localMediaUri(value: unknown, label: string) {
   const uri = nonEmptyString(value, label);
-  if (!uri.startsWith('content://') && !uri.startsWith('file:///')) throw new Error(`${label} is not local media`);
+  if (!isAndroidContentUri(uri) && !uri.startsWith('file:///')) throw new Error(`${label} is not local media`);
   if (uri.startsWith('file:///')) return localFileUri(uri, label);
   return uri;
 }

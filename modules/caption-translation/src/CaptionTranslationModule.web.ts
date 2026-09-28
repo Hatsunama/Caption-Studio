@@ -14,8 +14,8 @@ class CaptionTranslationModule extends NativeModule<Record<never, never>> {
     maxOperationsPerSession: 8,
     maxBatchesPerSession: 1_024,
     maxCaptionsPerSession: 3_072,
-    maxCharactersPerCaption: 1_000,
-    maxCaptionCharactersPerBatch: 8_000,
+    maxCharactersPerCaption: 256_000,
+    maxCaptionCharactersPerBatch: 256_000,
     maxCaptionCharactersPerSession: 256_000,
   };
 

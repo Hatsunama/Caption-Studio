@@ -139,6 +139,7 @@ import {
 } from '@/services/project-workflows';
 import { createEditorSession, type EditorProjectOperation } from '@/services/editor-session';
 import { CaptionGenerationCancelledError } from '@/services/caption-generation-session';
+import { runCaptionCancellationRequest } from '@/components/editor/caption-generation-cancellation-ui';
 import {
   NATURAL_TRANSLATION_MODEL_LABEL,
   naturalTranslationDownloadConsentMessage,
@@ -446,9 +447,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   );
   const pauseTransport = transport.pause;
   const cancelCaptionGeneration = useCallback(async () => {
-    setTranscriptionCancelling(true);
-    const cancelled = await cancelProjectCaptionGeneration();
-    if (!cancelled) setTranscriptionCancelling(false);
+    await runCaptionCancellationRequest(cancelProjectCaptionGeneration, setTranscriptionCancelling, setError);
   }, []);
 
   useEffect(() => {
@@ -1951,6 +1950,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             currentTransform={previewVideoTransform}
             currentClipId={currentClipEntry?.clip.id}
             onFirstFrameRender={transport.markFirstFrame}
+            setCompositeClock={transport.setCompositeClock}
           />
           {timelineLayers.map((layer) => {
             if (!layer.visible) return null;
