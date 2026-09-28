@@ -323,11 +323,12 @@ internal class TimelineVideoExporter(private val context: Context) {
     check(hasAudioTrack(clip.uri)) { "An added audio clip has no readable audio track" }
     val builder = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
     if (clip.startMs > 0) builder.addGap(clip.startMs * 1_000L)
-    val durationMs = sourceEndMs - clip.sourceStartMs
+    val durationMs = ((sourceEndMs - clip.sourceStartMs) / clip.playbackRate).toLong()
     val gain = GainProcessor(ClipGainProvider(clip.volume, durationMs, clip.fadeInMs, clip.fadeOutMs))
     builder.addItem(
       EditedMediaItem.Builder(clippedMediaItem(clip.uri, clip.sourceStartMs, sourceEndMs))
         .setRemoveVideo(true)
+        .setSpeed(ConstantSpeedProvider(clip.playbackRate))
         .setEffects(Effects(listOf(gain), emptyList()))
         .build(),
     )

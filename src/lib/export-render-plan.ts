@@ -71,6 +71,7 @@ export type TimelineRenderPlan = {
     startMs: number;
     sourceStartMs: number;
     sourceEndMs: number;
+    playbackRate: number;
     volume: number;
     muted: boolean;
     fadeInMs: number;
@@ -242,6 +243,7 @@ export function buildTimelineRenderPlan(
         startMs: clip.startMs,
         sourceStartMs: clip.sourceStartMs,
         sourceEndMs: clip.sourceEndMs,
+        playbackRate: clip.playbackRate ?? 1,
         volume: clip.volume,
         muted: clip.muted,
         fadeInMs: clip.fadeInMs,

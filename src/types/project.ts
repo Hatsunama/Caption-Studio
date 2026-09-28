@@ -356,7 +356,13 @@ export type ProjectAudioSource = {
 export type AudioClip = {
   id: Identifier;
   sourceId: Identifier;
-  anchor: 'timeline';
+  anchor: 'timeline' | 'video';
+  videoClipId?: Identifier;
+  requestedSourceStartMs?: number;
+  requestedSourceEndMs?: number;
+  anchorOffsetMs?: number;
+  hiddenByVideoTrim?: boolean;
+  playbackRate?: number;
   startMs: number;
   sourceStartMs: number;
   sourceEndMs: number;

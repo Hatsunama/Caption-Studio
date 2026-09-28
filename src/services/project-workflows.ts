@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { projectTimelineDuration } from '@/lib/project-timeline';
 import { createCaptionProject, createVideoClip } from '@/lib/project-factory';
 import { addAudioSourceToProject } from '@/lib/audio-timeline';
+import { buildClipTimeline } from '@/lib/video-timeline';
 import { AUDIO_WAVEFORM_VERSION } from '@/lib/audio-waveform';
 import {
   abandonedLedgerAssets,
@@ -219,7 +220,10 @@ export async function appendProjectVideoAudioToProject(
   if (!videoSource) throw new Error('That project video is no longer available.');
   const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const extractedSource = await extractAudioFromProjectVideo(project.id, `audio-source-${nonce}`, videoSource);
-  return appendOwnedAudioSource(project, currentMs, extractedSource, nonce, 'extracted audio');
+  const owner = buildClipTimeline(project.clips).find((entry) => entry.clip.sourceId === videoSourceId
+    && currentMs >= entry.startMs && currentMs < entry.endMs);
+  return appendOwnedAudioSource(project, currentMs, extractedSource, nonce, 'extracted audio',
+    owner ? { videoClipId: owner.clip.id } : undefined);
 }
 
 async function appendOwnedAudioSource(
@@ -228,6 +232,7 @@ async function appendOwnedAudioSource(
   importedSource: ProjectAudioSource,
   nonce: string,
   label: string,
+  attachment?: { videoClipId: string },
 ) {
   let source;
   try {
@@ -242,6 +247,7 @@ async function appendOwnedAudioSource(
     `audio-clip-${nonce}`,
     currentMs,
     projectTimelineDuration(project),
+    attachment,
   );
   if (!result) {
     await runBestEffortCleanup(`unused ${label}`, [deleteProjectOwnedFiles(project.id, [source.uri])]);

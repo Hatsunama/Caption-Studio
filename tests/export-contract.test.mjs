@@ -166,7 +166,7 @@ test('render plans omit undefined keys so Expo can convert them to Kotlin maps',
   assert.equal('uri' in plan.captions[0].style.font, false);
   assert.equal('postScriptName' in plan.captions[0].style.font, false);
   assert.deepEqual(Object.keys(plan.audioClips[0]).sort(), [
-    'fadeInMs', 'fadeOutMs', 'id', 'muted', 'sourceEndMs', 'sourceStartMs', 'startMs', 'uri', 'volume',
+    'fadeInMs', 'fadeOutMs', 'id', 'muted', 'playbackRate', 'sourceEndMs', 'sourceStartMs', 'startMs', 'uri', 'volume',
   ]);
   assert.equal(plan.audioClips[0].uri, 'file:///extracted.m4a');
   assertNoUndefined(plan, 'plan');

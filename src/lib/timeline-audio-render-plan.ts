@@ -45,8 +45,9 @@ export function buildTimelineAudioRenderPlan(project: CaptionProject): TimelineA
   });
   const audioClips = audibleAudioClipsWithin(project, durationMs).flatMap((clip) => {
     const source = audioSourceById.get(clip.sourceId);
+    const rate = clip.playbackRate ?? 1;
     const sourceDurationMs = Math.max(0, clip.sourceEndMs - clip.sourceStartMs);
-    const timelineEndMs = Math.min(durationMs, clip.startMs + sourceDurationMs);
+    const timelineEndMs = Math.min(durationMs, clip.startMs + sourceDurationMs / rate);
     if (!source || clip.startMs >= durationMs || timelineEndMs <= clip.startMs) return [];
     return [{
       id: clip.id,
@@ -54,8 +55,8 @@ export function buildTimelineAudioRenderPlan(project: CaptionProject): TimelineA
       timelineStartMs: Math.max(0, clip.startMs),
       timelineEndMs,
       sourceStartMs: clip.sourceStartMs,
-      sourceEndMs: clip.sourceStartMs + (timelineEndMs - clip.startMs),
-      playbackRate: 1,
+      sourceEndMs: clip.sourceStartMs + (timelineEndMs - clip.startMs) * rate,
+      playbackRate: rate,
       volume: clip.volume,
       muted: clip.muted,
     }];

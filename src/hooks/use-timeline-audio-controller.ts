@@ -19,14 +19,15 @@ export function useTimelineAudioController(
   );
   const targets = useMemo(
     () => admitted ? project.audioClips.flatMap((clip) => {
-      if (currentMs < clip.startMs || currentMs >= audioClipEnd(clip)) return [];
+      if (clip.hiddenByVideoTrim || currentMs < clip.startMs || currentMs >= audioClipEnd(clip)) return [];
       const source = sourceById.get(clip.sourceId);
       if (!source) return [];
       return [{
         clipId: clip.id,
         sourceId: source.id,
         uri: source.uri,
-        targetSeconds: (clip.sourceStartMs + currentMs - clip.startMs) / 1_000,
+        targetSeconds: (clip.sourceStartMs + (currentMs - clip.startMs) * (clip.playbackRate ?? 1)) / 1_000,
+        playbackRate: clip.playbackRate ?? 1,
         volume: audioClipVolume(clip, currentMs),
         muted: clip.muted,
         playing: isPlaying,

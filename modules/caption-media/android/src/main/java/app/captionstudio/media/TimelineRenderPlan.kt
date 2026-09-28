@@ -150,6 +150,7 @@ internal data class RenderAudioClip(
   val startMs: Long,
   val sourceStartMs: Long,
   val sourceEndMs: Long,
+  val playbackRate: Float = 1f,
   val volume: Float,
   val muted: Boolean,
   val fadeInMs: Long,
@@ -187,7 +188,7 @@ internal fun parseTimelineRenderPlan(value: Map<String, Any>): TimelineRenderPla
     require(plan.audioClips.all { it.startMs >= 0 && it.startMs < plan.durationMs }) {
       "An audio clip starts outside the render duration"
     }
-    require(plan.audioClips.all { it.sourceEndMs - it.sourceStartMs <= plan.durationMs - it.startMs }) {
+    require(plan.audioClips.all { (it.sourceEndMs - it.sourceStartMs) / it.playbackRate <= plan.durationMs - it.startMs + 1 }) {
       "An audio clip extends beyond the render duration"
     }
   }
@@ -354,6 +355,9 @@ private fun parseAudioClip(value: Map<String, Any>) = RenderAudioClip(
   startMs = value.number("startMs").toLong(),
   sourceStartMs = value.number("sourceStartMs").toLong(),
   sourceEndMs = value.number("sourceEndMs").toLong(),
+  playbackRate = value.numberOr("playbackRate", 1).toDouble().also {
+    require(it in 0.1..8.0) { "Audio clip playback rate must be between 0.1 and 8" }
+  }.toFloat(),
   volume = value.numberOr("volume", 1).toFloat().coerceIn(0f, 1f),
   muted = value.booleanOr("muted", false),
   fadeInMs = value.numberOr("fadeInMs", 0).toLong().coerceAtLeast(0),
