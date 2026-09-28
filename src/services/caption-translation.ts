@@ -20,6 +20,7 @@ import {
   captionTextTail,
 } from '@/lib/caption-text-breaks';
 import { createTranslationBatches } from '@/lib/translation-batching';
+import { translationModelConsentMessage } from '@/lib/translation-model-consent';
 import { removeModelArtifacts, storedModelBytes } from '@/lib/model-artifact-lifecycle';
 import {
   encodeModelVerificationMarker,
@@ -50,6 +51,10 @@ const TRANSLATION_BENCHMARK_BACKEND = benchmarkBackendSetting === 'cpu' || bench
   ? benchmarkBackendSetting : undefined;
 
 export const NATURAL_TRANSLATION_MODEL_LABEL = NATURAL_TRANSLATION_MODEL.label;
+
+export function naturalTranslationDownloadConsentMessage(): string {
+  return translationModelConsentMessage(NATURAL_TRANSLATION_MODEL);
+}
 
 export type CaptionTranslationProgress = {
   stage: 'downloading-model' | 'verifying-model' | 'loading-model' | 'translating';
@@ -740,9 +745,9 @@ async function translateWithModelRecovery(
   requestId?: string,
 ) {
   let recoveryAttempted = false;
+  throwIfCancelled(run);
+  const model = await ensureNaturalTranslationModel(run, onProgress);
   while (true) {
-    throwIfCancelled(run);
-    const model = await ensureNaturalTranslationModel(run, onProgress);
     throwIfCancelled(run);
     onProgress?.({
       stage: 'loading-model',
@@ -751,17 +756,33 @@ async function translateWithModelRecovery(
     });
     const stopProgress = pollNativeProgress(run, onProgress);
     try {
-      // Recovery changes only the model file; successful cue checkpoints remain reusable.
       return await translateWithNative(model.uri, operations, requestId);
     } catch (error) {
       if (!isNativeModelIntegrityFailure(error)) throw error;
-      // Remove the trust marker first, including after a failed recovery attempt.
-      // Keep independent download/resume artifacts for the verified downloader.
       const marker = new File(model.parentDirectory, `${model.name}.sha256`);
       if (marker.exists) marker.delete();
-      if (model.exists) model.delete();
       throwIfCancelled(run);
-      if (recoveryAttempted) throw error;
+      if (recoveryAttempted) {
+        throw new Error('The translation engine could not verify the model. Your downloaded file was kept. Try again; no replacement was downloaded.');
+      }
+      onProgress?.({
+        stage: 'verifying-model',
+        progress: null,
+        detail: 'Rechecking the model on this phone. Your downloaded file will be kept.',
+      });
+      let verified: boolean;
+      try {
+        verified = await verifyTranslationModel(model);
+      } catch {
+        throwIfCancelled(run);
+        throw new Error('The translation model could not be checked. Your downloaded file was kept. Try again; no replacement was downloaded.');
+      }
+      throwIfCancelled(run);
+      if (!verified) {
+        throw Object.assign(new Error(
+          'The translation model failed its integrity check. Your downloaded file was kept, but cannot be used safely. Try translation again to choose whether to download a replacement. No replacement was downloaded.',
+        ), { code: 'E_TRANSLATION_MODEL_REPLACEMENT_REQUIRED' });
+      }
       recoveryAttempted = true;
     } finally {
       stopProgress();

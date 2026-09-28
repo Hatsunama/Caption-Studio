@@ -70,6 +70,10 @@ function loadService(overrides = {}) {
         return overrides.native ? overrides.native() : published;
       },
       cancelTimelineVideoExport: async () => { calls.cancel += 1; },
+      sharePublishedVideo: async (uri) => {
+        calls.share.push({ uri });
+        await overrides.share?.();
+      },
     } },
     '@/services/export-storage': {
       ...storagePolicy,
@@ -118,20 +122,14 @@ test('a failed share sheet reports a warning while preserving the published expo
 
 for (const [name, overrides, expectedShares] of [
   ['successful sharing', {}, 1],
-  ['unavailable sharing', { isAvailable: async () => false }, 0],
-  ['availability check rejection', { isAvailable: async () => { throw Error('Unavailable'); } }, 0],
   ['share sheet rejection', { share: async () => { throw Error('No share target'); } }, 1],
-  ['missing cache copy', { getInfo: async () => ({ exists: false }) }, 0],
-  ['directory in place of cache copy', { getInfo: async () => ({ exists: true, isDirectory: true }) }, 0],
-  ['empty cache copy', { getInfo: async () => ({ exists: true, size: 0 }) }, 0],
-  ['incomplete cache copy', { getInfo: async () => ({ exists: true, size: 1 }) }, 0],
-  ['cache inspection rejection', { getInfo: async () => { throw Error('Cache unavailable'); } }, 0],
+  ['missing temporary cache copy', { getInfo: async () => ({ exists: false }) }, 1],
 ]) {
   test(`published video succeeds exactly once despite ${name}`, async () => {
     const service = loadService(overrides);
     const result = await service.exportProjectVideo(project);
     assert.equal(result.mediaUri, published.mediaUri);
-    if (name === 'successful sharing') assert.deepEqual(result, published);
+    if (name !== 'share sheet rejection') assert.deepEqual(result, published);
     else assert.match(result.sharingWarning, /Movies\/Caption Studio/);
     assert.equal(service.calls.native, 1);
     assert.equal(service.calls.share.length, expectedShares);
@@ -139,8 +137,7 @@ for (const [name, overrides, expectedShares] of [
     assert.equal(service.calls.released, 1);
     assert.equal(await service.cancelProjectVideoExport(), false);
     if (expectedShares) {
-      assert.equal(service.calls.share[0].uri, outputUri);
-      assert.equal(service.calls.share[0].options.mimeType, 'video/mp4');
+      assert.equal(service.calls.share[0].uri, published.mediaUri);
     }
   });
 }
@@ -224,6 +221,13 @@ test('verified native publication wins a cancellation race at the JS boundary', 
   assert.equal(service.calls.cancel, 1);
   assert.equal(service.calls.share.length, 1);
   assert.deepEqual(service.calls.cleanup, [outputUri]);
+});
+
+test('sharing uses the durable published URI even after the temporary render is removed', async () => {
+  const service = loadService();
+  await service.exportProjectVideo(project);
+  assert.deepEqual(service.calls.cleanup, [outputUri]);
+  assert.equal(service.calls.share[0].uri, published.mediaUri);
 });
 
 for (const format of ['srt', 'ass']) {

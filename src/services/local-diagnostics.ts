@@ -6,6 +6,10 @@ import { mergeBoundedExitRecords, type LocalProcessExitRecord } from '@/lib/diag
 
 const RECORD_LIMIT = 20;
 const DIAGNOSTIC_FILE = 'caption-studio-exit-diagnostics.json';
+const SHARED_DIAGNOSTIC_PREFIX = 'caption-studio-sanitized-diagnostics-';
+const SHARED_DIAGNOSTIC_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const activeDiagnosticShares = new Set<string>();
+let diagnosticShareSequence = 0;
 
 export async function captureHistoricalProcessExits(): Promise<LocalProcessExitRecord[]> {
   const existing = await readLocalProcessExits();
@@ -31,10 +35,14 @@ export async function readLocalProcessExits(): Promise<LocalProcessExitRecord[]>
 }
 
 export async function shareLocalProcessExits() {
-  if (!FileSystem.cacheDirectory) throw new Error('Diagnostic sharing storage is unavailable.');
+  if (!FileSystem.documentDirectory) throw new Error('Diagnostic sharing storage is unavailable.');
   if (!await Sharing.isAvailableAsync()) throw new Error('Android file sharing is unavailable.');
+  const directory = `${FileSystem.documentDirectory}diagnostic-shares/`;
+  await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+  await pruneOldDiagnosticShares(directory);
   const records = await captureHistoricalProcessExits();
-  const uri = `${FileSystem.cacheDirectory}caption-studio-sanitized-diagnostics.json`;
+  const uri = `${directory}${SHARED_DIAGNOSTIC_PREFIX}${Date.now()}-${diagnosticShareSequence++}.json`;
+  activeDiagnosticShares.add(uri);
   try {
     await FileSystem.writeAsStringAsync(uri, JSON.stringify({ schemaVersion: 1, records }, null, 2));
     await Sharing.shareAsync(uri, {
@@ -43,8 +51,27 @@ export async function shareLocalProcessExits() {
       UTI: 'public.json',
     });
   } finally {
-    await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
+    activeDiagnosticShares.delete(uri);
   }
+}
+
+async function pruneOldDiagnosticShares(directory: string, nowMs = Date.now()) {
+  let names: string[];
+  try {
+    names = await FileSystem.readDirectoryAsync(directory);
+  } catch {
+    return;
+  }
+  await Promise.allSettled(names.map(async (name) => {
+    if (!/^caption-studio-sanitized-diagnostics-\d{13}-\d+\.json$/.test(name)) return;
+    const uri = `${directory}${name}`;
+    if (activeDiagnosticShares.has(uri)) return;
+    const info = await FileSystem.getInfoAsync(uri);
+    if (info.exists && !info.isDirectory && typeof info.modificationTime === 'number'
+      && nowMs - info.modificationTime * 1000 > SHARED_DIAGNOSTIC_MAX_AGE_MS) {
+      await FileSystem.deleteAsync(uri, { idempotent: true });
+    }
+  }));
 }
 
 async function writeLocalProcessExits(records: LocalProcessExitRecord[]) {

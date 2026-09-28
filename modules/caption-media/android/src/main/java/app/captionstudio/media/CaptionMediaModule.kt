@@ -1,6 +1,7 @@
 package app.captionstudio.media
 
 import android.Manifest
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -18,6 +19,7 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
 import android.os.Build
+import android.provider.MediaStore
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import expo.modules.kotlin.exception.Exceptions
@@ -159,6 +161,36 @@ class CaptionMediaModule : Module() {
         parseTimelineRenderPlan(renderPlan),
         promise,
       )
+    }
+
+    AsyncFunction("sharePublishedVideo") { mediaUri: String, promise: Promise ->
+      try {
+        val uri = Uri.parse(mediaUri)
+        require(uri.scheme == "content" && uri.authority == MediaStore.AUTHORITY) {
+          "The saved video does not have a MediaStore URI."
+        }
+        val activity = appContext.throwingActivity
+        val send = Intent(Intent.ACTION_SEND).apply {
+          type = "video/mp4"
+          putExtra(Intent.EXTRA_STREAM, uri)
+          clipData = ClipData.newUri(activity.contentResolver, "Caption Studio video", uri)
+          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(send, "Share exported video").apply {
+          clipData = send.clipData
+          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        activity.runOnUiThread {
+          try {
+            activity.startActivity(chooser)
+            promise.resolve(null)
+          } catch (error: Exception) {
+            promise.reject("E_SHARE_FAILED", error.message ?: "Android could not open the share sheet", error)
+          }
+        }
+      } catch (error: Exception) {
+        promise.reject("E_SHARE_FAILED", error.message ?: "The saved video could not be shared", error)
+      }
     }
 
     AsyncFunction("cancelTimelineVideoExport") {

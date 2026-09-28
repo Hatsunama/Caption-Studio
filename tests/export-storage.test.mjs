@@ -113,9 +113,8 @@ test('project export verifies publication, offers optional sharing, then owns te
   assert.match(service, /requireFreeSpace\([\s\S]*'export this video'/);
   assert.match(service, /protectTemporaryVideoExportArtifacts\(outputUri\)/);
   assert.match(service, /assertVideoExportDelivery\(nativeResult\)/);
-  assert.match(service, /confirmLocalExportFile\(outputUri, sizeBytes\)/);
-  assert.match(service, /deliverExportedVideo\(outputUri, delivered\.sizeBytes\)/);
-  assert.match(service, /Sharing\.shareAsync\(outputUri, \{[\s\S]*mimeType: 'video\/mp4'/);
+  assert.match(service, /deliverExportedVideo\(delivered\.mediaUri\)/);
+  assert.match(service, /CaptionMedia\.sharePublishedVideo\(mediaUri\)/);
   assert.match(service, /try \{[\s\S]*session\.startNative[\s\S]*\} finally \{[\s\S]*removeTemporaryVideoExportArtifacts\(outputUri\);/);
   assert.match(service, /catch \(error\) \{\s*await removeFailedSubtitleExportArtifact\(uri\);\s*throw error;/);
 });

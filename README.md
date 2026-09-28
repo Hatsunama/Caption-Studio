@@ -90,7 +90,7 @@ Never uninstall or clear any of these apps to bypass an installation failure. Ke
 
 ### Data-preserving side-by-side build when the production signing key is unavailable
 
-Current Android build: **1.4.105** (`v1.4.105`, Android version code 117).
+Current published Android build and version code: [Caption Studio releases](https://github.com/Hatsunama/Caption-Studio/releases). The installer reads the latest eligible release and verifies its APK before installation.
 
 ## What the current Android build includes
 

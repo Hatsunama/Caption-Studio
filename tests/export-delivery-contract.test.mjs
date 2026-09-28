@@ -37,15 +37,11 @@ test('native export keeps the local MP4 until JS delivery', () => {
   assert.match(exporter, /task\.promise\.reject\("E_EXPORT_CANCELLED"/);
 });
 
-test('JS export owns published success and checks the cache only for optional sharing', () => {
+test('JS export shares the verified published copy independently of cache cleanup', () => {
   assert.match(projectExport, /assertVideoExportDelivery\(nativeResult\)/);
-  assert.match(projectExport, /deliverExportedVideo\(outputUri, delivered\.sizeBytes\)/);
-  assert.match(projectExport, /confirmLocalExportFile\(outputUri, sizeBytes\)/);
-  assert.doesNotMatch(projectExport, /session\.waitFor\((?:confirmLocalExportFile|deliverExportedVideo)/);
-  assert.match(projectExport, /Sharing\.shareAsync\(outputUri, \{[\s\S]*mimeType: 'video\/mp4'/);
-  assert.match(projectExport, /The exported video file is missing/);
-  assert.match(projectExport, /The exported video file is empty/);
-  assert.match(projectExport, /The exported video file is incomplete/);
+  assert.match(projectExport, /deliverExportedVideo\(delivered\.mediaUri\)/);
+  assert.match(projectExport, /CaptionMedia\.sharePublishedVideo\(mediaUri\)/);
+  assert.doesNotMatch(projectExport, /Sharing\.shareAsync\(outputUri/);
   assert.match(editor, /Saved to Movies\/Caption Studio/);
   assert.match(editor, /Second language visibility not saved/);
   assert.match(editor, /Canvas size not saved/);

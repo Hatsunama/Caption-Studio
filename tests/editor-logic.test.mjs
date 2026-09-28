@@ -9,7 +9,7 @@ import { alignWordsToSpeech } from '../src/lib/speech-alignment.ts';
 import { coalesceWhisperWords } from '../src/lib/whisper-words.ts';
 import { packTimelineLanes } from '../src/lib/timeline-layout.ts';
 import { minimumTimelineScale, reorderAutoScrollOffset, reorderFilmstripWidth, reorderScrollOffsetForTile, reorderTileLeft, reorderTrackWidth, timelineScrollOffset, timelineTickInterval, timelineTimeAtScroll, timelineWidth } from '../src/lib/timeline-scale.ts';
-import { PREPARING_AUDIO_CUES } from '../src/lib/transcription-progress.ts';
+import { displayTranscriptionProgress } from '../src/lib/transcription-progress.ts';
 import { humanVideoName, isMachineVideoName } from '../src/lib/project-presentation.ts';
 import { applyCaptionTextChanges } from '../src/lib/caption-text-edits.ts';
 import { serializeAss, serializeSrt } from '../src/lib/subtitle-export.ts';
@@ -912,9 +912,10 @@ test('generated caption blocks remain chronological and never overlap', () => {
   assert.equal(captions[0].startMs, 4_000);
 });
 
-test('preparing progress advances one percent every 22 seconds from 5% through 10%', () => {
-  assert.deepEqual(PREPARING_AUDIO_CUES.map((cue) => cue.progress), [0.05, 0.06, 0.07, 0.08, 0.09, 0.1]);
-  assert.deepEqual(PREPARING_AUDIO_CUES.slice(1).map((cue, index) => cue.afterMs - PREPARING_AUDIO_CUES[index].afterMs), [22_000, 22_000, 22_000, 22_000, 22_000]);
+test('unmeasured extraction is displayed as indeterminate, not an invented percentage', () => {
+  assert.equal(displayTranscriptionProgress(null), null);
+  assert.equal(displayTranscriptionProgress(0.5), 50);
+  assert.doesNotMatch(readFileSync(new URL('../src/services/transcription.ts', import.meta.url), 'utf8'), /preparationCueTimers/);
 });
 
 test('multi-source words are projected into the speed-aware ripple timeline', () => {

@@ -52,7 +52,7 @@ export async function exportProjectVideo(project: CaptionProject, allowIncomplet
       const delivered = assertVideoExportDelivery(nativeResult);
       // Native delivery already verified the published MediaStore copy. Optional
       // sharing must not turn that success into a failed or cancelled export.
-      const sharingWarning = await deliverExportedVideo(outputUri, delivered.sizeBytes);
+      const sharingWarning = await deliverExportedVideo(delivered.mediaUri);
       return sharingWarning ? { ...delivered, sharingWarning } : delivered;
     } finally {
       try {
@@ -108,30 +108,9 @@ export function userFacingExportError(caught: unknown, fallback = 'The video cou
   return cleaned.slice(0, 1000);
 }
 
-async function confirmLocalExportFile(outputUri: string, sizeBytes: number) {
-  const info = await FileSystem.getInfoAsync(outputUri);
-  if (!info.exists || info.isDirectory) {
-    throw new Error('The exported video file is missing.');
-  }
-  if (info.size <= 0) {
-    throw new Error('The exported video file is empty.');
-  }
-  if (info.size !== sizeBytes) {
-    throw new Error('The exported video file is incomplete.');
-  }
-}
-
-async function deliverExportedVideo(outputUri: string, sizeBytes: number) {
+async function deliverExportedVideo(mediaUri: string) {
   try {
-    if (!await Sharing.isAvailableAsync()) {
-      return 'Sharing is unavailable on this device. The video remains saved in Movies/Caption Studio.';
-    }
-    await confirmLocalExportFile(outputUri, sizeBytes);
-    await Sharing.shareAsync(outputUri, {
-      mimeType: 'video/mp4',
-      dialogTitle: 'Share exported video',
-      UTI: 'public.mpeg-4',
-    });
+    await CaptionMedia.sharePublishedVideo(mediaUri);
   } catch (caught) {
     const reason = caught && typeof caught === 'object' && 'message' in caught && typeof caught.message === 'string'
       ? caught.message
