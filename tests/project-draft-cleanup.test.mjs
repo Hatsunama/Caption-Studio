@@ -219,8 +219,10 @@ test('cancelling active caption generation preserves recovery journals', async (
   const generating = h.workflows.generateAndSaveProjectCaptions(fixture());
   const rejected = assert.rejects(generating, /Caption generation cancelled/);
   await started.promise;
-  assert.equal(await h.workflows.cancelProjectCaptionGeneration(), true);
+  const cancellation = await h.workflows.cancelProjectCaptionGeneration();
+  assert.equal(cancellation.status, 'stopping');
   finish.resolve(); await rejected;
+  await cancellation.finished;
   assert.deepEqual([...h.files], before);
 });
 

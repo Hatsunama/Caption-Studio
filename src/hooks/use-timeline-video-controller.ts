@@ -1,4 +1,5 @@
 import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project-timeline';
+import { buildVideoTransitionPreviewWindows, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
 import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
 import { videoPlaybackUri } from '@/lib/video-playback-source';
 import { useEventListener } from 'expo';
@@ -50,6 +51,7 @@ function createSlotRuntime(): SlotRuntime {
 
 export function useTimelineVideoController(project: CaptionProject, _onError: (message: string) => void, surfacesAdmitted = true) {
   const entries = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
+  const transitionWindows = useMemo(() => buildVideoTransitionPreviewWindows(entries, project.sources), [entries, project.sources]);
   const playerA = useVideoPlayer(null, configureTimelinePlayer);
   const playerB = useVideoPlayer(null, configureTimelinePlayer);
   const players = useMemo(() => [playerA, playerB] as const, [playerA, playerB]);
@@ -69,6 +71,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const projectRef = useRef(project);
   const entriesRef = useRef(entries);
+  const transitionWindowsRef = useRef(transitionWindows);
   const currentMsRef = useRef(0);
   const playIntentRef = useRef(false);
   const phaseRef = useRef<TransportPhase>(initialPhase);
@@ -101,8 +104,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   useLayoutEffect(() => {
     projectRef.current = project;
     entriesRef.current = entries;
+    transitionWindowsRef.current = transitionWindows;
     surfacesAdmittedRef.current = surfacesAdmitted;
-  }, [entries, project, surfacesAdmitted]);
+  }, [entries, project, surfacesAdmitted, transitionWindows]);
 
   const publishSlots = useCallback(() => {
     if (!mountedRef.current) return;
@@ -648,6 +652,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const synchronizeProject = useCallback((nextProject: CaptionProject) => {
     projectRef.current = nextProject;
     entriesRef.current = buildClipTimeline(nextProject.clips);
+    transitionWindowsRef.current = buildVideoTransitionPreviewWindows(entriesRef.current, nextProject.sources);
     requestTargetRef.current(clamp(currentMsRef.current, 0, projectTimelineDuration(nextProject)));
   }, []);
 
@@ -676,10 +681,13 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     if (!entry) return;
     const sourceMs = currentTime * 1_000;
     const tolerance = Math.max(4, entry.clip.playbackRate * 12);
-    const timelineMs = clamp(timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
+    const transitionMs = transitionTimelineTimeAt(
+      transitionWindowsRef.current, entry.clip.id, currentMsRef.current, sourceMs,
+    );
+    const timelineMs = clamp(transitionMs ?? timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
     setCurrentMs(timelineMs);
     playerForSlot(slot).volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
-    if (sourceMs >= entry.clip.sourceEndMs - tolerance) advanceFrom(entry);
+    if (timelineMs >= entry.endMs - tolerance) advanceFrom(entry);
   };
 
   const onPlayToEnd = (slot: SlotIndex) => {

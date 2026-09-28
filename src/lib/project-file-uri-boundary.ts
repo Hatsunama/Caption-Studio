@@ -3,6 +3,10 @@ type AppStorageRoots = {
   cacheDirectory: string | null | undefined;
 };
 
+export function isAndroidContentUri(uri: string): boolean {
+  return /^content:\/\/[^/?#\s]+(?:[/?#]|$)/.test(uri);
+}
+
 function decodedFilePath(uri: string, label: string, directory: boolean): string {
   if (!uri.startsWith('file:///') || uri.length > 16_384 || /[?#\\\0]/.test(uri)) {
     throw new Error(`${label} is not an app-owned file`);
@@ -46,7 +50,7 @@ export function assertProjectMediaReferences(project: unknown, roots: AppStorage
     for (const [key, child] of Object.entries(value)) {
       if (/uri$/i.test(key) && child != null) {
         if (typeof child !== 'string') throw new Error(`${key} contains an invalid media URI`);
-        if (child.startsWith('content://')) continue;
+        if (isAndroidContentUri(child)) continue;
         const path = decodedFilePath(child, key, false);
         if (!allowedRoots.some((root) => path.startsWith(root))) {
           throw new Error(`${key} is not an app-owned file`);

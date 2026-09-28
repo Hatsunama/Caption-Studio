@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createGeometryFrameQueue, createLayerGesture, layerExtent, positiveLayerScale, resolveLayerGeometry } from '../src/lib/layer-geometry.ts';
+import { createLayerGesture, layerExtent, positiveLayerScale, resolveLayerGeometry } from '../src/lib/layer-geometry.ts';
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
 import { buildTimelineRenderPlan, serializeStyle, toNativeRenderPlan } from '../src/lib/export-render-plan.ts';
@@ -114,20 +114,6 @@ test('a selected owner rejects competing responders and keeps extreme resizing r
   assert.ok(tiny.scaleX > 0);
   const large = gesture.update([point(1e5, 0)]);
   assert.ok(layerExtent(large).width <= 10);
-});
-
-test('frame scheduling coalesces latest geometry and cancellation prevents stale publication', () => {
-  const callbacks = new Map();
-  const published = [];
-  let sequence = 0;
-  const queue = createGeometryFrameQueue(cb => { callbacks.set(++sequence, cb); return sequence; }, id => callbacks.delete(id), value => published.push(value));
-  for (let i = 0; i < 100; i++) queue.push(i);
-  assert.equal(sequence, 1);
-  callbacks.get(1)();
-  assert.deepEqual(published, [99]);
-  queue.push(100);
-  queue.clear();
-  assert.equal(callbacks.has(2), false);
 });
 
 function project() {

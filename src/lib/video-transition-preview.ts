@@ -207,6 +207,23 @@ export function videoTransitionPlaybackTargets(
   ];
 }
 
+// The composite can consume hidden handles or change source speed. During its
+// window, native source time must be inverted through that same source clock.
+export function transitionTimelineTimeAt(
+  windows: readonly VideoTransitionPreviewWindow[],
+  clipId: string,
+  currentTimelineMs: number,
+  sourceMs: number,
+): number | undefined {
+  const window = windows.find((candidate) => candidate.mode === 'composite'
+    && currentTimelineMs >= candidate.startMs && currentTimelineMs < candidate.endMs
+    && (candidate.outgoing?.clipId === clipId || candidate.incoming?.clipId === clipId));
+  const source = window?.outgoing?.clipId === clipId ? window.outgoing : window?.incoming;
+  if (!window || !source) return undefined;
+  const timelineMs = window.startMs + (sourceMs - source.sourceStartMs) / source.playbackRate;
+  return clamp(Math.max(currentTimelineMs, timelineMs), window.startMs, window.endMs);
+}
+
 export function videoTransitionCompositeState(
   frame: VideoTransitionPreviewFrame,
   slots: readonly { preparedClipId?: string; firstFrameReady: boolean; readiness: string }[],

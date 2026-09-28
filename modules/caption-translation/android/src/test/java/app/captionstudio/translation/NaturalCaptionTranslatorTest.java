@@ -12,6 +12,9 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -461,6 +464,49 @@ public final class NaturalCaptionTranslatorTest {
 
     assertEquals("E_TRANSLATION_MODEL_INTEGRITY", failure.code);
     assertTrue(model.delete());
+  }
+
+  @Test
+  public void loadingModelOnlyReportsUnsupportedForLinkageFailures() throws Exception {
+    assertClassification(
+        new IllegalStateException("temporary model cache failure"),
+        NaturalCaptionTranslator.FAILED,
+        "The local translation model could not be loaded. Retry the translation."
+    );
+    assertClassification(
+        new UnsatisfiedLinkError("missing native library"),
+        NaturalCaptionTranslator.UNSUPPORTED,
+        "This model or device cannot run local caption translation."
+    );
+    assertClassification(
+        new NaturalCaptionTranslator.TranslationFailure("E_TRANSLATION_MODEL_INTEGRITY", "Invalid model."),
+        "E_TRANSLATION_MODEL_INTEGRITY",
+        "Invalid model."
+    );
+    assertClassification(
+        new OutOfMemoryError("model allocation failed"),
+        NaturalCaptionTranslator.FAILED,
+        "Android could not free enough memory to load the translation model. Close other apps, keep Caption Studio open, and retry. Your captions were not changed."
+    );
+  }
+
+  private static void assertClassification(Throwable failure, String expectedCode, String expectedMessage)
+      throws Exception {
+    Class<?> runClass = Class.forName(NaturalCaptionTranslator.class.getName() + "$ActiveRun");
+    Constructor<?> runConstructor = runClass.getDeclaredConstructor(
+        String.class, Map.class, NaturalCaptionTranslator.Callback.class);
+    runConstructor.setAccessible(true);
+    Object run = runConstructor.newInstance("model", Map.of(), new RecordingCallback());
+    Method classify = NaturalCaptionTranslator.class.getDeclaredMethod(
+        "classify", Throwable.class, runClass, String.class);
+    classify.setAccessible(true);
+    Object result = classify.invoke(null, failure, run, "loading-model");
+    Field code = result.getClass().getDeclaredField("code");
+    Field message = result.getClass().getDeclaredField("message");
+    code.setAccessible(true);
+    message.setAccessible(true);
+    assertEquals(expectedCode, code.get(result));
+    assertEquals(expectedMessage, message.get(result));
   }
 
   private static Map<String, Object> request(

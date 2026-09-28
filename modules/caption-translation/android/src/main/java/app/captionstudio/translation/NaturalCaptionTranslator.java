@@ -1591,11 +1591,18 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           sanitizedCause("Local translation ran out of memory")
       );
     }
-    if (error instanceof LinkageError || "loading-model".equals(stage)) {
+    if (error instanceof LinkageError) {
       return new TranslationError(
           UNSUPPORTED,
           "This model or device cannot run local caption translation.",
           sanitizedCause("Local translation is unsupported")
+      );
+    }
+    if ("loading-model".equals(stage)) {
+      return new TranslationError(
+          FAILED,
+          "The local translation model could not be loaded. Retry the translation.",
+          sanitizedCause("Local translation model loading failed")
       );
     }
     return new TranslationError(

@@ -5,6 +5,8 @@ const WRITE_EXTERNAL_STORAGE = 'android.permission.WRITE_EXTERNAL_STORAGE';
 module.exports = function withLegacyExportPermission(config) {
   return withAndroidManifest(config, (next) => {
     const manifest = next.modResults.manifest;
+    manifest.$ = manifest.$ ?? {};
+    manifest.$['xmlns:tools'] = 'http://schemas.android.com/tools';
     const permissions = (manifest['uses-permission'] ?? []).filter(
       (permission) => permission.$?.['android:name'] !== WRITE_EXTERNAL_STORAGE,
     );

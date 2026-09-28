@@ -447,8 +447,23 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const pauseTransport = transport.pause;
   const cancelCaptionGeneration = useCallback(async () => {
     setTranscriptionCancelling(true);
-    const cancelled = await cancelProjectCaptionGeneration();
-    if (!cancelled) setTranscriptionCancelling(false);
+    try {
+      const result = await cancelProjectCaptionGeneration();
+      if (result.status === 'idle') {
+        setTranscriptionCancelling(false);
+        return;
+      }
+      if (result.status === 'stop-failed') {
+        const details = result.failures.map((failure) => (
+          failure instanceof Error ? failure.message : String(failure)
+        )).join('; ');
+        setError(`Caption generation could not be stopped: ${details}`);
+      }
+      void result.finished.then(() => setTranscriptionCancelling(false));
+    } catch (error) {
+      setTranscriptionCancelling(false);
+      setError(error instanceof Error ? error.message : 'Caption generation could not be stopped.');
+    }
   }, []);
 
   useEffect(() => {

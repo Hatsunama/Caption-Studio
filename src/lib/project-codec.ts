@@ -1,5 +1,6 @@
 import { synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { decodeVersionTwoProject } from '@/lib/project-schema';
+import { isAndroidContentUri } from '@/lib/project-file-uri-boundary';
 import { hydrateProjectTranscription } from '@/lib/transcription-hydration';
 import { recoverPersistedDuplicateSourceWordIds } from '@/lib/transcription-recovery';
 import { MINIMUM_CLIP_TIMELINE_MS } from '@/lib/video-timeline';
@@ -32,7 +33,7 @@ function parseProject(value: string): CaptionProject {
 function hydrateProject(project: CaptionProject): CaptionProject {
   const sources = project.sources.map((source) => ({
     ...source,
-    storageMode: source.storageMode ?? (source.uri.startsWith('content:') ? 'linked' : 'copied'),
+    storageMode: source.storageMode ?? (isAndroidContentUri(source.uri) ? 'linked' : 'copied'),
     width: Math.max(1, source.width ?? 1),
     height: Math.max(1, source.height ?? 1),
     rotation: source.rotation ?? 0,
@@ -246,7 +247,7 @@ function migrateVersionOne(candidate: Record<string, unknown>): Record<string, u
     id: sourceId,
     uri: legacy.source.uri,
     previewUri: legacy.source.previewUri,
-    storageMode: legacy.source.storageMode ?? (legacy.source.uri.startsWith('content:') ? 'linked' : 'copied'),
+    storageMode: legacy.source.storageMode ?? (isAndroidContentUri(legacy.source.uri) ? 'linked' : 'copied'),
     sizeBytes: legacy.source.sizeBytes,
     mimeType: legacy.source.mimeType,
     thumbnailUri: legacy.source.thumbnailUri,

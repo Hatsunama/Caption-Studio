@@ -15,19 +15,40 @@ type Attempt = {
   token: number;
   cancelled: boolean;
   stoppers: Set<() => Promise<void>>;
+  workExited: boolean;
+  finished: Promise<void>;
+  resolveFinished: () => void;
+  stopSucceeded: boolean;
+  stopRequest?: Promise<CaptionGenerationCancellationResult>;
 };
+
+export type CaptionGenerationCancellationResult =
+  | { status: 'idle' }
+  | { status: 'stopping'; finished: Promise<void> }
+  | { status: 'stop-failed'; failures: unknown[]; finished: Promise<void> };
 
 export function createCaptionGenerationSession(cancelNativeExtraction: () => Promise<void>) {
   let nextToken = 1;
   let active: Attempt | undefined;
+  const releaseIfSettled = (attempt: Attempt) => {
+    if (!attempt.workExited || attempt.stopRequest) return;
+    if (active?.token === attempt.token) active = undefined;
+    attempt.resolveFinished();
+  };
 
   return {
     async run<T>(work: (context: CaptionGenerationSessionContext) => Promise<T>): Promise<T> {
       if (active) throw new Error('Caption generation is already underway.');
+      let resolveFinished!: () => void;
+      const finished = new Promise<void>((resolve) => { resolveFinished = resolve; });
       const attempt: Attempt = {
         token: nextToken++,
         cancelled: false,
         stoppers: new Set(),
+        workExited: false,
+        finished,
+        resolveFinished,
+        stopSucceeded: false,
       };
       active = attempt;
 
@@ -52,20 +73,38 @@ export function createCaptionGenerationSession(cancelNativeExtraction: () => Pro
         throw error;
       } finally {
         attempt.stoppers.clear();
-        if (active?.token === attempt.token) active = undefined;
+        attempt.workExited = true;
+        releaseIfSettled(attempt);
       }
     },
 
-    async cancel(): Promise<boolean> {
+    async cancel(): Promise<CaptionGenerationCancellationResult> {
       const attempt = active;
-      if (!attempt || attempt.cancelled) return false;
+      if (!attempt) return { status: 'idle' };
+      if (attempt.stopRequest) return attempt.stopRequest;
+      if (attempt.stopSucceeded) return { status: 'stopping', finished: attempt.finished };
       attempt.cancelled = true;
       const stoppers = [...attempt.stoppers];
-      await Promise.allSettled([
-        cancelNativeExtraction(),
-        ...stoppers.map((stopper) => stopper()),
-      ]);
-      return true;
+      const callbacks = [cancelNativeExtraction, ...stoppers];
+      const request = (async (): Promise<CaptionGenerationCancellationResult> => {
+        const results = await Promise.allSettled(
+          callbacks.map((callback) => Promise.resolve().then(callback)),
+        );
+        const failures = results.flatMap((result) => (
+          result.status === 'rejected' ? [result.reason] : []
+        ));
+        attempt.stopSucceeded = failures.length === 0;
+        return failures.length > 0
+          ? { status: 'stop-failed', failures, finished: attempt.finished }
+          : { status: 'stopping', finished: attempt.finished };
+      })();
+      attempt.stopRequest = request;
+      try {
+        return await request;
+      } finally {
+        if (attempt.stopRequest === request) attempt.stopRequest = undefined;
+        releaseIfSettled(attempt);
+      }
     },
   };
 }

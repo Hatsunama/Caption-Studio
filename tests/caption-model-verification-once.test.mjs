@@ -55,3 +55,11 @@ test('a same-size replacement cannot reuse the in-operation verification', () =>
   assert.equal(sameModelFileIdentity(identity, { ...identity, createdAtMs: 51 }), false);
   assert.equal(sameModelFileIdentity(identity, { ...identity, fileName: 'other.bin' }), false);
 });
+
+test('an Android API 24-25 null creation time can reuse only the same verified file lease', () => {
+  const withoutCreationTime = { ...identity, createdAtMs: null };
+  assert.equal(sameModelFileIdentity(withoutCreationTime, { ...withoutCreationTime }), true);
+  assert.equal(sameModelFileIdentity(withoutCreationTime, { ...withoutCreationTime, modifiedAtMs: 101 }), false);
+  assert.equal(sameModelFileIdentity(withoutCreationTime, identity), false);
+  assert.equal(sameModelFileIdentity({ ...withoutCreationTime, modifiedAtMs: null }, withoutCreationTime), false);
+});

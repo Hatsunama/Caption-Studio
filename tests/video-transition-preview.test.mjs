@@ -8,6 +8,7 @@ import {
   videoTransitionPreviewFrameAt,
   videoTransitionPlaybackTargets,
   videoTransitionCompositeState,
+  transitionTimelineTimeAt,
 } from '../src/lib/video-transition-preview.ts';
 import { buildClipTimeline } from '../src/lib/video-timeline.ts';
 import { readFileSync } from 'node:fs';
@@ -116,6 +117,21 @@ test('full-source clips advance visible tail and head without frozen frames', ()
     { slot: 0, sourceTimeMs: 3_850, playbackRate: 0.5, muted: true },
     { slot: 1, sourceTimeMs: 150, playbackRate: 0.5, muted: false },
   ]);
+});
+
+test('active transition source clocks preserve timeline progress through a no-handle cut', () => {
+  const windows = buildVideoTransitionPreviewWindows(buildClipTimeline([
+    clip('out', 'out-source', { sourceStartMs: 0, sourceEndMs: 4_000, availableSourceEndMs: 4_000,
+      transitionAfter: { type: 'crossfade', durationMs: 600 } }),
+    clip('in', 'in-source', { sourceStartMs: 0, sourceEndMs: 4_000, availableSourceEndMs: 4_000 }),
+  ]), [source('out-source', 4_000), source('in-source', 4_000)]);
+
+  assert.equal(transitionTimelineTimeAt(windows, 'out', 3_700, 3_775), 3_850);
+  assert.equal(transitionTimelineTimeAt(windows, 'out', 3_850, 3_850), 4_000);
+  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_000, 150), 4_000);
+  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_000, 225), 4_150);
+  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_150, 0), 4_150, 'a stale seek event cannot rewind playback');
+  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_300, 300), undefined, 'normal clip timing owns the clock after the window');
 });
 
 test('preview distinguishes exact composition and cover effects without diagram substitutes', () => {

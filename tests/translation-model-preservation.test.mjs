@@ -81,3 +81,9 @@ test('ordinary native errors do not invalidate or replace the model', async () =
   await assert.rejects(s.start(), /native failure/);
   assert.deepEqual(s.counts, { downloads: 0, deletes: 0, hashes: 0, calls: 1, stops: 1 });
 });
+
+test('native model read errors remain translation failures without a second model hash', async () => {
+  const s = scenario({ nativeCode: 'E_TRANSLATION_MODEL_READ' });
+  await assert.rejects(s.start(), (error) => error.code === 'E_TRANSLATION_MODEL_READ');
+  assert.deepEqual(s.counts, { downloads: 0, deletes: 0, hashes: 0, calls: 1, stops: 1 });
+});

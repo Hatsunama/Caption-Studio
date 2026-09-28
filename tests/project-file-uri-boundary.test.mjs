@@ -45,3 +45,9 @@ test('project media admission checks nested URI fields and fails closed without 
     cacheDirectory: null,
   }), /app-owned|invalid/i);
 });
+
+test('project media admission rejects malformed content scheme references', () => {
+  for (const uri of ['content:video/1', 'content:/video/1', 'content://']) {
+    assert.throws(() => assertProjectMediaReferences(project(uri), roots), /app-owned|invalid/i, uri);
+  }
+});

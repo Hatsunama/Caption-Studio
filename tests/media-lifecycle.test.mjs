@@ -264,6 +264,12 @@ test('release policy is exact for URI identity and matches the native Android co
   ]);
 });
 
+test('release policy ignores malformed content scheme references', () => {
+  assert.deepEqual(unreferencedLinkedMediaUris([
+    'content:video/1', 'content:/video/1', 'content://provider/video/1',
+  ], []), ['content://provider/video/1']);
+});
+
 function projectFixture(overrides = {}) {
   return {
     schemaVersion: 2,
