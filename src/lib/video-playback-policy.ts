@@ -2,6 +2,28 @@ import type { ClipTimelineEntry } from '@/lib/video-timeline';
 
 export const CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS = 48;
 
+export function shouldJoinTimelinePreparation(
+  slot: {
+    preparedClipId?: string;
+    playbackUri?: string;
+    preparingTimelineMs?: number;
+    readiness: string;
+    preparation?: AbortController;
+    preparationTask?: Promise<unknown>;
+  },
+  clipId: string,
+  playbackUri: string,
+  timelineMs: number,
+  forceReload: boolean,
+) {
+  return !forceReload
+    && slot.preparedClipId === clipId
+    && slot.playbackUri === playbackUri
+    && slot.preparingTimelineMs === timelineMs
+    && slot.readiness === 'preparing'
+    && Boolean(slot.preparation && !slot.preparation.signal.aborted && slot.preparationTask);
+}
+
 export function shouldApplyTimelineSeek(currentSeconds: number, targetSeconds: number) {
   return !Number.isFinite(currentSeconds)
     || !Number.isFinite(targetSeconds)
