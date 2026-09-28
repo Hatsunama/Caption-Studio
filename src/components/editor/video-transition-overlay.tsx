@@ -31,6 +31,7 @@ type Props = {
   currentTransform: VideoTransform;
   currentClipId?: string;
   onFirstFrameRender: (slot: 0 | 1, token: number) => void;
+  setCompositeClock: (clock?: { key: string; slot: 0 | 1; prepareToken: number }) => void;
 };
 
 const fill: ViewStyle = { position: 'absolute', inset: 0 };
@@ -55,11 +56,6 @@ export function VideoTransitionOverlay(props: Props) {
   const compositeState = frame?.mode === 'composite'
     ? videoTransitionCompositeState(frame, props.slots, failedPreviewKey) : undefined;
   const onUnavailable = useCallback(() => setFailedPreviewKey(frame?.key), [frame?.key]);
-  useEffect(() => {
-    if (!props.admitted || !props.visible || !props.transportReady || compositeState?.status !== 'waiting') return;
-    const timeout = setTimeout(onUnavailable, 1_500);
-    return () => clearTimeout(timeout);
-  }, [compositeState?.status, frame?.key, onUnavailable, props.admitted, props.transportReady, props.visible]);
   if (!props.admitted) return null;
   const transitionReady = props.visible && props.transportReady;
   return (
@@ -116,44 +112,46 @@ function SynchronizedComposite(props: Props & {
 }) {
   const [rendered, setRendered] = useState({ outgoing: false, incoming: false });
   const ready = rendered.outgoing && rendered.incoming;
-  const { activeSlot, frame, isPlaying, onUnavailable, outgoingSlot, incomingSlot, transportReady } = props;
-  const outgoingPlayer = props.players[props.outgoingSlot];
-  const incomingPlayer = props.players[props.incomingSlot];
-  const latestPlayersRef = useRef(props.players);
-  const latestActiveSlotRef = useRef(props.activeSlot);
+  const { activeSlot, frame, isPlaying, onUnavailable, outgoingSlot, incomingSlot, transportReady, players, slots, setCompositeClock } = props;
+  const outgoingPlayer = players[outgoingSlot];
+  const incomingPlayer = players[incomingSlot];
+  const latestPlayersRef = useRef(players);
+  const latestActiveSlotRef = useRef(activeSlot);
 
   useEffect(() => {
-    latestPlayersRef.current = props.players;
-    latestActiveSlotRef.current = props.activeSlot;
-  }, [props.players, props.activeSlot]);
-
-  useEffect(() => {
-    if (ready) return;
-    const timeout = setTimeout(onUnavailable, 1_500);
-    return () => clearTimeout(timeout);
-  }, [onUnavailable, ready]);
+    latestPlayersRef.current = players;
+    latestActiveSlotRef.current = activeSlot;
+  }, [players, activeSlot]);
 
   useEffect(() => () => {
+    setCompositeClock();
     latestPlayersRef.current.forEach((player, slot) => {
       if (slot !== latestActiveSlotRef.current) {
         player.muted = true;
         player.pause();
       }
     });
-  }, []);
+  }, [setCompositeClock]);
 
   useEffect(() => {
     try {
-      videoTransitionPlaybackTargets(frame, outgoingSlot, incomingSlot, activeSlot).forEach((target) => {
+      const targets = videoTransitionPlaybackTargets(frame, outgoingSlot, incomingSlot, activeSlot);
+      if (targets.length !== 2) {
+        setCompositeClock();
+        return;
+      }
+      targets.forEach((target) => {
         synchronizeTransitionPlayer(
-          props.players[target.slot], target.sourceTimeMs, target.playbackRate,
+          players[target.slot], target.sourceTimeMs, target.playbackRate,
           isPlaying && transportReady, target.muted,
         );
       });
+      setCompositeClock({ key: frame.key, slot: activeSlot, prepareToken: slots[activeSlot].prepareToken });
     } catch {
+      setCompositeClock();
       onUnavailable();
     }
-  }, [activeSlot, frame, incomingSlot, isPlaying, onUnavailable, outgoingSlot, props.players, transportReady]);
+  }, [activeSlot, frame, incomingSlot, isPlaying, onUnavailable, outgoingSlot, players, setCompositeClock, slots, transportReady]);
 
   return (
     <View pointerEvents="none" style={[fill, { overflow: 'hidden' }]}>

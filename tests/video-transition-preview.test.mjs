@@ -126,12 +126,45 @@ test('active transition source clocks preserve timeline progress through a no-ha
     clip('in', 'in-source', { sourceStartMs: 0, sourceEndMs: 4_000, availableSourceEndMs: 4_000 }),
   ]), [source('out-source', 4_000), source('in-source', 4_000)]);
 
-  assert.equal(transitionTimelineTimeAt(windows, 'out', 3_700, 3_775), 3_850);
-  assert.equal(transitionTimelineTimeAt(windows, 'out', 3_850, 3_850), 4_000);
-  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_000, 150), 4_000);
-  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_000, 225), 4_150);
-  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_150, 0), 4_150, 'a stale seek event cannot rewind playback');
-  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_300, 300), undefined, 'normal clip timing owns the clock after the window');
+  const synchronizedKey = windows[0].key;
+  assert.equal(transitionTimelineTimeAt(windows, 'out', 3_700, 3_775, synchronizedKey), 3_850);
+  assert.equal(transitionTimelineTimeAt(windows, 'out', 3_850, 3_850, synchronizedKey), 4_000);
+  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_000, 150, synchronizedKey), 4_000);
+  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_000, 225, synchronizedKey), 4_150);
+  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_150, 0, synchronizedKey), 4_150, 'a stale seek event cannot rewind playback');
+  assert.equal(transitionTimelineTimeAt(windows, 'in', 4_300, 300, synchronizedKey), undefined, 'normal clip timing owns the clock after the window');
+});
+
+test('an unavailable composite cannot advance the timeline with an unsynchronized source clock', () => {
+  const entries = buildClipTimeline([
+    clip('out', 'out-source', { transitionAfter: { type: 'crossfade', durationMs: 1_000 } }),
+    clip('in', 'in-source'),
+  ]);
+  const windows = buildVideoTransitionPreviewWindows(entries, [source('out-source'), source('in-source')]);
+  const frame = videoTransitionPreviewFrameAt(windows, 3_750);
+  const slots = [
+    { preparedClipId: 'out', firstFrameReady: true, readiness: 'ready' },
+    { preparedClipId: 'in', firstFrameReady: false, readiness: 'preparing' },
+  ];
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'waiting');
+  assert.equal(transitionTimelineTimeAt(windows, 'out', 3_750, 5_250), undefined);
+  assert.equal(transitionTimelineTimeAt(windows, 'out', 3_750, 5_250, frame.key), 4_250);
+});
+
+test('a frame arriving after two seconds recovers the waiting composite', () => {
+  const windows = buildVideoTransitionPreviewWindows(buildClipTimeline([
+    clip('out', 'out-source', { transitionAfter: { type: 'crossfade', durationMs: 1_000 } }),
+    clip('in', 'in-source'),
+  ]), [source('out-source'), source('in-source')]);
+  const frame = videoTransitionPreviewFrameAt(windows, 3_750);
+  const slots = [
+    { preparedClipId: 'out', firstFrameReady: true, readiness: 'ready' },
+    { preparedClipId: 'in', firstFrameReady: false, readiness: 'preparing' },
+  ];
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'waiting');
+  slots[1] = { ...slots[1], firstFrameReady: true, readiness: 'ready' };
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'ready');
+  assert.doesNotMatch(previewOverlaySource, /setTimeout\(onUnavailable, 1_500\)/);
 });
 
 test('preview distinguishes exact composition and cover effects without diagram substitutes', () => {

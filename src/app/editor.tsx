@@ -139,6 +139,7 @@ import {
 } from '@/services/project-workflows';
 import { createEditorSession, type EditorProjectOperation } from '@/services/editor-session';
 import { CaptionGenerationCancelledError } from '@/services/caption-generation-session';
+import { runCaptionCancellationRequest } from '@/components/editor/caption-generation-cancellation-ui';
 import {
   NATURAL_TRANSLATION_MODEL_LABEL,
   naturalTranslationDownloadConsentMessage,
@@ -446,24 +447,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   );
   const pauseTransport = transport.pause;
   const cancelCaptionGeneration = useCallback(async () => {
-    setTranscriptionCancelling(true);
-    try {
-      const result = await cancelProjectCaptionGeneration();
-      if (result.status === 'idle') {
-        setTranscriptionCancelling(false);
-        return;
-      }
-      if (result.status === 'stop-failed') {
-        const details = result.failures.map((failure) => (
-          failure instanceof Error ? failure.message : String(failure)
-        )).join('; ');
-        setError(`Caption generation could not be stopped: ${details}`);
-      }
-      void result.finished.then(() => setTranscriptionCancelling(false));
-    } catch (error) {
-      setTranscriptionCancelling(false);
-      setError(error instanceof Error ? error.message : 'Caption generation could not be stopped.');
-    }
+    await runCaptionCancellationRequest(cancelProjectCaptionGeneration, setTranscriptionCancelling, setError);
   }, []);
 
   useEffect(() => {
@@ -1966,6 +1950,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             currentTransform={previewVideoTransform}
             currentClipId={currentClipEntry?.clip.id}
             onFirstFrameRender={transport.markFirstFrame}
+            setCompositeClock={transport.setCompositeClock}
           />
           {timelineLayers.map((layer) => {
             if (!layer.visible) return null;

@@ -214,8 +214,11 @@ export function transitionTimelineTimeAt(
   clipId: string,
   currentTimelineMs: number,
   sourceMs: number,
+  synchronizedWindowKey?: string,
 ): number | undefined {
+  if (!synchronizedWindowKey) return undefined;
   const window = windows.find((candidate) => candidate.mode === 'composite'
+    && candidate.key === synchronizedWindowKey
     && currentTimelineMs >= candidate.startMs && currentTimelineMs < candidate.endMs
     && (candidate.outgoing?.clipId === clipId || candidate.incoming?.clipId === clipId));
   const source = window?.outgoing?.clipId === clipId ? window.outgoing : window?.incoming;

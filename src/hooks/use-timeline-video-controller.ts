@@ -20,6 +20,7 @@ import type { CaptionProject, ProjectVideoSource } from '@/types/project';
 type Target = { generation: number; timelineMs: number };
 type TransportPhase = 'loading' | 'buffering' | 'ready' | 'gap' | 'ended' | 'error' | 'suspended';
 type SlotIndex = 0 | 1;
+type CompositeClock = { key: string; slot: SlotIndex; prepareToken: number };
 const FIRST_FRAME_TIMEOUT_MS = 5_000;
 
 export type TimelineVideoSlot = {
@@ -76,6 +77,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const playIntentRef = useRef(false);
   const phaseRef = useRef<TransportPhase>(initialPhase);
   const activeSlotRef = useRef<SlotIndex>(0);
+  const compositeClockRef = useRef<CompositeClock | undefined>(undefined);
   const activeClipIdRef = useRef<string | undefined>(undefined);
   const slotRuntimeRef = useRef<[SlotRuntime, SlotRuntime]>([createSlotRuntime(), createSlotRuntime()]);
   const desiredRef = useRef<Target | undefined>(undefined);
@@ -173,6 +175,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const stopTransport = useCallback(() => {
     playIntentRef.current = false;
+    compositeClockRef.current = undefined;
     boundaryClipIdRef.current = undefined;
     cancelGapClock();
     cancelScheduledPreload();
@@ -537,6 +540,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   };
 
   const activateClip = async (entry: ClipTimelineEntry, timelineMs: number, generation: number) => {
+    compositeClockRef.current = undefined;
     cancelGapClock();
     const source = sourceForEntry(entry);
     if (generation === generationRef.current && continuePreparedClip(entry, timelineMs)) return;
@@ -612,6 +616,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   });
 
   const requestTarget = (timelineMs: number) => {
+    compositeClockRef.current = undefined;
     cancelScheduledPreload();
     const targetMs = clamp(timelineMs, 0, projectTimelineDuration(projectRef.current));
     const segment = projectTimelineSegmentAt(projectRef.current, targetMs, entriesRef.current);
@@ -681,8 +686,14 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     if (!entry) return;
     const sourceMs = currentTime * 1_000;
     const tolerance = Math.max(4, entry.clip.playbackRate * 12);
+    const compositeClock = compositeClockRef.current;
+    const runtime = slotRuntimeRef.current[slot];
+    const synchronizedWindowKey = compositeClock?.slot === slot
+      && compositeClock.prepareToken === runtime.prepareToken
+      && runtime.readiness === 'ready' && runtime.preparedClipId === entry.clip.id
+      ? compositeClock.key : undefined;
     const transitionMs = transitionTimelineTimeAt(
-      transitionWindowsRef.current, entry.clip.id, currentMsRef.current, sourceMs,
+      transitionWindowsRef.current, entry.clip.id, currentMsRef.current, sourceMs, synchronizedWindowKey,
     );
     const timelineMs = clamp(transitionMs ?? timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
     setCurrentMs(timelineMs);
@@ -715,6 +726,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       return;
     }
     if (runtime.readiness !== 'ready') return;
+    compositeClockRef.current = undefined;
     const ownsPlayback = slot === activeSlotRef.current && runtime.preparedClipId === activeClipIdRef.current;
     runtime.readiness = 'error';
     runtime.firstFrameReady = false;
@@ -774,6 +786,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     slots,
     activeSlot,
     markFirstFrame,
+    setCompositeClock: (clock?: CompositeClock) => { compositeClockRef.current = clock; },
     hasPresentedFrame,
     currentMs,
     isPlaying,
