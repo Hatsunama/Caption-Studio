@@ -20,6 +20,7 @@ import {
   captionTextTail,
 } from '@/lib/caption-text-breaks';
 import { createTranslationBatches } from '@/lib/translation-batching';
+import { translationModelConsentMessage } from '@/lib/translation-model-consent';
 import { removeModelArtifacts, storedModelBytes } from '@/lib/model-artifact-lifecycle';
 import {
   encodeModelVerificationMarker,
@@ -50,6 +51,10 @@ const TRANSLATION_BENCHMARK_BACKEND = benchmarkBackendSetting === 'cpu' || bench
   ? benchmarkBackendSetting : undefined;
 
 export const NATURAL_TRANSLATION_MODEL_LABEL = NATURAL_TRANSLATION_MODEL.label;
+
+export function naturalTranslationDownloadConsentMessage(): string {
+  return translationModelConsentMessage(NATURAL_TRANSLATION_MODEL);
+}
 
 export type CaptionTranslationProgress = {
   stage: 'downloading-model' | 'verifying-model' | 'loading-model' | 'translating';

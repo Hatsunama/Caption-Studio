@@ -141,10 +141,12 @@ import { createEditorSession, type EditorProjectOperation } from '@/services/edi
 import { CaptionGenerationCancelledError } from '@/services/caption-generation-session';
 import {
   NATURAL_TRANSLATION_MODEL_LABEL,
+  naturalTranslationDownloadConsentMessage,
   listDownloadedNaturalTranslationModel,
   registerCaptionTranslationResources,
   type CaptionTranslationProgress,
 } from '@/services/caption-translation';
+import { displayTranscriptionProgress } from '@/lib/transcription-progress';
 import {
   changedPrimaryCaptionTextIds,
   prepareOptionalDualCaptionTrack,
@@ -1077,7 +1079,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     return new Promise<boolean>((resolve) => {
       Alert.alert(
         'Download the translation model',
-        'Caption Studio needs a one-time download to translate captions. Download speeds vary depending on device restrictions. I really tried to speed this up. Keep this screen open until it finishes. Your video and audio stay on your phone.',
+        naturalTranslationDownloadConsentMessage(),
         [
           { text: 'Not now', style: 'cancel', onPress: () => resolve(false) },
           { text: 'Download model', onPress: () => resolve(true) },
@@ -2698,7 +2700,7 @@ function ProgressOverlay(props: {
   onCancel: () => void;
 }) {
   if (!props.progress) return null;
-  const percent = Math.round(props.progress.progress * 100);
+  const percent = displayTranscriptionProgress(props.progress.progress);
   return (
     <Modal visible transparent animationType="fade" onRequestClose={() => { if (!props.cancelling) props.onCancel(); }}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 26, backgroundColor: 'rgba(0,0,0,0.82)' }}>
@@ -2714,9 +2716,11 @@ function ProgressOverlay(props: {
               : 'Keep Caption Studio open and the phone unlocked until this finishes.'}
           </Text>
           <View style={{ height: 8, overflow: 'hidden', borderRadius: chrome.radius.pill, backgroundColor: chrome.fill }}>
-            <View style={{ width: `${percent}%`, height: '100%', backgroundColor: palette.accent }} />
+            {percent !== null ? <View style={{ width: `${percent}%`, height: '100%', backgroundColor: palette.accent }} /> : null}
           </View>
-          <Text style={{ color: palette.text, textAlign: 'center', fontVariant: ['tabular-nums'] }}>{percent}%</Text>
+          <Text style={{ color: palette.text, textAlign: 'center', fontVariant: ['tabular-nums'] }}>
+            {percent === null ? 'Still working' : `${percent}% of this step`}
+          </Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Cancel caption generation"

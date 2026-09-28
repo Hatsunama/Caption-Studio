@@ -3,9 +3,9 @@ import { initWhisper, initWhisperVad } from 'whisper.rn/index';
 
 import CaptionMedia from 'caption-media';
 import { assertCaptionAudioAvailable } from '@/lib/media-validation';
+import { sameModelFileIdentity } from '@/lib/model-verification-lease';
 import { alignWordsToSpeech } from '@/lib/speech-alignment';
 import { requireDetectedCaptionLanguage } from '@/lib/transcription-language';
-import { PREPARING_AUDIO_CUES } from '@/lib/transcription-progress';
 import { removeModelArtifacts, storedModelBytes } from '@/lib/model-artifact-lifecycle';
 import { coalesceWhisperWords } from '@/lib/whisper-words';
 import {
@@ -63,7 +63,7 @@ export type TranscriptionStage =
 
 export type TranscriptionProgress = {
   stage: TranscriptionStage;
-  progress: number;
+  progress: number | null;
   detail: string;
 };
 
@@ -163,10 +163,11 @@ export async function removeDownloadedTranscriptionModels() {
 async function ensureModel(
   onProgress?: (progress: TranscriptionProgress) => void,
   session?: CaptionGenerationSessionContext,
+  verifiedIdentity?: ModelFileIdentity,
 ): Promise<File> {
   pruneObsoleteModelFiles();
   if (activeModelDownload) return activeModelDownload;
-  const operation = downloadModel(onProgress, session);
+  const operation = downloadModel(onProgress, session, verifiedIdentity);
   activeModelDownload = operation;
   try {
     return await operation;
@@ -178,12 +179,15 @@ async function ensureModel(
 async function downloadModel(
   onProgress?: (progress: TranscriptionProgress) => void,
   session?: CaptionGenerationSessionContext,
+  verifiedIdentity?: ModelFileIdentity,
 ): Promise<File> {
   const model = CAPTION_MODEL;
   const modelDirectory = new Directory(Paths.document, 'models');
   modelDirectory.create({ idempotent: true, intermediates: true });
   const modelFile = new File(modelDirectory, model.fileName);
 
+  if (modelFile.exists && modelFile.size === model.downloadBytes
+    && sameModelFileIdentity(verifiedIdentity, modelFileIdentity(modelFile))) return modelFile;
   if (await verifyModelFile(modelFile, model.downloadBytes, model.sha256)) {
     return modelFile;
   }
@@ -235,10 +239,13 @@ async function downloadModel(
 async function ensureVadModel(
   onProgress?: (progress: TranscriptionProgress) => void,
   session?: CaptionGenerationSessionContext,
+  verifiedIdentity?: ModelFileIdentity,
 ): Promise<File> {
   const modelDirectory = new Directory(Paths.document, 'models');
   modelDirectory.create({ idempotent: true, intermediates: true });
   const modelFile = new File(modelDirectory, VAD_MODEL.fileName);
+  if (modelFile.exists && modelFile.size === VAD_MODEL.downloadBytes
+    && sameModelFileIdentity(verifiedIdentity, modelFileIdentity(modelFile))) return modelFile;
   if (await verifyModelFile(modelFile, VAD_MODEL.downloadBytes, VAD_MODEL.sha256)) return modelFile;
   const reservation = await resumableModelDownloadReservation(modelFile, VAD_MODEL, (uri) => CaptionMedia.sha256(uri));
   await requireFreeSpace(
@@ -288,6 +295,10 @@ async function verifyModelFile(file: File, expectedBytes: number, expectedSha256
   const marker = new File(file.parentDirectory, `${file.name}.sha256`);
   const identity = modelFileIdentity(file);
   const actualSha256 = await CaptionMedia.sha256(file.uri);
+  if (!sameModelFileIdentity(identity, modelFileIdentity(file))) {
+    if (marker.exists) marker.delete();
+    return false;
+  }
   if (marker.exists && modelVerificationMarkerMatches(await marker.text(), identity, expectedSha256, actualSha256)) return true;
   if (actualSha256 !== expectedSha256) {
     if (marker.exists) marker.delete();
@@ -328,13 +339,15 @@ function modelFileIdentity(file: File): ModelFileIdentity {
 async function modelReplacementReservation(
   file: File,
   descriptor: { downloadUrl: string; downloadBytes: number; sha256: string },
-) {
+): Promise<{ bytes: number; verifiedIdentity?: ModelFileIdentity }> {
   const { downloadBytes: expectedBytes, sha256: expectedSha256 } = descriptor;
   if (!file.exists || file.size !== expectedBytes) {
-    return resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri));
+    return { bytes: await resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri)) };
   }
-  if (await verifyModelFile(file, expectedBytes, expectedSha256)) return 0;
-  return resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri));
+  if (await verifyModelFile(file, expectedBytes, expectedSha256)) {
+    return { bytes: 0, verifiedIdentity: modelFileIdentity(file) };
+  }
+  return { bytes: await resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri)) };
 }
 
 export async function transcribeVideoLocally(options: {
@@ -353,48 +366,27 @@ export async function transcribeVideoLocally(options: {
   audioDirectory.create({ idempotent: true, intermediates: true });
   const audioFile = new File(audioDirectory, `${projectId}.wav`);
   const model = CAPTION_MODEL;
-  const modelFile = new File(new Directory(Paths.document, 'models'), model.fileName);
-  const vadModelFile = new File(new Directory(Paths.document, 'models'), VAD_MODEL.fileName);
+  const storedModelFile = new File(new Directory(Paths.document, 'models'), model.fileName);
+  const storedVadModelFile = new File(new Directory(Paths.document, 'models'), VAD_MODEL.fileName);
   const estimatedWavBytes = Math.ceil(Math.max(0, options.durationMs) / 1000) * 32_000 + 44;
-  const [modelBytes, vadModelBytes] = await Promise.all([
-    modelReplacementReservation(modelFile, model),
-    modelReplacementReservation(vadModelFile, VAD_MODEL),
+  activeModelUsers += 1;
+  try {
+  const [modelReservation, vadReservation] = await Promise.all([
+    modelReplacementReservation(storedModelFile, model),
+    modelReplacementReservation(storedVadModelFile, VAD_MODEL),
   ]);
   await requireFreeSpace(
-    estimatedWavBytes + modelBytes + vadModelBytes + 128 * 1024 * 1024,
+    estimatedWavBytes + modelReservation.bytes + vadReservation.bytes + 128 * 1024 * 1024,
     'generate captions',
   );
   session?.throwIfCancelled();
 
-  activeModelUsers += 1;
-  try {
-
   onProgress?.({
     stage: 'preparing-audio',
-    progress: 0,
+    progress: null,
     detail: 'Extracting audio on this phone',
   });
-
-  let audioPreparationFinished = false;
-  const preparationCueTimers = PREPARING_AUDIO_CUES.map((cue) =>
-    setTimeout(() => {
-      if (audioPreparationFinished) return;
-      onProgress?.({
-        stage: 'preparing-audio',
-        progress: cue.progress,
-        detail: cue.progress === 0.05
-          ? 'Extracting audio on this phone'
-          : 'Still preparing audio — longer videos can take a few minutes',
-      });
-    }, cue.afterMs),
-  );
-
-  try {
-    await CaptionMedia.extractAudioToWav(videoUri, audioFile.uri);
-  } finally {
-    audioPreparationFinished = true;
-    preparationCueTimers.forEach(clearTimeout);
-  }
+  await CaptionMedia.extractAudioToWav(videoUri, audioFile.uri);
   session?.throwIfCancelled();
   onProgress?.({
     stage: 'preparing-audio',
@@ -403,8 +395,8 @@ export async function transcribeVideoLocally(options: {
   });
 
   const [modelFile, vadModelFile] = await Promise.all([
-    ensureModel(onProgress, session),
-    ensureVadModel(onProgress, session),
+    ensureModel(onProgress, session, modelReservation.verifiedIdentity),
+    ensureVadModel(onProgress, session, vadReservation.verifiedIdentity),
   ]);
   session?.throwIfCancelled();
   onProgress?.({

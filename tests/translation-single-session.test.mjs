@@ -5,6 +5,7 @@ import { transform } from 'esbuild';
 import test from 'node:test';
 import { encodeModelVerificationMarker, modelVerificationMarkerIdentityMatches } from '../src/lib/model-verification.ts';
 import * as modelArtifacts from '../src/lib/model-artifact-lifecycle.ts';
+import { translationModelConsentMessage } from '../src/lib/translation-model-consent.ts';
 
 async function serviceFixture(failSecond = false) {
   const source = await readFile(new URL('../src/services/caption-translation.ts', import.meta.url), 'utf8');
@@ -78,6 +79,7 @@ async function serviceFixture(failSecond = false) {
     '@/lib/model-verification': { encodeModelVerificationMarker, modelVerificationMarkerIdentityMatches },
     '@/lib/model-artifact-lifecycle': modelArtifacts,
     '@/lib/translation-batching': { createTranslationBatches: (captions) => captions.map((caption) => [caption]) },
+    '@/lib/translation-model-consent': { translationModelConsentMessage },
     '@/lib/contextual-translation-batching': { splitBatchesByContext: (batches) => batches },
     '@/lib/translation-input': { validateTranslationUnits: (captions) => captions },
     '@/lib/translation-invariants': { acceptTranslationBoundary: (expected, actual) => ({

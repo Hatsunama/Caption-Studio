@@ -31,6 +31,7 @@ declare class CaptionMediaModule extends NativeModule<Record<never, never>> {
   ): Promise<VideoThumbnailResult>;
   requestLegacyMediaWritePermission(): Promise<boolean>;
   exportTimelineVideo(outputPath: string, renderPlan: Record<string, unknown>): Promise<TimelineVideoExportResult>;
+  sharePublishedVideo(mediaUri: string): Promise<void>;
   getTimelineVideoExportProgress(): Promise<TimelineVideoExportProgress>;
   cancelTimelineVideoExport(): Promise<void>;
 }
