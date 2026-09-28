@@ -6,6 +6,8 @@ import {
   TRANSITION_PRELOAD_LEAD_MS,
   videoTransitionPreloadWindow,
   videoTransitionPreviewFrameAt,
+  videoTransitionPlaybackTargets,
+  videoTransitionCompositeState,
 } from '../src/lib/video-transition-preview.ts';
 import { buildClipTimeline } from '../src/lib/video-timeline.ts';
 import { readFileSync } from 'node:fs';
@@ -110,6 +112,10 @@ test('full-source clips advance visible tail and head without frozen frames', ()
   assert.equal(videoTransitionPreviewFrameAt(windows, 4_000).outgoingSourceTimeMs, 3_850);
   assert.equal(videoTransitionPreviewFrameAt(windows, 4_299).outgoingSourceTimeMs, 4_000);
   assert.equal(videoTransitionPreviewFrameAt(windows, 4_000).incomingSourceTimeMs, 150);
+  assert.deepEqual(videoTransitionPlaybackTargets(videoTransitionPreviewFrameAt(windows, 4_000), 0, 1, 1), [
+    { slot: 0, sourceTimeMs: 3_850, playbackRate: 0.5, muted: true },
+    { slot: 1, sourceTimeMs: 150, playbackRate: 0.5, muted: false },
+  ]);
 });
 
 test('preview distinguishes exact composition and cover effects without diagram substitutes', () => {
@@ -181,8 +187,46 @@ test('composite previews never animate an ExoPlayer shutter or an unrendered sur
   assert.match(previewOverlaySource, /useExoShutter=\{false\}/);
   assert.doesNotMatch(previewOverlaySource, /overflow: 'hidden', backgroundColor: props\.backgroundColor/);
   assert.doesNotMatch(previewOverlaySource, /LOADING TRANSITION PREVIEW/);
-  assert.match(previewOverlaySource, /preparedClipId === props\.frame\.outgoing\?\.clipId/);
-  assert.match(previewOverlaySource, /preparedClipId === props\.frame\.incoming\?\.clipId/);
+  assert.match(previewOverlaySource, /videoTransitionCompositeState\(frame, props\.slots, failedPreviewKey\)/);
   assert.match(previewOverlaySource, /driftMs > 160/);
   assert.doesNotMatch(previewOverlaySource, /useVideoPlayer/);
+});
+
+test('both playback targets follow native source clocks through hidden handles', () => {
+  const windows = buildVideoTransitionPreviewWindows(
+    buildClipTimeline([
+      clip('out', 'out-source', { transitionAfter: { type: 'crossfade', durationMs: 1_000 } }),
+      clip('in', 'in-source'),
+    ]),
+    [source('out-source'), source('in-source')],
+  );
+  const frame = videoTransitionPreviewFrameAt(windows, 4_250);
+  assert.deepEqual(videoTransitionPlaybackTargets(frame, 0, 1, 0), [
+    { slot: 0, sourceTimeMs: 5_250, playbackRate: 1, muted: false },
+    { slot: 1, sourceTimeMs: 1_250, playbackRate: 1, muted: true },
+  ]);
+  assert.deepEqual(videoTransitionPlaybackTargets(frame, 1, 0, 0), [
+    { slot: 1, sourceTimeMs: 5_250, playbackRate: 1, muted: true },
+    { slot: 0, sourceTimeMs: 1_250, playbackRate: 1, muted: false },
+  ]);
+});
+
+test('a missing first frame or failed composite has an explicit unavailable state', () => {
+  const windows = buildVideoTransitionPreviewWindows(
+    buildClipTimeline([
+      clip('out', 'out-source', { transitionAfter: { type: 'crossfade', durationMs: 600 } }),
+      clip('in', 'in-source'),
+    ]),
+    [source('out-source'), source('in-source')],
+  );
+  const frame = videoTransitionPreviewFrameAt(windows, 4_000);
+  const slots = [
+    { preparedClipId: 'out', firstFrameReady: true, readiness: 'ready' },
+    { preparedClipId: 'in', firstFrameReady: false, readiness: 'ready' },
+  ];
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'waiting');
+  assert.equal(videoTransitionCompositeState(frame, slots, frame.key).status, 'unavailable');
+  assert.equal(videoTransitionCompositeState(frame, slots.map((slot) => ({ ...slot, firstFrameReady: true }))).status, 'ready');
+  assert.match(previewOverlaySource, /compositeState\?\.status !== 'ready'/);
+  assert.match(previewOverlaySource, /backgroundColor: props\.backgroundColor/);
 });

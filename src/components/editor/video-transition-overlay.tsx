@@ -1,9 +1,11 @@
 import { VideoView, type VideoPlayer } from 'expo-video';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import {
   buildVideoTransitionPreviewWindows,
+  videoTransitionCompositeState,
+  videoTransitionPlaybackTargets,
   videoTransitionPreviewFrameAt,
   type VideoTransitionPreviewFrame,
 } from '@/lib/video-transition-preview';
@@ -50,18 +52,37 @@ export function VideoTransitionOverlay(props: Props) {
     incoming: sourceFrame.incoming?.clipId === props.currentClipId
       ? { ...sourceFrame.incoming, transform: props.currentTransform } : sourceFrame.incoming,
   } : sourceFrame;
+  const compositeState = frame?.mode === 'composite'
+    ? videoTransitionCompositeState(frame, props.slots, failedPreviewKey) : undefined;
+  const onUnavailable = useCallback(() => setFailedPreviewKey(frame?.key), [frame?.key]);
+  useEffect(() => {
+    if (!props.admitted || !props.visible || !props.transportReady || compositeState?.status !== 'waiting') return;
+    const timeout = setTimeout(onUnavailable, 1_500);
+    return () => clearTimeout(timeout);
+  }, [compositeState?.status, frame?.key, onUnavailable, props.admitted, props.transportReady, props.visible]);
   if (!props.admitted) return null;
-  const transitionReady = props.visible && props.transportReady && frame?.key !== failedPreviewKey;
+  const transitionReady = props.visible && props.transportReady;
   return (
     <View pointerEvents="none" style={fill}>
       <TimelineVideoPair {...props} />
       {!props.visible ? <View style={[fill, { backgroundColor: props.backgroundColor }]} /> : null}
       {transitionReady && frame?.mode === 'cover'
         ? <CoverTransition frame={frame} width={props.width} height={props.height} /> : null}
-      {transitionReady && frame?.unavailableReason
+      {transitionReady && frame?.mode === 'cover' && frame.unavailableReason
         ? <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame.unavailableReason} /> : null}
-      {transitionReady && frame?.mode === 'composite' && frame.outgoing && frame.incoming && !frame.unavailableReason
-        ? <CompositeVideoTransitionOverlay {...props} frame={frame} onUnavailable={() => setFailedPreviewKey(frame.key)} /> : null}
+      {transitionReady && compositeState
+        ? <View style={[fill, { backgroundColor: props.backgroundColor }]} /> : null}
+      {transitionReady && compositeState?.status !== 'ready' && compositeState
+        ? <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame?.unavailableReason ?? (compositeState.status === 'waiting' ? 'Waiting for video frames.' : 'A transition frame could not be rendered.')} /> : null}
+      {transitionReady && frame?.mode === 'composite' && compositeState?.status === 'ready'
+        ? <SynchronizedComposite
+            key={`${frame.key}:${props.slots[compositeState.outgoingSlot].prepareToken}:${props.slots[compositeState.incomingSlot].prepareToken}`}
+            {...props}
+            frame={frame}
+            outgoingSlot={compositeState.outgoingSlot as 0 | 1}
+            incomingSlot={compositeState.incomingSlot as 0 | 1}
+            onUnavailable={onUnavailable}
+          /> : null}
     </View>
   );
 }
@@ -87,33 +108,6 @@ function TimelineVideoPair(props: Props) {
   );
 }
 
-function CompositeVideoTransitionOverlay(props: Props & {
-  frame: VideoTransitionPreviewFrame;
-  onUnavailable: () => void;
-}) {
-  const outgoingSlot = props.slots.findIndex((slot) => slot.preparedClipId === props.frame.outgoing?.clipId);
-  const incomingSlot = props.slots.findIndex((slot) => slot.preparedClipId === props.frame.incoming?.clipId);
-  if (
-    outgoingSlot < 0
-    || incomingSlot < 0
-    || outgoingSlot === incomingSlot
-    || !props.slots[outgoingSlot].firstFrameReady
-    || !props.slots[incomingSlot].firstFrameReady
-    || props.slots[outgoingSlot].readiness !== 'ready'
-    || props.slots[incomingSlot].readiness !== 'ready'
-  ) {
-    return null;
-  }
-  return (
-    <SynchronizedComposite
-      key={`${props.frame.key}:${props.slots[outgoingSlot].prepareToken}:${props.slots[incomingSlot].prepareToken}`}
-      {...props}
-      outgoingSlot={outgoingSlot as 0 | 1}
-      incomingSlot={incomingSlot as 0 | 1}
-    />
-  );
-}
-
 function SynchronizedComposite(props: Props & {
   frame: VideoTransitionPreviewFrame;
   outgoingSlot: 0 | 1;
@@ -122,7 +116,7 @@ function SynchronizedComposite(props: Props & {
 }) {
   const [rendered, setRendered] = useState({ outgoing: false, incoming: false });
   const ready = rendered.outgoing && rendered.incoming;
-  const { activeSlot, frame, isPlaying, onUnavailable, outgoingSlot, transportReady } = props;
+  const { activeSlot, frame, isPlaying, onUnavailable, outgoingSlot, incomingSlot, transportReady } = props;
   const outgoingPlayer = props.players[props.outgoingSlot];
   const incomingPlayer = props.players[props.incomingSlot];
   const latestPlayersRef = useRef(props.players);
@@ -149,25 +143,22 @@ function SynchronizedComposite(props: Props & {
   }, []);
 
   useEffect(() => {
-    // The controller owns the active player's clock and audio. Only the
-      // decorative standby follows the transition's source-time mapping.
     try {
-      const standbyIsOutgoing = outgoingSlot !== activeSlot;
-      const standby = standbyIsOutgoing ? outgoingPlayer : incomingPlayer;
-      synchronizeTransitionPlayer(
-        standby,
-        standbyIsOutgoing ? frame.outgoingSourceTimeMs : frame.incomingSourceTimeMs,
-        standbyIsOutgoing ? frame.outgoing?.playbackRate : frame.incoming?.playbackRate,
-        isPlaying && transportReady,
-      );
+      videoTransitionPlaybackTargets(frame, outgoingSlot, incomingSlot, activeSlot).forEach((target) => {
+        synchronizeTransitionPlayer(
+          props.players[target.slot], target.sourceTimeMs, target.playbackRate,
+          isPlaying && transportReady, target.muted,
+        );
+      });
     } catch {
       onUnavailable();
     }
-  }, [activeSlot, frame, incomingPlayer, isPlaying, onUnavailable, outgoingPlayer, outgoingSlot, transportReady]);
+  }, [activeSlot, frame, incomingSlot, isPlaying, onUnavailable, outgoingSlot, props.players, transportReady]);
 
   return (
-    <View pointerEvents="none" style={[fill, { overflow: 'hidden', opacity: ready ? 1 : 0 }]}>
-      <View style={fill}>
+    <View pointerEvents="none" style={[fill, { overflow: 'hidden' }]}>
+      {!ready ? <View style={[fill, { backgroundColor: props.backgroundColor }]} /> : null}
+      <View style={[fill, { opacity: ready ? 1 : 0 }]}>
         <CompositeTransition
           frame={props.frame}
           outgoingPlayer={outgoingPlayer}
@@ -184,6 +175,7 @@ function SynchronizedComposite(props: Props & {
           }}
         />
       </View>
+      {!ready ? <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail="Waiting for video frames." /> : null}
     </View>
   );
 }
@@ -193,9 +185,10 @@ function synchronizeTransitionPlayer(
   targetMs: number | undefined,
   playbackRate: number | undefined,
   playing: boolean,
+  muted: boolean,
 ) {
   if (targetMs == null || playbackRate == null) return;
-  player.muted = true;
+  if (muted) player.muted = true;
   const targetSeconds = targetMs / 1_000;
   player.playbackRate = playbackRate;
   const driftMs = Math.abs(player.currentTime - targetSeconds) * 1_000;

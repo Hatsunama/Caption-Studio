@@ -183,6 +183,46 @@ export function videoTransitionPreloadWindow(
   ));
 }
 
+export function videoTransitionPlaybackTargets(
+  frame: VideoTransitionPreviewFrame,
+  outgoingSlot: 0 | 1,
+  incomingSlot: 0 | 1,
+  activeSlot: 0 | 1,
+) {
+  if (!frame.outgoing || !frame.incoming
+    || frame.outgoingSourceTimeMs == null || frame.incomingSourceTimeMs == null) return [];
+  return [
+    {
+      slot: outgoingSlot,
+      sourceTimeMs: frame.outgoingSourceTimeMs,
+      playbackRate: frame.outgoing.playbackRate,
+      muted: outgoingSlot !== activeSlot,
+    },
+    {
+      slot: incomingSlot,
+      sourceTimeMs: frame.incomingSourceTimeMs,
+      playbackRate: frame.incoming.playbackRate,
+      muted: incomingSlot !== activeSlot,
+    },
+  ];
+}
+
+export function videoTransitionCompositeState(
+  frame: VideoTransitionPreviewFrame,
+  slots: readonly { preparedClipId?: string; firstFrameReady: boolean; readiness: string }[],
+  failedPreviewKey?: string,
+) {
+  const outgoingSlot = slots.findIndex((slot) => slot.preparedClipId === frame.outgoing?.clipId);
+  const incomingSlot = slots.findIndex((slot) => slot.preparedClipId === frame.incoming?.clipId);
+  const status = frame.unavailableReason || frame.key === failedPreviewKey || !frame.outgoing || !frame.incoming
+    ? 'unavailable'
+    : outgoingSlot < 0 || incomingSlot < 0 || outgoingSlot === incomingSlot
+      || !slots[outgoingSlot].firstFrameReady || !slots[incomingSlot].firstFrameReady
+      || slots[outgoingSlot].readiness !== 'ready' || slots[incomingSlot].readiness !== 'ready'
+      ? 'waiting' : 'ready';
+  return { status, outgoingSlot, incomingSlot };
+}
+
 export function transitionPreviewKind(type: VideoTransitionType) {
   return videoTransitionPreviewKind(type);
 }
