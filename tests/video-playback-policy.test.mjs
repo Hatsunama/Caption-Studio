@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { canContinuePreparedTimelineClip, canContinueTimelineClip, shouldApplyTimelineSeek } from '../src/lib/video-playback-policy.ts';
+import { canContinuePreparedTimelineClip, canContinueTimelineClip, shouldApplyTimelineSeek, shouldJoinTimelinePreparation } from '../src/lib/video-playback-policy.ts';
 import {
   TIMELINE_PLAYER_BUFFER_OPTIONS,
   configureTimelinePlayer,
@@ -55,6 +55,22 @@ test('explicit seeks compare with the player position rather than a stale reques
   assert.equal(shouldApplyTimelineSeek(15, 10), true);
   assert.equal(shouldApplyTimelineSeek(10, 10), false);
   assert.equal(shouldApplyTimelineSeek(Number.NaN, 10), true);
+});
+
+test('activation joins only the in-flight preparation for the same clip, source, and frame', () => {
+  const controller = new AbortController();
+  const runtime = {
+    preparedClipId: 'next', playbackUri: 'file:///next.mp4',
+    preparingTimelineMs: 2_000, readiness: 'preparing', preparation: controller,
+    preparationTask: Promise.resolve(1),
+  };
+  assert.equal(shouldJoinTimelinePreparation(runtime, 'next', 'file:///next.mp4', 2_000, false), true);
+  assert.equal(shouldJoinTimelinePreparation(runtime, 'other', 'file:///next.mp4', 2_000, false), false);
+  assert.equal(shouldJoinTimelinePreparation(runtime, 'next', 'file:///changed.mp4', 2_000, false), false);
+  assert.equal(shouldJoinTimelinePreparation(runtime, 'next', 'file:///next.mp4', 2_500, false), false);
+  assert.equal(shouldJoinTimelinePreparation(runtime, 'next', 'file:///next.mp4', 2_000, true), false);
+  controller.abort();
+  assert.equal(shouldJoinTimelinePreparation(runtime, 'next', 'file:///next.mp4', 2_000, false), false);
 });
 
 test('both persistent timeline players receive the same bounded lifecycle settings', () => {

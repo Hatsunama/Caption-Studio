@@ -12,7 +12,7 @@ import {
   timelineTimeAt,
   type ClipTimelineEntry,
 } from '@/lib/video-timeline';
-import { canContinuePreparedTimelineClip, canContinueTimelineClip, CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS, shouldApplyTimelineSeek } from '@/lib/video-playback-policy';
+import { canContinuePreparedTimelineClip, canContinueTimelineClip, CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS, shouldApplyTimelineSeek, shouldJoinTimelinePreparation } from '@/lib/video-playback-policy';
 import { configureTimelinePlayer } from '@/services/video-player-runtime';
 import type { CaptionProject, ProjectVideoSource } from '@/types/project';
 
@@ -33,6 +33,8 @@ export type TimelineVideoSlot = {
 type SlotRuntime = TimelineVideoSlot & {
   prepareToken: number;
   preparation?: AbortController;
+  preparationTask?: Promise<SlotIndex>;
+  preparingTimelineMs?: number;
   preparationError?: Error;
   frameWaiters: Set<() => void>;
 };
@@ -320,7 +322,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     signal.addEventListener('abort', abort, { once: true });
   });
 
-  const prepareSlot = async (
+  const prepareSlotOperation = async (
     slot: SlotIndex,
     entry: ClipTimelineEntry,
     timelineMs: number,
@@ -342,6 +344,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.sourceId = source.id;
     runtime.playbackUri = uri;
     runtime.preparedClipId = entry.clip.id;
+    runtime.preparingTimelineMs = timelineMs;
     runtime.firstFrameReady = false;
     runtime.readiness = 'preparing';
     publishSlots();
@@ -392,6 +395,26 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       preparation.abort();
       if (runtime.preparation === preparation) runtime.preparation = undefined;
     }
+  };
+
+  const prepareSlot = (
+    slot: SlotIndex,
+    entry: ClipTimelineEntry,
+    timelineMs: number,
+    forceReload = false,
+  ): Promise<SlotIndex> => {
+    const runtime = slotRuntimeRef.current[slot];
+    const uri = videoPlaybackUri(sourceForEntry(entry));
+    if (shouldJoinTimelinePreparation(runtime, entry.clip.id, uri, timelineMs, forceReload)) {
+      return runtime.preparationTask!;
+    }
+    const task = prepareSlotOperation(slot, entry, timelineMs, forceReload);
+    runtime.preparationTask = task;
+    const clearTask = () => {
+      if (runtime.preparationTask === task) runtime.preparationTask = undefined;
+    };
+    void task.then(clearTask, clearTask);
+    return task;
   };
 
   const applyClipToSlot = (slot: SlotIndex, entry: ClipTimelineEntry, timelineMs: number) => {
