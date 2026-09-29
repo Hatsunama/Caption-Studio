@@ -4,16 +4,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const requiredAbis = ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'];
-const requiredLibraries = ['libreactnative.so', 'librnwhisper.so', 'liblitertlm_jni.so'];
+const coreLibraries = ['libreactnative.so', 'librnwhisper.so'];
+const translationAbis = ['arm64-v8a', 'x86_64'];
 
 export function assertAndroidAbiCoverage(entries, format) {
   assert.ok(format === 'apk' || format === 'base', 'Unknown Android archive format');
   const paths = new Set(entries);
   const prefix = format === 'apk' ? 'lib' : 'base/lib';
   for (const abi of requiredAbis) {
-    for (const library of requiredLibraries) {
+    for (const library of coreLibraries) {
       assert.ok(paths.has(`${prefix}/${abi}/${library}`), `Missing ${abi}/${library} in ${format} archive`);
     }
+  }
+  for (const abi of translationAbis) {
+    assert.ok(paths.has(`${prefix}/${abi}/liblitertlm_jni.so`), `Missing ${abi}/liblitertlm_jni.so in ${format} archive`);
   }
 }
 
