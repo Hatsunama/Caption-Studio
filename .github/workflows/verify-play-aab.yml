@@ -140,6 +140,7 @@ jobs:
           name: caption-studio-play-aab-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             dist/caption-studio-play.aab
+            dist/caption-studio-play-mapping.txt
             dist/play-aab-provenance.json
           if-no-files-found: error
           retention-days: 14

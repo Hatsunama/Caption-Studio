@@ -11,6 +11,14 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const contract = JSON.parse(await readFile(path.join(root, 'config/product-contract.json'), 'utf8'));
 const app = JSON.parse(await readFile(path.join(root, 'app.json'), 'utf8'));
 const expectedPackage = 'com.xmilo_at_your_side.caption_studio';
+const mappingEntry = 'BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map';
+
+export function assertPlayBundleMapping(entries, generated, embedded) {
+  assert.ok(entries.includes(mappingEntry), 'Play AAB is missing its R8 mapping');
+  assert.ok(generated.length > 0, 'Generated R8 mapping is missing or empty');
+  assert.deepEqual(embedded, generated, 'Play AAB R8 mapping differs from the generated mapping');
+  return createHash('sha256').update(generated).digest('hex');
+}
 
 export function checkInputs(version, rawVersionCode, config = app) {
   assert.equal(contract.android.sourcePackage, expectedPackage);
@@ -158,6 +166,13 @@ async function verify(sourceRoot, approvalPath, bundletool) {
   assert.ok((await stat(bundle)).size > 0, 'AAB is empty');
   assert.ok((await stat(bundletool)).size > 0, 'bundletool is missing');
   command('java', ['-jar', bundletool, 'validate', `--bundle=${bundle}`]);
+  const mappingPath = path.join(sourceRoot, 'android/app/build/outputs/mapping/release/mapping.txt');
+  const generatedMapping = await readFile(mappingPath);
+  const entries = command('unzip', ['-Z', '-1', bundle]).split(/\r?\n/).filter(Boolean);
+  const embeddedMapping = entries.includes(mappingEntry)
+    ? execFileSync('unzip', ['-p', bundle, mappingEntry], { maxBuffer: 128 * 1024 * 1024 })
+    : Buffer.alloc(0);
+  const mappingSha256 = assertPlayBundleMapping(entries, generatedMapping, embeddedMapping);
 
   const attribute = (name) => command('java', [
     '-jar', bundletool, 'dump', 'manifest', `--bundle=${bundle}`, `--xpath=/manifest/@${name}`,
@@ -175,6 +190,9 @@ async function verify(sourceRoot, approvalPath, bundletool) {
   await mkdir(dist, { recursive: true });
   const output = path.join(dist, 'caption-studio-play.aab');
   await copyFile(bundle, output);
+  const mappingOutput = path.join(dist, 'caption-studio-play-mapping.txt');
+  await copyFile(mappingPath, mappingOutput);
+  assert.equal(await sha256(mappingOutput), mappingSha256, 'Retained R8 mapping differs from the verified bundle');
   const sourceDigest = await sha256(bundle);
   const outputDigest = await sha256(output);
   assert.equal(outputDigest, sourceDigest, 'Copied AAB differs from verified build');
@@ -192,6 +210,7 @@ async function verify(sourceRoot, approvalPath, bundletool) {
     version,
     versionCode,
     signingCertificateSha256,
+    mapping: { name: path.basename(mappingOutput), sha256: mappingSha256 },
     aab: { name: path.basename(output), sha256: outputDigest },
   };
   await writeFile(path.join(dist, 'play-aab-provenance.json'), `${JSON.stringify(provenance, null, 2)}\n`, { flag: 'wx' });
