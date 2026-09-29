@@ -33,6 +33,10 @@ class CaptionTranslationModule : Module() {
       ),
     )
 
+    AsyncFunction("isLocalTranslationSupported") {
+      AndroidTranslationEnvironment(context.applicationContext).supportsLocalTranslation()
+    }
+
     AsyncFunction("translateNaturalCaptions") { modelFile: String, request: Map<String, Any?>, promise: Promise ->
       val activeTranslator = synchronized(lifecycleLock) {
         if (destroyed) null

@@ -3,6 +3,7 @@ package app.captionstudio.translation;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.os.Build;
+import android.os.Process;
 
 import java.io.File;
 import java.util.Objects;
@@ -32,26 +33,24 @@ final class AndroidTranslationEnvironment implements TranslationEnvironment {
 
   @Override
   public void verifyDeviceCapacity(File model) throws NaturalCaptionTranslator.TranslationFailure {
-    boolean supports64Bit = Build.SUPPORTED_64_BIT_ABIS.length > 0;
-    if (!supports64Bit) {
-      throw unsupported("This device cannot run the local natural-language model.");
+    if (!Process.is64Bit()) throw unsupported("Local caption translation requires a 64-bit app process.");
+    if (!supportsLocalTranslation()) {
+      throw unsupported("Local caption translation requires a 64-bit Android device with at least 4 GB of RAM.");
     }
+  }
+
+  boolean supportsLocalTranslation() {
     ActivityManager activityManager =
         (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-    if (activityManager == null) {
-      throw unsupported("Caption Studio could not verify that this device can load the local model.");
-    }
+    if (activityManager == null) return false;
     ActivityManager.MemoryInfo memoryInfo = new ActivityManager.MemoryInfo();
     activityManager.getMemoryInfo(memoryInfo);
-    if (!hasHardwareCapacity(
-        supports64Bit,
+    return hasHardwareCapacity(
+        Build.SUPPORTED_64_BIT_ABIS.length > 0,
         activityManager.isLowRamDevice(),
-        memoryInfo.totalMem
-    )) {
-      throw unsupported(
-          "Local caption translation requires a 64-bit Android device with at least 4 GB of RAM."
-      );
-    }
+        memoryInfo.totalMem,
+        Process.is64Bit()
+    );
   }
 
   @Override
@@ -76,12 +75,14 @@ final class AndroidTranslationEnvironment implements TranslationEnvironment {
   static boolean hasHardwareCapacity(
       boolean supports64Bit,
       boolean lowRamDevice,
-      long totalMemoryBytes
+      long totalMemoryBytes,
+      boolean process64Bit
   ) {
     // Do not reject on MemoryInfo.lowMemory or availMem. Both are transient,
     // and the LiteRT-LM model is memory-mapped rather than copied wholesale
     // into resident RAM. The runtime is the authoritative allocation test.
     return supports64Bit
+        && process64Bit
         && !lowRamDevice
         && totalMemoryBytes >= MINIMUM_TOTAL_MEMORY_BYTES;
   }

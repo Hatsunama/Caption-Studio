@@ -12,6 +12,7 @@ declare class CaptionTranslationModule extends NativeModule<{
   onNaturalCaptionBatchAccepted: (event: NaturalCaptionTranslationAcceptedBatch) => void;
 }> {
   readonly limits: NaturalCaptionTranslationLimits;
+  isLocalTranslationSupported(): Promise<boolean>;
   translateNaturalCaptions(
     modelFile: string,
     request: NaturalCaptionTranslationRequest,

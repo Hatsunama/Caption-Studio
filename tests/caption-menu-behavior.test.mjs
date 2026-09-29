@@ -9,6 +9,7 @@ import { applyStylePatch, resolveCaptionStyle } from '../src/lib/style-resolver.
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 import { CaptionGenerationCancelledError } from '../src/services/caption-generation-session.ts';
 import { createEditorSession } from '../src/services/editor-session.ts';
+import { canOpenDualCaptions } from '../src/lib/translation-device-capability.ts';
 
 // Execute the workspace's real callbacks and menu JSX with only native UI,
 // persistence, and generation replaced. This catches selection guards and wiring.
@@ -58,6 +59,7 @@ function workspace(overrides = {}) {
     selectedTextLayer: undefined,
     translationTrackSelected: false,
     selectedTranslationTrack: undefined,
+    localTranslationSupported: true,
     animationScope: 'all',
     editorSelectionState,
     shouldOpenEditorTool,
@@ -145,6 +147,7 @@ function renderMenu(w, selectedCaption) {
     PersistedHorizontalScroll: 'scroll', Action: 'action', chrome: { accent: '#FFFFFF' },
     beginEditCaption: w.callback('beginEditCaption'),
     openDualCaptionEditor: () => {},
+    canOpenDualCaptions,
     confirmDeleteCaption: () => {},
     setFontBrowserOpen: () => {},
     queueCaptionStyleChange: w.callback('queueCaptionStyleChange'),
@@ -154,6 +157,12 @@ function renderMenu(w, selectedCaption) {
     finishHistoryInteraction: () => w.calls.persisted.push(w.context.editorSession.current()),
   }).children.filter(Boolean).map((child) => child.props);
 }
+
+test('unsupported devices cannot open dual subtitles from the caption menu', () => {
+  const w = workspace({ localTranslationSupported: false });
+  const actions = renderMenu(w, undefined);
+  assert.equal(actions.find(({ label }) => label === 'Dual subtitles').disabled, true);
+});
 
 for (const selected of [false, true]) {
   test(`caption menu exposes editing and bulk actions with selected=${selected}, without Split/Join`, async () => {

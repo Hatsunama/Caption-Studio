@@ -132,6 +132,10 @@ export type CaptionTranslationResourceLease = {
 type CaptionTranslationResourceOwner = () => CaptionTranslationResourceLease;
 let translationResourceOwner: CaptionTranslationResourceOwner | undefined;
 
+export function isLocalCaptionTranslationSupported(): Promise<boolean> {
+  return CaptionTranslation.isLocalTranslationSupported();
+}
+
 export function registerCaptionTranslationResources(owner: CaptionTranslationResourceOwner) {
   translationResourceOwner = owner;
   return () => {

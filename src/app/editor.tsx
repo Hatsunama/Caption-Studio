@@ -31,6 +31,7 @@ import { ensureProjectVideoAccess } from '@/services/project-media-access';
 import { PersistedHorizontalScroll, PersistedHorizontalScrollScope } from '@/components/editor/persisted-horizontal-scroll';
 import { assertDualCaptionEditsStillCurrent } from '@/lib/dual-caption-save-merge';
 import { needsTranslationModelDownloadConsent } from '@/lib/translation-model-availability';
+import { canOpenDualCaptions } from '@/lib/translation-device-capability';
 import { synchronizeProjectDualCaptionEdits } from '@/services/project-caption-translation';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
@@ -145,6 +146,7 @@ import { runCaptionCancellationRequest } from '@/components/editor/caption-gener
 import {
   NATURAL_TRANSLATION_MODEL_LABEL,
   naturalTranslationDownloadConsentMessage,
+  isLocalCaptionTranslationSupported,
   listDownloadedNaturalTranslationModel,
   registerCaptionTranslationResources,
   type CaptionTranslationProgress,
@@ -292,7 +294,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setScriptEditorOpen(false);
   });
   const [dualCaptionEditorOpen, setDualCaptionEditorOpen] = useState(false);
+  const [localTranslationSupported, setLocalTranslationSupported] = useState<boolean>();
   const [dualLanguagePickerOpen, setDualLanguagePickerOpen] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void isLocalCaptionTranslationSupported()
+      .then((supported) => { if (active) setLocalTranslationSupported(supported); })
+      .catch(() => { if (active) setLocalTranslationSupported(false); });
+    return () => { active = false; };
+  }, []);
   const [selectedTranslationTrackId, setSelectedTranslationTrackId] = useState<string>();
   const [activeTool, setActiveTool] = useState<EditorTool>('captions');
   const activeToolRef = useRef<EditorTool>('captions');
@@ -1045,6 +1055,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const openDualCaptionEditor = () => {
+    if (!canOpenDualCaptions(localTranslationSupported)) return;
     if (timelineCaptions.length === 0) {
       Alert.alert('Generate captions first', 'Dual subtitles need a primary caption script to translate.');
       return;
@@ -2142,8 +2153,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Open optional dual subtitles"
+                accessibilityState={{ disabled: !canOpenDualCaptions(localTranslationSupported) }}
+                disabled={!canOpenDualCaptions(localTranslationSupported)}
                 onPress={openDualCaptionEditor}
-                hitSlop={8}>
+                hitSlop={8}
+                style={{ opacity: canOpenDualCaptions(localTranslationSupported) ? 1 : 0.35 }}>
                 <Text style={{ color: '#64D2FF', fontSize: 13, fontWeight: '700' }}>
                   {project.captionTracks.translations.length > 0 ? 'Dual subtitles' : 'Add dual subtitles'}
                 </Text>
@@ -2379,7 +2393,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             ) : (
               <PersistedHorizontalScroll id="tool:captions:caption" contentContainerStyle={{ gap: 8 }}>
                 <Action label="Edit captions" disabled={timelineCaptions.length === 0} onPress={beginEditCaption} />
-                <Action label="Dual subtitles" color={chrome.accent} onPress={openDualCaptionEditor} />
+                <Action label="Dual subtitles" color={chrome.accent} disabled={!canOpenDualCaptions(localTranslationSupported)} onPress={openDualCaptionEditor} />
                 {selectedCaption ? <Action label="Delete subtitle" danger onPress={() => confirmDeleteCaption(selectedCaption.id)} /> : null}
                 <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
                 <Action label="White" color="#FFFFFF" onPress={() => queueCaptionStyleChange('Text color: white', { textColor: '#FFFFFF' })} />
