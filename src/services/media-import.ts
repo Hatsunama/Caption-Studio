@@ -7,6 +7,7 @@ import {
   deleteProjectOwnedFiles,
   ensureProjectVideoPreview,
   generateProjectThumbnail,
+  MAX_STORED_AUDIO_BYTES,
   prepareExtractedAudioUri,
   storeProjectAudio,
   storeProjectImage,
@@ -127,6 +128,9 @@ export async function pickAndStoreAudio(projectId: string, audioId: string): Pro
   });
   if (result.canceled) return null;
   const asset = result.assets[0];
+  if (asset.size != null && asset.size > MAX_STORED_AUDIO_BYTES) {
+    throw new Error('This audio is larger than the 256 MB import limit. Choose a smaller file.');
+  }
   await requireFreeSpace((asset.size ?? MIN_IMPORT_HEADROOM_BYTES) + MIN_IMPORT_HEADROOM_BYTES, 'add this audio');
   let uri: string | undefined;
   try {

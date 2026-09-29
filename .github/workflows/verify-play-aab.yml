@@ -130,6 +130,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          node ./scripts/verify-android-abi.mjs --aab release-source/android/app/build/outputs/bundle/release/app-release.aab
           node ./scripts/verify-play-aab.mjs --verify \
             release-source dist/play-aab-approval.json "$CAPTION_STUDIO_BUNDLETOOL"
 
@@ -139,6 +140,7 @@ jobs:
           name: caption-studio-play-aab-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             dist/caption-studio-play.aab
+            dist/caption-studio-play-mapping.txt
             dist/play-aab-provenance.json
           if-no-files-found: error
           retention-days: 14

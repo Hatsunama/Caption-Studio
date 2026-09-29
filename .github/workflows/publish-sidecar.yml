@@ -162,6 +162,7 @@ jobs:
           set -euo pipefail
           source_apk="android/app/build/outputs/apk/release/app-release.apk"
           test -s "$source_apk"
+          node ./scripts/verify-android-abi.mjs --apk "$source_apk"
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           ndk_root="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           badging="$($build_tools/aapt dump badging "$source_apk")"

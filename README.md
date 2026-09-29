@@ -18,7 +18,7 @@ Do not assume previously published APKs are immutable; repository-level immutabl
 
 Android may show a Play Protect warning because this independent APK is not installed through Google Play. Check that the address is this repository before continuing. Never download the APK from a mirror or reposting site.
 
-The current universal APK supports Android 7 or newer and includes 64-bit ARM, 32-bit ARM, x86, and x86_64 native builds. That includes the Solana Seeker and nearly all current physical Android phones.
+The universal APK packages core editor and captioning libraries for arm64-v8a, armeabi-v7a, x86, and x86_64 on Android 7 or newer. The pinned LiteRT-LM translation runtime ships only arm64-v8a and x86_64 libraries; local translation also requires at least 4 GB of RAM. Do not infer Google Play device coverage or 32-bit translation support from the universal APK. Check the uploaded AAB in Play Console's device catalog.
 
 ### From Termux on the phone
 

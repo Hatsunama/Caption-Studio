@@ -11,15 +11,16 @@ public final class AndroidTranslationEnvironmentTest {
 
   @Test
   public void admitsCapableHardwareRegardlessOfTransientAvailableMemory() {
-    assertTrue(AndroidTranslationEnvironment.hasHardwareCapacity(true, false, 8L * GIBIBYTE));
-    assertTrue(AndroidTranslationEnvironment.hasHardwareCapacity(true, false, 4L * GIBIBYTE));
+    assertTrue(AndroidTranslationEnvironment.hasHardwareCapacity(true, false, 8L * GIBIBYTE, true));
+    assertTrue(AndroidTranslationEnvironment.hasHardwareCapacity(true, false, 4L * GIBIBYTE, true));
   }
 
   @Test
   public void rejectsOnlyPermanentHardwareConstraints() {
-    assertFalse(AndroidTranslationEnvironment.hasHardwareCapacity(false, false, 8L * GIBIBYTE));
-    assertFalse(AndroidTranslationEnvironment.hasHardwareCapacity(true, true, 8L * GIBIBYTE));
-    assertFalse(AndroidTranslationEnvironment.hasHardwareCapacity(true, false, 4L * GIBIBYTE - 1L));
+    assertFalse(AndroidTranslationEnvironment.hasHardwareCapacity(false, false, 8L * GIBIBYTE, true));
+    assertFalse(AndroidTranslationEnvironment.hasHardwareCapacity(true, true, 8L * GIBIBYTE, true));
+    assertFalse(AndroidTranslationEnvironment.hasHardwareCapacity(true, false, 4L * GIBIBYTE - 1L, true));
+    assertFalse(AndroidTranslationEnvironment.hasHardwareCapacity(true, false, 8L * GIBIBYTE, false));
   }
 
   @Test

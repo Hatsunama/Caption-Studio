@@ -33,20 +33,24 @@ internal class DocumentReadAccess(private val resolver: ContentResolver) {
     }) { "Android did not release the failed selection's read grant." }
   }
 
-  fun check(input: String): Map<String, Any> {
-    val uri = Uri.parse(input)
-    return try {
-      // An older import may still hold an offered, but untaken, persistable grant.
-      // This cannot invent a grant after Android has revoked it.
-      if (uri.scheme == "content" && !retained(uri)) {
-        try {
-          resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        } catch (_: SecurityException) {
-          // Report the actual read/grant state below; never treat temporary access as durable.
-        }
-      }
-      open(uri)
-      result(if (uri.scheme != "content" || retained(uri)) "ready" else "permission-required")
+  fun check(input: String): Map<String, Any> =
+    checkDocumentReadAccess(Uri.parse(input), ::retained, ::open)
+
+  private fun open(uri: Uri) {
+    resolver.openAssetFileDescriptor(uri, "r")?.use { }
+      ?: throw FileNotFoundException("The video document is unavailable.")
+  }
+}
+
+internal fun checkDocumentReadAccess(
+  uri: Uri,
+  retained: (Uri) -> Boolean,
+  open: (Uri) -> Unit,
+): Map<String, Any> {
+  fun result(status: String): Map<String, Any> = mapOf("status" to status)
+  return try {
+    open(uri)
+    result(if (uri.scheme != "content" || retained(uri)) "ready" else "permission-required")
     } catch (_: SecurityException) {
       result("permission-required")
     } catch (_: FileNotFoundException) {
@@ -55,15 +59,7 @@ internal class DocumentReadAccess(private val resolver: ContentResolver) {
       result("unavailable")
     } catch (_: IllegalArgumentException) {
       result("unavailable")
-    }
   }
-
-  private fun open(uri: Uri) {
-    resolver.openAssetFileDescriptor(uri, "r")?.use { }
-      ?: throw FileNotFoundException("The video document is unavailable.")
-  }
-
-  private fun result(status: String): Map<String, Any> = mapOf("status" to status)
 }
 
 internal fun releasePersistedReadPermission(

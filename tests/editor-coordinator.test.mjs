@@ -238,7 +238,7 @@ const captured = [
   'setCanvasPreset', 'generateCaptions', 'addVideosToTimeline', 'addAudio', 'addProjectVideoAudio',
   'beginEditCaption', 'updateSharedCaptionTransform', 'beginHistoryInteraction',
   'finishHistoryInteraction', 'undo', 'redo', 'persistProjectInBackground',
-  'activeTool', 'openEditorTool',
+  'activeTool', 'openEditorTool', 'exportVideo',
 ].join(', ');
 const instrumented = source.slice(0, returnNode.getStart(ast))
   + '__capture({' + captured + '});\n'
@@ -339,6 +339,7 @@ function mount(initialProject = fixture()) {
     cancelProjectCaptionGeneration: async () => true, cancelProjectVideoExport: async () => {},
     validateProjectSources: async () => {},
     isCaptionModelReady: async () => true, NATURAL_TRANSLATION_MODEL_LABEL: 'Test',
+    isLocalCaptionTranslationSupported: async () => true,
     registerCaptionTranslationResources: () => () => {},
     ProjectPersistenceError: class ProjectPersistenceError extends Error {},
     CaptionGenerationCancelledError: class CaptionGenerationCancelledError extends Error {},
@@ -481,6 +482,31 @@ function mount(initialProject = fixture()) {
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
   };
 }
+
+test('export uses durably recovered video access without adding an undo edit', async () => {
+  const initial = fixture();
+  initial.captionTracks.translations = [];
+  const h = mount(initial);
+  const recovered = { ...initial, sources: initial.sources.map((source) => ({ ...source, uri: 'content://restored/video' })) };
+  let exported;
+  h.services.ensureProjectVideoAccess = async (project) => {
+    assert.equal(project, initial);
+    h.disk = recovered;
+    return recovered;
+  };
+  h.services.exportProjectVideo = async (project, allowIncomplete) => {
+    exported = { project, allowIncomplete };
+    return { width: 1080, height: 1920 };
+  };
+  await h.actions.exportVideo();
+  await h.flush();
+  assert.equal(h.project, recovered);
+  assert.equal(h.disk, recovered);
+  assert.deepEqual(exported, { project: recovered, allowIncomplete: true });
+  assert.equal(h.calls.writes.length, 0);
+  h.actions.undo();
+  assert.equal(h.project, recovered);
+});
 
 for (const exit of ['Done', 'Cancel']) {
   test(`${exit} after keyboard editing restores preview and reveals timeline without changing time or tool`, async () => {

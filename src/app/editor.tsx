@@ -26,9 +26,12 @@ import {
 
 import { AnimationBrowser } from '@/components/editor/animation-browser';
 import { projectMediaRecoveryPrompts } from '@/components/editor/project-media-recovery-prompts';
+import { exportProgressPresentation } from '@/lib/export-progress-presentation';
+import { ensureProjectVideoAccess } from '@/services/project-media-access';
 import { PersistedHorizontalScroll, PersistedHorizontalScrollScope } from '@/components/editor/persisted-horizontal-scroll';
 import { assertDualCaptionEditsStillCurrent } from '@/lib/dual-caption-save-merge';
 import { needsTranslationModelDownloadConsent } from '@/lib/translation-model-availability';
+import { canOpenDualCaptions } from '@/lib/translation-device-capability';
 import { synchronizeProjectDualCaptionEdits } from '@/services/project-caption-translation';
 import { CaptionOverlay } from '@/components/editor/caption-overlay';
 import { DualCaptionEditor } from '@/components/editor/dual-caption-editor';
@@ -143,6 +146,7 @@ import { runCaptionCancellationRequest } from '@/components/editor/caption-gener
 import {
   NATURAL_TRANSLATION_MODEL_LABEL,
   naturalTranslationDownloadConsentMessage,
+  isLocalCaptionTranslationSupported,
   listDownloadedNaturalTranslationModel,
   registerCaptionTranslationResources,
   type CaptionTranslationProgress,
@@ -290,7 +294,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setScriptEditorOpen(false);
   });
   const [dualCaptionEditorOpen, setDualCaptionEditorOpen] = useState(false);
+  const [localTranslationSupported, setLocalTranslationSupported] = useState<boolean>();
   const [dualLanguagePickerOpen, setDualLanguagePickerOpen] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void isLocalCaptionTranslationSupported()
+      .then((supported) => { if (active) setLocalTranslationSupported(supported); })
+      .catch(() => { if (active) setLocalTranslationSupported(false); });
+    return () => { active = false; };
+  }, []);
   const [selectedTranslationTrackId, setSelectedTranslationTrackId] = useState<string>();
   const [activeTool, setActiveTool] = useState<EditorTool>('captions');
   const activeToolRef = useRef<EditorTool>('captions');
@@ -394,13 +406,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     });
   };
 
-  const commitEditorProject = async (operation: EditorProjectOperation, alreadyPersists = false) => {
+  const commitEditorProject = async (operation: EditorProjectOperation, alreadyPersists = false, recordHistory = true) => {
     try {
       const receipt = await editorSession.commit(async (before) => {
         const next = await operation(before);
         if (next) trackSessionMedia(next);
         return next;
-      }, alreadyPersists);
+      }, alreadyPersists, recordHistory);
       if (workspaceMountedRef.current) setPersistenceError(undefined);
       return receipt;
     } catch (caught) {
@@ -1043,6 +1055,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const openDualCaptionEditor = () => {
+    if (!canOpenDualCaptions(localTranslationSupported)) return;
     if (timelineCaptions.length === 0) {
       Alert.alert('Generate captions first', 'Dual subtitles need a primary caption script to translate.');
       return;
@@ -1724,7 +1737,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     try {
       if (!await confirmOptionalTranslationExport(snapshot, true)) return;
       setExporting(true);
-      const result = await exportProjectVideo(snapshot, true);
+      const access = await commitEditorProject(
+        (current) => ensureProjectVideoAccess(current, projectMediaRecoveryPrompts),
+        true,
+        false,
+      );
+      if (!access || !editorSession.isCurrent(access)) throw new Error('The project changed while video access was being restored. Try export again.');
+      const result = await exportProjectVideo(access.project, true);
       Alert.alert('Export complete', `Saved to Movies/Caption Studio.\n${result.width} × ${result.height}${result.sharingWarning ? `\n\n${result.sharingWarning}` : ''}`);
     } catch (caught) {
       if (!(caught instanceof VideoExportCancelledError)) {
@@ -2134,8 +2153,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Open optional dual subtitles"
+                accessibilityState={{ disabled: !canOpenDualCaptions(localTranslationSupported) }}
+                disabled={!canOpenDualCaptions(localTranslationSupported)}
                 onPress={openDualCaptionEditor}
-                hitSlop={8}>
+                hitSlop={8}
+                style={{ opacity: canOpenDualCaptions(localTranslationSupported) ? 1 : 0.35 }}>
                 <Text style={{ color: '#64D2FF', fontSize: 13, fontWeight: '700' }}>
                   {project.captionTracks.translations.length > 0 ? 'Dual subtitles' : 'Add dual subtitles'}
                 </Text>
@@ -2371,7 +2393,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             ) : (
               <PersistedHorizontalScroll id="tool:captions:caption" contentContainerStyle={{ gap: 8 }}>
                 <Action label="Edit captions" disabled={timelineCaptions.length === 0} onPress={beginEditCaption} />
-                <Action label="Dual subtitles" color={chrome.accent} onPress={openDualCaptionEditor} />
+                <Action label="Dual subtitles" color={chrome.accent} disabled={!canOpenDualCaptions(localTranslationSupported)} onPress={openDualCaptionEditor} />
                 {selectedCaption ? <Action label="Delete subtitle" danger onPress={() => confirmDeleteCaption(selectedCaption.id)} /> : null}
                 <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
                 <Action label="White" color="#FFFFFF" onPress={() => queueCaptionStyleChange('Text color: white', { textColor: '#FFFFFF' })} />
@@ -2580,12 +2602,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               </Text>
               {exportKind === 'video' && exportProgress ? (
                 <View style={{ gap: 7 }}>
-                  <View style={{ height: 8, overflow: 'hidden', borderRadius: chrome.radius.pill, backgroundColor: chrome.fill }}>
-                    <View style={{ width: `${exportProgress.percent ?? 0}%`, height: '100%', backgroundColor: palette.accent }} />
-                  </View>
-                  <Text style={{ color: palette.text, textAlign: 'center', fontVariant: ['tabular-nums'] }}>
-                    {exportProgressLabel(exportProgress)}
-                  </Text>
+                  <ExportProgressIndicator progress={exportProgress} />
                   {exportProgressPollError ? <Text style={{ color: '#FFBBC8', textAlign: 'center' }}>Progress unavailable: {exportProgressPollError}</Text> : null}
                 </View>
               ) : null}
@@ -2853,12 +2870,16 @@ function translationProgressLabel(progress?: CaptionTranslationProgress) {
   return `${progress.detail} · ${Math.round(progress.progress * 100)}% ${unit}`;
 }
 
-function exportProgressLabel(progress: ProjectVideoExportProgress) {
-  if (progress.stage === 'publishing') return 'Saving to media library · 99%';
-  if (progress.stage === 'idle') return 'Preparing export';
-  if (progress.stage === 'preparing') return 'Preparing export';
-  if (progress.percent == null) return 'Rendering video';
-  return `Rendering video · ${progress.percent}%`;
+function ExportProgressIndicator({ progress }: { progress: ProjectVideoExportProgress }) {
+  const presentation = exportProgressPresentation(progress);
+  return <>
+    {presentation.kind === 'determinate' ? (
+      <View style={{ height: 8, overflow: 'hidden', borderRadius: chrome.radius.pill, backgroundColor: chrome.fill }}>
+        <View style={{ width: `${presentation.percent}%`, height: '100%', backgroundColor: palette.accent }} />
+      </View>
+    ) : null}
+    <Text style={{ color: palette.text, textAlign: 'center', fontVariant: ['tabular-nums'] }}>{presentation.label}</Text>
+  </>;
 }
 
 const HISTORY_MAX_ENTRIES = 24;

@@ -124,6 +124,7 @@ function mount(t, initialProject = fixture()) {
     cancelProjectVideoExport: async () => {},
     validateProjectSources: async () => {},
     isCaptionModelReady: async () => true, NATURAL_TRANSLATION_MODEL_LABEL: 'Test',
+    isLocalCaptionTranslationSupported: async () => true,
     registerCaptionTranslationResources: () => () => {},
     ProjectPersistenceError: class extends Error {},
   };
@@ -292,8 +293,10 @@ for (const scenario of [
   { name: 'dual language picker', open: 'Open optional dual subtitles', translated: false,
     identify: (props) => typeof props.automaticModelLabel === 'string' },
 ]) {
-  test(`navigation Back closes the ${scenario.name} and retains its timeline parent`, (t) => {
+  test(`navigation Back closes the ${scenario.name} and retains its timeline parent`, async (t) => {
     const h = mount(t, fixture(scenario.translated !== false));
+    await Promise.resolve();
+    h.render();
     h.press(scenario.open);
     if (scenario.translated === false) {
       const explanation = h.calls.alerts.pop();
@@ -387,4 +390,3 @@ test('watermark editor closes before navigating away from the timeline', () => {
   const state = { interactionLocked: false, captionGenerationActive: false, videoExportActive: false, textEditorOpen: false, fontBrowserOpen: false, styleScopeOpen: false, transitionTimingOpen: false, voiceoverOpen: false, audioSourceOpen: false, watermarkOpen: true, languagePickerOpen: false, dualCaptionEditorOpen: false, scriptEditorOpen: false, selectionActive: false, timelineRooted: true };
   assert.equal(resolveEditorBackStep(state), 'close-watermark');
 });
-

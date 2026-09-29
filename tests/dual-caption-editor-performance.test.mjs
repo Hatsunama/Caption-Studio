@@ -87,6 +87,7 @@ function mount(overrides = {}, options = {}) {
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, md: 8, pill: 20, xl: 20 } } };
       if (name === '@/lib/dual-caption-drafts') return draftHelpers;
       if (name === '@/services/editor-draft-journal') return {
+        archiveEditorDraftJournal: async () => {},
         readEditorDraftJournal: async (...args) => { calls.reads.push(args); return options.read ? options.read(...args) : options.journal; },
         writeEditorDraftJournal: async (...args) => { calls.writes.push(args); if (options.writeError) throw new Error('storage full'); },
         clearEditorDraftJournal: async (...args) => { calls.clears.push(args); if (options.clearError) throw new Error('clear failed'); },
@@ -265,6 +266,14 @@ test('recovery snapshots are debounced and immutable; reverting clears pending r
   assert.equal(h.button('Save dual subtitle edits').props.disabled, true);
 });
 
+test('dual recovery revision changes with committed captions even when updatedAt does not', async () => {
+  const original = mount(); await original.flush(); original.edit(0, 'First draft'); await original.advance(600);
+  const revised = pairs(); revised[0].source.text = 'Changed in the same tick';
+  const changed = mount({ pairs: revised }); await changed.flush(); changed.edit(0, 'Second draft'); await changed.advance(600);
+  assert.notEqual(original.calls.writes[0][2], changed.calls.writes[0][2]);
+  assert.match(original.calls.writes[0][2], /^dual-v2:/);
+});
+
 test('whitespace and blank input keep the existing committed fallback semantics', async () => {
   const h = mount(); await h.flush(); h.edit(0, '   '); h.edit(0, '', 'Chinese');
   assert.equal(h.button('Save dual subtitle edits').props.disabled, true);
@@ -277,7 +286,7 @@ test('whitespace and blank input keep the existing committed fallback semantics'
 
 for (const choice of ['Keep current translation', 'Restore unsaved typing']) {
   test(`${choice} resolves recovery against the latest committed translation`, async () => {
-    const h = mount({}, { journal: { payload: { 'cue-0': { primaryText: 'Recovered source', translatedText: '' } } } });
+    const h = mount({}, { journal: { baseRevision: draftHelpers.dualCaptionDraftRevision(draftHelpers.dualCaptionDraftsFromPairs(pairs())), payload: { 'cue-0': { primaryText: 'Recovered source', translatedText: '' } } } });
     await h.flush(); assert.equal(h.input(0).props.editable, false);
     const next = plain(h.props.pairs); next[0].translation.text = 'Translation received while asking';
     h.update({ pairs: next }); h.choose(choice);

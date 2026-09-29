@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 
 import {
+  captionScriptRevision,
   decodeCaptionDraft,
   sameCaptionDraft,
   mergeCaptionScriptBlock,
@@ -21,6 +22,7 @@ import {
   updateCaptionScriptText,
 } from '@/lib/caption-script';
 import {
+  archiveEditorDraftJournal,
   clearEditorDraftJournal,
   readEditorDraftJournal,
   writeEditorDraftJournal,
@@ -93,7 +95,8 @@ export function ScriptEditor(props: {
   const [journalReady, setJournalReady] = useState(false);
   const [journalError, setJournalError] = useState<string>();
   const [journalRecovery, setJournalRecovery] = useState<EditorDraftJournalRecovery>();
-  const journalProtected = !!journalRecovery?.failures.length;
+  const [journalConflict, setJournalConflict] = useState(false);
+  const journalProtected = journalConflict || !!journalRecovery?.failures.length;
   const wasVisibleRef = useRef(false);
   const draftVersionRef = useRef(0);
   const captionLayoutsRef = useRef<Record<string, { y: number; height: number; index: number }>>({});
@@ -201,6 +204,7 @@ export function ScriptEditor(props: {
     () => [...props.captions].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs),
     [props.captions],
   );
+  const sourceRevision = useMemo(() => captionScriptRevision(sourceCaptions), [sourceCaptions]);
   const initialIndex = useMemo(() => {
     const index = sourceCaptions.findIndex((caption) => caption.id === props.initialCaptionId);
     return index < 0 ? 0 : index;
@@ -208,10 +212,10 @@ export function ScriptEditor(props: {
 
   // Only opening/closing owns recovery's lifetime. A style or project revision
   // update while storage is loading must not cancel that read or reset the draft.
-  const openingStateRef = useRef({ sourceCaptions, initialIndex, onDraftChange, baseRevision: props.baseRevision });
+  const openingStateRef = useRef({ sourceCaptions, initialIndex, onDraftChange, baseRevision: sourceRevision });
   useEffect(() => {
-    openingStateRef.current = { sourceCaptions, initialIndex, onDraftChange, baseRevision: props.baseRevision };
-  }, [sourceCaptions, initialIndex, onDraftChange, props.baseRevision]);
+    openingStateRef.current = { sourceCaptions, initialIndex, onDraftChange, baseRevision: sourceRevision };
+  }, [sourceCaptions, initialIndex, onDraftChange, sourceRevision]);
 
   useEffect(() => {
     const opening = props.visible && !wasVisibleRef.current;
@@ -232,6 +236,7 @@ export function ScriptEditor(props: {
     setJournalReady(false);
     setJournalError(undefined);
     setJournalRecovery(undefined);
+    setJournalConflict(false);
     selectionRef.current = {};
     splitCounterRef.current = 0;
     let active = true;
@@ -249,18 +254,28 @@ export function ScriptEditor(props: {
         return;
       }
       const conflict = journal?.baseRevision !== openingStateRef.current.baseRevision;
+      if (conflict) setJournalConflict(true);
+      const finishConflict = () => {
+        if (!conflict || preserveRecovery) { setJournalReady(true); return; }
+        void archiveEditorDraftJournal(projectId, 'caption-script')
+          .then(() => { if (active) { setJournalConflict(false); setJournalReady(true); } })
+          .catch((caught) => { if (active) {
+            setJournalError(caught instanceof Error ? caught.message : 'The stale recovery draft could not be preserved.');
+            setJournalReady(true);
+          } });
+      };
       Alert.alert(
         conflict ? 'Recovery draft needs review' : 'Restore unsaved caption edits?',
         [journal?.recovery?.warning, conflict
-          ? 'The project changed after this recovery draft was created. Review it carefully before saving.'
+          ? 'The captions changed after this recovery draft was created. The old draft will be preserved separately; review it carefully before saving.'
           : 'Caption Studio recovered edits that were not saved before the app closed.'].filter(Boolean).join('\n\n'),
         [
           {
-            text: preserveRecovery ? 'Keep current captions' : 'Discard recovery',
-            style: preserveRecovery ? 'cancel' : 'destructive',
+            text: preserveRecovery || conflict ? 'Keep current captions' : 'Discard recovery',
+            style: preserveRecovery || conflict ? 'cancel' : 'destructive',
             onPress: () => {
               if (!active) return;
-              if (preserveRecovery) { setJournalReady(true); return; }
+              if (preserveRecovery || conflict) { finishConflict(); return; }
               void clearEditorDraftJournal(projectId, 'caption-script')
                 .then(() => { if (active) setJournalReady(true); })
                 .catch(() => { if (active) setJournalError('Recovery data could not be cleared. It is preserved; try opening the editor again.'); });
@@ -270,7 +285,7 @@ export function ScriptEditor(props: {
             if (!active) return;
             draftVersionRef.current += 1;
             setDraftCaptions(recovered);
-            setJournalReady(true);
+            finishConflict();
           } },
         ],
       );
@@ -291,7 +306,7 @@ export function ScriptEditor(props: {
     if (journalProtected) return;
     let active = true;
     const timer = setTimeout(() => {
-      void writeEditorDraftJournal(props.projectId, 'caption-script', props.baseRevision, draftCaptions)
+      void writeEditorDraftJournal(props.projectId, 'caption-script', sourceRevision, draftCaptions)
         .then(() => { if (active) setJournalError(undefined); })
         .catch((caught) => { if (active) setJournalError(caught instanceof Error ? caught.message : 'Caption recovery could not be saved. Keep this editor open until you save.'); });
     }, 600);
@@ -299,7 +314,7 @@ export function ScriptEditor(props: {
       active = false;
       clearTimeout(timer);
     };
-  }, [closing, draftCaptions, journalProtected, journalReady, props.baseRevision, props.projectId, props.visible, sourceCaptions]);
+  }, [closing, draftCaptions, journalProtected, journalReady, props.projectId, props.visible, sourceCaptions, sourceRevision]);
 
   useEffect(() => {
     if (!props.visible) return;

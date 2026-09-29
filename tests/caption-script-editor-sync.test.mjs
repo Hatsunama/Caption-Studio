@@ -120,6 +120,7 @@ function mount(overrides = {}, platform = 'android') {
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, pill: 20 } } };
       if (name === '@/services/editor-draft-journal') return {
         readEditorDraftJournal: () => ({ then: (callback) => { recover = callback; return { catch: (callback) => { recoveryError = callback; } }; } }),
+        archiveEditorDraftJournal: async () => { calls.journalArchives = (calls.journalArchives ?? 0) + 1; },
         clearEditorDraftJournal: async () => { calls.journalClears = (calls.journalClears ?? 0) + 1; },
         writeEditorDraftJournal: async (...args) => { (calls.journals ??= []).push(plain(args)); },
       };
@@ -210,7 +211,10 @@ function mount(overrides = {}, platform = 'android') {
     edit: (index) => act(() => row(index).props.onPress()),
     input: (index) => find('TextInput', row(index)).props,
     action: (index, label) => act(() => walk(row(index), (node) => node.props?.label === label).props.onPress()),
-    recover: (payload) => act(() => recover(payload === null ? null : { payload, baseRevision: 'revision' })),
+    recover: (payload) => act(() => recover(payload === null ? null : {
+      payload,
+      baseRevision: scriptMutations.captionScriptRevision([...props.captions].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs)),
+    })),
     failRecovery: () => act(() => recoveryError(new Error('Read failed'))),
     restore: () => act(() => calls.alerts.at(-1)[2].find(({ text }) => text === 'Restore').onPress()),
     button: (label) => walk(tree, (node) => node.props?.accessibilityLabel === label).props,
