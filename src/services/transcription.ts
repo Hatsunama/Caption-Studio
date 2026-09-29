@@ -411,6 +411,7 @@ export async function transcribeVideoLocally(options: {
   });
   let speechSegments: { t0: number; t1: number }[];
   try {
+    session?.throwIfCancelled();
     speechSegments = await detectSpeechCooperatively(vadContext, audioFile, onProgress, session);
     session?.throwIfCancelled();
   } finally {
@@ -489,7 +490,7 @@ async function detectSpeechCooperatively(
     handle.offset = 0;
     const header = handle.readBytes(44);
     const format = parseCaptionPcmWave(header, handle.size ?? audioFile.size);
-    const ranges = planOverlappingPcmChunks(format.dataBytes, format.bytesPerSecond);
+    const ranges = planOverlappingPcmChunks(format.dataBytes, format.bytesPerSecond, 10, 2);
     for (let index = 0; index < ranges.length; index += 1) {
       session?.throwIfCancelled();
       const range = ranges[index];
@@ -501,7 +502,9 @@ async function detectSpeechCooperatively(
       const chunkFile = new File(audioFile.parentDirectory, `.vad-${chunkNonce}-${index}.wav`);
       try {
         chunkFile.write(buildPcm16MonoWave(pcm, format.sampleRate));
+        session?.throwIfCancelled();
         const chunkSegments = await vadContext.detectSpeech(chunkFile.uri, VAD_OPTIONS);
+        session?.throwIfCancelled();
         const offsetCentiseconds = Math.round(range.start / format.bytesPerSecond * 100);
         speechSegments.push(...chunkSegments.map((segment) => ({
           t0: segment.t0 + offsetCentiseconds,

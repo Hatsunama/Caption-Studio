@@ -60,10 +60,23 @@ export async function downloadVerifiedModel(options: DownloadOptions) {
   const chunk = chunkFile(target);
   const chunkMarker = chunkMarkerFile(target);
   const identity = downloadIdentity(temporary, descriptor);
+  let pauseRequested = false;
+  let activeRequest: AbortController | undefined;
+  const throwIfPaused = () => {
+    if (pauseRequested) throw new ModelDownloadPausedError();
+  };
+  const pause = async () => {
+    pauseRequested = true;
+    activeRequest?.abort();
+  };
+  const unregisterPauser = options.registerPauser?.(pause);
 
+  try {
   if (temporary.exists && temporary.size === descriptor.downloadBytes) {
     options.onVerifying?.();
-    if (await options.verifySha256(temporary.uri) === descriptor.sha256) {
+    const actualSha256 = await options.verifySha256(temporary.uri);
+    throwIfPaused();
+    if (actualSha256 === descriptor.sha256) {
       deleteIfPresent(resumeFile);
       deleteIfPresent(chunk);
       deleteIfPresent(chunkMarker);
@@ -73,21 +86,15 @@ export async function downloadVerifiedModel(options: DownloadOptions) {
     removeResumableModelDownloadArtifacts(target);
   }
 
-  let committedBytes = await readValidCheckpoint(temporary, resumeFile, chunk, chunkMarker, identity);
+  let committedBytes = await readValidCheckpoint(temporary, resumeFile, chunk, chunkMarker, identity, throwIfPaused);
+  throwIfPaused();
   if (!temporary.exists) temporary.create();
   await writeResumeState(resumeFile, encodeModelDownloadCheckpoint(identity, committedBytes));
+  throwIfPaused();
   options.onProgress?.(committedBytes, descriptor.downloadBytes);
-  let pauseRequested = false;
-  let activeRequest: AbortController | undefined;
-  const pause = async () => {
-    pauseRequested = true;
-    activeRequest?.abort();
-  };
-  const unregisterPauser = options.registerPauser?.(pause);
 
-  try {
     while (committedBytes < descriptor.downloadBytes) {
-      if (pauseRequested) throw new ModelDownloadPausedError();
+      throwIfPaused();
       const end = Math.min(descriptor.downloadBytes, committedBytes + CHUNK_BYTES) - 1;
       const chunkLength = end - committedBytes + 1;
       if (!chunk.exists || chunk.size !== chunkLength) {
@@ -101,32 +108,39 @@ export async function downloadVerifiedModel(options: DownloadOptions) {
           () => pauseRequested,
           (controller) => { activeRequest = controller; },
         );
-        if (pauseRequested) throw new ModelDownloadPausedError();
+        throwIfPaused();
         chunkMarker.write(String(committedBytes));
+        throwIfPaused();
         chunk.write(bytes);
+        throwIfPaused();
       }
       if (temporary.size < committedBytes || temporary.size > committedBytes + chunkLength) {
         throw new ModelDownloadIntegrityError();
       }
-      appendChunk(temporary, chunk, committedBytes);
+      appendChunk(temporary, chunk, committedBytes, throwIfPaused);
+      throwIfPaused();
       committedBytes += chunkLength;
       await writeResumeState(resumeFile, encodeModelDownloadCheckpoint(identity, committedBytes));
+      throwIfPaused();
       deleteIfPresent(chunk);
       deleteIfPresent(chunkMarker);
       options.onProgress?.(committedBytes, descriptor.downloadBytes);
     }
+    throwIfPaused();
     if (temporary.size !== descriptor.downloadBytes) {
       throw new ModelDownloadIntegrityError();
     }
     options.onVerifying?.();
-    if (await options.verifySha256(temporary.uri) !== descriptor.sha256) {
+    const actualSha256 = await options.verifySha256(temporary.uri);
+    throwIfPaused();
+    if (actualSha256 !== descriptor.sha256) {
       throw new ModelDownloadIntegrityError();
     }
     await replaceTarget(temporary, target);
     deleteIfPresent(resumeFile);
     return target;
   } catch (error) {
-    if (error instanceof ModelDownloadIntegrityError) {
+    if (error instanceof ModelDownloadIntegrityError && !pauseRequested) {
       removeResumableModelDownloadArtifacts(target);
     }
     if (pauseRequested) throw new ModelDownloadPausedError();
@@ -173,6 +187,7 @@ async function readValidCheckpoint(
   chunk: File,
   chunkMarker: File,
   identity: ModelDownloadResumeIdentity,
+  throwIfPaused: () => void = () => {},
 ) {
   if (!temporary.exists || !resumeFile.exists) {
     if (temporary.exists || resumeFile.exists) {
@@ -184,12 +199,14 @@ async function readValidCheckpoint(
     return 0;
   }
   const raw = await resumeFile.text();
+  throwIfPaused();
   const checkpoint = decodeModelDownloadCheckpoint(raw, identity);
   if (checkpoint !== undefined) {
     const chunkLength = Math.min(CHUNK_BYTES, identity.expectedBytes - checkpoint);
-    const currentChunk = chunk.exists && chunkMarker.exists
-      && chunk.size === chunkLength
-      && await chunkMarker.text() === String(checkpoint);
+    const marker = chunk.exists && chunkMarker.exists && chunk.size === chunkLength
+      ? await chunkMarker.text() : undefined;
+    throwIfPaused();
+    const currentChunk = marker === String(checkpoint);
     if (
       temporary.size >= checkpoint
       && temporary.size <= checkpoint + chunkLength
@@ -209,6 +226,7 @@ async function readValidCheckpoint(
     deleteIfPresent(chunk);
     deleteIfPresent(chunkMarker);
     await writeResumeState(resumeFile, encodeModelDownloadCheckpoint(identity, temporary.size));
+    throwIfPaused();
     return temporary.size;
   }
   deleteIfPresent(temporary);
@@ -262,16 +280,18 @@ async function fetchVerifiedRange(
   throw new ModelDownloadTransferError('The model download stopped. Download progress was saved.');
 }
 
-function appendChunk(target: File, chunk: File, offset: number) {
+function appendChunk(target: File, chunk: File, offset: number, throwIfPaused: () => void) {
   const source = chunk.open(FileMode.ReadOnly);
   const destination = target.open(FileMode.WriteOnly);
   try {
     destination.offset = offset;
     let remaining = chunk.size;
     while (remaining > 0) {
+      throwIfPaused();
       const bytes = source.readBytes(Math.min(COPY_BYTES, remaining));
       if (bytes.length === 0) throw new ModelDownloadIntegrityError();
       destination.writeBytes(bytes);
+      throwIfPaused();
       remaining -= bytes.length;
     }
   } finally {
