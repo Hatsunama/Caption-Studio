@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import java.io.File
+import java.io.InputStream
 import kotlin.math.abs
 
 internal data class VerifiedRenderedVideo(
@@ -51,12 +52,9 @@ internal fun inspectRenderedVideo(
     val file = File(path)
     check(file.isFile && file.length() == expectedSize) { "The exported video file is incomplete" }
   } else {
-    val descriptorSize = context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
-      descriptor.declaredLength
+    context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+      requirePublishedVideoSize(descriptor.declaredLength, expectedSize) { descriptor.createInputStream() }
     } ?: throw IllegalStateException("Android could not reopen the exported video")
-    if (descriptorSize >= 0L) {
-      check(descriptorSize == expectedSize) { "Android saved an incomplete exported video" }
-    }
   }
 
   val extractor = MediaExtractor()
@@ -114,6 +112,29 @@ internal fun inspectRenderedVideo(
     extractor.release()
     retriever.release()
   }
+}
+
+internal fun requirePublishedVideoSize(
+  descriptorLength: Long,
+  expectedSize: Long,
+  openStream: () -> InputStream,
+): Long {
+  if (descriptorLength >= 0L) {
+    check(descriptorLength == expectedSize) { "Android saved an incomplete exported video" }
+    return descriptorLength
+  }
+  var actualSize = 0L
+  openStream().use { stream ->
+    val buffer = ByteArray(64 * 1024)
+    while (true) {
+      val count = stream.read(buffer)
+      if (count < 0) break
+      check(count.toLong() <= expectedSize - actualSize) { "Android saved an incomplete exported video" }
+      actualSize += count
+    }
+  }
+  check(actualSize == expectedSize) { "Android saved an incomplete exported video" }
+  return actualSize
 }
 
 internal fun visibleVideoDimensions(

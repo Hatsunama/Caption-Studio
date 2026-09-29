@@ -15,6 +15,7 @@ import { chrome } from '@/lib/ui-theme';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import {
   committedDualCaptionText,
+  dualCaptionDraftRevision,
   dualCaptionDraftsFromPairs,
   mergeRecoveredDualCaptionDrafts,
   shouldRestoreDualCaptionJournal,
@@ -22,6 +23,7 @@ import {
 } from '@/lib/dual-caption-drafts';
 import type { DualCaptionTextEdit } from '@/services/project-caption-translation';
 import {
+  archiveEditorDraftJournal,
   clearEditorDraftJournal,
   readEditorDraftJournal,
   writeEditorDraftJournal,
@@ -78,6 +80,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const insets = useSafeAreaInsets();
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
   const [store] = useState(() => new DualCaptionDraftStore(sourceDrafts));
+  const [openingRevision] = useState(() => dualCaptionDraftRevision(sourceDrafts));
   const editCount = useSyncExternalStore(store.subscribeDirty, store.getDirtyCount, store.getDirtyCount);
   const [journalReady, setJournalReady] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -85,7 +88,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const [journalError, setJournalError] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [journalRecovery, setJournalRecovery] = useState<EditorDraftJournalRecovery>();
-  const journalProtected = !!journalRecovery?.failures.some((failure) => journalRecovery.source !== 'primary' || failure.source === 'primary');
+  const [journalConflict, setJournalConflict] = useState(false);
+  const journalProtected = journalConflict || !!journalRecovery?.failures.some((failure) => journalRecovery.source !== 'primary' || failure.source === 'primary');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const stopJournalRef = useRef<(() => void) | undefined>(undefined);
   const journalKind = `dual-captions-${props.trackId}` as EditorDraftKind;
@@ -104,21 +108,33 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       const preserveRecovery = !!journal?.recovery?.failures.length;
       const recovered = decodeDualDraft(journal?.payload, allowedIds);
       const nextCommitted = store.committed;
+      const revisionConflict = !!journal && journal.baseRevision !== openingRevision;
+      if (revisionConflict) setJournalConflict(true);
+      const finishConflict = () => {
+        if (!revisionConflict || preserveRecovery) { setJournalReady(true); return; }
+        void archiveEditorDraftJournal(props.projectId, journalKind)
+          .then(() => { if (active) { setJournalConflict(false); setJournalReady(true); } })
+          .catch((caught) => { if (active) {
+            setJournalError(caught instanceof Error ? caught.message : 'The stale recovery draft could not be preserved.');
+            setJournalReady(true);
+          } });
+      };
       if (journal && !recovered) {
         setJournalError('The recovery draft could not be decoded. It is preserved; close and reopen the editor to retry.');
         return;
       }
       if (!recovered || !shouldRestoreDualCaptionJournal(recovered, nextCommitted)) {
-        if (recovered && !preserveRecovery) void clearEditorDraftJournal(props.projectId, journalKind).catch(() => { if (active) setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'); });
-        setJournalReady(true);
+        if (recovered && !preserveRecovery && !revisionConflict) void clearEditorDraftJournal(props.projectId, journalKind).catch(() => { if (active) setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'); });
+        if (revisionConflict) setJournalError('Recovery conflict: the captions changed since this draft was saved. The recovery draft is preserved.');
+        finishConflict();
         return;
       }
       Alert.alert(
         'Restore unsaved dual-subtitle edits?',
-        [journal?.recovery?.warning, 'Caption Studio found typed edits that were not saved. Keeping the current translation leaves the second language as it is now.'].filter(Boolean).join('\n\n'),
+        [journal?.recovery?.warning, revisionConflict ? 'Recovery conflict: the captions changed since this draft was saved. Restoring may replace newer caption text; the recovery draft will be preserved.' : undefined, 'Caption Studio found typed edits that were not saved. Keeping the current translation leaves the second language as it is now.'].filter(Boolean).join('\n\n'),
         [
-          { text: 'Keep current translation', style: 'cancel', onPress: () => { if (!active) return; store.replace(store.committed); if (!preserveRecovery) void clearEditorDraftJournal(props.projectId, journalKind).catch(() => { if (active) setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'); }); setJournalReady(true); } },
-          { text: 'Restore unsaved typing', onPress: () => { if (!active) return; store.replace(mergeRecoveredDualCaptionDrafts(recovered, store.committed)); setJournalReady(true); } },
+          { text: 'Keep current translation', style: 'cancel', onPress: () => { if (!active) return; store.replace(store.committed); if (!preserveRecovery && !revisionConflict) void clearEditorDraftJournal(props.projectId, journalKind).catch(() => { if (active) setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'); }); finishConflict(); } },
+          { text: 'Restore unsaved typing', onPress: () => { if (!active) return; store.replace(mergeRecoveredDualCaptionDrafts(recovered, store.committed)); finishConflict(); } },
         ],
       );
     }).catch((caught) => {
@@ -128,7 +144,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       }
     });
     return () => { active = false; };
-  }, [journalKind, props.projectId, store]);
+  }, [journalKind, openingRevision, props.projectId, store]);
 
   useEffect(() => {
     if (!journalReady || props.busy || saving || closing) return;
@@ -151,7 +167,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       timer = setTimeout(() => {
         // Snapshot once after typing settles, not on every character. Journal
         // operations may be queued, so never pass the mutable draft map itself.
-        void writeEditorDraftJournal(props.projectId, journalKind, props.baseRevision, store.snapshot())
+        void writeEditorDraftJournal(props.projectId, journalKind, openingRevision, store.snapshot())
           .then(() => { if (active) setJournalError(undefined); })
           .catch((caught) => { if (active) setJournalError(caught instanceof Error ? caught.message : 'Dual-subtitle recovery could not be saved. Keep this editor open until you save.'); });
       }, 600);
@@ -159,7 +175,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     const unsubscribe = store.subscribeChanges(schedule);
     schedule();
     return () => { stop(); unsubscribe(); };
-  }, [closing, journalKind, journalProtected, journalReady, props.baseRevision, props.busy, props.projectId, saving, store]);
+  }, [closing, journalKind, journalProtected, journalReady, openingRevision, props.busy, props.projectId, saving, store]);
 
   const includedPairs = useMemo(() => props.pairs.filter((pair) => !pair.translation.translationSkipped), [props.pairs]);
   const missingCount = useMemo(() => includedPairs.filter((pair) => !pair.translation.text.trim()).length, [includedPairs]);

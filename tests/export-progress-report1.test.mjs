@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { exportProgressPresentation } from '../src/lib/export-progress-presentation.ts';
 
 const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
 
 test('idle progress stays in preparation and never invents publishing', () => {
-  assert.ok(/if \(progress\.stage === 'idle'\) return 'Preparing export'/.test(editor));
-  assert.ok(!/return \{ stage: 'publishing', percent: 99 \}/.test(editor));
+  assert.deepEqual(exportProgressPresentation({ stage: 'idle', percent: null }),
+    { kind: 'indeterminate', label: 'Preparing export' });
 });
 
 test('a failed progress poll preserves the last good progress and records the error', () => {

@@ -31,6 +31,20 @@ export function dualCaptionDraftsMatch(
   return true;
 }
 
+// A timestamp can be shared by distinct edits in the same millisecond. Bind
+// recovery to the exact committed text and cue set seen when the editor opened.
+export function dualCaptionDraftRevision(drafts: Record<string, DualCaptionDraft>) {
+  const content = JSON.stringify(Object.entries(drafts).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < content.length; index += 1) {
+    const code = content.charCodeAt(index);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ code, 0x85ebca6b);
+  }
+  return `dual-v2:${content.length}:${(first >>> 0).toString(16)}:${(second >>> 0).toString(16)}`;
+}
+
 export function adoptCommittedDualCaptionDrafts(
   previousCommitted: Record<string, DualCaptionDraft>,
   nextCommitted: Record<string, DualCaptionDraft>,

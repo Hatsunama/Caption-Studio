@@ -130,6 +130,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          node ./scripts/verify-android-abi.mjs --aab release-source/android/app/build/outputs/bundle/release/app-release.aab
           node ./scripts/verify-play-aab.mjs --verify \
             release-source dist/play-aab-approval.json "$CAPTION_STUDIO_BUNDLETOOL"
 

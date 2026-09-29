@@ -110,6 +110,7 @@ jobs:
           aab="android/app/build/outputs/bundle/release/app-release.aab"
           test -s "$apk"
           test -s "$aab"
+          node ./scripts/verify-android-abi.mjs --apk "$apk" --aab "$aab"
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           test -x "$build_tools/aapt"
           test -x "$build_tools/apksigner"

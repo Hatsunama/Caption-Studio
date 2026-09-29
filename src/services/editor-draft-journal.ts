@@ -7,6 +7,7 @@ export type EditorDraftJournal = {
   schemaVersion: 1;
   projectId: string;
   kind: EditorDraftKind;
+  /** Supplied by the editor; dual-caption journals use a content revision. */
   baseRevision: string;
   savedAt: string;
   payload: unknown;
@@ -163,6 +164,25 @@ async function clearEditorDraftJournalUnqueued(projectId: string, kind: EditorDr
   }
 }
 
+async function archiveEditorDraftJournalUnqueued(projectId: string, kind: EditorDraftKind) {
+  const uri = journalUri(projectId, kind);
+  if (!uri) throw new EditorDraftJournalError('unavailable', 'Recovery draft storage is unavailable. Existing recovery data is preserved.');
+  const existing = await readEditorDraftJournalUnqueued(projectId, kind);
+  if (!existing) return;
+  if (existing.recovery.failures.length) {
+    throw new EditorDraftJournalError(existing.recovery.failures[0].code,
+      existing.recovery.warning ?? 'A recovery copy is unreadable. Existing recovery data is preserved.', existing.recovery.failures);
+  }
+  // Move the fallback first. At every interruption point a valid stale copy
+  // remains either at its live path or at an archive path.
+  for (const source of [`${uri}.previous`, uri]) {
+    if (!(await FileSystem.getInfoAsync(source)).exists) continue;
+    let suffix = Date.now();
+    while ((await FileSystem.getInfoAsync(`${uri}.quarantine-${suffix}`)).exists) suffix += 1;
+    await FileSystem.moveAsync({ from: source, to: `${uri}.quarantine-${suffix}` });
+  }
+}
+
 function journalDirectoryUri() {
   return FileSystem.documentDirectory ? `${FileSystem.documentDirectory}editor-drafts/` : null;
 }
@@ -184,6 +204,9 @@ export function writeEditorDraftJournal(projectId: string, kind: EditorDraftKind
 }
 export function clearEditorDraftJournal(projectId: string, kind: EditorDraftKind) {
   return journalOperations(safe(projectId), () => clearEditorDraftJournalUnqueued(projectId, kind));
+}
+export function archiveEditorDraftJournal(projectId: string, kind: EditorDraftKind) {
+  return journalOperations(safe(projectId), () => archiveEditorDraftJournalUnqueued(projectId, kind));
 }
 
 // Share the project queue with every journal kind so pending writes finish before

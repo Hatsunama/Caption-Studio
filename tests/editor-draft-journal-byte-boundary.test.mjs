@@ -292,6 +292,7 @@ async function mountEditor(kind, options = {}) {
       if (name === '@/lib/caption-script') return scriptHelpers;
       if (name === '@/lib/dual-caption-drafts') return dualHelpers;
       if (name === '@/services/editor-draft-journal') return {
+        archiveEditorDraftJournal: async (...args) => options.service?.archiveEditorDraftJournal(...args),
         readEditorDraftJournal: async (...args) => {
           if (options.error) throw options.error;
           return options.service ? options.service.readEditorDraftJournal(...args) : options.journal;
@@ -366,6 +367,50 @@ for (const kind of ['script', 'dual']) {
 
 const cue = { id: 'cue', text: 'Source', startMs: 0, endMs: 1000, wordIds: [] };
 const pair = { source: cue, translation: { text: 'Translation', status: 'translated' } };
+test('script recovery detects a caption change within the same updatedAt tick and journals fresh typing', async () => {
+  const h = harness();
+  const stale = JSON.stringify({ ...JSON.parse(envelope([{ ...cue, text: 'Old unsaved typing' }])),
+    baseRevision: scriptHelpers.captionScriptRevision([cue]) });
+  h.files.set(uri, stale);
+  const editor = await mountEditor('script', { service: h.journal, captions: [{ ...cue, text: 'Revised elsewhere' }] });
+  assert.match(editor.alerts[0][1], /changed|conflict/i);
+  await editor.choose('Keep current captions');
+  assert.equal(editor.draft()[0].text, 'Revised elsewhere');
+  await editor.edit('Fresh local typing');
+  await editor.drainTimers();
+  assert.equal(editor.calls.writes, 1);
+  assert.equal(JSON.parse(h.files.get(uri)).payload[0].text, 'Fresh local typing');
+  assert.ok([...h.files].some(([name, raw]) => name.startsWith(`${uri}.quarantine-`) && raw === stale));
+});
+test('dual recovery warns and preserves stale typing when captions changed within the same updatedAt tick', async () => {
+  const h = harness();
+  const path = uri.replace('caption-script', 'dual-captions-zh');
+  const stale = envelope({ cue: { primaryText: 'Old unsaved typing', translatedText: 'Translation' } }, 'dual-captions-zh');
+  h.files.set(path, stale);
+  const revisedPair = { ...pair, source: { ...cue, text: 'Source revised elsewhere' } };
+  const editor = await mountEditor('dual', { service: h.journal, pairs: [revisedPair] });
+  assert.match(editor.alerts[0][1], /conflict|changed since|different revision/i);
+  await editor.choose('Keep current translation');
+  assert.equal(editor.draft().cue.primaryText, 'Source revised elsewhere');
+  await editor.edit('New local typing');
+  await editor.drainTimers();
+  assert.equal(editor.calls.writes, 1);
+  assert.equal(JSON.parse(h.files.get(path)).payload.cue.primaryText, 'New local typing');
+  assert.ok([...h.files].some(([name, raw]) => name.startsWith(`${path}.quarantine-`) && raw === stale));
+});
+test('dual conflict restore archives old recovery before journaling restored typing', async () => {
+  const h = harness();
+  const path = uri.replace('caption-script', 'dual-captions-zh');
+  const stale = envelope({ cue: { primaryText: 'Recovered typing', translatedText: 'Translation' } }, 'dual-captions-zh');
+  h.files.set(path, stale);
+  const editor = await mountEditor('dual', { service: h.journal, pairs: [pair] });
+  await editor.choose('Restore unsaved typing');
+  await editor.drainTimers();
+  assert.equal(editor.draft().cue.primaryText, 'Recovered typing');
+  assert.equal(editor.calls.writes, 1);
+  assert.equal(JSON.parse(h.files.get(path)).payload.cue.primaryText, 'Recovered typing');
+  assert.ok([...h.files].some(([name, raw]) => name.startsWith(`${path}.quarantine-`) && raw === stale));
+});
 for (const kind of ['script', 'dual']) {
   const draftKind = kind === 'script' ? 'caption-script' : 'dual-captions-zh';
   const path = uri.replace('caption-script', draftKind);

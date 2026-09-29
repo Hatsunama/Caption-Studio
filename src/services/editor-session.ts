@@ -48,7 +48,7 @@ export function createEditorSession(
       if (started === revision) return current;
     }
   };
-  const commit = (operation: EditorProjectOperation, alreadyPersists = false) => {
+  const commit = (operation: EditorProjectOperation, alreadyPersists = false, recordHistory = true) => {
     if (!editable()) return Promise.reject(new Error('Finish leaving the editor before making more changes.'));
     return enqueue(async (expected): Promise<EditorPublication | null> => {
       const before = current;
@@ -71,7 +71,7 @@ export function createEditorSession(
         throw new Error('The project changed while this action was saving. Newer edits were kept. Try the action again.');
       }
       if (next !== before) {
-        remember(before);
+        if (recordHistory) remember(before);
         current = next;
         revision += 1;
         publish(next);

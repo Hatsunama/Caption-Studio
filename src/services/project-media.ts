@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { File, FileMode } from 'expo-file-system';
 
 import CaptionMedia from 'caption-media';
 import { audioWaveformPeakCount } from '@/lib/audio-waveform';
@@ -7,6 +8,8 @@ import { requireFreeSpace } from '@/services/storage-policy';
 import type { ProjectVideoSource } from '@/types/project';
 
 const MAX_STORED_IMAGE_BYTES = 50 * 1024 * 1024;
+export const MAX_STORED_AUDIO_BYTES = 256 * 1024 * 1024;
+const AUDIO_COPY_CHUNK_BYTES = 1024 * 1024;
 const PROJECT_POSTER_VERSION = 3;
 const CLIP_THUMBNAIL_VERSION = 2;
 const VIDEO_PREVIEW_VERSION = 1;
@@ -310,16 +313,52 @@ export async function storeProjectAudio(options: {
   const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const stagingUri = `${directory}.staging-${safePathSegment(options.audioId)}-${nonce}`;
   const destinationUri = `${directory}${safePathSegment(options.audioId)}-${nonce}.${extension}`;
+  let committed = false;
+  let promotionAttempted = false;
   try {
+    const source = await FileSystem.getInfoAsync(options.sourceUri);
+    if (source.exists && !source.isDirectory && source.size > MAX_STORED_AUDIO_BYTES) {
+      throw new Error('This audio is larger than the 256 MB import limit. Choose a smaller file.');
+    }
     await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
-    await FileSystem.copyAsync({ from: options.sourceUri, to: stagingUri });
+    const sourceHandle = new File(options.sourceUri).open(FileMode.ReadOnly);
+    try {
+      const stagingFile = new File(stagingUri);
+      stagingFile.create();
+      const stagingHandle = stagingFile.open(FileMode.WriteOnly);
+      try {
+        let copiedBytes = 0;
+        while (true) {
+          const bytes = sourceHandle.readBytes(AUDIO_COPY_CHUNK_BYTES);
+          if (bytes.length === 0) break;
+          if (copiedBytes + bytes.length > MAX_STORED_AUDIO_BYTES) {
+            throw new Error('This audio is larger than the 256 MB import limit. Choose a smaller file.');
+          }
+          stagingHandle.writeBytes(bytes);
+          copiedBytes += bytes.length;
+        }
+      } finally {
+        stagingHandle.close();
+      }
+    } finally {
+      sourceHandle.close();
+    }
+    const staged = await FileSystem.getInfoAsync(stagingUri);
+    if (!staged.exists || staged.isDirectory || staged.size > MAX_STORED_AUDIO_BYTES) {
+      throw new Error('The selected audio could not be saved within the 256 MB import limit.');
+    }
     await validateStoredAudio(stagingUri);
     const existing = await FileSystem.getInfoAsync(destinationUri);
     if (existing.exists) throw new Error('Caption Studio could not allocate a unique audio file. Try again.');
+    promotionAttempted = true;
     await FileSystem.moveAsync({ from: stagingUri, to: destinationUri });
+    committed = true;
     return destinationUri;
   } finally {
     await FileSystem.deleteAsync(stagingUri, { idempotent: true }).catch(() => undefined);
+    if (promotionAttempted && !committed) {
+      await FileSystem.deleteAsync(destinationUri, { idempotent: true }).catch(() => undefined);
+    }
   }
 }
 
