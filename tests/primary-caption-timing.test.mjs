@@ -60,13 +60,16 @@ test('clip projection preserves source word timing for legacy recovery and edits
   ]);
 });
 
-test('an isolated unrepresentably short word reports a timing quality failure', () => {
-  assert.throws(() => groupWordsIntoCaptions([
+test('an isolated short word uses available pre-roll without changing its source word', () => {
+  const captions = groupWordsIntoCaptions([
     { id: 'tiny', text: 'Tiny.', startMs: 995, endMs: 1_000 },
-  ]), /Primary caption timing quality failure for caption-1, words tiny: isolated short word interval/);
+  ]);
+  assert.deepEqual(captions.map(({ text, startMs, endMs, wordIds }) => ({ text, startMs, endMs, wordIds })), [
+    { text: 'Tiny.', startMs: 920, endMs: 1_000, wordIds: ['tiny'] },
+  ]);
 });
 
-test('a short group cannot merge into a caption beyond the configured text budget', () => {
+test('a short group preserves speech instead of merging beyond the configured text budget', () => {
   const words = [
     { id: 'short', text: 'A.', startMs: 0, endMs: 40 },
     { id: 'neighbor', text: 'Longword.', startMs: 40, endMs: 500 },
@@ -75,14 +78,37 @@ test('a short group cannot merge into a caption beyond the configured text budge
     { ...DEFAULT_GROUPING_OPTIONS, maxWords: 1, maxCharacters: 99 },
     { ...DEFAULT_GROUPING_OPTIONS, maxWords: 99, maxCharacters: 10 },
   ]) {
-    assert.throws(() => groupWordsIntoCaptions(words, options),
-      /Primary caption timing quality failure.*short.*text budget/);
+    const captions = groupWordsIntoCaptions(words, options);
+    assert.deepEqual(captions.flatMap((caption) => caption.wordIds), ['short', 'neighbor']);
+    assert.equal(captions.length, 2);
+    assert.ok(captions[0].endMs <= captions[1].startMs);
   }
-  assert.throws(() => groupWordsIntoCaptions([
+  const cjk = groupWordsIntoCaptions([
     { id: 'short', text: '你。', startMs: 0, endMs: 40 },
     { id: 'neighbor', text: '好。', startMs: 40, endMs: 500 },
-  ], { ...DEFAULT_GROUPING_OPTIONS, maxCjkCharacters: 1 }),
-  /Primary caption timing quality failure.*short.*text budget/);
+  ], { ...DEFAULT_GROUPING_OPTIONS, maxCjkCharacters: 1 });
+  assert.deepEqual(cjk.flatMap((caption) => caption.wordIds), ['short', 'neighbor']);
+  assert.equal(cjk.length, 2);
+});
+
+test('unmergeable short speech remains a visible, non-overlapping caption instead of failing the run', () => {
+  const words = [
+    { id: 'short', text: 'A.', startMs: 0, endMs: 40 },
+    { id: 'neighbor', text: 'Longword.', startMs: 40, endMs: 500 },
+  ];
+  const captions = groupWordsIntoCaptions(words, { ...DEFAULT_GROUPING_OPTIONS, maxWords: 1 });
+  assert.deepEqual(captions.map(({ text, startMs, endMs, wordIds }) => ({ text, startMs, endMs, wordIds })), [
+    { text: 'A.', startMs: 0, endMs: 40, wordIds: ['short'] },
+    { text: 'Longword.', startMs: 40, endMs: 500, wordIds: ['neighbor'] },
+  ]);
+});
+
+test('one indivisible long spoken token remains editable instead of failing every caption', () => {
+  const word = { id: 'long-token', text: 'supercalifragilisticexpialidociouswhatever', startMs: 100, endMs: 600 };
+  const captions = groupWordsIntoCaptions([word]);
+  assert.deepEqual(captions.map(({ text, startMs, endMs, wordIds }) => ({ text, startMs, endMs, wordIds })), [
+    { text: word.text, startMs: 100, endMs: 600, wordIds: [word.id] },
+  ]);
 });
 
 test('unresolved long word fails cue sizing with clip and word provenance', () => {
