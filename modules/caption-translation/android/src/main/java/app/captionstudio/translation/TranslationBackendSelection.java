@@ -72,6 +72,10 @@ final class TranslationBackendSelection {
       public String translate(String prompt, int tokens, boolean requireStructuredOutput) throws Exception {
         return runtime.translate(prompt, tokens, requireStructuredOutput);
       }
+      public String translate(String prompt, int tokens, boolean requireStructuredOutput,
+          String responseSchema) throws Exception {
+        return runtime.translate(prompt, tokens, requireStructuredOutput, responseSchema);
+      }
       public void cancel() { runtime.cancel(); }
       public void close() throws TranslationRuntimeCleanupException { runtime.close(); }
     };

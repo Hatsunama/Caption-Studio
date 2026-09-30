@@ -27,13 +27,21 @@ final class TranslationBatchMetrics {
 
   String generate(TranslationRuntime runtime, String prompt, int tokens, boolean repair)
       throws Exception {
+    return generate(runtime, prompt, tokens, repair, null);
+  }
+
+  String generate(TranslationRuntime runtime, String prompt, int tokens, boolean repair,
+      String responseSchema) throws Exception {
     backend = safeBackend(runtime.backendName());
     fallback = runtime.initializationFallback();
     attempts++;
     if (repair) repairAttempts++;
     long start = System.nanoTime();
     try {
-      return runtime.translate(prompt, tokens, runtime.supportsStructuredOutput());
+      boolean structured = runtime.supportsStructuredOutput();
+      return responseSchema == null
+          ? runtime.translate(prompt, tokens, structured)
+          : runtime.translate(prompt, tokens, structured, structured ? responseSchema : null);
     } catch (Exception | Error failure) {
       generationFailures++;
       cancelled = failure instanceof CancellationException || failure instanceof InterruptedException;

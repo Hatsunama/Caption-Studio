@@ -11,7 +11,6 @@ import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.ResponseFormat
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ThinkingConfig
-import com.google.gson.JsonParser
 import java.io.File
 import java.util.Collections
 import java.util.function.BooleanSupplier
@@ -107,12 +106,28 @@ internal class LiteRtLmTranslationRuntime(
     translate(prompt, maxOutputTokens, false)
 
   @Throws(Exception::class)
-  override fun translate(prompt: String, maxOutputTokens: Int, requireStructuredOutput: Boolean): String {
+  override fun translate(prompt: String, maxOutputTokens: Int, requireStructuredOutput: Boolean): String =
+    translate(prompt, maxOutputTokens, requireStructuredOutput,
+      if (requireStructuredOutput) GENERIC_RESPONSE_SCHEMA else null)
+
+  @Throws(Exception::class)
+  override fun translate(
+    prompt: String,
+    maxOutputTokens: Int,
+    requireStructuredOutput: Boolean,
+    responseSchema: String?,
+  ): String {
     generationDiagnostics.clear()
     check(!closed.get()) { "The translation runtime is closed" }
     if (cancelled.get()) throw CancellationException("Caption translation was cancelled")
 
     require(maxOutputTokens in 1..1_536)
+    require(requireStructuredOutput || responseSchema == null) {
+      "A response schema requires structured output"
+    }
+    require(!requireStructuredOutput || !responseSchema.isNullOrBlank()) {
+      "Structured output requires a response schema"
+    }
     val conversation = engine.createConversation(conversationConfig.copy(
       maxOutputToken = maxOutputTokens,
       enableResponseFormat = requireStructuredOutput,
@@ -138,8 +153,7 @@ internal class LiteRtLmTranslationRuntime(
     var operationFailure: Throwable? = null
     try {
       response = if (requireStructuredOutput) {
-        val captionCount = JsonParser.parseString(prompt).asJsonObject.getAsJsonArray("captions").size()
-        conversation.sendMessage(prompt, responseFormat = ResponseFormat.json(responseJsonSchema(captionCount))).toString()
+        conversation.sendMessage(prompt, responseFormat = ResponseFormat.json(checkNotNull(responseSchema))).toString()
       } else {
         conversation.sendMessage(prompt).toString()
       }
@@ -211,8 +225,8 @@ internal class LiteRtLmTranslationRuntime(
     runCatching { conversation.close() }.exceptionOrNull()
 
   private companion object {
-    fun responseJsonSchema(count: Int): String =
-      """{"type":"array","minItems":$count,"maxItems":$count,"items":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}"""
+    const val GENERIC_RESPONSE_SCHEMA =
+      """{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string","minLength":1}},"required":["id","text"],"additionalProperties":false}}"""
   }
 }
 
