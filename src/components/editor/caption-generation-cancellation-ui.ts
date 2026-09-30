@@ -4,7 +4,7 @@ export async function runCaptionCancellationRequest(
   cancel: () => Promise<CaptionGenerationCancellationResult>,
   setCancelling: (value: boolean) => void,
   reportFailure: (message: string) => void,
-): Promise<void> {
+): Promise<{ interruptionError?: string } | undefined> {
   setCancelling(true);
   try {
     const result = await cancel();
@@ -16,19 +16,17 @@ export async function runCaptionCancellationRequest(
       const details = result.failures.map((failure) => (
         failure instanceof Error ? failure.message : String(failure)
       )).join('; ');
-      reportFailure(`Caption generation could not be stopped: ${details}`);
+      const interruptionError = `Caption generation could not be stopped: ${details}`;
+      reportFailure(interruptionError);
       setCancelling(false);
-      return;
+      return { interruptionError };
     }
-    void result.finished.then(
-      () => setCancelling(false),
-      (error) => {
-        reportFailure(error instanceof Error ? error.message : 'Caption generation could not be stopped.');
-        setCancelling(false);
-      },
-    );
-  } catch (error) {
-    reportFailure(error instanceof Error ? error.message : 'Caption generation could not be stopped.');
+    await result.finished;
     setCancelling(false);
+  } catch (error) {
+    const interruptionError = error instanceof Error ? error.message : 'Caption generation could not be stopped.';
+    reportFailure(interruptionError);
+    setCancelling(false);
+    return { interruptionError };
   }
 }

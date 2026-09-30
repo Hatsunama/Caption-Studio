@@ -28,8 +28,12 @@ export function useForegroundOperation<Stage extends string>(options: {
         if (!stage || pendingRef.current) return;
         const pending: ForegroundOperationInterruption<Stage> = { stage };
         pendingRef.current = pending;
-        stopPromiseRef.current = Promise.resolve(interruptRef.current()).then(
-          () => undefined,
+        stopPromiseRef.current = Promise.resolve().then(() => interruptRef.current()).then(
+          (result: unknown) => {
+            if (result && typeof result === 'object' && 'interruptionError' in result && typeof result.interruptionError === 'string') {
+              pending.interruptionError = result.interruptionError;
+            }
+          },
           (error: unknown) => {
             pending.interruptionError = error instanceof Error ? error.message : 'The operation could not stop cleanly.';
           },

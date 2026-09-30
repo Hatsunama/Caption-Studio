@@ -20,6 +20,7 @@ import org.robolectric.annotation.Implements
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(RobolectricTestRunner::class)
@@ -88,6 +89,42 @@ class TimelineAudioRendererTest {
     )
     assertEquals(1, cleanupCount)
     assertEquals(1, rejectionCount)
+  }
+
+  @Test
+  fun cancelledPreflightRetriesNeverCreateUnboundedWorkers() {
+    val field = TimelineAudioRenderer::class.java.getDeclaredField("preflightWorkers")
+    field.isAccessible = true
+    val executor = field.get(TimelineAudioRenderer) as ThreadPoolExecutor
+    assertEquals(1, executor.maximumPoolSize)
+    val entered = CountDownLatch(1)
+    val release = CountDownLatch(1)
+    val retryStarted = CountDownLatch(1)
+    val blocked = executor.submit {
+      entered.countDown()
+      while (release.count > 0) {
+        try { release.await() } catch (_: InterruptedException) { }
+      }
+    }
+    try {
+      assertTrue(entered.await(5, TimeUnit.SECONDS))
+      val cancelledRetry = executor.submit { throw AssertionError("Cancelled queued retry ran") }
+      assertEquals(1, executor.queue.size)
+      cancelledRetry.cancel(true)
+      executor.purge()
+      assertTrue(executor.queue.isEmpty())
+      val retry = executor.submit { retryStarted.countDown() }
+      assertEquals(1L, retryStarted.count)
+      assertEquals(1, executor.activeCount)
+      release.countDown()
+      blocked.get(5, TimeUnit.SECONDS)
+      retry.get(5, TimeUnit.SECONDS)
+      assertEquals(0L, retryStarted.count)
+    } finally {
+      release.countDown()
+      blocked.cancel(true)
+      executor.purge()
+    }
   }
 
   @Test

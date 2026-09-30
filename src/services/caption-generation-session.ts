@@ -5,6 +5,13 @@ export class CaptionGenerationCancelledError extends Error {
   }
 }
 
+export class CaptionGenerationStopError extends Error {
+  constructor(public readonly failures: unknown[]) {
+    super('Caption generation could not stop cleanly. ' + failures.map((failure) => failure instanceof Error ? failure.message : String(failure)).join('; '));
+    this.name = 'CaptionGenerationStopError';
+  }
+}
+
 export type CaptionGenerationSessionContext = {
   isCancelled(): boolean;
   throwIfCancelled(): void;
@@ -19,6 +26,7 @@ type Attempt = {
   finished: Promise<void>;
   resolveFinished: () => void;
   stopSucceeded: boolean;
+  stopFailures: unknown[];
   stopRequest?: Promise<CaptionGenerationCancellationResult>;
 };
 
@@ -49,6 +57,7 @@ export function createCaptionGenerationSession(cancelNativeExtraction: () => Pro
         finished,
         resolveFinished,
         stopSucceeded: false,
+        stopFailures: [],
       };
       active = attempt;
 
@@ -68,8 +77,16 @@ export function createCaptionGenerationSession(cancelNativeExtraction: () => Pro
       };
 
       try {
-        return await work(context);
+        const result = await work(context);
+        await attempt.stopRequest;
+        if (attempt.stopFailures.length > 0) throw new CaptionGenerationStopError(attempt.stopFailures);
+        throwIfCancelled();
+        return result;
       } catch (error) {
+        await attempt.stopRequest;
+        if (error instanceof CaptionGenerationCancelledError && attempt.stopFailures.length > 0) {
+          throw new CaptionGenerationStopError(attempt.stopFailures);
+        }
         throw error;
       } finally {
         attempt.stoppers.clear();
@@ -94,6 +111,7 @@ export function createCaptionGenerationSession(cancelNativeExtraction: () => Pro
           result.status === 'rejected' ? [result.reason] : []
         ));
         attempt.stopSucceeded = failures.length === 0;
+        attempt.stopFailures = failures;
         return failures.length > 0
           ? { status: 'stop-failed', failures, finished: attempt.finished }
           : { status: 'stopping', finished: attempt.finished };

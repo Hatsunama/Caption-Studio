@@ -23,10 +23,17 @@ import type { CaptionProject } from '@/types/project';
 
 const videoExportSession = createVideoExportSession(() => CaptionMedia.cancelTimelineVideoExport());
 
-export async function exportProjectVideo(project: CaptionProject, allowIncompleteTranslations = false): Promise<ReturnType<typeof assertVideoExportDelivery> & { sharingWarning?: string }> {
+export async function exportProjectVideo(
+  project: CaptionProject,
+  allowIncompleteTranslations = false,
+  prepareProject?: (project: CaptionProject, throwIfCancelled: () => void) => Promise<CaptionProject>,
+): Promise<ReturnType<typeof assertVideoExportDelivery> & { sharingWarning?: string }> {
   return videoExportSession.run(async (session) => {
+    session.throwIfCancelled();
+    const preparedProject = prepareProject ? await prepareProject(project, session.throwIfCancelled) : project;
+    session.throwIfCancelled();
     if (!FileSystem.cacheDirectory) throw new Error('Export storage is unavailable on this device.');
-    const unresolvedPlan = buildTimelineRenderPlan(project, undefined, allowIncompleteTranslations);
+    const unresolvedPlan = buildTimelineRenderPlan(preparedProject, undefined, allowIncompleteTranslations);
     await session.waitFor(assertExportSourcesAvailable(unresolvedPlan, {
       media: (uri) => CaptionMedia.getMediaInfo(uri),
       image: (uri) => CaptionMedia.validateImageFile(uri),
@@ -40,8 +47,8 @@ export async function exportProjectVideo(project: CaptionProject, allowIncomplet
     if (!canPublish) throw new Error('Allow storage access so Caption Studio can save the export to your media library.');
 
     const fontUris = await session.waitFor(resolveExportFontUris(collectUnresolvedFontFamilies(unresolvedPlan)));
-    const renderPlan = fontUris.size > 0 ? buildTimelineRenderPlan(project, fontUris, allowIncompleteTranslations) : unresolvedPlan;
-    const outputUri = `${directory}${createExportCacheFileName(project.name, 'mp4')}`;
+    const renderPlan = fontUris.size > 0 ? buildTimelineRenderPlan(preparedProject, fontUris, allowIncompleteTranslations) : unresolvedPlan;
+    const outputUri = `${directory}${createExportCacheFileName(preparedProject.name, 'mp4')}`;
     const releaseArtifactProtection = protectTemporaryVideoExportArtifacts(outputUri);
     try {
       session.throwIfCancelled();

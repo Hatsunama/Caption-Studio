@@ -4,6 +4,7 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as scriptMutations from '../src/lib/caption-script.ts';
+import * as saveRecoveryHelpers from '../src/components/editor/caption-save-recovery.ts';
 import { applyStylePatch, resolveCaptionStyle } from '../src/lib/style-resolver.ts';
 import { captionTransform } from '../src/lib/caption-transform.ts';
 import { replaceVisibleCaptionScript } from '../src/lib/project-editor.ts';
@@ -69,7 +70,7 @@ const crop = evaluate(editorAst.statements.find((node) => ts.isFunctionDeclarati
   clamp: (value, min, max) => Math.min(max, Math.max(min, value)),
 });
 
-function mount(overrides = {}, platform = 'android') {
+function mount(overrides = {}, platform = 'android', storage = {}) {
   const slots = [];
   const timers = new Map();
   const keyboardListeners = new Map();
@@ -117,11 +118,15 @@ function mount(overrides = {}, platform = 'android') {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return native;
       if (name === '@/lib/caption-script') return scriptMutations;
+      if (name === './caption-save-recovery') return saveRecoveryHelpers;
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, pill: 20 } } };
       if (name === '@/services/editor-draft-journal') return {
         readEditorDraftJournal: () => ({ then: (callback) => { recover = callback; return { catch: (callback) => { recoveryError = callback; } }; } }),
         archiveEditorDraftJournal: async () => { calls.journalArchives = (calls.journalArchives ?? 0) + 1; },
-        clearEditorDraftJournal: async () => { calls.journalClears = (calls.journalClears ?? 0) + 1; },
+        clearEditorDraftJournal: async () => {
+          calls.journalClears = (calls.journalClears ?? 0) + 1;
+          if (storage.clearError) throw new Error('recovery cleanup failed');
+        },
         writeEditorDraftJournal: async (...args) => { (calls.journals ??= []).push(plain(args)); },
       };
       throw new Error(`Unexpected dependency: ${name}`);
@@ -206,6 +211,7 @@ function mount(overrides = {}, platform = 'android') {
   calls.indices.length = 0;
   return {
     calls, props, list, row, find, act, fire, measure, viewport, advance,
+    async flush() { await new Promise(setImmediate); render(); },
     keyboard: (name) => act(() => keyboardListeners.get(name)?.()),
     update: (values) => act(() => Object.assign(props, values)),
     edit: (index) => act(() => row(index).props.onPress()),
@@ -688,6 +694,7 @@ for (const rejection of ['throw', 'false']) test(`rejected script save (${reject
   invalid[0].endMs = invalid[0].startMs + 40;
   invalid[1].text = 'Keep this unsaved edit';
   h.recover(invalid); h.restore(); h.advance(1000);
+  await h.flush();
   const journals = plain(h.calls.journals);
   assert.ok(journals.length > 0);
   h.act(() => h.button('Save all caption edits').onPress());
@@ -728,6 +735,7 @@ for (const legacyDuration of [0, 1, 40, 79]) test(`script component restores and
   h.restore();
   assert.equal(h.input(1).value, 'Recovered journal text');
   h.edit(1); h.act(() => h.input(1).onChangeText('Durable separate edit')); h.advance(1000);
+  await h.flush();
   assert.equal(h.calls.journals.at(-1)[3][0].endMs, legacyDuration);
   assert.equal(h.calls.journals.at(-1)[3][1].text, 'Durable separate edit');
   h.act(() => h.button('Save all caption edits').onPress());
@@ -758,7 +766,7 @@ test('a failed recovery read cannot authorize overwriting the unread journal', (
   h.unmount();
 });
 
-test('zero-duration recovery survives editing another cue and a second journal restore', () => {
+test('zero-duration recovery survives editing another cue and a second journal restore', async () => {
   const project = migrationProject();
   project.captions[0].endMs = project.captions[0].startMs;
   const original = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(project)));
@@ -767,6 +775,7 @@ test('zero-duration recovery survives editing another cue and a second journal r
   const h = mount({ captions: original.captions });
   h.recover(recovery); h.restore();
   h.act(() => h.input(0).onChangeText('Next edit in zero cue')); h.advance(1000);
+  await h.flush();
   const payload = h.calls.journals.at(-1)[3];
   assert.equal(payload[0].endMs, payload[0].startMs);
   assert.equal(payload[0].text, 'Next edit in zero cue');
@@ -778,6 +787,44 @@ test('zero-duration recovery survives editing another cue and a second journal r
   reopened.restore();
   assert.deepEqual(plain(reopened.list().data), payload);
   reopened.unmount();
+});
+
+test('durable script save with failed recovery cleanup retries cleanup without resaving accepted text', async () => {
+  let saves = 0, closes = 0;
+  const storage = { clearError: true };
+  const h = mount({ onSave: async () => { saves++; return true; }, onCancel: () => { closes++; } }, 'android', storage);
+  h.recover(null);
+  h.act(() => h.input(1).onChangeText('Durable accepted text'));
+  h.act(() => h.button('Save all caption edits').onPress()); await h.flush();
+  assert.equal(saves, 1); assert.equal(closes, 0);
+  assert.equal(h.calls.alerts.at(-1)[0], 'Changes saved');
+  assert.match(h.calls.alerts.at(-1)[1], /changes were saved.*recovery copy cleanup failed/i);
+  assert.equal(h.input(1).value, 'Durable accepted text');
+  storage.clearError = false;
+  h.act(() => h.calls.alerts.at(-1)[2].find((button) => button.text === 'Retry cleanup').onPress());
+  await h.flush();
+  assert.equal(saves, 1); assert.equal(closes, 1); assert.equal(h.calls.journalClears, 2);
+  h.advance(1000); await h.flush(); assert.equal(h.calls.journals, undefined);
+  h.unmount();
+});
+
+test('script cleanup button state resets on newer typing and old retry preserves its journal', async () => {
+  let saves = 0;
+  const storage = { clearError: true };
+  const h = mount({ onSave: async () => { saves++; return true; } }, 'android', storage);
+  h.recover(null);
+  h.act(() => h.input(1).onChangeText('Accepted text'));
+  h.act(() => h.button('Save all caption edits').onPress()); await h.flush();
+  assert.equal(h.button('Save all caption edits').children.props.children, 'Retry cleanup');
+  const oldRetry = h.calls.alerts.at(-1)[2].find((button) => button.text === 'Retry cleanup');
+  h.act(() => h.input(1).onChangeText('New unsaved text'));
+  assert.equal(h.button('Save all caption edits').children.props.children, 'Done');
+  storage.clearError = false;
+  h.act(() => oldRetry.onPress()); await h.flush();
+  assert.equal(saves, 1); assert.equal(h.calls.journalClears, 1);
+  h.advance(1000); await h.flush();
+  assert.equal(h.calls.journals.at(-1)[3][1].text, 'New unsaved text');
+  h.unmount();
 });
 
 for (const recovered of [false, true]) test(`script component split -> transform -> ${recovered ? 'delayed recovery -> ' : ''}save -> reopen uses current geometry`, async () => {

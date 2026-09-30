@@ -20,8 +20,11 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import expo.modules.kotlin.Promise
 import java.io.File
-import java.util.concurrent.Executors
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.CancellationException
 import java.util.concurrent.Future
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 internal data class TimelineAudioSegment(
   val id: String,
@@ -155,9 +158,11 @@ internal object TimelineAudioRenderer {
   )
 
   private val handler = Handler(Looper.getMainLooper())
-  private val preflightWorkers = Executors.newCachedThreadPool { runnable ->
-    Thread(runnable, "timeline-audio-preflight").apply { isDaemon = true }
-  }
+  private val preflightWorkers = ThreadPoolExecutor(
+    1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue<Runnable>(1),
+    { runnable -> Thread(runnable, "timeline-audio-preflight").apply { isDaemon = true } },
+    ThreadPoolExecutor.AbortPolicy(),
+  )
   private var active: ActiveRender? = null
 
   fun render(context: Context, outputPath: String, plan: TimelineAudioPlan, promise: Promise) {
@@ -169,11 +174,15 @@ internal object TimelineAudioRenderer {
       val task = ActiveRender(File(outputPath), promise)
       active = task
       try {
+        preflightWorkers.purge()
         task.preparation = preflightWorkers.submit {
           val result = runCatching {
             val appContext = context.applicationContext
             val policy = MediaInputPolicy(appContext)
-            (plan.videoClips + plan.audioClips).forEach { policy.requireInput(it.sourceUri) }
+            (plan.videoClips + plan.audioClips).forEach {
+              checkPreflightCancellation()
+              policy.requireInput(it.sourceUri)
+            }
             buildComposition(appContext, plan)
           }
           handler.post {
@@ -269,6 +278,7 @@ internal object TimelineAudioRenderer {
 
   private fun buildComposition(context: Context, plan: TimelineAudioPlan): Composition {
     val sequences = selectAudibleTimelineSegments(plan) { mediaHasAudioTrack(context, it) }.map { segment ->
+      checkPreflightCancellation()
       val clipping = MediaItem.ClippingConfiguration.Builder()
         .setStartPositionMs(segment.sourceStartMs)
         .setEndPositionMs(segment.sourceEndMs)
@@ -294,6 +304,7 @@ internal object TimelineAudioRenderer {
   }
 
   private fun mediaHasAudioTrack(context: Context, sourceUri: String): Boolean {
+    checkPreflightCancellation()
     val extractor = MediaExtractor()
     return try {
       val uri = MediaInputPolicy(context).requireInput(sourceUri)
@@ -303,10 +314,15 @@ internal object TimelineAudioRenderer {
         else -> throw IllegalArgumentException("The audio source URI is invalid")
       }
       (0 until extractor.trackCount).any { index ->
+        checkPreflightCancellation()
         extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
       }
     } finally {
       extractor.release()
     }
+  }
+
+  private fun checkPreflightCancellation() {
+    if (Thread.currentThread().isInterrupted) throw CancellationException("Timeline audio preparation was cancelled")
   }
 }
