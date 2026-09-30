@@ -35,13 +35,14 @@ test('natural caption translation is isolated in its own offline Expo module', a
 });
 
 test('LiteRT runtime is pinned, identity-gated, serialized, and deterministically closed', async () => {
-  const [gradle, runtime, verifier, translator, environment, generated] = await Promise.all([
+  const [gradle, runtime, verifier, translator, environment, generated, metrics] = await Promise.all([
     source('android/build.gradle'),
     source('android/src/main/java/app/captionstudio/translation/LiteRtLmTranslationRuntime.kt'),
     source('android/src/main/java/app/captionstudio/translation/OfficialQwenModelVerifier.java'),
     source('android/src/main/java/app/captionstudio/translation/NaturalCaptionTranslator.java'),
     source('android/src/main/java/app/captionstudio/translation/AndroidTranslationEnvironment.java'),
     source('android/src/main/java/app/captionstudio/translation/GeneratedProductContract.java'),
+    source('android/src/main/java/app/captionstudio/translation/TranslationBatchMetrics.java'),
   ]);
 
   assert.match(gradle, /litertlm-android:0\.16\.1/);
@@ -49,8 +50,12 @@ test('LiteRT runtime is pinned, identity-gated, serialized, and deterministicall
   assert.match(runtime, /OUTPUT_TOKEN_LIMIT = 1_536/);
   assert.match(runtime, /Backend\.CPU\(/);
   assert.match(runtime, /engine\.createConversation\(conversationConfig\.copy\([\s\S]*enableResponseFormat = requireStructuredOutput/);
-  assert.match(runtime, /JsonParser\.parseString\(prompt\)\.asJsonObject\.getAsJsonArray\("captions"\)\.size\(\)/);
-  assert.match(runtime, /responseFormat = ResponseFormat\.json\(responseJsonSchema\(captionCount\)\)/);
+  assert.match(translator, /TranslationResponseSchema\.forIds\(/);
+  assert.match(translator, /run\.batchMetrics\.generate\(runtime, prompt, tokens,[^;]*,\s*schema\)/);
+  assert.match(metrics, /runtime\.translate\(prompt, tokens, structured, structured \? responseSchema : null\)/);
+  assert.match(runtime, /responseSchema: String\?/);
+  assert.match(runtime, /responseFormat = ResponseFormat\.json\(checkNotNull\(responseSchema\)\)/);
+  assert.doesNotMatch(runtime, /JsonParser|parseString\(prompt\)|getAsJsonArray\("captions"\)|captionCount|responseJsonSchema\(/);
   assert.match(runtime, /currentConversation\.compareAndSet\(conversation, null\)/);
   assert.match(runtime, /currentConversation\.get\(\)\?\.cancelProcess\(\)/);
   assert.match(runtime, /conversation\.close\(\)/);

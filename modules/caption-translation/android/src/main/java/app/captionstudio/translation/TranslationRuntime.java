@@ -8,7 +8,7 @@ interface TranslationRuntime extends AutoCloseable {
 
   default boolean initializationFallback() { return false; }
 
-  /** True only when the runtime implements constrained generation for the three-argument call. */
+  /** True only when the runtime implements constrained generation for structured calls. */
   default boolean supportsStructuredOutput() { return false; }
 
   /** Optional content-free snapshot; missing metrics and termination evidence remain unknown. */
@@ -27,6 +27,12 @@ interface TranslationRuntime extends AutoCloseable {
       throw new UnsupportedOperationException("Structured translation output is unavailable");
     }
     return translate(prompt, maxOutputTokens);
+  }
+
+  /** Optional request schema; the default preserves existing injected/test runtimes. */
+  default String translate(String prompt, int maxOutputTokens, boolean requireStructuredOutput,
+      String responseSchema) throws Exception {
+    return translate(prompt, maxOutputTokens, requireStructuredOutput);
   }
 
   void cancel();

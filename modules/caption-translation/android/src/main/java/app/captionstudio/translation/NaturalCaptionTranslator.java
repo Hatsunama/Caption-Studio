@@ -667,10 +667,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       return;
     }
     if (!repairOutputs) return;
-    // A rejected item gets exactly one recovery generation, directly using the repair
-    // contract. Never spend an unconstrained singleton call before that repair.
-    // Each generated group therefore costs at most 1 + group size calls, including
-    // malformed envelopes. Accepted items and their checkpoints are never regenerated.
+    // One normal repair, plus at most one capacity-safe recovery for a proven capped
+    // EOF. Accepted items and their checkpoints are never regenerated.
     for (FragmentWork fragment : rejected) {
     checkCancelled(run);
     updateProgress(
@@ -707,6 +705,18 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         ++run.diagnosticAttempt, AttemptStage.REPAIR, 1, retryPrompt.length(), retryTokens);
     Caption candidate = generateAndParse(run, runtime, retryPrompt, retryTokens,
         List.of(fragment.requestCaption), repairDiagnostic).get(0);
+    int recoveryTokens = Math.min(1_024, retryTokens + Math.max(64, retryTokens / 2));
+    if (!candidate.valid && FailureClass.MALFORMED_JSON.name().equals(candidate.failureReason)
+        && "UNEXPECTED_EOF".equals(repairDiagnostic.malformedKind)
+        && repairDiagnostic.tokenCapHit && recoveryTokens > retryTokens
+        && fitsPromptCapacity(retryPrompt, recoveryTokens)) {
+      run.batchMetrics.reject(false);
+      checkCancelled(run);
+      repairDiagnostic = new AttemptDiagnostic(diagnosticSink, batchIndex,
+          ++run.diagnosticAttempt, AttemptStage.REPAIR, 1, retryPrompt.length(), recoveryTokens);
+      candidate = generateAndParse(run, runtime, retryPrompt, recoveryTokens,
+          List.of(fragment.requestCaption), repairDiagnostic).get(0);
+    }
     if (usable(candidate, fragment.requestCaption.text, targetLanguage)) {
       fragment.accept(candidate.text);
       writeCheckpoint(
@@ -728,8 +738,14 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       throws Exception {
     String response;
     try {
+      String schema = null;
+      if (runtime.supportsStructuredOutput()) {
+        List<String> expectedIds = new ArrayList<>(expected.size());
+        for (Caption caption : expected) expectedIds.add(caption.id);
+        schema = TranslationResponseSchema.forIds(expectedIds);
+      }
       response = run.batchMetrics.generate(runtime, prompt, tokens,
-          diagnostic.stage == AttemptStage.REPAIR);
+          diagnostic.stage == AttemptStage.REPAIR, schema);
     } catch (Exception | Error failure) {
       diagnostic.captureRuntime(runtime);
       FailureClass kind = failure instanceof CancellationException || failure instanceof InterruptedException
