@@ -203,7 +203,7 @@ test('dual-subtitle language ownership stays canonical and advertises local gene
   assert.match(dualEditor, /useSafeAreaInsets/);
   assert.match(dualEditor, /store\.reconcile\(sourceDrafts\)/);
   assert.match(dualEditor, /props\.busy/);
-  assert.match(dualEditor, /Keep Caption Studio open on this screen/);
+  assert.match(dualEditor, /Turn off battery saver and keep Caption Studio open on this screen until this finishes/);
   assert.match(dualEditor, /committedDualCaptionText/);
   assert.match(editor, /translatedText\.trim\(\) \|\| committedTranslation/);
   assert.match(renderPlan, /activeWordColor", "#64D2FF"/);

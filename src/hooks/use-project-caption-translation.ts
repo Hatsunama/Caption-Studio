@@ -11,6 +11,7 @@ import {
   CaptionTranslationCancelledError,
   translateNaturalCaptionBatch,
   type CaptionTranslationProgress,
+  type CaptionTranslationCheckpointPolicy,
 } from '@/services/caption-translation';
 import type { DualCaptionTextEdit } from '@/services/project-caption-translation';
 import type { CaptionProject } from '@/types/project';
@@ -46,6 +47,7 @@ async function refreshIncremental(
   sourceCaptionIds: readonly string[],
   onProgress: (progress: CaptionTranslationProgress) => void,
   onAcceptedBatch: (apply: (current: CaptionProject) => CaptionProject) => Promise<boolean>,
+  checkpointPolicy: CaptionTranslationCheckpointPolicy,
 ) {
   const track = project.captionTracks.translations.find((candidate) => candidate.id === trackId);
   if (!track) throw new Error('The second-language caption track no longer exists.');
@@ -56,7 +58,11 @@ async function refreshIncremental(
   }
   const context = visibleTimelineCaptions(project.captions);
   const eligible = new Set(resolveCaptionPairs(project, trackId)
-    .filter((pair) => pair.timelineVisible).map((pair) => pair.source.id));
+    .filter((pair) => pair.timelineVisible && (checkpointPolicy === 'refresh'
+      || !(pair.translation?.text.trim() && (pair.translation.reviewed
+        || ((pair.translation.status === 'translated' || pair.translation.status === 'reviewed')
+          && pair.translation.sourceTextSnapshot === pair.source.text)))))
+    .map((pair) => pair.source.id));
   const selected = new Set(sourceCaptionIds);
   const captions = project.captions.filter((caption) => selected.has(caption.id)
     && eligible.has(caption.id) && caption.text.trim());
@@ -67,6 +73,7 @@ async function refreshIncremental(
     targetLanguage: track.languageTag,
     captions: captions.map(({ id, text }) => ({ id, text })),
     allCaptions: context.map(({ id, text }) => ({ id, text })),
+    checkpointPolicy,
     onProgress,
     onAcceptedBatch: async (batch) => {
       const batchCaptions = captions.filter((caption) => batch.captions.has(caption.id));
@@ -241,7 +248,9 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
 
   const retry = useCallback(() => {
     const request = retryRequestRef.current;
-    return request ? execute(request) : Promise.resolve(false);
+    return request
+      ? execute(request.retryWith?.(optionsRef.current.getCurrentProject()) ?? request)
+      : Promise.resolve(false);
   }, [execute]);
 
   const clearError = useCallback(() => {
@@ -256,17 +265,21 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     sourceCaptionIds: readonly string[],
     baseline = optionsRef.current.getCurrentProject(),
   ) => {
-    const makeRequest = (project: CaptionProject): TranslationRequest => ({
+    const makeRequest = (
+      project: CaptionProject,
+      checkpointPolicy: CaptionTranslationCheckpointPolicy = 'refresh',
+    ): TranslationRequest => ({
       kind: 'translation',
       baseline: project,
       incremental: true,
-      retryWith: (latest) => makeRequest(latest),
+      retryWith: (latest) => makeRequest(latest, 'resume'),
       operation: (onProgress, onAcceptedBatch) => refreshIncremental(
         project,
         trackId,
         sourceCaptionIds,
         onProgress,
         onAcceptedBatch,
+        checkpointPolicy,
       ),
       completionMessage: (next) => translationAttemptMessage(next, trackId, sourceCaptionIds),
     });

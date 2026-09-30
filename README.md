@@ -95,6 +95,7 @@ Current published Android build and version code: [Caption Studio releases](http
 ## What the current Android build includes
 
 - Caption generation owns model preparation, native transcription, and cancellation through one session. Cancellation retains resumable downloads and does not claim completion before active work exits.
+- Translation resume reuses accepted checkpoints; explicit Refresh regenerates the requested lines and saves their newly accepted results for later recovery. Failed refreshes retain previously accepted text. Runtime diagnostics contain counts and failure categories, never caption text.
 - Short generated speech stays editable without failing the entire run. Visual timing recovery stays within its owning clip's projected speech window and never borrows time from a preceding clip.
 - Completed timeline transcription is retained in a bounded temporary retry cache, separate from saved captions and translation edits. A failed attempt leaves previously accepted edits intact.
 - Caption, import, audio-extraction, and export progress cards stay inside the app screen rather than opening competing Android dialog windows.

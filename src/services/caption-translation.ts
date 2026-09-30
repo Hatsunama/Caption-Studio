@@ -64,6 +64,9 @@ export type CaptionTranslationProgress = {
 
 export type NaturalTranslationUnit = { id: string; text: string };
 
+/** Refresh bypasses checkpoint reads while native still saves accepted outputs. */
+export type CaptionTranslationCheckpointPolicy = 'resume' | 'refresh';
+
 export type NaturalCaptionTranslationProvider = {
   id: 'litertlm';
   modelId: typeof NATURAL_TRANSLATION_MODEL.id;
@@ -175,6 +178,7 @@ export async function translateNaturalCaptionBatch(options: {
   targetLanguage: string;
   captions: NaturalTranslationUnit[];
   allCaptions?: NaturalTranslationUnit[];
+  checkpointPolicy?: CaptionTranslationCheckpointPolicy;
   onProgress?: (progress: CaptionTranslationProgress) => void;
   onAcceptedBatch?: (batch: NaturalCaptionTranslation) => Promise<void | boolean>;
 }): Promise<NaturalCaptionTranslation> {
@@ -188,6 +192,7 @@ export async function translateNaturalCaptionBatch(options: {
       allCaptions: options.allCaptions,
     }],
     onProgress: options.onProgress,
+    checkpointPolicy: options.checkpointPolicy,
     onAcceptedBatch: options.onAcceptedBatch
       ? async (_id, batch) => options.onAcceptedBatch!(batch)
       : undefined,
@@ -204,6 +209,7 @@ export async function translateNaturalCaptionBatch(options: {
 
 export async function translateNaturalCaptionOperations(options: {
   operations: NaturalCaptionTranslationOperation[];
+  checkpointPolicy?: CaptionTranslationCheckpointPolicy;
   onProgress?: (progress: CaptionTranslationProgress) => void;
   onAcceptedBatch?: (operationId: string, batch: NaturalCaptionTranslation) => Promise<void | boolean>;
 }): Promise<NaturalCaptionTranslationSession> {
@@ -353,7 +359,7 @@ export async function translateNaturalCaptionOperations(options: {
       let result: NaturalCaptionTranslationResult;
       try {
         result = await translateWithModelRecovery(run, nativeRequest.operations, options.onProgress,
-          options.onAcceptedBatch ? requestId : undefined);
+          options.onAcceptedBatch ? requestId : undefined, options.checkpointPolicy);
       } catch (error) {
         if (options.onAcceptedBatch) {
           const accepted = await CaptionTranslation.getNaturalCaptionAcceptedBatches(requestId);
@@ -665,6 +671,7 @@ async function translateWithNative(
     batches: { captions: NaturalCaptionTranslationInput[]; contextBefore?: string; contextAfter?: string; }[];
   }[],
   requestId?: string,
+  checkpointPolicy: CaptionTranslationCheckpointPolicy = 'resume',
 ) {
   const benchmarkNoCheckpoints = TRANSLATION_BENCHMARK_BACKEND !== undefined;
   const runtimeBackend = TRANSLATION_BENCHMARK_BACKEND ?? 'cpu';
@@ -673,7 +680,7 @@ async function translateWithNative(
     requestId,
     runtimeBackend,
     benchmarkNoCheckpoints,
-    reuseCheckpoints: !benchmarkNoCheckpoints,
+    reuseCheckpoints: !benchmarkNoCheckpoints && checkpointPolicy === 'resume',
     repairUnusableOutputs: true,
   });
   if (benchmarkNoCheckpoints) {
@@ -747,6 +754,7 @@ async function translateWithModelRecovery(
   operations: Parameters<typeof translateWithNative>[1],
   onProgress?: (progress: CaptionTranslationProgress) => void,
   requestId?: string,
+  checkpointPolicy: CaptionTranslationCheckpointPolicy = 'resume',
 ) {
   let recoveryAttempted = false;
   throwIfCancelled(run);
@@ -760,7 +768,7 @@ async function translateWithModelRecovery(
     });
     const stopProgress = pollNativeProgress(run, onProgress);
     try {
-      return await translateWithNative(model.uri, operations, requestId);
+      return await translateWithNative(model.uri, operations, requestId, checkpointPolicy);
     } catch (error) {
       if (!isNativeModelIntegrityFailure(error)) throw error;
       const marker = new File(model.parentDirectory, `${model.name}.sha256`);

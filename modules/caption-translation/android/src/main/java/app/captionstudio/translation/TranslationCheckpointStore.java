@@ -27,11 +27,17 @@ final class TranslationCheckpointStore {
   static final long RETENTION_MS = 30L * 24L * 60L * 60L * 1000L;
   private static final int MAGIC = 0x43535431;
   private final File directory;
+  private final boolean readEnabled;
   private long storedBytes;
   private int storedEntries;
 
   TranslationCheckpointStore(File directory) throws IOException {
+    this(directory, true);
+  }
+
+  TranslationCheckpointStore(File directory, boolean readEnabled) throws IOException {
     this.directory = directory.getCanonicalFile();
+    this.readEnabled = readEnabled;
     if ((!this.directory.isDirectory() && !this.directory.mkdirs()) || !this.directory.canWrite()) {
       throw new IOException("Checkpoint directory unavailable");
     }
@@ -50,6 +56,7 @@ final class TranslationCheckpointStore {
 
   String read(String key) throws IOException {
     File file = ownedFile(key, ".checkpoint");
+    if (!readEnabled) return null;
     if (!file.isFile()) return null;
     if (file.length() < 40 || file.length() > MAX_RESPONSE_BYTES + 40L) return null;
     try (DataInputStream input = new DataInputStream(new FileInputStream(file))) {

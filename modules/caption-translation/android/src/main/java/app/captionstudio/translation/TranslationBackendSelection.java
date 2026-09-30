@@ -1,5 +1,6 @@
 package app.captionstudio.translation;
 
+import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 
@@ -63,6 +64,7 @@ final class TranslationBackendSelection {
       public String backendName() { return backend; }
       public boolean initializationFallback() { return fallback; }
       public boolean supportsStructuredOutput() { return runtime.supportsStructuredOutput(); }
+      public Map<String, Object> lastGenerationDiagnostics() { return runtime.lastGenerationDiagnostics(); }
       public String translate(String prompt) throws Exception { return runtime.translate(prompt); }
       public String translate(String prompt, int tokens) throws Exception {
         return runtime.translate(prompt, tokens);
