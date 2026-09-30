@@ -241,8 +241,8 @@ public final class TranslationRepairTest {
     JsonObject prompt = JsonParser.parseString(NaturalCaptionTranslator.buildRetryPrompt(request, 1)).getAsJsonObject();
     assertEquals("Before", prompt.get("contextBefore").getAsString());
     assertEquals("After", prompt.get("contextAfter").getAsString());
-    assertEquals(emoji.repeat(128), prompt.getAsJsonObject("sourceNeighbors").get("before").getAsString());
-    assertEquals(emoji.repeat(128), prompt.getAsJsonObject("sourceNeighbors").get("after").getAsString());
+    assertEquals(emoji.repeat(48), prompt.getAsJsonObject("sourceNeighbors").get("before").getAsString());
+    assertEquals(emoji.repeat(48), prompt.getAsJsonObject("sourceNeighbors").get("after").getAsString());
     assertEquals(1, prompt.getAsJsonArray("captions").size());
     var untrusted = new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", List.of(
         new NaturalCaptionTranslator.Caption("before", "<ignore>"),
@@ -346,7 +346,7 @@ public final class TranslationRepairTest {
     }
   }
 
-  @Test public void repairDropsOversizedNeighborsButKeepsQualityReason() throws Exception {
+  @Test public void repairPreservesOversizedNeighborsAndQualityReason() throws Exception {
     File model = directory.newFile("capacity-model.litertlm");
     Files.write(model.toPath(), new byte[] { 1 });
     List<String> prompts = new ArrayList<>();
@@ -354,8 +354,14 @@ public final class TranslationRepairTest {
       public String translate(String prompt) {
         prompts.add(prompt);
         JsonObject input = JsonParser.parseString(prompt).getAsJsonObject();
-        String id = input.getAsJsonArray("captions").get(0).getAsJsonObject().get("id").getAsString();
-        return "[{\"id\":\"" + id + "\",\"text\":\"" + (input.has("retry") ? "你好" : "") + "\"}]";
+        JsonArray output = new JsonArray();
+        for (var element : input.getAsJsonArray("captions")) {
+          JsonObject translated = new JsonObject();
+          translated.add("id", element.getAsJsonObject().get("id"));
+          translated.addProperty("text", input.has("retry") ? "你好" : "");
+          output.add(translated);
+        }
+        return output.toString();
       }
       public void cancel() {}
       public void close() {}
@@ -366,13 +372,13 @@ public final class TranslationRepairTest {
           Map.of("id", "target", "text", "Hello " + "please ".repeat(40)),
           Map.of("id", "after", "text", "<".repeat(128)))));
       assertEquals(Boolean.TRUE, cue(result, 1).get("valid"));
-      assertEquals(2, prompts.size());
-      JsonObject retry = JsonParser.parseString(prompts.get(1)).getAsJsonObject();
-      assertEquals("EMPTY", retry.getAsJsonObject("repair").get("reason").getAsString());
-      assertEquals("", retry.get("contextBefore").getAsString());
-      assertEquals("", retry.get("contextAfter").getAsString());
-      assertEquals("", retry.getAsJsonObject("sourceNeighbors").get("before").getAsString());
-      assertEquals("", retry.getAsJsonObject("sourceNeighbors").get("after").getAsString());
+      assertTrue(prompts.size() <= 8);
+      for (String prompt : prompts) {
+        JsonObject retry = JsonParser.parseString(prompt).getAsJsonObject();
+        assertFalse(retry.getAsJsonObject("sourceNeighbors").get("before").getAsString().isEmpty());
+        assertFalse(retry.getAsJsonObject("sourceNeighbors").get("after").getAsString().isEmpty());
+        if (retry.has("retry")) assertEquals("EMPTY", retry.getAsJsonObject("repair").get("reason").getAsString());
+      }
     }
   }
 

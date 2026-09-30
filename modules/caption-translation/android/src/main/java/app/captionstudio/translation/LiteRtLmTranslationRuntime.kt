@@ -6,11 +6,14 @@ import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.ResponseFormat
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ThinkingConfig
 import com.google.gson.JsonParser
 import java.io.File
+import java.util.Collections
 import java.util.function.BooleanSupplier
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -30,6 +33,7 @@ internal class LiteRtLmTranslationRuntimeFactory : TranslationRuntimeFactory {
     TranslationBackendSelection.Preference.AUTO, BooleanSupplier { false },
   )
 
+  @OptIn(ExperimentalApi::class)
   @Throws(Exception::class)
   override fun open(
     model: File,
@@ -39,6 +43,8 @@ internal class LiteRtLmTranslationRuntimeFactory : TranslationRuntimeFactory {
     preference: TranslationBackendSelection.Preference,
     cancelled: BooleanSupplier,
   ): TranslationRuntime {
+    // v0.16.1 reads this instrumentation flag during engine initialization.
+    ExperimentalFlags.enableBenchmark = true
     val conversationConfig = ConversationConfig(
           Contents.of(systemInstruction),
           emptyList(),
@@ -87,8 +93,11 @@ internal class LiteRtLmTranslationRuntime(
   private val currentConversation = AtomicReference<Conversation?>()
   private val cancelled = AtomicBoolean(false)
   private val closed = AtomicBoolean(false)
+  private val generationDiagnostics = TranslationGenerationDiagnosticsState()
 
   override fun supportsStructuredOutput(): Boolean = true
+
+  override fun lastGenerationDiagnostics(): Map<String, Any> = generationDiagnostics.get()
 
   @Throws(Exception::class)
   override fun translate(prompt: String): String = translate(prompt, 1_536)
@@ -99,6 +108,7 @@ internal class LiteRtLmTranslationRuntime(
 
   @Throws(Exception::class)
   override fun translate(prompt: String, maxOutputTokens: Int, requireStructuredOutput: Boolean): String {
+    generationDiagnostics.clear()
     check(!closed.get()) { "The translation runtime is closed" }
     if (cancelled.get()) throw CancellationException("Caption translation was cancelled")
 
@@ -138,6 +148,21 @@ internal class LiteRtLmTranslationRuntime(
     }
 
     val cleanupFailure = lifecycleLock.withLock {
+      // Capture before closing; optional instrumentation must never replace a generation failure.
+      val benchmark = runCatching {
+        @OptIn(ExperimentalApi::class)
+        conversation.getBenchmarkInfo()
+      }.getOrNull()
+      generationDiagnostics.set(TranslationGenerationDiagnostics.snapshot(
+        benchmark != null,
+        benchmark?.initTimeInSecond ?: 0.0,
+        benchmark?.timeToFirstTokenInSecond ?: 0.0,
+        benchmark?.lastPrefillTokenCount ?: -1,
+        benchmark?.lastDecodeTokenCount ?: -1,
+        benchmark?.lastPrefillTokensPerSecond ?: 0.0,
+        benchmark?.lastDecodeTokensPerSecond ?: 0.0,
+        maxOutputTokens, operationFailure == null,
+      ))
       currentConversation.compareAndSet(conversation, null)
       closeConversation(conversation)
     }
@@ -188,6 +213,62 @@ internal class LiteRtLmTranslationRuntime(
   private companion object {
     fun responseJsonSchema(count: Int): String =
       """{"type":"array","minItems":$count,"maxItems":$count,"items":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}"""
+  }
+}
+
+internal class TranslationGenerationDiagnosticsState {
+  private val values = AtomicReference<Map<String, Any>>(emptyMap())
+
+  fun get(): Map<String, Any> = values.get()
+  fun set(snapshot: Map<String, Any>) { values.set(snapshot) }
+  fun clear() { values.set(emptyMap()) }
+}
+
+internal object TranslationGenerationDiagnostics {
+  @JvmStatic
+  fun snapshot(
+    benchmarkAvailable: Boolean,
+    initTimeInSecond: Double,
+    timeToFirstTokenInSecond: Double,
+    prefillTokenCount: Int,
+    decodeTokenCount: Int,
+    prefillTokensPerSecond: Double,
+    decodeTokensPerSecond: Double,
+    outputTokenLimit: Int,
+    succeeded: Boolean,
+  ): Map<String, Any> {
+    val values = linkedMapOf<String, Any>(
+      "outputTokenLimit" to outputTokenLimit,
+      "benchmarkAvailable" to benchmarkAvailable,
+      // The SDK exposes counts and throughput, but no finish reason or EOS indication.
+      "terminationReason" to "unknown",
+    )
+    if (benchmarkAvailable) {
+      fun timing(key: String, seconds: Double) {
+        val milliseconds = seconds * 1_000.0
+        if (seconds >= 0.0 && milliseconds.isFinite()) values[key] = milliseconds
+      }
+      fun phase(name: String, count: Int, rate: Double) {
+        if (count >= 0) values["${name}TokenCount"] = count
+        if (rate > 0.0 && rate.isFinite()) {
+          values["${name}TokensPerSecond"] = rate
+          val milliseconds = count.toDouble() / rate * 1_000.0
+          if (count > 0 && milliseconds.isFinite()) {
+            values["${name}DurationMsFromThroughput"] = milliseconds
+          }
+        }
+      }
+      timing("initTimeMs", initTimeInSecond)
+      timing("timeToFirstTokenMs", timeToFirstTokenInSecond)
+      phase("prefill", prefillTokenCount, prefillTokensPerSecond)
+      phase("decode", decodeTokenCount, decodeTokensPerSecond)
+      val decoded = decodeTokenCount
+      if (outputTokenLimit > 0 && decoded > 0 && (succeeded || decoded >= outputTokenLimit)) {
+        // Observed cap saturation is evidence of a hit, not an SDK termination reason.
+        values["outputTokenLimitHit"] = decoded >= outputTokenLimit
+      }
+    }
+    return Collections.unmodifiableMap(values)
   }
 }
 

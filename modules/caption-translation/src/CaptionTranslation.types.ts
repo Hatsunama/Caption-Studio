@@ -37,6 +37,7 @@ export type NaturalCaptionTranslationRequest = {
   requestId?: string;
   runtimeBackend?: 'auto' | 'cpu' | 'gpu';
   benchmarkNoCheckpoints?: boolean;
+  /** Controls checkpoint reads only; accepted results are still saved outside benchmarks. */
   reuseCheckpoints?: boolean;
   repairUnusableOutputs?: boolean;
 };

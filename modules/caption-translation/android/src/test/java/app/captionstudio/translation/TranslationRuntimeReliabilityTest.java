@@ -14,6 +14,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -105,10 +106,15 @@ public final class TranslationRuntimeReliabilityTest {
     File model = model();
     File checkpoints = temporary.newFolder();
     String source = "Please close the door and then open the window. ".repeat(80);
-    List<String> parts = TranslationText.split(source);
+    List<String> acceptedInputs = new ArrayList<>();
+    AtomicInteger acceptedFragments = new AtomicInteger();
     AtomicInteger calls = new AtomicInteger();
     try (var worker = worker(checkpoints, (prompt, budget) -> {
       if (calls.incrementAndGet() == 2) throw new CancellationException();
+      for (var caption : JsonParser.parseString(prompt).getAsJsonObject().getAsJsonArray("captions")) {
+        acceptedInputs.add(caption.getAsJsonObject().get("text").getAsString());
+        acceptedFragments.incrementAndGet();
+      }
       return responseForEveryCaption(prompt, "Fermez la porte.");
     })) {
       Result result = run(worker, model, request("en", "fr", List.of(Map.of("id", "c99", "text", source))));
@@ -116,9 +122,15 @@ public final class TranslationRuntimeReliabilityTest {
     }
     AtomicInteger resumed = new AtomicInteger();
     List<String> inputs = new ArrayList<>();
+    AtomicInteger resumedFragments = new AtomicInteger();
+    AtomicReference<String> completedText = new AtomicReference<>();
     try (var worker = worker(checkpoints, (prompt, budget) -> {
       resumed.incrementAndGet();
-      inputs.add(text(prompt));
+      for (var caption : JsonParser.parseString(prompt).getAsJsonObject().getAsJsonArray("captions")) {
+        String part = caption.getAsJsonObject().get("text").getAsString();
+        inputs.add(part);
+        resumedFragments.incrementAndGet();
+      }
       return responseForEveryCaption(prompt, "Fermez la porte.");
     })) {
       Result result = run(worker, model, request("en", "fr", List.of(Map.of("id", "c1", "text", source))));
@@ -126,13 +138,18 @@ public final class TranslationRuntimeReliabilityTest {
       assertEquals("c1", cue(result, 0).get("id"));
       assertEquals(true, cue(result, 0).get("valid"));
       assertTrue(resumed.get() > 0);
-      assertTrue(resumed.get() < parts.size());
-      assertEquals(String.join(" ", java.util.Collections.nCopies(parts.size(), "Fermez la porte.")),
+      assertTrue("Completed fragments must survive cancellation", acceptedFragments.get() > 0);
+      assertTrue(resumed.get() < acceptedFragments.get() + resumedFragments.get());
+      assertEquals("Every source character must be translated exactly once across cancellation",
+          source, String.join("", acceptedInputs) + String.join("", inputs));
+      assertEquals(String.join(" ", java.util.Collections.nCopies(acceptedFragments.get() + resumedFragments.get(), "Fermez la porte.")),
           cue(result, 0).get("text"));
+      completedText.set((String) cue(result, 0).get("text"));
     }
     try (var worker = worker(checkpoints, (prompt, budget) -> { throw new AssertionError("Should restore"); })) {
-      assertEquals(true, cue(run(worker, model,
-          request("en", "fr", List.of(Map.of("id", "new-id", "text", source)))), 0).get("valid"));
+      Result restored = run(worker, model, request("en", "fr", List.of(Map.of("id", "new-id", "text", source))));
+      assertEquals(true, cue(restored, 0).get("valid"));
+      assertEquals(completedText.get(), cue(restored, 0).get("text"));
     }
   }
 

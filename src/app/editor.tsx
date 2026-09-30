@@ -2743,6 +2743,11 @@ function ProgressOverlay(props: {
           <Text style={{ color: palette.text, textAlign: 'center', fontVariant: ['tabular-nums'] }}>
             {percent === null ? 'Still working' : `${percent}% of this step`}
           </Text>
+          {props.progress.stage === 'downloading-model' ? (
+            <Text style={{ color: '#E8EF8D', fontSize: 13, lineHeight: 19, textAlign: 'center' }}>
+              Turn off battery saver and keep Caption Studio open on this screen until this finishes
+            </Text>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Cancel caption generation"

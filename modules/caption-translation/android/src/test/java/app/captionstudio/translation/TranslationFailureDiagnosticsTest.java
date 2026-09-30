@@ -89,6 +89,31 @@ public final class TranslationFailureDiagnosticsTest {
     assertSafe(logs);
   }
 
+  @Test public void runtimeMetricsUseOnlyFiniteNonnegativeAllowlistedNumbers() throws Exception {
+    List<String> logs = new ArrayList<>();
+    Map<String, Object> diagnostics = new java.util.LinkedHashMap<>();
+    diagnostics.put("outputTokenLimit", 128); diagnostics.put("prefillTokenCount", 77);
+    diagnostics.put("decodeTokenCount", 17); diagnostics.put("initTimeMs", 0.5);
+    diagnostics.put("timeToFirstTokenMs", Double.NaN);
+    diagnostics.put("prefillTokensPerSecond", -1);
+    diagnostics.put("decodeTokensPerSecond", Double.POSITIVE_INFINITY);
+    diagnostics.put("prefillDurationMsFromThroughput", "private-caption-id");
+    diagnostics.put("decodeDurationMsFromThroughput", 2.5);
+    diagnostics.put("private-caption-id", 123);
+    diagnostics.put("outputTokenLimitHit", true); diagnostics.put("terminationReason", "C:/private/path");
+    run(List.of(Map.of("id", ID, "text", SOURCE)), false, prompt -> "[", logs::add, false, diagnostics);
+    assertEquals(1, logs.size());
+    assertTrue(logs.get(0).contains("decodeTokenCount=17.0"));
+    assertTrue(logs.get(0).contains("prefillTokenCount=77.0"));
+    assertTrue(logs.get(0).contains("decodeDurationMsFromThroughput=2.5"));
+    for (String log : logs) {
+      assertFalse(log.contains("private")); assertFalse(log.contains("NaN")); assertFalse(log.contains("Infinity"));
+      assertFalse(log.contains("timeToFirstTokenMs=")); assertFalse(log.contains("prefillTokensPerSecond="));
+      assertFalse(log.contains("outputTokenLimitHit=")); assertFalse(log.contains("terminationReason="));
+    }
+    assertSafe(logs);
+  }
+
   @Test public void brokenDiagnosticSinkCannotChangeTranslationOutcome() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     Map<String, Object> result = run(List.of(Map.of("id", ID, "text", SOURCE)), true,
@@ -100,6 +125,11 @@ public final class TranslationFailureDiagnosticsTest {
 
   private Map<String, Object> run(List<Map<String, String>> captions, boolean repair,
       Generator generator, Consumer<String> sink, boolean expectError) throws Exception {
+    return run(captions, repair, generator, sink, expectError, Map.of());
+  }
+
+  private Map<String, Object> run(List<Map<String, String>> captions, boolean repair,
+      Generator generator, Consumer<String> sink, boolean expectError, Map<String, Object> diagnostics) throws Exception {
     File model = temporary.newFile();
     File namedModel = new File(model.getParentFile(), model.getName() + ".litertlm");
     Files.write(namedModel.toPath(), new byte[] {1});
@@ -110,6 +140,7 @@ public final class TranslationFailureDiagnosticsTest {
     };
     TranslationRuntimeFactory factory = (file, folder, threads, instruction) -> new TranslationRuntime() {
       public String translate(String prompt) throws Exception { return generator.generate(prompt); }
+      public Map<String, Object> lastGenerationDiagnostics() { return diagnostics; }
       public void cancel() {}
       public void close() {}
     };
@@ -138,7 +169,10 @@ public final class TranslationFailureDiagnosticsTest {
 
   private static void assertSafe(List<String> logs) {
     for (String log : logs) assertTrue(log, log.matches(
-        "batch=[0-9]+ attempt=[0-9]+ stage=[A-Z_]+ phase=[A-Z_]+ failure=[A-Z_]+ group=[0-9]+ item=-?[0-9]+ promptBucket=-?[0-9]+ outputBucket=-?[0-9]+ textBucket=-?[0-9]+ tokens=[0-9]+ expected=[0-9]+ actual=-?[0-9]+(?: qualityReason=(?:EMPTY|RUNAWAY_LENGTH|SOURCE_ECHO|WRONG_SCRIPT))?"));
+        "batch=[0-9]+ attempt=[0-9]+ stage=[A-Z_]+ phase=[A-Z_]+ failure=[A-Z_]+ group=[0-9]+ item=-?[0-9]+ promptBucket=-?[0-9]+ outputBucket=-?[0-9]+ textBucket=-?[0-9]+ tokens=[0-9]+ expected=[0-9]+ actual=-?[0-9]+"
+            + "(?: malformedKind=(?:UNEXPECTED_EOF|SYNTAX))?"
+            + "(?: (?:outputTokenLimit|prefillTokenCount|decodeTokenCount|initTimeMs|timeToFirstTokenMs|prefillTokensPerSecond|decodeTokensPerSecond|prefillDurationMsFromThroughput|decodeDurationMsFromThroughput)=[0-9]+(?:\\.[0-9]+)?(?:E[+-]?[0-9]+)?)*"
+            + "(?: qualityReason=(?:EMPTY|RUNAWAY_LENGTH|SOURCE_ECHO|WRONG_SCRIPT))?"));
   }
 
   private static String response(String id, String text) {

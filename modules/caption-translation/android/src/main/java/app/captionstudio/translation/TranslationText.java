@@ -30,6 +30,10 @@ final class TranslationText {
   }
 
   static List<String> split(String text) {
+    return split(text, FRAGMENT_BYTES);
+  }
+
+  static List<String> split(String text, int fragmentBytes) {
     if (!wellFormed(text)) throw new IllegalArgumentException("invalid-source-unicode");
     List<String> parts = new ArrayList<>();
     int start = 0;
@@ -41,7 +45,7 @@ final class TranslationText {
       while (end < text.length()) {
         int cp = text.codePointAt(end);
         int cost = escapedBytes(cp);
-        if (bytes + cost > FRAGMENT_BYTES) break;
+        if (bytes + cost > fragmentBytes) break;
         bytes += cost;
         end += Character.charCount(cp);
         if (safeBoundary(text, end)) {

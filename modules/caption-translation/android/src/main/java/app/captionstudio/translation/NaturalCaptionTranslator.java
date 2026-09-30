@@ -11,6 +11,7 @@ import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 
 import java.io.File;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.StringReader;
 import java.net.URI;
@@ -58,7 +59,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final String PROMPT_CONTRACT = GeneratedProductContract.PROMPT_CONTRACT;
   // Preserve this legacy identity (including its cpu label) across backend selection:
   // accepted text still passes the same prompt/output contract and must remain resumable.
-  static final String CHECKPOINT_PROFILE = "v8;litertlm-0.16.1;cpu;4096;128-1024;topk1;topp1;temperature0;seed0;microbatch8-bounded-isolation;strict-boundary;separate-source-neighbors";
+  static final String CHECKPOINT_PROFILE = "v9;litertlm-0.16.1;cpu;4096;128-1024;topk1;topp1;temperature0;seed0;microbatch8-bounded-isolation;strict-boundary;cue-context-identity;reserved-neighbors192";
 
   static final String INVALID_REQUEST = "E_TRANSLATION_INVALID_REQUEST";
   static final String BUSY = "E_TRANSLATION_BUSY";
@@ -70,6 +71,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   private static final int MAX_ESTIMATED_REQUEST_TOKENS = 3_600;
   private static final int MICRO_BATCH_SIZE = 8;
   private static final int CONTEXT_CODE_POINT_LIMIT = 128;
+  private static final int CONTEXT_ESCAPED_BYTE_LIMIT = 192;
   private static final int MAX_MODEL_LOCATION_CHARACTERS = 4_096;
   private static final Pattern CAPTION_ID = Pattern.compile("[A-Za-z0-9._:-]{1,64}");
   private static final Pattern URI_SCHEME = Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*:.*");
@@ -367,7 +369,6 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         );
         List<PreparedCue> preparedCues = new ArrayList<>();
         List<FragmentWork> pendingFragments = new ArrayList<>();
-        String batchKey = checkpointBatchKey(request, batchIndex);
         for (int cueIndex = 0; cueIndex < request.captions.size(); cueIndex++) {
           Caption source = request.captions.get(cueIndex);
           checkCancelled(run);
@@ -382,14 +383,14 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           }
           List<String> parts;
           try {
-            parts = TranslationText.split(source.text);
+            parts = splitWithContextReserve(request, cueIndex);
           } catch (IllegalArgumentException invalid) {
             preparedCues.add(PreparedCue.completed(new Caption(source.id, "", false, invalid.getMessage())));
             continue;
           }
           PreparedCue preparedCue = new PreparedCue(source, parts);
           preparedCues.add(preparedCue);
-          String cueKey = TranslationCheckpointStore.key(batchKey + "\n" + cueIndex);
+          String cueKey = checkpointCueKey(request, cueIndex);
           String cueBefore = neighboringContext(request.captions, cueIndex, request.contextBefore, true);
           String cueAfter = neighboringContext(request.captions, cueIndex, request.contextAfter, false);
           for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
@@ -399,7 +400,21 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
               preparedCue.outputs.set(partIndex, part);
               continue;
             }
-            String checkpointKey = TranslationCheckpointStore.key(cueKey + "\n" + partIndex);
+            String partBefore = cueBefore;
+            for (int index = 0; index < partIndex; index++) {
+              partBefore = extendContext(partBefore, parts.get(index), true);
+            }
+            String partAfter = cueAfter;
+            for (int index = parts.size() - 1; index > partIndex; index--) {
+              partAfter = extendContext(partAfter, parts.get(index), false);
+            }
+            JsonArray fragmentIdentity = new JsonArray();
+            fragmentIdentity.add(cueKey);
+            fragmentIdentity.add(partIndex);
+            fragmentIdentity.add(part);
+            fragmentIdentity.add(partBefore);
+            fragmentIdentity.add(partAfter);
+            String checkpointKey = TranslationCheckpointStore.key(fragmentIdentity.toString());
             Caption stored = new Caption("fragment", part);
             Caption candidate = parseSingleCaptionRetryResponse(readCheckpoint(checkpoints, checkpointKey), stored);
             if (usable(candidate, part, request.targetLanguage)) {
@@ -408,14 +423,6 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
               String inferenceId = parts.size() == 1
                   ? source.id
                   : "f" + (pendingFragments.size() + 1);
-              String partBefore = cueBefore;
-              for (int index = 0; index < partIndex; index++) {
-                partBefore = extendContext(partBefore, parts.get(index), true);
-              }
-              String partAfter = cueAfter;
-              for (int index = parts.size() - 1; index > partIndex; index--) {
-                partAfter = extendContext(partAfter, parts.get(index), false);
-              }
               pendingFragments.add(new FragmentWork(
                   preparedCue,
                   partIndex,
@@ -598,7 +605,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     }
     if (!fitsPromptCapacity(prompt, outputTokens)) {
       request = new ValidatedRequest(sourceLanguage, targetLanguage, requestCaptions, "", "");
-      prompt = buildUserPrompt(request);
+      prompt = withSourceNeighbors(buildUserPrompt(request),
+          fragments.get(0).contextBefore, fragments.get(fragments.size() - 1).contextAfter);
     }
     requirePromptCapacity(prompt, outputTokens);
     updateProgress(
@@ -632,6 +640,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         if (candidate.valid) diagnostic.emitQuality(fragment.qualityReason, index, candidate.text.length());
         run.batchMetrics.reject(candidate.valid);
         fragment.failureReason = candidate.valid ? FailureClass.QUALITY_REVIEW.name() : candidate.failureReason;
+        fragment.tokenCapHit = diagnostic.tokenCapHit;
         rejected.add(fragment);
       }
     }
@@ -680,17 +689,18 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         contextBefore,
         contextAfter
     );
-    String retryPrompt = withSourceNeighbors(buildRetryPrompt(retry, 0, fragment.qualityReason),
+    String retryPrompt = withSourceNeighbors(buildRetryPrompt(retry, 0, fragment.qualityReason, fragment.failureReason),
         fragment.contextBefore, fragment.contextAfter);
     int retryTokens = outputTokenLimit(List.of(fragment.requestCaption), true);
     if (!fitsPromptCapacity(retryPrompt, retryTokens)) {
       retry = new ValidatedRequest(sourceLanguage, targetLanguage, List.of(fragment.requestCaption), "", "");
       // Drop outer context before the immediate source neighbors.
-      retryPrompt = withSourceNeighbors(buildRetryPrompt(retry, 0, fragment.qualityReason),
+      retryPrompt = withSourceNeighbors(buildRetryPrompt(retry, 0, fragment.qualityReason, fragment.failureReason),
           fragment.contextBefore, fragment.contextAfter);
-      if (!fitsPromptCapacity(retryPrompt, retryTokens)) {
-        retryPrompt = buildRetryPrompt(retry, 0, fragment.qualityReason);
-      }
+    }
+    if (fragment.tokenCapHit) {
+      int expanded = Math.min(1_024, retryTokens + Math.max(32, retryTokens / 4));
+      if (fitsPromptCapacity(retryPrompt, expanded)) retryTokens = expanded;
     }
     requirePromptCapacity(retryPrompt, retryTokens);
     AttemptDiagnostic repairDiagnostic = new AttemptDiagnostic(diagnosticSink, batchIndex,
@@ -721,6 +731,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       response = run.batchMetrics.generate(runtime, prompt, tokens,
           diagnostic.stage == AttemptStage.REPAIR);
     } catch (Exception | Error failure) {
+      diagnostic.captureRuntime(runtime);
       FailureClass kind = failure instanceof CancellationException || failure instanceof InterruptedException
           ? FailureClass.GENERATION_CANCELLED : failure instanceof OutOfMemoryError
           ? FailureClass.GENERATION_MEMORY : failure instanceof LinkageError
@@ -729,6 +740,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       diagnostic.emit(FailurePhase.GENERATION, kind, -1, -1);
       throw failure;
     }
+    diagnostic.captureRuntime(runtime);
     diagnostic.outputBucket = lengthBucket(response == null ? -1 : response.length());
     List<Caption> captions = parseStrictResponse(response, expected, diagnostic);
     diagnostic.flushParseFailures();
@@ -770,6 +782,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     int outputBucket = -1;
     int actual = -1; // Unknown until the complete array has been read; never a partial count.
     TranslationOutputQuality.Reason qualityReason = TranslationOutputQuality.Reason.NONE;
+    String malformedKind;
+    String runtimeFields = "";
+    boolean tokenCapHit;
 
     AttemptDiagnostic(Consumer<String> sink, int batch, int ordinal, AttemptStage stage,
         int group, int promptLength, int tokens) {
@@ -790,6 +805,28 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       int slot = item < 0 ? group : item;
       parseFailures[slot] = failure;
       textBuckets[slot] = lengthBucket(textLength);
+    }
+
+    void captureRuntime(TranslationRuntime runtime) {
+      try {
+        Map<String, Object> values = runtime.lastGenerationDiagnostics();
+        if (values == null) return;
+        StringBuilder fields = new StringBuilder();
+        for (String key : List.of("outputTokenLimit", "prefillTokenCount", "decodeTokenCount",
+            "initTimeMs", "timeToFirstTokenMs", "prefillTokensPerSecond", "decodeTokensPerSecond",
+            "prefillDurationMsFromThroughput", "decodeDurationMsFromThroughput")) {
+          Object value = values.get(key);
+          if (!(value instanceof Byte || value instanceof Short || value instanceof Integer
+              || value instanceof Long || value instanceof Float || value instanceof Double)) continue;
+          double number = ((Number) value).doubleValue();
+          if (!Double.isFinite(number) || number < 0 || number > 1_000_000_000) continue;
+          fields.append(' ').append(key).append('=').append(number);
+          if (key.equals("decodeTokenCount") && number >= tokens) tokenCapHit = true;
+        }
+        runtimeFields = fields.toString();
+      } catch (RuntimeException | OutOfMemoryError unavailableDiagnostics) {
+        // Optional runtime metadata must never replace a translation outcome.
+      }
     }
 
     void flushParseFailures() {
@@ -819,6 +856,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
             + " promptBucket=" + promptBucket + " outputBucket=" + outputBucket
             + " textBucket=" + textBucket + " tokens=" + tokens
             + " expected=" + group + " actual=" + actual
+            + (failure == FailureClass.MALFORMED_JSON && malformedKind != null ? " malformedKind=" + malformedKind : "")
+            + runtimeFields
             + (reason == TranslationOutputQuality.Reason.NONE ? "" : " qualityReason=" + reason.name()));
       } catch (RuntimeException | OutOfMemoryError unavailableLogger) {
         // Best effort even on memory failure; never replace the original outcome.
@@ -863,11 +902,56 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
 
   private static String boundedContext(String context, boolean keepTail) {
     int count = context.codePointCount(0, context.length());
-    if (count <= CONTEXT_CODE_POINT_LIMIT) return context;
-    int boundary = keepTail
-        ? context.offsetByCodePoints(0, count - CONTEXT_CODE_POINT_LIMIT)
-        : context.offsetByCodePoints(0, CONTEXT_CODE_POINT_LIMIT);
-    return keepTail ? context.substring(boundary) : context.substring(0, boundary);
+    int start = keepTail && count > CONTEXT_CODE_POINT_LIMIT
+        ? context.offsetByCodePoints(0, count - CONTEXT_CODE_POINT_LIMIT) : 0;
+    int end = !keepTail && count > CONTEXT_CODE_POINT_LIMIT
+        ? context.offsetByCodePoints(0, CONTEXT_CODE_POINT_LIMIT) : context.length();
+    int cost = 0;
+    int boundary = keepTail ? end : start;
+    while (keepTail ? boundary > start : boundary < end) {
+      int cp = keepTail ? context.codePointBefore(boundary) : context.codePointAt(boundary);
+      cost += TranslationText.escapedBytes(cp);
+      if (cost > CONTEXT_ESCAPED_BYTE_LIMIT) break;
+      boundary += keepTail ? -Character.charCount(cp) : Character.charCount(cp);
+    }
+    return keepTail ? context.substring(boundary, end) : context.substring(start, boundary);
+  }
+
+  private static List<String> splitWithContextReserve(ValidatedRequest request, int index) {
+    String before = neighboringContext(request.captions, index, request.contextBefore, true);
+    String after = neighboringContext(request.captions, index, request.contextAfter, false);
+    for (int limit = TranslationText.FRAGMENT_BYTES; limit >= 30; limit /= 2) {
+      List<String> parts = TranslationText.split(request.captions.get(index).text, limit);
+      boolean fits = true;
+      for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
+        String partBefore = before, partAfter = after;
+        for (int i = 0; i < partIndex; i++) partBefore = extendContext(partBefore, parts.get(i), true);
+        for (int i = parts.size() - 1; i > partIndex; i--) partAfter = extendContext(partAfter, parts.get(i), false);
+        Caption part = new Caption("f".repeat(64), parts.get(partIndex));
+        ValidatedRequest single = new ValidatedRequest(request.sourceLanguage, request.targetLanguage, List.of(part), "", "");
+        // Reserve the longest repair guidance and transport-ID overhead before generation.
+        String prompt = withSourceNeighbors(buildRetryPrompt(single, 0, TranslationOutputQuality.Reason.RUNAWAY_LENGTH), partBefore, partAfter);
+        int reserveTokens = outputTokenLimit(List.of(part), true);
+        reserveTokens = Math.min(1_024, reserveTokens + Math.max(32, reserveTokens / 4));
+        if (!fitsPromptCapacity(prompt, reserveTokens)) { fits = false; break; }
+      }
+      if (fits) return parts;
+    }
+    throw new IllegalArgumentException("unsegmentable-source");
+  }
+
+  static String checkpointCueKey(ValidatedRequest request, int index) {
+    Caption source = request.captions.get(index);
+    ValidatedRequest cue = new ValidatedRequest(request.sourceLanguage, request.targetLanguage,
+        List.of(new Caption("fragment", source.text)),
+        neighboringContext(request.captions, index, request.contextBefore, true),
+        neighboringContext(request.captions, index, request.contextAfter, false));
+    JsonArray identity = new JsonArray();
+    identity.add(checkpointBatchKey(cue, 0));
+    // Outer context is also supplied separately to generation, even for interior cues.
+    identity.add(boundedContext(request.contextBefore, true));
+    identity.add(boundedContext(request.contextAfter, false));
+    return TranslationCheckpointStore.key(identity.toString());
   }
 
   static String checkpointBatchKey(ValidatedRequest request, int batchIndex) {
@@ -880,7 +964,6 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     identity.add(SYSTEM_INSTRUCTION);
     identity.add(request.sourceLanguage);
     identity.add(request.targetLanguage);
-    identity.add(batchIndex);
     identity.add(boundedContext(request.contextBefore, true));
     identity.add(boundedContext(request.contextAfter, false));
     JsonArray sources = new JsonArray();
@@ -917,6 +1000,11 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   }
 
   static String buildRetryPrompt(ValidatedRequest request, int index, TranslationOutputQuality.Reason reason) {
+    return buildRetryPrompt(request, index, reason, null);
+  }
+
+  private static String buildRetryPrompt(ValidatedRequest request, int index,
+      TranslationOutputQuality.Reason reason, String parserFailure) {
     ValidatedRequest single = new ValidatedRequest(request.sourceLanguage, request.targetLanguage,
         List.of(request.captions.get(index)),
         boundedContext(request.contextBefore, true),
@@ -924,7 +1012,12 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     JsonObject payload = com.google.gson.JsonParser.parseString(buildUserPrompt(single)).getAsJsonObject();
     payload.addProperty("retry", true);
     JsonObject repair = new JsonObject();
-    repair.addProperty("reason", reason == TranslationOutputQuality.Reason.NONE ? "RESPONSE_CONTRACT" : reason.name());
+    String failure = "RESPONSE_CONTRACT";
+    if (parserFailure != null) {
+      try { failure = FailureClass.valueOf(parserFailure).name(); }
+      catch (IllegalArgumentException unknownFailure) { /* Keep the generic contract reason. */ }
+    }
+    repair.addProperty("reason", reason == TranslationOutputQuality.Reason.NONE ? failure : reason.name());
     String guidance;
     switch (reason) {
       case SOURCE_ECHO:
@@ -946,7 +1039,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       default:
         guidance = "The previous response failed the response contract. Regenerate the requested caption from its source. ";
     }
-    repair.addProperty("guidance", guidance
+    repair.addProperty("guidance", "Translate from " + languageLabel(request.sourceLanguage)
+        + " to " + languageLabel(request.targetLanguage) + ". " + guidance
         + "Use contextBefore, contextAfter and sourceNeighbors only to understand this cue. "
         + "Return exactly one JSON array containing one object with exactly two string fields, id and text. "
         + "Copy the requested id exactly. No extra items, Markdown, commentary or repair fields in the output.");
@@ -1041,11 +1135,10 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     // A diagnostic run must neither restore accepted text nor replace normal checkpoints.
     // Returning no store disables every read and write, including fragment repairs.
     if (run.benchmarkNoCheckpoints) return null;
-    if (!Boolean.TRUE.equals(run.rawRequest.get("reuseCheckpoints"))) return null;
     File directory = environment.prepareCheckpointDirectory();
     if (directory == null) return null;
     try {
-      return new TranslationCheckpointStore(directory);
+      return new TranslationCheckpointStore(directory, Boolean.TRUE.equals(run.rawRequest.get("reuseCheckpoints")));
     } catch (IOException | SecurityException error) {
       throw checkpointFailure();
     }
@@ -1493,6 +1586,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       if (reader.peek() != JsonToken.END_DOCUMENT)
         return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.TRAILING_CONTENT);
     } catch (IOException | IllegalStateException error) {
+      if (diagnostic != null && !arrayEnded) diagnostic.malformedKind = malformedKind(error);
       return diagnosticFallback(expectedCaptions, diagnostic,
           arrayEnded ? FailureClass.TRAILING_CONTENT : FailureClass.MALFORMED_JSON);
     }
@@ -1504,6 +1598,16 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       resolved.add(accepted.get(expected.id));
     }
     return resolved;
+  }
+
+  private static String malformedKind(Exception error) {
+    if (error instanceof EOFException) return "UNEXPECTED_EOF";
+    // Gson reports unterminated strings/containers as syntax exceptions. Inspect only
+    // fixed parser wording; never persist or emit exception messages or JSON paths.
+    String message = error.getMessage();
+    if (message != null && (message.startsWith("Unterminated string")
+        || message.startsWith("End of input"))) return "UNEXPECTED_EOF";
+    return "SYNTAX";
   }
 
   private static List<Caption> diagnosticFallback(List<Caption> expected,
@@ -1829,6 +1933,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     final String contextBefore;
     final String contextAfter;
     String failureReason;
+    boolean tokenCapHit;
     TranslationOutputQuality.Reason qualityReason = TranslationOutputQuality.Reason.NONE;
 
     FragmentWork(

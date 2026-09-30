@@ -181,12 +181,12 @@ public final class TranslationCheckpointResumeTest {
     return request;
   }
 
-  @Test public void checkpointIdentityIncludesBoundedContextOrderedNeighborsAndBatchPosition() {
+  @Test public void checkpointIdentityIncludesBoundedContextOrderedNeighborsWithoutBatchPosition() {
     var captions = List.of(new NaturalCaptionTranslator.Caption("one", "Hello"),
         new NaturalCaptionTranslator.Caption("two", "World"));
     var original = new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", captions, "Before", "After");
     String key = NaturalCaptionTranslator.checkpointBatchKey(original, 0);
-    assertNotEquals(key, NaturalCaptionTranslator.checkpointBatchKey(original, 1));
+    assertEquals(key, NaturalCaptionTranslator.checkpointBatchKey(original, 1));
     assertNotEquals(key, NaturalCaptionTranslator.checkpointBatchKey(
         new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", captions, "Changed", "After"), 0));
     assertNotEquals(key, NaturalCaptionTranslator.checkpointBatchKey(
@@ -201,13 +201,13 @@ public final class TranslationCheckpointResumeTest {
         new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans",
             List.of(new NaturalCaptionTranslator.Caption("new-one", "Hello"),
                 new NaturalCaptionTranslator.Caption("new-two", "World")), "Before", "After"), 0));
-    String bounded = "\uD83D\uDE00".repeat(128);
+    String bounded = "\uD83D\uDE00".repeat(48);
     assertEquals(NaturalCaptionTranslator.checkpointBatchKey(
         new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", captions, bounded, bounded), 0),
         NaturalCaptionTranslator.checkpointBatchKey(
             new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", captions,
                 "discarded prefix" + bounded, bounded + "discarded suffix"), 0));
-    assertTrue(NaturalCaptionTranslator.CHECKPOINT_PROFILE.startsWith("v8;"));
+    assertTrue(NaturalCaptionTranslator.CHECKPOINT_PROFILE.startsWith("v9;"));
   }
 
   private static class Result implements NaturalCaptionTranslator.Callback {

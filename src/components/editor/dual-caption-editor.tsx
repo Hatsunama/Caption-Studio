@@ -376,8 +376,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
                 {props.warningMessage ?? props.errorMessage ?? props.progressLabel ?? 'Translating locally…'}
               </Text>
               {props.busy && !props.errorMessage && !props.warningMessage ? (
-                <Text style={{ color: chrome.muted, fontSize: 13, lineHeight: 19, textAlign: 'center' }}>
-                  Keep Caption Studio open on this screen and keep the phone unlocked until this finishes.
+                <Text style={{ color: '#E8EF8D', fontSize: 13, lineHeight: 19, textAlign: 'center' }}>
+                  Turn off battery saver and keep Caption Studio open on this screen until this finishes
                 </Text>
               ) : null}
               <View style={{ flexDirection: 'row', gap: 10 }}>
