@@ -115,6 +115,7 @@ function harness(options = {}) {
       async persistProjectCheckpoint(project) { await modules['@/services/database'].saveProject(project); return project; },
     },
     '@/services/project-recovery': { async cleanupStaleProjectRecoveryCache() {} },
+    '@/services/timeline-transcription-cache': { async clearTimelineTranscriptionForProject() {} },
     '@/services/project-media-access': {
       async ensureProjectVideoAccess(project) { events.push(['checkVideoAccess', project.id]); return project; },
     },

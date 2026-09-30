@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   CaptionGenerationCancelledError,
+  CaptionGenerationStopError,
   createCaptionGenerationSession,
 } from '../src/services/caption-generation-session.ts';
 
@@ -94,7 +95,7 @@ test('failed native and registered stops are both reported while work remains ac
   assert.equal(exited, false);
   await assert.rejects(session.run(async () => 'too early'), /already underway/);
 
-  const completion = assert.rejects(running, CaptionGenerationCancelledError);
+  const completion = assert.rejects(running, CaptionGenerationStopError);
   releaseWork();
   await completion;
   await result.finished;
@@ -132,11 +133,13 @@ test('new work waits for an in-flight native stop after the old work exits', asy
   const workHeld = new Promise((resolve) => { releaseWork = resolve; });
   const session = createCaptionGenerationSession(async () => stopHeld);
   const running = session.run(async () => workHeld);
+  const rejection = assert.rejects(running, CaptionGenerationCancelledError);
   const cancellation = session.cancel();
   releaseWork();
-  assert.equal(await running, undefined);
+  await Promise.resolve();
   await assert.rejects(session.run(async () => 'too early'), /already underway/);
   finishStop();
   assert.equal((await cancellation).status, 'stopping');
+  await rejection;
   assert.equal(await session.run(async () => 'next run'), 'next run');
 });

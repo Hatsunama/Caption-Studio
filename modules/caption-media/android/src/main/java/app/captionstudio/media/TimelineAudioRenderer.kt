@@ -20,6 +20,11 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import expo.modules.kotlin.Promise
 import java.io.File
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.CancellationException
+import java.util.concurrent.Future
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 internal data class TimelineAudioSegment(
   val id: String,
@@ -125,14 +130,39 @@ internal fun selectAudibleTimelineSegments(
   }
 }
 
+internal fun finishCancelledTimelineAudioRender(
+  cancelTransformer: () -> Unit,
+  cleanup: () -> Unit,
+  reject: () -> Unit,
+) {
+  try {
+    cancelTransformer()
+  } catch (_: Throwable) {
+    // Cancellation must still settle the promise even if Transformer.cancel fails.
+  } finally {
+    try {
+      cleanup()
+    } finally {
+      reject()
+    }
+  }
+}
+
 internal object TimelineAudioRenderer {
   private data class ActiveRender(
-    val transformer: Transformer,
     val output: File,
     val promise: Promise,
+    var preparation: Future<*>? = null,
+    var transformer: Transformer? = null,
+    var outputPrepared: Boolean = false,
   )
 
   private val handler = Handler(Looper.getMainLooper())
+  private val preflightWorkers = ThreadPoolExecutor(
+    1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue<Runnable>(1),
+    { runnable -> Thread(runnable, "timeline-audio-preflight").apply { isDaemon = true } },
+    ThreadPoolExecutor.AbortPolicy(),
+  )
   private var active: ActiveRender? = null
 
   fun render(context: Context, outputPath: String, plan: TimelineAudioPlan, promise: Promise) {
@@ -141,33 +171,54 @@ internal object TimelineAudioRenderer {
         promise.reject("E_TIMELINE_AUDIO_BUSY", "Timeline audio preparation is already running", null)
         return@post
       }
+      val task = ActiveRender(File(outputPath), promise)
+      active = task
       try {
-        val policy = MediaInputPolicy(context)
-        (plan.videoClips + plan.audioClips).forEach { policy.requireInput(it.sourceUri) }
+        preflightWorkers.purge()
+        task.preparation = preflightWorkers.submit {
+          val result = runCatching {
+            val appContext = context.applicationContext
+            val policy = MediaInputPolicy(appContext)
+            (plan.videoClips + plan.audioClips).forEach {
+              checkPreflightCancellation()
+              policy.requireInput(it.sourceUri)
+            }
+            buildComposition(appContext, plan)
+          }
+          handler.post {
+            if (active !== task) return@post
+            result.fold(
+              onSuccess = { composition -> startRender(context.applicationContext, plan, task, composition) },
+              onFailure = { error -> failPreparation(task, error) },
+            )
+          }
+        }
       } catch (error: Exception) {
-        promise.reject("E_TIMELINE_AUDIO_PREPARE", error.message ?: "An audio source is unavailable", error)
-        return@post
+        failPreparation(task, error)
       }
-      val output = File(outputPath)
-      try {
-        output.parentFile?.mkdirs()
-        if (output.exists() && !output.delete()) throw IllegalStateException("Temporary timeline audio could not be replaced")
-        val composition = buildComposition(context.applicationContext, plan)
-        lateinit var transformer: Transformer
-        transformer = Transformer.Builder(context.applicationContext)
+    }
+  }
+
+  private fun startRender(context: Context, plan: TimelineAudioPlan, task: ActiveRender, composition: Composition) {
+    try {
+      task.output.parentFile?.mkdirs()
+      if (task.output.exists() && !task.output.delete()) throw IllegalStateException("Temporary timeline audio could not be replaced")
+      task.outputPrepared = true
+      lateinit var transformer: Transformer
+      transformer = Transformer.Builder(context)
           .setLooper(Looper.getMainLooper())
           .setAudioMimeType(MimeTypes.AUDIO_AAC)
           .addListener(object : Transformer.Listener {
             override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-              val task = claim(transformer) ?: return
-              val size = task.output.takeIf { it.isFile }?.length() ?: 0L
+              val completed = claim(transformer) ?: return
+              val size = completed.output.takeIf { it.isFile }?.length() ?: 0L
               if (size <= 0L) {
-                task.output.delete()
-                task.promise.reject("E_TIMELINE_AUDIO_EMPTY", "The audible timeline produced no audio data", null)
+                completed.output.delete()
+                completed.promise.reject("E_TIMELINE_AUDIO_EMPTY", "The audible timeline produced no audio data", null)
                 return
               }
-              task.promise.resolve(mapOf(
-                "outputUri" to Uri.fromFile(task.output).toString(),
+              completed.promise.resolve(mapOf(
+                "outputUri" to Uri.fromFile(completed.output).toString(),
                 "sizeBytes" to size.toDouble(),
                 "durationMs" to (
                   exportResult.approximateDurationMs.takeIf { it > 0L }?.toDouble()
@@ -177,9 +228,9 @@ internal object TimelineAudioRenderer {
             }
 
             override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
-              val task = claim(transformer) ?: return
-              task.output.delete()
-              task.promise.reject(
+              val failed = claim(transformer) ?: return
+              failed.output.delete()
+              failed.promise.reject(
                 "E_TIMELINE_AUDIO_RENDER",
                 "Caption Studio could not prepare the audible timeline. Keep the editor open and try again.",
                 exportException,
@@ -187,27 +238,34 @@ internal object TimelineAudioRenderer {
             }
           })
           .build()
-        active = ActiveRender(transformer, output, promise)
-        transformer.start(composition, output.absolutePath)
-      } catch (error: Throwable) {
-        active = null
-        output.delete()
-        promise.reject(
-          "E_TIMELINE_AUDIO_PREPARE",
-          error.message ?: "Caption Studio could not prepare the audible timeline",
-          error,
-        )
-      }
+      task.transformer = transformer
+      transformer.start(composition, task.output.absolutePath)
+    } catch (error: Throwable) {
+      failPreparation(task, error)
     }
+  }
+
+  private fun failPreparation(task: ActiveRender, error: Throwable) {
+    if (active !== task) return
+    active = null
+    if (task.outputPrepared) task.output.delete()
+    task.promise.reject(
+      "E_TIMELINE_AUDIO_PREPARE",
+      error.message ?: "Caption Studio could not prepare the audible timeline",
+      error,
+    )
   }
 
   fun cancel() {
     handler.post {
       val task = active ?: return@post
       active = null
-      task.transformer.cancel()
-      task.output.delete()
-      task.promise.reject("E_TIMELINE_AUDIO_CANCELLED", "Timeline audio preparation was cancelled", null)
+      task.preparation?.cancel(true)
+      finishCancelledTimelineAudioRender(
+        cancelTransformer = { task.transformer?.cancel() },
+        cleanup = { if (task.outputPrepared) task.output.delete() },
+        reject = { task.promise.reject("E_TIMELINE_AUDIO_CANCELLED", "Timeline audio preparation was cancelled", null) },
+      )
     }
   }
 
@@ -220,6 +278,7 @@ internal object TimelineAudioRenderer {
 
   private fun buildComposition(context: Context, plan: TimelineAudioPlan): Composition {
     val sequences = selectAudibleTimelineSegments(plan) { mediaHasAudioTrack(context, it) }.map { segment ->
+      checkPreflightCancellation()
       val clipping = MediaItem.ClippingConfiguration.Builder()
         .setStartPositionMs(segment.sourceStartMs)
         .setEndPositionMs(segment.sourceEndMs)
@@ -245,6 +304,7 @@ internal object TimelineAudioRenderer {
   }
 
   private fun mediaHasAudioTrack(context: Context, sourceUri: String): Boolean {
+    checkPreflightCancellation()
     val extractor = MediaExtractor()
     return try {
       val uri = MediaInputPolicy(context).requireInput(sourceUri)
@@ -254,10 +314,15 @@ internal object TimelineAudioRenderer {
         else -> throw IllegalArgumentException("The audio source URI is invalid")
       }
       (0 until extractor.trackCount).any { index ->
+        checkPreflightCancellation()
         extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
       }
     } finally {
       extractor.release()
     }
+  }
+
+  private fun checkPreflightCancellation() {
+    if (Thread.currentThread().isInterrupted) throw CancellationException("Timeline audio preparation was cancelled")
   }
 }

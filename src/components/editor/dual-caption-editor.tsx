@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CAPTION_CLEANUP_WARNING, createCaptionJournalQueue } from './caption-save-recovery';
 
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionPair } from '@/lib/caption-tracks';
@@ -85,6 +86,11 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const [journalReady, setJournalReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [cleanupPending, setCleanupPending] = useState(false);
+  const cleanupPendingRef = useRef(false);
+  const journalQueueRef = useRef(createCaptionJournalQueue());
+  const recoveryActiveRef = useRef(true);
+  const [journalRestart, setJournalRestart] = useState(0);
   const [journalError, setJournalError] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [journalRecovery, setJournalRecovery] = useState<EditorDraftJournalRecovery>();
@@ -94,6 +100,11 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const stopJournalRef = useRef<(() => void) | undefined>(undefined);
   const journalKind = `dual-captions-${props.trackId}` as EditorDraftKind;
   useLayoutEffect(() => { store.reconcile(sourceDrafts); }, [sourceDrafts, store]);
+  useEffect(() => {
+    const journalQueue = journalQueueRef.current;
+    recoveryActiveRef.current = true;
+    return () => { recoveryActiveRef.current = false; journalQueue.pause(); };
+  }, []);
 
   useEffect(() => {
     const openingDrafts = store.committed;
@@ -149,6 +160,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   useEffect(() => {
     if (!journalReady || props.busy || saving || closing) return;
     if (journalProtected) return;
+    if (cleanupPendingRef.current && !store.hasRecoveryChanges()) return;
+    journalQueueRef.current.resume();
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const stop = () => {
@@ -160,14 +173,17 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       if (!active) return;
       clearTimeout(timer);
       if (!store.hasRecoveryChanges()) {
-        void clearEditorDraftJournal(props.projectId, journalKind)
+        void journalQueueRef.current.clear(() => clearEditorDraftJournal(props.projectId, journalKind), () => !store.hasRecoveryChanges())
           .catch(() => { if (active) setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'); });
         return;
       }
       timer = setTimeout(() => {
         // Snapshot once after typing settles, not on every character. Journal
         // operations may be queued, so never pass the mutable draft map itself.
-        void writeEditorDraftJournal(props.projectId, journalKind, openingRevision, store.snapshot())
+        const snapshot = store.snapshot();
+        const revision = dualCaptionDraftRevision(store.committed);
+        journalQueueRef.current.resume();
+        void journalQueueRef.current.write(() => writeEditorDraftJournal(props.projectId, journalKind, revision, snapshot))
           .then(() => { if (active) setJournalError(undefined); })
           .catch((caught) => { if (active) setJournalError(caught instanceof Error ? caught.message : 'Dual-subtitle recovery could not be saved. Keep this editor open until you save.'); });
       }, 600);
@@ -175,7 +191,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     const unsubscribe = store.subscribeChanges(schedule);
     schedule();
     return () => { stop(); unsubscribe(); };
-  }, [closing, journalKind, journalProtected, journalReady, openingRevision, props.busy, props.projectId, saving, store]);
+  }, [closing, journalKind, journalProtected, journalReady, journalRestart, openingRevision, props.busy, props.projectId, saving, store]);
 
   const includedPairs = useMemo(() => props.pairs.filter((pair) => !pair.translation.translationSkipped), [props.pairs]);
   const missingCount = useMemo(() => includedPairs.filter((pair) => !pair.translation.text.trim()).length, [includedPairs]);
@@ -188,13 +204,37 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const dirty = editCount > 0;
   const disabled = props.busy || saving || closing || !journalReady;
 
+  const retryCleanup = useCallback(async function retrySavedRecoveryCleanup(): Promise<void> {
+    if (!recoveryActiveRef.current || !cleanupPendingRef.current || store.hasRecoveryChanges()) return;
+    stopJournalRef.current?.();
+    setClosing(true);
+    try {
+      const cleared = await journalQueueRef.current.clear(
+        () => clearEditorDraftJournal(projectId, journalKind),
+        () => recoveryActiveRef.current && !store.hasRecoveryChanges(),
+      );
+      if (!cleared) return;
+      cleanupPendingRef.current = false;
+      setCleanupPending(false);
+      setJournalError(undefined);
+    } catch {
+      Alert.alert('Changes saved', CAPTION_CLEANUP_WARNING, [
+        { text: 'Keep editing', style: 'cancel' },
+        { text: 'Retry cleanup', onPress: () => { void retrySavedRecoveryCleanup(); } },
+      ]);
+    } finally {
+      setClosing(false);
+      setJournalRestart((value) => value + 1);
+    }
+  }, [journalKind, projectId, store]);
+
   const closeAfterClearingJournal = useCallback(() => {
     stopJournalRef.current?.();
     if (!journalReady || journalProtected) { onClose(); return; }
     setClosing(true);
-    void clearEditorDraftJournal(projectId, journalKind).then(onClose)
-      .catch(() => setJournalError('Recovery data could not be cleared. Your edits are still here; try Save or Close again.'))
-      .finally(() => setClosing(false));
+    void journalQueueRef.current.clear(() => clearEditorDraftJournal(projectId, journalKind)).then(onClose)
+      .catch(() => setJournalError(cleanupPendingRef.current ? CAPTION_CLEANUP_WARNING : 'Recovery data could not be cleared. Your edits are still here; try Save or Close again.'))
+      .finally(() => { setClosing(false); setJournalRestart((value) => value + 1); });
   }, [journalKind, journalProtected, journalReady, onClose, projectId]);
 
   const requestClose = useCallback(() => {
@@ -235,19 +275,29 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
 
   const save = async () => {
     if (disabled) return;
+    if (cleanupPendingRef.current && !store.hasRecoveryChanges()) { await retryCleanup(); return; }
     const edits = store.getEdits(props.pairs);
     if (edits.length === 0) return;
+    const snapshot = store.snapshot();
     stopJournalRef.current?.();
+    journalQueueRef.current.pause();
     setSaving(true);
     setSaveError(undefined);
+    let saved = false;
     try {
-      const saved = await props.onSave(edits);
+      saved = await props.onSave(edits);
       if (!saved) setSaveError('Dual-subtitle edits could not be saved. Your changes are still here. Try again.');
-      else if (journalReady && !journalProtected) await clearEditorDraftJournal(props.projectId, journalKind);
+      else store.accept(edits, snapshot);
     } catch (caught) {
       setSaveError(caught instanceof Error ? caught.message : 'These edits could not be saved. They are still in this editor.');
     } finally {
       setSaving(false);
+      setJournalRestart((value) => value + 1);
+    }
+    if (saved && journalReady && !journalProtected && !store.hasRecoveryChanges()) {
+      cleanupPendingRef.current = true;
+      setCleanupPending(true);
+      await retryCleanup();
     }
   };
 
@@ -368,11 +418,11 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Save dual subtitle edits"
-              disabled={editCount === 0 || disabled}
+              disabled={(editCount === 0 && !cleanupPending) || disabled}
               onPress={() => { void save(); }}
               style={{ alignItems: 'center', paddingVertical: 16, borderRadius: chrome.radius.lg, backgroundColor: editCount > 0 ? chrome.accent : chrome.fill }}>
               <Text style={{ color: editCount > 0 ? chrome.accentInk : chrome.muted, fontSize: 16, fontWeight: '700' }}>
-                {editCount > 0
+                {cleanupPending && !store.hasRecoveryChanges() ? 'Retry recovery cleanup' : editCount > 0
                   ? `Save ${editCount} change${editCount === 1 ? '' : 's'}`
                   : 'No unsaved changes'}
               </Text>
@@ -596,6 +646,28 @@ class DualCaptionDraftStore {
   replace(next: Record<string, DualCaptionDraft>) {
     const previousCount = this.edits.size;
     for (const [id, committed] of Object.entries(this.committed)) this.update(id, next[id] ?? committed);
+    this.notify(previousCount);
+  }
+
+  // Accept only the fields submitted by this save. Incoming translations and
+  // keystrokes arriving during the save retain their own ownership.
+  accept(edits: DualCaptionTextEdit[], snapshot: Record<string, DualCaptionDraft>) {
+    const previousCount = this.edits.size;
+    const committed = { ...this.committed };
+    for (const edit of edits) {
+      const id = edit.sourceCaptionId;
+      const current = this.drafts.get(id);
+      if (!current || !committed[id] || !snapshot[id]) continue;
+      committed[id] = {
+        primaryText: edit.primaryChanged ? edit.primaryText : committed[id].primaryText,
+        translatedText: edit.translatedChanged ? edit.translatedText : committed[id].translatedText,
+      };
+      this.committed = committed;
+      this.update(id, {
+        primaryText: edit.primaryChanged && current.primaryText === snapshot[id].primaryText ? edit.primaryText : current.primaryText,
+        translatedText: edit.translatedChanged && current.translatedText === snapshot[id].translatedText ? edit.translatedText : current.translatedText,
+      });
+    }
     this.notify(previousCount);
   }
 

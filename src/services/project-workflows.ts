@@ -41,6 +41,7 @@ import {
   reconcileProjectOwnedFiles,
 } from '@/services/project-media';
 import { generateProjectCaptions } from '@/services/project-transcription';
+import { clearTimelineTranscriptionForProject } from '@/services/timeline-transcription-cache';
 import { persistProjectCheckpoint } from '@/services/project-persistence';
 import { ensureProjectVideoAccess } from '@/services/project-media-access';
 import type { ProjectMediaRecoveryPrompts } from '@/types/project-media-recovery';
@@ -325,6 +326,7 @@ export async function discardEditorSession(
 }
 
 export async function deleteProjectCompletely(projectId: string) {
+  await clearTimelineTranscriptionForProject(projectId);
   const deletedProject = await deleteProjectRecord(projectId);
   await runBestEffortCleanup('deleted project cleanup', [
     clearProjectEditorDraftJournals(projectId),
@@ -336,6 +338,7 @@ export async function deleteProjectCompletely(projectId: string) {
 }
 
 export async function deleteUnreadableProjectCompletely(projectId: string) {
+  await clearTimelineTranscriptionForProject(projectId);
   const linkedUris = await deleteUnreadableProjectRecord(projectId);
   await runBestEffortCleanup('deleted unreadable project cleanup', [
     clearProjectEditorDraftJournals(projectId),

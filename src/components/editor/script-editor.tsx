@@ -30,6 +30,7 @@ import {
 } from '@/services/editor-draft-journal';
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionBlock, WordToken } from '@/types/project';
+import { CAPTION_CLEANUP_WARNING, createCaptionJournalQueue } from './caption-save-recovery';
 
 const CaptionCellLayoutContext = createContext<(id: string, index: number, layout: LayoutRectangle) => void>(() => {});
 const SCRIPT_ANCHOR = 8;
@@ -92,6 +93,12 @@ export function ScriptEditor(props: {
   const [saveError, setSaveError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [cleanupPending, setCleanupPending] = useState(false);
+  const cleanupPendingRef = useRef(false);
+  const acceptedDraftRef = useRef<{ captions: CaptionBlock[]; version: number } | undefined>(undefined);
+  const journalQueueRef = useRef(createCaptionJournalQueue());
+  const stopJournalRef = useRef<(() => void) | undefined>(undefined);
+  const [journalRestart, setJournalRestart] = useState(0);
   const [journalReady, setJournalReady] = useState(false);
   const [journalError, setJournalError] = useState<string>();
   const [journalRecovery, setJournalRecovery] = useState<EditorDraftJournalRecovery>();
@@ -232,6 +239,10 @@ export function ScriptEditor(props: {
     setBoundaryMessage(undefined);
     setSaveError(undefined);
     setSaving(false);
+    journalQueueRef.current.pause();
+    acceptedDraftRef.current = undefined;
+    cleanupPendingRef.current = false;
+    setCleanupPending(false);
     setKeyboardOpen(Keyboard.isVisible());
     setJournalReady(false);
     setJournalError(undefined);
@@ -283,6 +294,8 @@ export function ScriptEditor(props: {
           },
           { text: 'Restore', onPress: () => {
             if (!active) return;
+            cleanupPendingRef.current = false;
+            setCleanupPending(false);
             draftVersionRef.current += 1;
             setDraftCaptions(recovered);
             finishConflict();
@@ -302,19 +315,24 @@ export function ScriptEditor(props: {
   }, [projectId, props.visible]);
 
   useEffect(() => {
-    if (!props.visible || closing || !journalReady || sameCaptionDraft(draftCaptions, sourceCaptions)) return;
+    const committed = acceptedDraftRef.current?.captions ?? sourceCaptions;
+    if (!props.visible || saving || closing || !journalReady || sameCaptionDraft(draftCaptions, committed)) return;
     if (journalProtected) return;
+    journalQueueRef.current.resume();
     let active = true;
     const timer = setTimeout(() => {
-      void writeEditorDraftJournal(props.projectId, 'caption-script', sourceRevision, draftCaptions)
+      const revision = acceptedDraftRef.current ? captionScriptRevision(committed) : sourceRevision;
+      void journalQueueRef.current.write(() => writeEditorDraftJournal(props.projectId, 'caption-script', revision, draftCaptions))
         .then(() => { if (active) setJournalError(undefined); })
         .catch((caught) => { if (active) setJournalError(caught instanceof Error ? caught.message : 'Caption recovery could not be saved. Keep this editor open until you save.'); });
     }, 600);
-    return () => {
+    const stop = () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [closing, draftCaptions, journalProtected, journalReady, props.projectId, props.visible, sourceCaptions, sourceRevision]);
+    stopJournalRef.current = stop;
+    return stop;
+  }, [closing, draftCaptions, journalProtected, journalReady, journalRestart, props.projectId, props.visible, saving, sourceCaptions, sourceRevision]);
 
   useEffect(() => {
     if (!props.visible) return;
@@ -396,6 +414,8 @@ export function ScriptEditor(props: {
     scrollOwnerRef.current = 'programmatic';
     pendingScrollSeekRef.current = false;
     cancelNavigation();
+    cleanupPendingRef.current = false;
+    setCleanupPending(false);
     draftVersionRef.current += 1;
     setDraftCaptions(captions);
     setSelectedCaptionId(captionId);
@@ -412,6 +432,8 @@ export function ScriptEditor(props: {
   const updateText = (caption: CaptionBlock, text: string) => {
     // Wrapping and literal newlines are text edits. Only the explicit split/join
     // actions below may change cue boundaries or move text to another caption.
+    cleanupPendingRef.current = false;
+    setCleanupPending(false);
     draftVersionRef.current += 1;
     setDraftCaptions(updateCaptionScriptText(draftCaptions, caption.id, text));
     setBoundaryMessage(undefined);
@@ -456,8 +478,38 @@ export function ScriptEditor(props: {
     focusCaption(result.focusedId, result.captions);
   };
 
+  const retryCleanup = useCallback(async function retrySavedRecoveryCleanup(): Promise<void> {
+    const accepted = acceptedDraftRef.current;
+    if (!sessionRef.current.visible || !cleanupPendingRef.current || !accepted || draftVersionRef.current !== accepted.version) return;
+    stopJournalRef.current?.();
+    setClosing(true);
+    try {
+      const cleared = await journalQueueRef.current.clear(
+        () => clearEditorDraftJournal(projectId, 'caption-script'),
+        () => sessionRef.current.visible && acceptedDraftRef.current === accepted && draftVersionRef.current === accepted.version,
+      );
+      if (!cleared) return;
+      cleanupPendingRef.current = false;
+      setCleanupPending(false);
+      setJournalError(undefined);
+      onCancel();
+    } catch {
+      Alert.alert('Changes saved', CAPTION_CLEANUP_WARNING, [
+        { text: 'Keep editing', style: 'cancel' },
+        { text: 'Retry cleanup', onPress: () => { if (acceptedDraftRef.current === accepted) void retrySavedRecoveryCleanup(); } },
+      ]);
+    } finally {
+      setClosing(false);
+      setJournalRestart((value) => value + 1);
+    }
+  }, [onCancel, projectId]);
+
   const save = async () => {
     if (saving || closing || !journalReady) return;
+    if (acceptedDraftRef.current?.version === draftVersionRef.current && cleanupPendingRef.current) {
+      await retryCleanup();
+      return;
+    }
     const empty = draftCaptions.find((caption) => !caption.text.trim());
     if (empty) {
       focusCaption(empty.id, draftCaptions);
@@ -465,43 +517,56 @@ export function ScriptEditor(props: {
       return;
     }
     setSaving(true);
+    stopJournalRef.current?.();
+    journalQueueRef.current.pause();
     setSaveError(undefined);
     const savingVersion = draftVersionRef.current;
     const savingDraft = draftCaptions;
+    let saved = false;
     try {
       if (!await props.onSave(savingDraft)) {
         setSaveError('Caption edits were not saved. Review the draft and try again.');
         return;
       }
+      saved = true;
+      acceptedDraftRef.current = { captions: savingDraft, version: savingVersion };
       if (draftVersionRef.current !== savingVersion) {
-        setSaveError('Captions changed while saving. Review the latest text, then tap Done again.');
+        setSaveError('The submitted changes were saved. Newer caption edits are still unsaved; review them, then tap Done.');
         return;
       }
-      // Saving current edits does not authorize deleting an unread older draft.
-      if (journalReady && !journalProtected) await clearEditorDraftJournal(props.projectId, 'caption-script');
-      props.onCancel();
     } catch (caught) {
       setSaveError(caught instanceof Error ? caught.message : 'Caption changes were not saved. Try again.');
     } finally {
       setSaving(false);
+      setJournalRestart((value) => value + 1);
     }
+    if (!saved) return;
+    // Cleanup owns its own outcome after the durable project acceptance.
+    if (journalReady && !journalProtected) {
+      cleanupPendingRef.current = true;
+      setCleanupPending(true);
+      await retryCleanup();
+    } else props.onCancel();
   };
 
   const cancel = useCallback(() => {
     if (saving || closing) return;
     const close = async () => {
+      stopJournalRef.current?.();
+      journalQueueRef.current.pause();
       setClosing(true);
       setSaveError(undefined);
       try {
-        if (journalReady && !journalProtected) await clearEditorDraftJournal(projectId, 'caption-script');
+        if (journalReady && !journalProtected) await journalQueueRef.current.clear(() => clearEditorDraftJournal(projectId, 'caption-script'));
         onCancel();
       } catch (caught) {
-        setJournalError(caught instanceof Error ? caught.message : 'Caption recovery could not be cleared. Your edits are still open.');
+        setJournalError(cleanupPendingRef.current ? CAPTION_CLEANUP_WARNING : caught instanceof Error ? caught.message : 'Caption recovery could not be cleared. Your edits are still open.');
       } finally {
         setClosing(false);
+        setJournalRestart((value) => value + 1);
       }
     };
-    if (sameCaptionDraft(draftCaptions, sourceCaptions)) {
+    if (sameCaptionDraft(draftCaptions, sourceCaptions) || (acceptedDraftRef.current && sameCaptionDraft(draftCaptions, acceptedDraftRef.current.captions))) {
       void close();
       return;
     }
@@ -566,7 +631,7 @@ export function ScriptEditor(props: {
             <Text style={{ color: chrome.muted, fontSize: 12 }}>{draftCaptions.length} subtitle blocks</Text>
           </View>
           <Pressable accessibilityRole="button" accessibilityLabel="Save all caption edits" disabled={saving || closing || !journalReady} hitSlop={10} onPress={() => { void save(); }} style={{ minWidth: 60, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' }}>
-            <Text style={{ color: chrome.accent, fontSize: 17, fontWeight: '700', opacity: saving ? 0.45 : 1 }}>Done</Text>
+            <Text style={{ color: chrome.accent, fontSize: 17, fontWeight: '700', opacity: saving ? 0.45 : 1 }}>{cleanupPending ? 'Retry cleanup' : 'Done'}</Text>
           </Pressable>
         </View>
 

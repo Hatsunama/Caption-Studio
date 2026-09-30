@@ -245,3 +245,36 @@ function deferred() {
   const promise = new Promise((onResolve, onReject) => { resolve = onResolve; reject = onReject; });
   return { promise, resolve, reject };
 }
+
+test('video access preparation belongs to the cancellable export attempt', async () => {
+  const preparation = deferred();
+  const service = loadService();
+  let started = false;
+  const exporting = service.exportProjectVideo(project, true, async () => {
+    started = true;
+    return preparation.promise;
+  });
+  const rejected = assert.rejects(exporting, VideoExportCancelledError);
+  await Promise.resolve();
+  assert.equal(started, true, 'export must own access recovery before rendering');
+  assert.equal(service.calls.native, 0);
+  assert.equal(await service.cancelProjectVideoExport(), true);
+  await assert.rejects(service.exportProjectVideo(project), /already underway/);
+  preparation.resolve(project);
+  await rejected;
+  assert.equal(service.calls.native, 0);
+  assert.equal(service.calls.share.length, 0);
+});
+
+test('export uses the project returned by access preparation', async () => {
+  const service = loadService();
+  let prepared = false;
+  await service.exportProjectVideo(project, true, async (current, checkCancelled) => {
+    checkCancelled();
+    assert.equal(current, project);
+    prepared = true;
+    return { ...current, name: 'Recovered project' };
+  });
+  assert.equal(prepared, true);
+  assert.equal(service.calls.native, 1);
+});

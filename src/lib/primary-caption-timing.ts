@@ -3,6 +3,8 @@ import { captionLayoutText } from '@/lib/caption-text-breaks';
 
 const MINIMUM_GENERATED_CUE_MS = 80;
 
+export type CaptionTimingBounds = { startMs: number; endMs: number };
+
 // Source intervals describe the audio. Resolve overlapping ASR endpoints at
 // the next acoustic onset, without applying minimum visual cue durations.
 export function canonicalizeSourceWords(words: WordToken[], durationMs: number): WordToken[] {
@@ -64,10 +66,11 @@ export function normalizeProjectedPrimaryWords(
   });
 }
 
-// The projected word intervals already carry clip bounds. Generated cues must
-// use those intervals as-is so their anchors continue to match their words.
+// Acoustic word timings stay canonical; optional visual padding stays inside
+// the owning clip's projected speech window.
 export function sequenceGeneratedPrimaryCaptions(
   captions: CaptionBlock[], maxDurationMs: number, fitsTextBudget: (caption: CaptionBlock) => boolean,
+  bounds?: CaptionTimingBounds,
 ): CaptionBlock[] {
   const sequenced: CaptionBlock[] = [];
   for (const caption of captions) {
@@ -75,7 +78,7 @@ export function sequenceGeneratedPrimaryCaptions(
       || caption.endMs <= caption.startMs || caption.endMs - caption.startMs > maxDurationMs) {
       throw new Error(`Primary caption timing quality failure for ${caption.id}, words ${caption.wordIds.join(',')}: invalid cue interval`);
     }
-    if (!fitsTextBudget(caption)) {
+    if (!fitsTextBudget(caption) && caption.wordIds.length !== 1) {
       throw new Error(`Primary caption timing quality failure for ${caption.id}, words ${caption.wordIds.join(',')}: text budget exceeded`);
     }
     const previous = sequenced.at(-1);
@@ -102,8 +105,11 @@ export function sequenceGeneratedPrimaryCaptions(
       sequenced.splice(index - 1, 2, previousCandidate);
       index -= 1;
     } else {
-      const reason = nextCandidate || previousCandidate ? 'text budget exceeded by short-cue merge' : 'isolated short word interval';
-      throw new Error(`Primary caption timing quality failure for ${caption.id}, words ${caption.wordIds.join(',')}: ${reason}`);
+      const neededMs = Math.max(0, Math.min(MINIMUM_GENERATED_CUE_MS, maxDurationMs) - (caption.endMs - caption.startMs));
+      const beforeMs = Math.min(neededMs, Math.max(0, caption.startMs - (previous?.endMs ?? bounds?.startMs ?? 0)));
+      const afterMs = Math.min(neededMs - beforeMs, Math.max(0, (next?.startMs ?? bounds?.endMs ?? caption.endMs) - caption.endMs));
+      sequenced[index] = { ...caption, startMs: caption.startMs - beforeMs, endMs: caption.endMs + afterMs };
+      continue;
     }
     index -= 1;
   }

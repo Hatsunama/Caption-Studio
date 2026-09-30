@@ -4,7 +4,7 @@ import { initWhisper, initWhisperVad } from 'whisper.rn/index';
 import CaptionMedia from 'caption-media';
 import { assertCaptionAudioAvailable } from '@/lib/media-validation';
 import { sameModelFileIdentity } from '@/lib/model-verification-lease';
-import { alignWordsToSpeech } from '@/lib/speech-alignment';
+import { alignWordsToSpeech, mergeSpeechWindows } from '@/lib/speech-alignment';
 import { requireDetectedCaptionLanguage } from '@/lib/transcription-language';
 import { removeModelArtifacts, storedModelBytes } from '@/lib/model-artifact-lifecycle';
 import { coalesceWhisperWords } from '@/lib/whisper-words';
@@ -166,7 +166,13 @@ async function ensureModel(
   verifiedIdentity?: ModelFileIdentity,
 ): Promise<File> {
   pruneObsoleteModelFiles();
-  if (activeModelDownload) return activeModelDownload;
+  // Wait for the prior writer to terminate, then start work owned by this session.
+  // Sharing its promise would also share its old cancellation registration.
+  while (activeModelDownload) {
+    await activeModelDownload.catch(() => undefined);
+    session?.throwIfCancelled();
+  }
+  session?.throwIfCancelled();
   const operation = downloadModel(onProgress, session, verifiedIdentity);
   activeModelDownload = operation;
   try {
@@ -188,14 +194,16 @@ async function downloadModel(
 
   if (modelFile.exists && modelFile.size === model.downloadBytes
     && sameModelFileIdentity(verifiedIdentity, modelFileIdentity(modelFile))) return modelFile;
-  if (await verifyModelFile(modelFile, model.downloadBytes, model.sha256)) {
+  if (await verifyModelFile(modelFile, model.downloadBytes, model.sha256, session)) {
     return modelFile;
   }
-  const reservation = await resumableModelDownloadReservation(modelFile, model, (uri) => CaptionMedia.sha256(uri));
+  session?.throwIfCancelled();
+  const reservation = await resumableModelDownloadReservation(modelFile, model, (uri) => CaptionMedia.sha256(uri), () => session?.throwIfCancelled());
   await requireFreeSpace(
     reservation + MODEL_REPLACEMENT_HEADROOM_BYTES,
     `replace the ${model.label} transcription model safely`,
   );
+  session?.throwIfCancelled();
 
   onProgress?.({
     stage: 'downloading-model',
@@ -246,12 +254,14 @@ async function ensureVadModel(
   const modelFile = new File(modelDirectory, VAD_MODEL.fileName);
   if (modelFile.exists && modelFile.size === VAD_MODEL.downloadBytes
     && sameModelFileIdentity(verifiedIdentity, modelFileIdentity(modelFile))) return modelFile;
-  if (await verifyModelFile(modelFile, VAD_MODEL.downloadBytes, VAD_MODEL.sha256)) return modelFile;
-  const reservation = await resumableModelDownloadReservation(modelFile, VAD_MODEL, (uri) => CaptionMedia.sha256(uri));
+  if (await verifyModelFile(modelFile, VAD_MODEL.downloadBytes, VAD_MODEL.sha256, session)) return modelFile;
+  session?.throwIfCancelled();
+  const reservation = await resumableModelDownloadReservation(modelFile, VAD_MODEL, (uri) => CaptionMedia.sha256(uri), () => session?.throwIfCancelled());
   await requireFreeSpace(
     reservation + MODEL_REPLACEMENT_HEADROOM_BYTES,
     'replace the offline silence-detector model safely',
   );
+  session?.throwIfCancelled();
 
   onProgress?.({
     stage: 'downloading-model',
@@ -290,16 +300,22 @@ async function ensureVadModel(
   return modelFile;
 }
 
-async function verifyModelFile(file: File, expectedBytes: number, expectedSha256: string) {
+async function verifyModelFile(file: File, expectedBytes: number, expectedSha256: string, session?: CaptionGenerationSessionContext) {
+  session?.throwIfCancelled();
   if (!file.exists || file.size !== expectedBytes) return false;
   const marker = new File(file.parentDirectory, `${file.name}.sha256`);
   const identity = modelFileIdentity(file);
   const actualSha256 = await CaptionMedia.sha256(file.uri);
+  session?.throwIfCancelled();
   if (!sameModelFileIdentity(identity, modelFileIdentity(file))) {
     if (marker.exists) marker.delete();
     return false;
   }
-  if (marker.exists && modelVerificationMarkerMatches(await marker.text(), identity, expectedSha256, actualSha256)) return true;
+  if (marker.exists) {
+    const contents = await marker.text();
+    session?.throwIfCancelled();
+    if (modelVerificationMarkerMatches(contents, identity, expectedSha256, actualSha256)) return true;
+  }
   if (actualSha256 !== expectedSha256) {
     if (marker.exists) marker.delete();
     return false;
@@ -339,15 +355,18 @@ function modelFileIdentity(file: File): ModelFileIdentity {
 async function modelReplacementReservation(
   file: File,
   descriptor: { downloadUrl: string; downloadBytes: number; sha256: string },
+  session?: CaptionGenerationSessionContext,
 ): Promise<{ bytes: number; verifiedIdentity?: ModelFileIdentity }> {
+  session?.throwIfCancelled();
   const { downloadBytes: expectedBytes, sha256: expectedSha256 } = descriptor;
   if (!file.exists || file.size !== expectedBytes) {
-    return { bytes: await resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri)) };
+    return { bytes: await resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri), () => session?.throwIfCancelled()) };
   }
-  if (await verifyModelFile(file, expectedBytes, expectedSha256)) {
+  if (await verifyModelFile(file, expectedBytes, expectedSha256, session)) {
     return { bytes: 0, verifiedIdentity: modelFileIdentity(file) };
   }
-  return { bytes: await resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri)) };
+  session?.throwIfCancelled();
+  return { bytes: await resumableModelDownloadReservation(file, descriptor, (uri) => CaptionMedia.sha256(uri), () => session?.throwIfCancelled()) };
 }
 
 export async function transcribeVideoLocally(options: {
@@ -371,10 +390,9 @@ export async function transcribeVideoLocally(options: {
   const estimatedWavBytes = Math.ceil(Math.max(0, options.durationMs) / 1000) * 32_000 + 44;
   activeModelUsers += 1;
   try {
-  const [modelReservation, vadReservation] = await Promise.all([
-    modelReplacementReservation(storedModelFile, model),
-    modelReplacementReservation(storedVadModelFile, VAD_MODEL),
-  ]);
+  const modelReservation = await modelReplacementReservation(storedModelFile, model, session);
+  session?.throwIfCancelled();
+  const vadReservation = await modelReplacementReservation(storedVadModelFile, VAD_MODEL, session);
   await requireFreeSpace(
     estimatedWavBytes + modelReservation.bytes + vadReservation.bytes + 128 * 1024 * 1024,
     'generate captions',
@@ -394,10 +412,9 @@ export async function transcribeVideoLocally(options: {
     detail: 'Audio ready',
   });
 
-  const [modelFile, vadModelFile] = await Promise.all([
-    ensureModel(onProgress, session, modelReservation.verifiedIdentity),
-    ensureVadModel(onProgress, session, vadReservation.verifiedIdentity),
-  ]);
+  const modelFile = await ensureModel(onProgress, session, modelReservation.verifiedIdentity);
+  session?.throwIfCancelled();
+  const vadModelFile = await ensureVadModel(onProgress, session, vadReservation.verifiedIdentity);
   session?.throwIfCancelled();
   onProgress?.({
     stage: 'detecting-speech',
@@ -411,11 +428,13 @@ export async function transcribeVideoLocally(options: {
   });
   let speechSegments: { t0: number; t1: number }[];
   try {
+    session?.throwIfCancelled();
     speechSegments = await detectSpeechCooperatively(vadContext, audioFile, onProgress, session);
     session?.throwIfCancelled();
   } finally {
     await vadContext.release();
   }
+  session?.throwIfCancelled();
   if (speechSegments.length === 0) {
     throw new Error('No speech was detected in this video. Try a clip with clearer spoken audio.');
   }
@@ -424,12 +443,14 @@ export async function transcribeVideoLocally(options: {
     progress: 1,
     detail: `Found ${speechSegments.length} spoken section${speechSegments.length === 1 ? '' : 's'}`,
   });
+  session?.throwIfCancelled();
   const context = await initWhisper({
     filePath: modelFile.uri,
     useGpu: false,
   });
 
   try {
+    session?.throwIfCancelled();
     const { promise, stop } = context.transcribe(audioFile.uri, {
       ...(options.language && options.language !== 'auto' ? { language: options.language } : {}),
       maxThreads: 4,
@@ -447,13 +468,33 @@ export async function transcribeVideoLocally(options: {
           detail: 'Generating word timings locally',
         }),
     });
-    const unregisterStopper = session?.registerStopper(stop);
-    let result;
+    // Observe native work before registration can throw. Even a failed stop must
+    // wait for natural termination before the context/audio can be released.
+    const observed = promise.then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    let unregisterStopper: (() => void) | undefined;
+    let outcome;
     try {
-      result = await promise;
+      try {
+        unregisterStopper = session?.registerStopper(stop);
+      } catch (registrationError) {
+        let stopFailure: unknown;
+        let stopFailed = false;
+        try { await stop(); } catch (error) { stopFailed = true; stopFailure = error; }
+        await observed;
+        if (stopFailed) {
+          throw new AggregateError([registrationError, stopFailure], 'Transcription cancellation failed; native work has now terminated.');
+        }
+        throw registrationError;
+      }
+      outcome = await observed;
     } finally {
       unregisterStopper?.();
     }
+    if (!outcome.ok) throw outcome.error;
+    const result = outcome.value;
     session?.throwIfCancelled();
     if (result.isAborted) throw new Error('Transcription was cancelled');
 
@@ -489,7 +530,7 @@ async function detectSpeechCooperatively(
     handle.offset = 0;
     const header = handle.readBytes(44);
     const format = parseCaptionPcmWave(header, handle.size ?? audioFile.size);
-    const ranges = planOverlappingPcmChunks(format.dataBytes, format.bytesPerSecond);
+    const ranges = planOverlappingPcmChunks(format.dataBytes, format.bytesPerSecond, 10, 2);
     for (let index = 0; index < ranges.length; index += 1) {
       session?.throwIfCancelled();
       const range = ranges[index];
@@ -501,7 +542,9 @@ async function detectSpeechCooperatively(
       const chunkFile = new File(audioFile.parentDirectory, `.vad-${chunkNonce}-${index}.wav`);
       try {
         chunkFile.write(buildPcm16MonoWave(pcm, format.sampleRate));
+        session?.throwIfCancelled();
         const chunkSegments = await vadContext.detectSpeech(chunkFile.uri, VAD_OPTIONS);
+        session?.throwIfCancelled();
         const offsetCentiseconds = Math.round(range.start / format.bytesPerSecond * 100);
         speechSegments.push(...chunkSegments.map((segment) => ({
           t0: segment.t0 + offsetCentiseconds,
@@ -519,7 +562,10 @@ async function detectSpeechCooperatively(
           : `Finding spoken sections · part ${index + 1} of ${ranges.length}`,
       });
     }
-    return speechSegments;
+    // Union overlapping detections while retaining real silence gaps. Repeated
+    // boundary windows must not truncate a word to the first partial detection.
+    return mergeSpeechWindows(speechSegments.map(({ t0, t1 }) => ({ startMs: t0 * 10, endMs: t1 * 10 })), 0)
+      .map(({ startMs, endMs }) => ({ t0: startMs / 10, t1: endMs / 10 }));
   } finally {
     handle.close();
   }

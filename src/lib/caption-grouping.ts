@@ -5,7 +5,7 @@ import {
   captionTextLength,
 } from '@/lib/caption-text-breaks';
 import type { CaptionBlock, WordToken } from '@/types/project';
-import { normalizeProjectedPrimaryWords, sequenceGeneratedPrimaryCaptions } from '@/lib/primary-caption-timing';
+import { normalizeProjectedPrimaryWords, sequenceGeneratedPrimaryCaptions, type CaptionTimingBounds } from '@/lib/primary-caption-timing';
 
 export type CaptionGroupingOptions = {
   maxWords: number;
@@ -46,6 +46,7 @@ function isUnspacedNonHangulToken(text: string) {
 
 function normalizeCaptionTimings(
   captions: CaptionBlock[], words: WordToken[], options: CaptionGroupingOptions,
+  bounds?: CaptionTimingBounds,
 ): CaptionBlock[] {
   const wordById = new Map(words.map((word) => [word.id, word]));
   const fitsTextBudget = (caption: CaptionBlock) => {
@@ -55,12 +56,13 @@ function normalizeCaptionTimings(
       && captionTextLength(caption.text) <= options.maxCharacters
       && captionCjkCharacterCount(caption.text) <= options.maxCjkCharacters;
   };
-  return sequenceGeneratedPrimaryCaptions(captions, options.maxDurationMs, fitsTextBudget);
+  return sequenceGeneratedPrimaryCaptions(captions, options.maxDurationMs, fitsTextBudget, bounds);
 }
 
 export function groupWordsIntoCaptions(
   words: WordToken[],
   options: CaptionGroupingOptions = DEFAULT_GROUPING_OPTIONS,
+  bounds?: CaptionTimingBounds,
 ): CaptionBlock[] {
   const groups: WordToken[][] = [];
   let current: WordToken[] = [];
@@ -102,7 +104,7 @@ export function groupWordsIntoCaptions(
     wordIds: group.map((word) => word.id),
     textMode: 'automatic',
     timelineVisible: true,
-  })), words, options);
+  })), words, options, bounds);
 }
 
 export function groupTimelineWordsByClip(
@@ -121,7 +123,10 @@ export function groupTimelineWordsByClip(
       Math.max(...clipWords.map((word) => word.endMs)),
     );
     previousClipEndMs = normalizedWords.at(-1)!.endMs;
-    return groupWordsIntoCaptions(normalizedWords, typeof options === 'function' ? options(clipId) : options)
+    return groupWordsIntoCaptions(normalizedWords, typeof options === 'function' ? options(clipId) : options, {
+      startMs: normalizedWords[0].startMs,
+      endMs: normalizedWords.at(-1)!.endMs,
+    })
       .map((caption, index) => ({ ...caption, id: `caption-${clipId}-${index + 1}` }));
   });
   for (let index = 1; index < captions.length; index += 1) {
