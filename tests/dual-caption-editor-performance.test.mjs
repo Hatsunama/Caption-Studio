@@ -4,6 +4,7 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as draftHelpers from '../src/lib/dual-caption-drafts.ts';
+import * as saveRecoveryHelpers from '../src/components/editor/caption-save-recovery.ts';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { createTranslationCaptionTrack, resolveCaptionPairs, setTranslationCueTiming, setTranslationCueStyle, setTranslationStackGap, updatePairedCaptionTexts } from '../src/lib/caption-tracks.ts';
 import { resolveCaptionStyle } from '../src/lib/style-resolver.ts';
@@ -86,6 +87,7 @@ function mount(overrides = {}, options = {}) {
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 24 }) };
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, md: 8, pill: 20, xl: 20 } } };
       if (name === '@/lib/dual-caption-drafts') return draftHelpers;
+      if (name === './caption-save-recovery') return saveRecoveryHelpers;
       if (name === '@/services/editor-draft-journal') return {
         archiveEditorDraftJournal: async () => {},
         readEditorDraftJournal: async (...args) => { calls.reads.push(args); return options.read ? options.read(...args) : options.journal; },
@@ -373,6 +375,25 @@ test('failed save and journal failures retain typing and expose accessible error
   assert.ok(h.all((node) => node.props.accessibilityRole === 'alert').length > 0);
   await h.advance(600); assert.equal(h.calls.writes.length, 1);
   assert.equal(h.button('Save dual subtitle edits').props.disabled, false);
+});
+
+test('durable dual save with failed recovery cleanup exposes cleanup-only retry without dirty save state', async () => {
+  let saves = 0;
+  const storage = { clearError: true };
+  const h = mount({ onSave: async () => { saves++; return true; } }, storage);
+  await h.flush(); h.edit(0, 'Durably saved');
+  h.press('Save dual subtitle edits'); await h.flush();
+  assert.equal(saves, 1);
+  assert.equal(h.input(0).props.value, 'Durably saved');
+  assert.equal(h.calls.alerts.at(-1)[0], 'Changes saved');
+  assert.match(h.calls.alerts.at(-1)[1], /changes were saved.*recovery copy cleanup failed/i);
+  assert.equal(h.all((node) => node.props.accessibilityRole === 'alert' && /could not be saved/i.test(node.props.children ?? '')).length, 0);
+  assert.ok(!h.button('Retry recovery cleanup').props.disabled);
+  storage.clearError = false;
+  h.press('Retry recovery cleanup'); await h.flush();
+  assert.equal(saves, 1, 'cleanup retry must never repeat the project commit');
+  assert.equal(h.button('Save dual subtitle edits').props.disabled, true);
+  await h.advance(1000); assert.equal(h.calls.writes.length, 0);
 });
 
 test('a rejected dual-caption save shows an error beside the retained draft', async () => {

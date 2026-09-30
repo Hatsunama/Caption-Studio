@@ -42,6 +42,7 @@ import { WatermarkSheet } from '@/components/editor/watermark-sheet';
 import { ImageLayerOverlay } from '@/components/editor/image-layer-overlay';
 import { LayerTimeline } from '@/components/editor/layer-timeline';
 import { MediaLoadingOverlay } from '@/components/media-loading-overlay';
+import { OperationOverlay } from '@/components/operation-overlay';
 import { PlaybackLoadingOverlay } from '@/components/editor/playback-loading-overlay';
 import { ScopeSheet } from '@/components/editor/scope-sheet';
 import { ScriptEditor } from '@/components/editor/script-editor';
@@ -416,7 +417,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       if (workspaceMountedRef.current) setPersistenceError(undefined);
       return receipt;
     } catch (caught) {
-      if (workspaceMountedRef.current) {
+      if (workspaceMountedRef.current && !(caught instanceof CaptionGenerationCancelledError)) {
         if (caught instanceof ProjectPersistenceError) {
           setPersistenceError(caught.message);
         } else {
@@ -459,7 +460,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   );
   const pauseTransport = transport.pause;
   const cancelCaptionGeneration = useCallback(async () => {
-    await runCaptionCancellationRequest(cancelProjectCaptionGeneration, setTranscriptionCancelling, setError);
+    return runCaptionCancellationRequest(cancelProjectCaptionGeneration, setTranscriptionCancelling, setError);
   }, []);
 
   useEffect(() => {
@@ -872,7 +873,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     : captionInterruption.stage === 'downloading-model' && !captionInterruption.interruptionError
       ? 'The caption-model download paused because Caption Studio left the foreground. Downloaded model bytes were saved. Keep this screen open and the phone unlocked, then retry caption generation to resume.'
       : captionInterruption.interruptionError
-        ? `Caption generation stopped when Caption Studio left the foreground, but Android could not preserve the active transfer: ${captionInterruption.interruptionError}`
+        ? `Caption Studio could not confirm that caption generation stopped safely: ${captionInterruption.interruptionError}`
         : 'Caption generation stopped because Caption Studio left the foreground. The project and previously saved captions were left unchanged. Keep this screen open and the phone unlocked, then try again.';
 
   useEffect(() => {
@@ -1737,13 +1738,17 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     try {
       if (!await confirmOptionalTranslationExport(snapshot, true)) return;
       setExporting(true);
-      const access = await commitEditorProject(
-        (current) => ensureProjectVideoAccess(current, projectMediaRecoveryPrompts),
-        true,
-        false,
-      );
-      if (!access || !editorSession.isCurrent(access)) throw new Error('The project changed while video access was being restored. Try export again.');
-      const result = await exportProjectVideo(access.project, true);
+      const result = await exportProjectVideo(snapshot, true, async (_project, throwIfCancelled) => {
+        throwIfCancelled();
+        const access = await commitEditorProject(
+          (current) => ensureProjectVideoAccess(current, projectMediaRecoveryPrompts),
+          true,
+          false,
+        );
+        throwIfCancelled();
+        if (!access || !editorSession.isCurrent(access)) throw new Error('The project changed while video access was being restored. Try export again.');
+        return access.project;
+      });
       Alert.alert('Export complete', `Saved to Movies/Caption Studio.\n${result.width} × ${result.height}${result.sharingWarning ? `\n\n${result.sharingWarning}` : ''}`);
     } catch (caught) {
       if (!(caught instanceof VideoExportCancelledError)) {
@@ -2586,7 +2591,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       <MediaLoadingOverlay progress={mediaProgress} />
       <PlaybackLoadingOverlay phase={transport.phase} hasPresentedFrame={transport.hasPresentedFrame} admitted={runtimePolicy.mediaAdmitted} />
       {exporting ? (
-        <Modal visible transparent animationType="fade" onRequestClose={() => {
+        <OperationOverlay visible onRequestClose={() => {
           if (exportKind === 'video') void cancelProjectVideoExport();
         }}>
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: 'rgba(0,0,0,0.78)' }}>
@@ -2617,7 +2622,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               ) : null}
             </View>
           </View>
-        </Modal>
+        </OperationOverlay>
       ) : null}
     </View>
     </PersistedHorizontalScrollScope>
@@ -2685,7 +2690,7 @@ function HistoryButton(props: { label: string; disabled: boolean; onPress: () =>
 function ExtractAudioBusyOverlay(props: { visible: boolean }) {
   if (!props.visible) return null;
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={() => {}}>
+    <OperationOverlay visible>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: chrome.overlay }}>
         <View style={{ width: '100%', maxWidth: 360, alignItems: 'center', gap: 14, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <ActivityIndicator size="large" color={chrome.accent} />
@@ -2695,7 +2700,7 @@ function ExtractAudioBusyOverlay(props: { visible: boolean }) {
           </Text>
         </View>
       </View>
-    </Modal>
+    </OperationOverlay>
   );
 }
 
@@ -2719,7 +2724,7 @@ function ProgressOverlay(props: {
   if (!props.progress) return null;
   const percent = displayTranscriptionProgress(props.progress.progress);
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={() => { if (!props.cancelling) props.onCancel(); }}>
+    <OperationOverlay visible onRequestClose={() => { if (!props.cancelling) props.onCancel(); }}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 26, backgroundColor: 'rgba(0,0,0,0.82)' }}>
         <View style={{ width: '100%', maxWidth: 380, gap: 16, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <ActivityIndicator color={palette.accent} size="large" />
@@ -2750,7 +2755,7 @@ function ProgressOverlay(props: {
           </Pressable>
         </View>
       </View>
-    </Modal>
+    </OperationOverlay>
   );
 }
 

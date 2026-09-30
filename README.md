@@ -94,6 +94,11 @@ Current published Android build and version code: [Caption Studio releases](http
 
 ## What the current Android build includes
 
+- Caption generation owns model preparation, native transcription, and cancellation through one session. Cancellation retains resumable downloads and does not claim completion before active work exits.
+- Short generated speech stays editable without failing the entire run. Visual timing recovery stays within its owning clip's projected speech window and never borrows time from a preceding clip.
+- Completed timeline transcription is retained in a bounded temporary retry cache, separate from saved captions and translation edits. A failed attempt leaves previously accepted edits intact.
+- Caption, import, audio-extraction, and export progress cards stay inside the app screen rather than opening competing Android dialog windows.
+- A saved caption edit remains saved even if recovery-copy cleanup fails; cleanup can be retried without saving the project again.
 - Multi-select Android Files video import that retains and checks durable read access to source documents without duplicating full videos into app cache
 - Existing projects with inaccessible linked footage offer original-file re-linking while preserving cuts, captions, translations, and draft journals
 - Preview player failures stay visible with a source-specific retry path; export checks required video, audio, and image sources before starting the MP4 render

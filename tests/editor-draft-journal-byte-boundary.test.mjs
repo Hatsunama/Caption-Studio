@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { createKeyedOperationQueue } from '../src/lib/keyed-operation-queue.ts';
 import * as scriptHelpers from '../src/lib/caption-script.ts';
 import * as dualHelpers from '../src/lib/dual-caption-drafts.ts';
+import * as saveRecoveryHelpers from '../src/components/editor/caption-save-recovery.ts';
 
 const compile = (path) => ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
@@ -291,6 +292,7 @@ async function mountEditor(kind, options = {}) {
       if (name === '@/lib/ui-theme') return { chrome: { radius: {} } };
       if (name === '@/lib/caption-script') return scriptHelpers;
       if (name === '@/lib/dual-caption-drafts') return dualHelpers;
+      if (name === './caption-save-recovery') return saveRecoveryHelpers;
       if (name === '@/services/editor-draft-journal') return {
         archiveEditorDraftJournal: async (...args) => options.service?.archiveEditorDraftJournal(...args),
         readEditorDraftJournal: async (...args) => {

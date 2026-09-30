@@ -72,15 +72,17 @@ export async function downloadVerifiedModel(options: DownloadOptions) {
   const unregisterPauser = options.registerPauser?.(pause);
 
   try {
+  throwIfPaused();
   if (temporary.exists && temporary.size === descriptor.downloadBytes) {
     options.onVerifying?.();
     const actualSha256 = await options.verifySha256(temporary.uri);
     throwIfPaused();
     if (actualSha256 === descriptor.sha256) {
+      await replaceTarget(temporary, target);
+      throwIfPaused();
       deleteIfPresent(resumeFile);
       deleteIfPresent(chunk);
       deleteIfPresent(chunkMarker);
-      await replaceTarget(temporary, target);
       return target;
     }
     removeResumableModelDownloadArtifacts(target);
@@ -117,7 +119,7 @@ export async function downloadVerifiedModel(options: DownloadOptions) {
       if (temporary.size < committedBytes || temporary.size > committedBytes + chunkLength) {
         throw new ModelDownloadIntegrityError();
       }
-      appendChunk(temporary, chunk, committedBytes, throwIfPaused);
+      await appendChunk(temporary, chunk, committedBytes, throwIfPaused);
       throwIfPaused();
       committedBytes += chunkLength;
       await writeResumeState(resumeFile, encodeModelDownloadCheckpoint(identity, committedBytes));
@@ -125,6 +127,8 @@ export async function downloadVerifiedModel(options: DownloadOptions) {
       deleteIfPresent(chunk);
       deleteIfPresent(chunkMarker);
       options.onProgress?.(committedBytes, descriptor.downloadBytes);
+      // Checkpoint-only replay also yields so a queued cancel reaches this work.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
     throwIfPaused();
     if (temporary.size !== descriptor.downloadBytes) {
@@ -137,6 +141,7 @@ export async function downloadVerifiedModel(options: DownloadOptions) {
       throw new ModelDownloadIntegrityError();
     }
     await replaceTarget(temporary, target);
+    throwIfPaused();
     deleteIfPresent(resumeFile);
     return target;
   } catch (error) {
@@ -154,17 +159,21 @@ export async function resumableModelDownloadReservation(
   target: File,
   descriptor: VerifiedModelDescriptor,
   verifySha256: (uri: string) => Promise<string>,
+  throwIfCancelled: () => void = () => {},
 ) {
+  throwIfCancelled();
   const temporary = temporaryFile(target);
   const resumeFile = resumeStateFile(target);
   if (temporary.exists && temporary.size === descriptor.downloadBytes) {
-    if (await verifySha256(temporary.uri) === descriptor.sha256) return 0;
+    const actualSha256 = await verifySha256(temporary.uri);
+    throwIfCancelled();
+    if (actualSha256 === descriptor.sha256) return 0;
     removeResumableModelDownloadArtifacts(target);
     return descriptor.downloadBytes;
   }
   const identity = downloadIdentity(temporary, descriptor);
   const committedBytes = await readValidCheckpoint(
-    temporary, resumeFile, chunkFile(target), chunkMarkerFile(target), identity,
+    temporary, resumeFile, chunkFile(target), chunkMarkerFile(target), identity, throwIfCancelled,
   );
   return remainingModelDownloadBytes(
     descriptor.downloadBytes,
@@ -189,6 +198,7 @@ async function readValidCheckpoint(
   identity: ModelDownloadResumeIdentity,
   throwIfPaused: () => void = () => {},
 ) {
+  throwIfPaused();
   if (!temporary.exists || !resumeFile.exists) {
     if (temporary.exists || resumeFile.exists) {
       deleteIfPresent(temporary);
@@ -280,10 +290,11 @@ async function fetchVerifiedRange(
   throw new ModelDownloadTransferError('The model download stopped. Download progress was saved.');
 }
 
-function appendChunk(target: File, chunk: File, offset: number, throwIfPaused: () => void) {
+async function appendChunk(target: File, chunk: File, offset: number, throwIfPaused: () => void) {
   const source = chunk.open(FileMode.ReadOnly);
-  const destination = target.open(FileMode.WriteOnly);
+  let destination: ReturnType<File['open']> | undefined;
   try {
+    destination = target.open(FileMode.WriteOnly);
     destination.offset = offset;
     let remaining = chunk.size;
     while (remaining > 0) {
@@ -293,10 +304,14 @@ function appendChunk(target: File, chunk: File, offset: number, throwIfPaused: (
       destination.writeBytes(bytes);
       throwIfPaused();
       remaining -= bytes.length;
+      // A synchronous loop cannot observe cancellation from a new JS event.
+      // Keep the old checkpoint and chunk marker until the entire append commits.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      throwIfPaused();
     }
   } finally {
     source.close();
-    destination.close();
+    destination?.close();
   }
 }
 

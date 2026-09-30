@@ -494,8 +494,8 @@ test('export uses durably recovered video access without adding an undo edit', a
     h.disk = recovered;
     return recovered;
   };
-  h.services.exportProjectVideo = async (project, allowIncomplete) => {
-    exported = { project, allowIncomplete };
+  h.services.exportProjectVideo = async (project, allowIncomplete, prepareProject) => {
+    exported = { project: await prepareProject(project, () => {}), allowIncomplete };
     return { width: 1080, height: 1920 };
   };
   await h.actions.exportVideo();

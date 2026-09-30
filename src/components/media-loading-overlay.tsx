@@ -1,11 +1,13 @@
-import { ActivityIndicator, Modal, Text, View } from 'react-native';
+import { ActivityIndicator, Text, View } from 'react-native';
+
+import { OperationOverlay } from '@/components/operation-overlay';
 
 import type { MediaImportProgress } from '@/services/media-import';
 import { chrome } from '@/lib/ui-theme';
 
 export function MediaLoadingOverlay({ progress }: { progress?: MediaImportProgress }) {
   return (
-    <Modal visible={Boolean(progress)} transparent animationType="fade" onRequestClose={() => {}}>
+    <OperationOverlay visible={Boolean(progress)}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: chrome.overlay }}>
         <View style={{ width: '100%', maxWidth: 360, alignItems: 'center', gap: 14, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <ActivityIndicator size="large" color={chrome.accent} />
@@ -20,6 +22,6 @@ export function MediaLoadingOverlay({ progress }: { progress?: MediaImportProgre
           </Text>
         </View>
       </View>
-    </Modal>
+    </OperationOverlay>
   );
 }
