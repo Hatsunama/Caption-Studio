@@ -21,7 +21,7 @@ import org.junit.rules.TemporaryFolder;
 public final class TranslationTruncationRecoveryTest {
   @Rule public TemporaryFolder temporary = new TemporaryFolder();
   private static final String SOURCE = "Please keep this app blank.";
-  private static final String TRANSLATED = "\u0628\u0631\u0627\u06c1 \u06a9\u0631\u0645 \u0627\u0633 \u0627\u06cc\u067e \u06a9\u0648 \u062e\u0627\u0644\u06cc \u0631\u06a9\u06be\u06cc\u06ba\u06d4";
+  private static final String TRANSLATED = "\u064a\u0631\u062c\u0649 \u0625\u0628\u0642\u0627\u0621 \u0647\u0630\u0627 \u0627\u0644\u062a\u0637\u0628\u064a\u0642 \u0641\u0627\u0631\u063a\u0627\u064b.";
   private static final String EOF = "[{\"id\":\"cue\",\"text\":\"" + TRANSLATED;
 
   @Test public void initialAndRepairGenerationReceiveOnlyTheRequestedCueSchema() throws Exception {
@@ -119,7 +119,7 @@ public final class TranslationTruncationRecoveryTest {
     String source = null;
     for (int length = 20; length <= 78; length++) {
       String candidate = "Please " + "<".repeat(length);
-      var request = new NaturalCaptionTranslator.ValidatedRequest("en", "ur",
+      var request = new NaturalCaptionTranslator.ValidatedRequest("en", "ar",
           List.of(new NaturalCaptionTranslator.Caption("cue", candidate)), context, context);
       JsonObject prompt = JsonParser.parseString(NaturalCaptionTranslator.buildRetryPrompt(request, 0)).getAsJsonObject();
       prompt.getAsJsonObject("repair").addProperty("reason", "MALFORMED_JSON");
@@ -217,7 +217,7 @@ public final class TranslationTruncationRecoveryTest {
       }, (file, folder, threads, instruction) -> runtime, (file, cancelled, progress) -> {},
           Executors.newSingleThreadExecutor(), line -> {});
       request = Map.of("reuseCheckpoints", true, "repairUnusableOutputs", true,
-          "operations", List.of(Map.of("id", "op", "sourceLanguage", "en", "targetLanguage", "ur",
+          "operations", List.of(Map.of("id", "op", "sourceLanguage", "en", "targetLanguage", "ar",
               "batches", List.of(Map.of("captions", List.of(Map.of("id", "cue", "text", source)),
                   "contextBefore", before, "contextAfter", after)))));
     }

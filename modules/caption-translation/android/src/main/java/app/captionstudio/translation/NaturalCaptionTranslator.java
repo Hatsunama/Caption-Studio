@@ -1775,7 +1775,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   private static boolean isSupportedLanguage(String language) {
     switch (language) {
       case "en": case "zh-Hans": case "zh-Hant": case "hi": case "es": case "fr":
-      case "ar": case "bn": case "pt": case "ru": case "ur": case "id": case "de":
+      case "ar": case "bn": case "pt": case "ru": case "id": case "de":
       case "ja": case "ko": case "tr": case "vi": case "th": case "it": case "pl":
         return true;
       default:
@@ -1799,7 +1799,6 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       case "bn": return "Bengali (bn)";
       case "pt": return "Portuguese (pt)";
       case "ru": return "Russian (ru)";
-      case "ur": return "Urdu (ur)";
       case "id": return "Indonesian (id)";
       case "de": return "German (de)";
       case "ja": return "Japanese (ja)";

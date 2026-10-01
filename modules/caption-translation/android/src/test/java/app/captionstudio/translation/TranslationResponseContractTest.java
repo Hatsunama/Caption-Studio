@@ -25,7 +25,7 @@ public final class TranslationResponseContractTest {
       {"en", "Please close the door."}, {"zh-Hans", "请关门。"}, {"zh-Hant", "請關門。"},
       {"hi", "कृपया दरवाजा बंद करें।"}, {"es", "Por favor, cierra la puerta."},
       {"fr", "Fermez la porte."}, {"ar", "أغلق الباب من فضلك."}, {"bn", "দরজা বন্ধ করুন।"},
-      {"pt", "Feche a porta."}, {"ru", "Закройте дверь."}, {"ur", "دروازہ بند کریں۔"},
+      {"pt", "Feche a porta."}, {"ru", "Закройте дверь."}, {"ar", "يرجى إغلاق الباب."},
       {"id", "Tutup pintunya."}, {"de", "Bitte schließe die Tür."}, {"ja", "ドアを閉めてください。"},
       {"ko", "문을 닫아 주세요."}, {"tr", "Lütfen kapıyı kapat."}, {"vi", "Xin đóng cửa."},
       {"th", "กรุณาปิดประตู"}, {"it", "Chiudi la porta."}, {"pl", "Zamknij drzwi."},
@@ -39,7 +39,8 @@ public final class TranslationResponseContractTest {
     for (String[] target : TARGETS) {
       int previousCheckpoints = checkpoints.list().length;
       AtomicInteger calls = new AtomicInteger();
-      String source = "en".equals(target[0]) ? "请在离开之前关上房间的门，谢谢。" : "Please close the door.";
+      String source = "en".equals(target[0]) ? "请在离开之前关上房间的门，谢谢。"
+          : "يرجى إغلاق الباب.".equals(target[1]) ? "Please close the door carefully." : "Please close the door.";
       String bleed = "c1: " + target[1] + "\nc2: " + target[1];
       // The previous length/script heuristics accept this multi-cue response.
       assertFalse(target[0], TranslationOutputQuality.needsReview(source, bleed, target[0]));

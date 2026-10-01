@@ -93,9 +93,10 @@ public final class TranslationPolicyRegressionTest {
     }
   }
 
-  @Test public void sameScriptRetryCarriesExactDirectionAndReadOnlyNeighbors() throws Exception {
+  @Test public void sameScriptAndArabicRetryCarryExactDirectionAndReadOnlyNeighbors() throws Exception {
     for (String[] direction : List.of(new String[] { "de", "es", "German (de)", "Spanish (es)", "hola mundo" },
-        new String[] { "ur", "ar", "Urdu (ur)", "Arabic (ar)", "\u0645\u0631\u062d\u0628\u0627" })) {
+        new String[] { "zh-Hans", "zh-Hant", "Simplified Chinese (zh-Hans)", "Traditional Chinese (zh-Hant)", "\u8acb\u95dc\u9580" },
+        new String[] { "ar", "en", "Arabic (ar)", "English (en)", "hello world" })) {
       try (Fixture f = new Fixture()) {
         f.initialResponse = "[]"; f.output = direction[4];
         Map<String, Object> input = request(List.of(caption("cue", "Hallo Welt")), false);

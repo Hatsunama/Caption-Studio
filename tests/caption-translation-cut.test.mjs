@@ -14,13 +14,15 @@ import {
 import { cutTranslatedDocument, packCaptionDocuments } from '../src/lib/caption-translation-cut.ts';
 
 test('the spoken-language catalog exposes the verified local model for every listed language', () => {
-  assert.equal(TOP_SPOKEN_CAPTION_LANGUAGES.length, 20);
-  assert.equal(TOP_SPOKEN_CAPTION_LANGUAGES.filter((language) => language.automaticTranslation).length, 20);
+  assert.deepEqual(TOP_SPOKEN_CAPTION_LANGUAGES.map((language) => language.tag),
+    ['en', 'zh-Hans', 'zh-Hant', 'hi', 'es', 'fr', 'ar', 'bn', 'pt', 'ru',
+      'id', 'de', 'ja', 'ko', 'tr', 'vi', 'th', 'it', 'pl']);
+  assert.equal(TOP_SPOKEN_CAPTION_LANGUAGES.every((language) => language.automaticTranslation), true);
   assert.equal(captionLanguageLabel('es'), 'Spanish');
   assert.equal(captionLanguageLabel('zh-CN'), 'Chinese (Simplified)');
   assert.equal(captionGroupingProfile('ko'), 'hangul');
   assert.equal(captionGroupingProfile('th'), 'thai');
-  assert.equal(automaticTranslationTargetTags('en').length, 19);
+  assert.equal(automaticTranslationTargetTags('en').length, 18);
   assert.equal(automaticTranslationTargetTags('zh-TW').includes('zh-Hans'), false);
   assert.equal(automaticTranslationTargetTags('zh-TW').includes('en'), true);
   const englishChoices = dualCaptionLanguageChoices('en');
