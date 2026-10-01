@@ -59,7 +59,7 @@ final class TranslationOutputQuality {
       case "ja": return !has(text, HIRAGANA_KATAKANA_HAN);
       case "ko": return !has(text, HANGUL);
       case "th": return !has(text, THAI);
-      case "ar": case "ur": return !has(text, ARABIC);
+      case "ar": return !has(text, ARABIC);
       case "hi": return !has(text, DEVANAGARI);
       case "bn": return !has(text, BENGALI);
       case "ru": return !has(text, CYRILLIC);

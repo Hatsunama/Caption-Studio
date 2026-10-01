@@ -25,7 +25,7 @@ public final class TranslationRuntimeReliabilityTest {
       {"en", "Please close the door."}, {"zh-Hans", "请关门。"}, {"zh-Hant", "請關門。"},
       {"hi", "कृपया दरवाजा बंद करें।"}, {"es", "Por favor, cierra la puerta."},
       {"fr", "Fermez la porte."}, {"ar", "أغلق الباب من فضلك."}, {"bn", "দরজা বন্ধ করুন।"},
-      {"pt", "Feche a porta."}, {"ru", "Закройте дверь."}, {"ur", "دروازہ بند کریں۔"},
+      {"pt", "Feche a porta."}, {"ru", "Закройте дверь."}, {"ar", "يرجى إغلاق الباب."},
       {"id", "Tutup pintunya."}, {"de", "Bitte schließe die Tür."}, {"ja", "ドアを閉めてください。"},
       {"ko", "문을 닫아 주세요."}, {"tr", "Lütfen kapıyı kapat."}, {"vi", "Xin đóng cửa."},
       {"th", "กรุณาปิดประตู"}, {"it", "Chiudi la porta."}, {"pl", "Zamknij drzwi."},
@@ -49,12 +49,15 @@ public final class TranslationRuntimeReliabilityTest {
           Result result = run(worker, model, request(source[0], target[0],
               List.of(Map.of("id", "cue", "text", source[1]))));
           assertNull(source[0] + " -> " + target[0], result.error);
-          assertEquals(target[1], cue(result, 0).get("text"));
+          assertEquals(source[0].equals(target[0]) ? source[1] : target[1], cue(result, 0).get("text"));
           assertEquals(true, cue(result, 0).get("valid"));
         }
       }
     }
-    assertEquals(380, calls.get()); // 20 identity directions require no model.
+    int generatedDirections = 0;
+    for (String[] source : LANGUAGES) for (String[] target : LANGUAGES)
+      if (!source[0].equals(target[0])) generatedDirections++;
+    assertEquals(generatedDirections, calls.get()); // Identity directions require no model.
   }
 
   @Test public void partitionsUnicodeAndHostileJsonLosslesslyWithinTheEscapedByteBudget() throws Exception {

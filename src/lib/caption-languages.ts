@@ -13,7 +13,6 @@ export type CaptionLanguageTag =
   | 'bn'
   | 'pt'
   | 'ru'
-  | 'ur'
   | 'id'
   | 'de'
   | 'ja'
@@ -45,7 +44,6 @@ export const TOP_SPOKEN_CAPTION_LANGUAGES: readonly CaptionLanguageDefinition[] 
   { tag: 'bn', displayName: 'Bengali', family: 'bn', grouping: 'spaced', automaticTranslation: true },
   { tag: 'pt', displayName: 'Portuguese', family: 'pt', grouping: 'spaced', automaticTranslation: true },
   { tag: 'ru', displayName: 'Russian', family: 'ru', grouping: 'spaced', automaticTranslation: true },
-  { tag: 'ur', displayName: 'Urdu', family: 'ur', grouping: 'arabic', automaticTranslation: true },
   { tag: 'id', displayName: 'Indonesian', family: 'id', grouping: 'spaced', automaticTranslation: true },
   { tag: 'de', displayName: 'German', family: 'de', grouping: 'spaced', automaticTranslation: true },
   { tag: 'ja', displayName: 'Japanese', family: 'ja', grouping: 'cjk', automaticTranslation: true },
@@ -167,7 +165,7 @@ export function isLikelyUntranslatedCaption(sourceText: string, translatedText: 
     if (multilingualTarget === 'ja') return !/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(translated);
     if (multilingualTarget === 'ko') return !/\p{Script=Hangul}/u.test(translated);
     if (multilingualTarget === 'th') return !/\p{Script=Thai}/u.test(translated);
-    if (multilingualTarget === 'ar' || multilingualTarget === 'ur') return !/\p{Script=Arabic}/u.test(translated);
+    if (multilingualTarget === 'ar') return !/\p{Script=Arabic}/u.test(translated);
     if (multilingualTarget === 'hi') return !/\p{Script=Devanagari}/u.test(translated);
     if (multilingualTarget === 'bn') return !/\p{Script=Bengali}/u.test(translated);
     if (multilingualTarget === 'ru') return !/\p{Script=Cyrillic}/u.test(translated);
