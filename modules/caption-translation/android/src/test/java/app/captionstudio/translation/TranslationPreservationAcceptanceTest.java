@@ -101,6 +101,11 @@ public final class TranslationPreservationAcceptanceTest {
     File model = temporary.newFile("test-" + System.nanoTime() + ".litertlm");
     Files.write(model.toPath(), new byte[]{1});
     TranslationRuntimeFactory factory = (m,c,t,s) -> new TranslationRuntime() {
+      public boolean supportsStructuredOutput() { return true; }
+      public String translate(String prompt, int tokens, boolean structured) {
+        assertTrue(structured);
+        return translate(prompt);
+      }
       public String translate(String prompt) {
         calls.incrementAndGet();
         JsonArray response = new JsonArray();
@@ -128,8 +133,9 @@ public final class TranslationPreservationAcceptanceTest {
         (f,c,p) -> {}, Executors.newSingleThreadExecutor(), line -> {})) {
       worker.start(model.getAbsolutePath(), Map.of("requestId", "preservation-test",
           "reuseCheckpoints", true, "repairUnusableOutputs", repair,
-          "sourceLanguage", "en", "targetLanguage", "fr",
-          "captions", List.of(Map.of("id", "cue", "text", "Hello \ud83d\udc69\ud83c\udffd\u200d\ud83d\udcbb"))),
+          "operations", List.of(Map.of("id", "op", "sourceLanguage", "en", "targetLanguage", "fr",
+              "batches", List.of(Map.of("captions", List.of(Map.of("id", "cue",
+                  "text", "Hello \ud83d\udc69\ud83c\udffd\u200d\ud83d\udcbb"))))))),
           new NaturalCaptionTranslator.Callback() {
             public void onSuccess(Map<String,Object> result) { value.set(result); done.countDown(); }
             public void onError(String code,String message,Throwable cause) { failure.set(code); done.countDown(); }

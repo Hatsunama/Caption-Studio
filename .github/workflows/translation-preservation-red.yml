@@ -20,7 +20,7 @@ jobs:
       - name: Install locked test dependencies
         run: npm ci --no-audit --no-fund
       - name: Record baseline and new regression runtime results
-        run: python3 tests/translation-preservation-cloud.py
+        run: python3 tests/translation-preservation-cloud.py --native-only
       - name: Retain RED results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

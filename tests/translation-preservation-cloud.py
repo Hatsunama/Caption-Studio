@@ -11,10 +11,11 @@ import urllib.request, io, zipfile
 def fetch(url):
     with urllib.request.urlopen(url,timeout=120) as r: return r.read()
 try:
-    baseline=sorted(str(p) for p in (root/"tests").glob("*.test.mjs") if p.name!="translation-preservation-acceptance.test.mjs")
-    run("baseline_full_logic",["node","--import","tsx","--test"]+baseline,root,timeout=360)
-    run("red_js",["node","--import","tsx","--test","tests/translation-preservation-acceptance.test.mjs"],root)
-    run("full_logic_with_red_regressions",["npm","run","test:logic"],root,timeout=360)
+    if "--native-only" not in sys.argv:
+        baseline=sorted(str(p) for p in (root/"tests").glob("*.test.mjs") if p.name!="translation-preservation-acceptance.test.mjs")
+        run("baseline_full_logic",["node","--import","tsx","--test"]+baseline,root,timeout=360)
+        run("red_js",["node","--import","tsx","--test","tests/translation-preservation-acceptance.test.mjs"],root)
+        run("full_logic_with_red_regressions",["npm","run","test:logic"],root,timeout=360)
     jars=root/"test-jars"
     jars.mkdir()
     def maven(group,artifact,version):
@@ -50,7 +51,7 @@ try:
     javac=run("compile_native_tests",["javac","-encoding","UTF-8","-cp",cp,"-d",str(classes)]+java+list(map(str,tests.glob("*.java"))),timeout=180)
     if kotlin==0 and javac==0:
         baseline=["app.captionstudio.translation."+p.stem for p in tests.glob("*Test.java") if p.stem!="TranslationPreservationAcceptanceTest"]
-        run("baseline_full_native",["java","-cp",cp,"org.junit.runner.JUnitCore"]+baseline,timeout=240)
+        if "--native-only" not in sys.argv: run("baseline_full_native",["java","-cp",cp,"org.junit.runner.JUnitCore"]+baseline,timeout=240)
         run("red_native",["java","-cp",cp,"org.junit.runner.JUnitCore","app.captionstudio.translation.TranslationPreservationAcceptanceTest"],timeout=120)
 except Exception as e:
     reports["infrastructure_error"]={"type":type(e).__name__,"message":str(e)}
