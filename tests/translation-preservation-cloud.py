@@ -26,7 +26,8 @@ try:
     gson=maven("com.google.code.gson","gson","2.13.2")
     junit=maven("junit","junit","4.13.2")
     hamcrest=maven("org.hamcrest","hamcrest-core","1.3")
-    android=maven("org.robolectric","android-all","15-robolectric-12650502")
+    android=str(pathlib.Path(os.environ["ANDROID_HOME"])/"platforms/android-36/android.jar")
+    if not pathlib.Path(android).is_file(): raise RuntimeError("Runner Android 36 platform jar unavailable")
     stdlib=maven("org.jetbrains.kotlin","kotlin-stdlib","2.3.0")
     annotations=maven("org.jetbrains","annotations","26.0.2")
     compiler=":".join([
@@ -51,7 +52,7 @@ try:
     javac=run("compile_native_tests",["javac","-encoding","UTF-8","-cp",cp,"-d",str(classes)]+java+list(map(str,tests.glob("*.java"))),timeout=180)
     if kotlin==0 and javac==0:
         baseline=["app.captionstudio.translation."+p.stem for p in tests.glob("*Test.java") if p.stem!="TranslationPreservationAcceptanceTest"]
-        if "--native-only" not in sys.argv: run("baseline_full_native",["java","-cp",cp,"org.junit.runner.JUnitCore"]+baseline,timeout=240)
+        run("baseline_full_native",["java","-cp",cp,"org.junit.runner.JUnitCore"]+baseline,timeout=240)
         run("red_native",["java","-cp",cp,"org.junit.runner.JUnitCore","app.captionstudio.translation.TranslationPreservationAcceptanceTest"],timeout=120)
 except Exception as e:
     reports["infrastructure_error"]={"type":type(e).__name__,"message":str(e)}
