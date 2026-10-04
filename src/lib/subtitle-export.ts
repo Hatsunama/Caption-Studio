@@ -33,7 +33,9 @@ export function serializeSrt(project: CaptionProject, allowIncompleteTranslation
       text: normalizeLineEndings(pair.displayText).trim() }));
   }
   events.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
-  return events.length > 0 ? `${events.map((event, index) => [
+  const cues = events.map((event) => ({ ...event, text: srtCaptionText(event.text) }))
+    .filter((event) => event.text);
+  return cues.length > 0 ? `${cues.map((event, index) => [
     String(index + 1),
     `${srtTime(event.startMs)} --> ${srtTime(event.endMs)}`,
     event.text,
@@ -288,6 +290,12 @@ function subtitleCanvasSize(project: CaptionProject) {
   return aspect >= 1
     ? { width: Math.round(1080 * aspect), height: 1080 }
     : { width: 1080, height: Math.round(1080 / aspect) };
+}
+
+/** Blank lines delimit SRT cues; retain nonblank lines without changing project text. */
+function srtCaptionText(value: string) {
+  return normalizeLineEndings(value).trim().split('\n')
+    .filter((line) => line.trim()).join('\n');
 }
 
 function normalizeLineEndings(value: string) {
