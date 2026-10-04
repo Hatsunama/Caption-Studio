@@ -1,0 +1,432 @@
+{
+  "decision": "BLOCKED: no published patched release for either root advisory; no package/lock remediation bundle justified.",
+  "run": "https://github.com/Hatsunama/Caption-Studio/actions/runs/37240875594",
+  "jobId": 111549183092,
+  "artifact": {
+    "id": 11317457490,
+    "url": "https://github.com/Hatsunama/Caption-Studio/actions/runs/37240875594/artifacts/11317457490",
+    "sha256": "2cb5ceee297b794dd1497f0c4b5b6a33a66b951e0db19ee680ea250eb23b68fe",
+    "retentionDays": 14
+  },
+  "summary": {
+    "counts": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 19,
+      "critical": 0,
+      "total": 19
+    },
+    "roots": {
+      "braces": {
+        "name": "braces",
+        "severity": "high",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1240992,
+            "name": "braces",
+            "dependency": "braces",
+            "title": "braces vulnerable to stack-exhaustion denial of service through deeply nested patterns",
+            "url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+            "severity": "high",
+            "cwe": [
+              "CWE-674"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": "<=3.0.3"
+          }
+        ],
+        "effects": [
+          "micromatch"
+        ],
+        "range": "*",
+        "nodes": [
+          "node_modules/braces"
+        ],
+        "fixAvailable": {
+          "name": "expo",
+          "version": "44.0.6",
+          "isSemVerMajor": true
+        }
+      },
+      "node-forge": {
+        "name": "node-forge",
+        "severity": "high",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1240912,
+            "name": "node-forge",
+            "dependency": "node-forge",
+            "title": "node-forge RSA PKCS#1 v1.5 signature verification accepts extra nested DigestAlgorithm elements",
+            "url": "https://github.com/advisories/GHSA-86w9-cpqp-85rv",
+            "severity": "high",
+            "cwe": [
+              "CWE-347"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"
+            },
+            "range": "<=1.4.0"
+          }
+        ],
+        "effects": [
+          "@expo/cli",
+          "@expo/code-signing-certificates"
+        ],
+        "range": "*",
+        "nodes": [
+          "node_modules/node-forge"
+        ],
+        "fixAvailable": {
+          "name": "expo",
+          "version": "44.0.6",
+          "isSemVerMajor": true
+        }
+      }
+    }
+  },
+  "audit": {
+    "counts": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 19,
+      "critical": 0,
+      "total": 19
+    },
+    "roots": {
+      "braces": {
+        "name": "braces",
+        "severity": "high",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1240992,
+            "name": "braces",
+            "dependency": "braces",
+            "title": "braces vulnerable to stack-exhaustion denial of service through deeply nested patterns",
+            "url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+            "severity": "high",
+            "cwe": [
+              "CWE-674"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": "<=3.0.3"
+          }
+        ],
+        "effects": [
+          "micromatch"
+        ],
+        "range": "*",
+        "nodes": [
+          "node_modules/braces"
+        ],
+        "fixAvailable": {
+          "name": "expo",
+          "version": "44.0.6",
+          "isSemVerMajor": true
+        }
+      },
+      "node-forge": {
+        "name": "node-forge",
+        "severity": "high",
+        "isDirect": false,
+        "via": [
+          {
+            "source": 1240912,
+            "name": "node-forge",
+            "dependency": "node-forge",
+            "title": "node-forge RSA PKCS#1 v1.5 signature verification accepts extra nested DigestAlgorithm elements",
+            "url": "https://github.com/advisories/GHSA-86w9-cpqp-85rv",
+            "severity": "high",
+            "cwe": [
+              "CWE-347"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"
+            },
+            "range": "<=1.4.0"
+          }
+        ],
+        "effects": [
+          "@expo/cli",
+          "@expo/code-signing-certificates"
+        ],
+        "range": "*",
+        "nodes": [
+          "node_modules/node-forge"
+        ],
+        "fixAvailable": {
+          "name": "expo",
+          "version": "44.0.6",
+          "isSemVerMajor": true
+        }
+      }
+    }
+  },
+  "registry": {
+    "braces": {
+      "source": "https://registry.npmjs.org/braces",
+      "fetchedAt": "2026-10-04T22:40:35.124Z",
+      "etag": "W/\"58a16aca7a634b127464dba3bb05aa7c\"",
+      "distTags": {
+        "latest": "3.0.3"
+      },
+      "highestStable": "3.0.3",
+      "versionsAboveAdvisoryBound": [],
+      "lockedVersion": "3.0.3",
+      "lockedIntegrity": "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==",
+      "published": "2024-05-21T08:59:11.390Z"
+    },
+    "node-forge": {
+      "source": "https://registry.npmjs.org/node-forge",
+      "fetchedAt": "2026-10-04T22:40:35.169Z",
+      "etag": "W/\"cdedcbfa488dbaa64f422e1b940729fc\"",
+      "distTags": {
+        "latest": "1.4.0"
+      },
+      "highestStable": "1.4.0",
+      "versionsAboveAdvisoryBound": [],
+      "lockedVersion": "1.4.0",
+      "lockedIntegrity": "sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==",
+      "published": "2026-03-24T21:44:34.668Z"
+    }
+  },
+  "behavior": [
+    {
+      "name": "ordinary brace expansion and file-map glob",
+      "passed": true
+    },
+    {
+      "name": "deep braces compile",
+      "depth": 4900,
+      "inputLength": 9803,
+      "expected": "bounded handling without stack exhaustion",
+      "passed": false,
+      "error": {
+        "name": "RangeError",
+        "message": "Maximum call stack size exceeded"
+      }
+    },
+    {
+      "name": "deep braces expand",
+      "depth": 4900,
+      "inputLength": 9803,
+      "expected": "bounded handling without stack exhaustion",
+      "passed": false,
+      "error": {
+        "name": "RangeError",
+        "message": "Maximum call stack size exceeded"
+      }
+    },
+    {
+      "name": "valid RSA signature and wrong-message control",
+      "passed": true
+    },
+    {
+      "name": "reject nested DigestAlgorithm extra child",
+      "passed": false,
+      "accepted": true,
+      "rejection": null,
+      "limitation": "Uses a generated private key to isolate malformed encoding acceptance; not a no-private-key forgery proof."
+    }
+  ],
+  "advisorySnapshots": [
+    {
+      "schema_version": "1.4.0",
+      "id": "GHSA-vfj7-8cjw-p6xm",
+      "modified": "2026-10-02T22:36:33Z",
+      "published": "2026-09-18T18:31:41Z",
+      "aliases": [
+        "CVE-2026-93687"
+      ],
+      "summary": "braces vulnerable to stack-exhaustion denial of service through deeply nested patterns",
+      "details": "braces through 3.0.3 contains a stack overflow vulnerability in the recursive AST walkers that lack depth guards. Attackers can supply deeply nested brace patterns under the character limit to exhaust the call stack and terminate the Node.js process with an uncaught RangeError.",
+      "severity": [
+        {
+          "type": "CVSS_V3",
+          "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+        },
+        {
+          "type": "CVSS_V4",
+          "score": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N"
+        }
+      ],
+      "affected": [
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "braces"
+          },
+          "ranges": [
+            {
+              "type": "ECOSYSTEM",
+              "events": [
+                {
+                  "introduced": "0"
+                },
+                {
+                  "last_affected": "3.0.3"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "type": "ADVISORY",
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-93687"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/micromatch/braces/issues/70"
+        },
+        {
+          "type": "PACKAGE",
+          "url": "https://github.com/micromatch/braces"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/micromatch/braces/blob/3.0.3/lib/compile.js#L49-L53"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/micromatch/braces/blob/3.0.3/lib/expand.js#L102-L105"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/micromatch/braces/blob/3.0.3/lib/parse.js#L38-L40"
+        },
+        {
+          "type": "WEB",
+          "url": "https://www.vulncheck.com/advisories/braces-through-3.0.3-stack-overflow-via-deeply-nested-patterns"
+        }
+      ],
+      "database_specific": {
+        "cwe_ids": [
+          "CWE-674"
+        ],
+        "severity": "HIGH",
+        "github_reviewed": true,
+        "github_reviewed_at": "2026-10-02T22:36:33Z",
+        "nvd_published_at": "2026-09-18T16:17:15Z"
+      }
+    },
+    {
+      "schema_version": "1.4.0",
+      "id": "GHSA-86w9-cpqp-85rv",
+      "modified": "2026-10-01T21:09:09Z",
+      "published": "2026-09-03T21:31:15Z",
+      "aliases": [
+        "CVE-2026-85393"
+      ],
+      "summary": "node-forge RSA PKCS#1 v1.5 signature verification accepts extra nested DigestAlgorithm elements",
+      "details": "node-forge through 1.4.0 fails to validate element count in nested DigestAlgorithm sequences during RSA PKCS#1 v1.5 signature verification. Attackers can embed garbage bytes inside the DigestAlgorithm sequence to forge valid signatures for arbitrary messages using low-exponent RSA keys. This is an incomplete fix for CVE-2026-33894.",
+      "severity": [
+        {
+          "type": "CVSS_V3",
+          "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"
+        },
+        {
+          "type": "CVSS_V4",
+          "score": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:H/VA:N/SC:N/SI:N/SA:N"
+        }
+      ],
+      "affected": [
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "node-forge"
+          },
+          "ranges": [
+            {
+              "type": "ECOSYSTEM",
+              "events": [
+                {
+                  "introduced": "0"
+                },
+                {
+                  "last_affected": "1.4.0"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "references": [
+        {
+          "type": "ADVISORY",
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-85393"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/digitalbazaar/forge/issues/1149"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/digitalbazaar/forge/pull/1152"
+        },
+        {
+          "type": "ADVISORY",
+          "url": "https://github.com/advisories/GHSA-ppp5-5v6c-4jwp"
+        },
+        {
+          "type": "PACKAGE",
+          "url": "https://github.com/digitalbazaar/forge"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/digitalbazaar/forge/blob/v1.4.0/lib/asn1.js"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/digitalbazaar/forge/blob/v1.4.0/lib/rsa.js"
+        },
+        {
+          "type": "WEB",
+          "url": "https://www.vulncheck.com/advisories/node-forge-through-1.4.0-rsa-pkcs-1-1.5-signature-forgery-via-nested-digestalgorithm-padding"
+        }
+      ],
+      "database_specific": {
+        "cwe_ids": [
+          "CWE-347"
+        ],
+        "severity": "HIGH",
+        "github_reviewed": true,
+        "github_reviewed_at": "2026-10-01T21:09:09Z",
+        "nvd_published_at": "2026-09-03T19:17:31Z"
+      }
+    }
+  ],
+  "responsibilities": {
+    "braces": "micromatch glob expansion for Expo/Metro file maps; production reachability via Expo and React Native dependencies.",
+    "node-forge": "Expo CLI and @expo/code-signing-certificates certificate/RSA signature tooling; no app-runtime exposure demonstrated."
+  },
+  "limitations": [
+    "No compatible patched release exists in fetched npm version sets; no behavioral remediation green run.",
+    "Forge test isolates malformed signature-encoding acceptance with a generated private key; does not implement a no-private-key forgery.",
+    "No device or app-runtime exploitability proof.",
+    "Full Android release gate not run because no production candidate exists.",
+    "Ruleset 22243030 has owner creation/update/deletion restrictions and linear history; no required_status_checks rule. Legacy branch-protection status contexts not verified.",
+    "HF repository and credentials not accessed; no paid HF execution needed.",
+    "No C: writes, installs, cache or downloads; all npm execution was ephemeral Ubuntu GitHub Actions.",
+    "Baseline app files and package manifests preserved; only isolated audit tooling/report added."
+  ],
+  "options": [
+    "Await real upstream published fixes compatible with the installed Expo57/RN0.86 tree.",
+    "Separately assess pinned maintained forks/replacements with behavior, security and full consumer compatibility review; not validated in this audit.",
+    "Postinstall patches/guards do not remove vulnerable package identity from unchanged npm audit and must not be called a green dependency-gate repair."
+  ],
+  "requiredCheckPlan": "# Dependency gate audit preparation\n\nBaseline: cbb60fb58ed448f2146145ae2d2ccca2ec75dde1.\nSRT draft PR132 head: e3b8b9fe8d3f944c44996a7cb8e25de08c2c150c.\nPR132 changes only subtitle export and its test; it changes neither dependency manifest.\nHistorical failing merge checkout: 946bf1a96a0f9f52199b3151fdc6c05992939c57.\nHistorical run: https://github.com/Hatsunama/Caption-Studio/actions/runs/37239948094\n\n## Root evidence and ownership\n\n- https://github.com/advisories/GHSA-vfj7-8cjw-p6xm: braces <=3.0.3 affected, no patched version; recursive compile/expand stack exhaustion. Locked braces 3.0.3. micromatch 4.0.8 requests ^3.0.3; @expo/metro-file-map 57.0.3 and metro-file-map 0.84.5 use micromatch for glob/file map work. Expo and React Native CLI/Metro retain this production dependency path.\n- https://github.com/advisories/GHSA-86w9-cpqp-85rv: node-forge <=1.4.0 affected, no patched version; nested DigestAlgorithm element counts not validated in RSA PKCS#1 v1.5 verification. Locked 1.4.0. Expo CLI 57.0.27 and @expo/code-signing-certificates 0.0.6 request ^1.3.3. This concerns certificate/signature tooling; installed production classification alone does not establish app-runtime exploitability.\n- https://github.com/digitalbazaar/forge/pull/1152 is open, not a published patched release. Its proposed 1.4.1 changelog is not proof that npm 1.4.1 exists.\n- https://docs.npmjs.com/cli/v10/commands/npm-audit/ explains propagated meta-vulnerabilities. Nineteen affected package entries are not nineteen independent root CVEs. Human '*' is not a substitute for the root advisory's affected range.\n- https://docs.expo.dev/versions/v57.0.0/ ties SDK57 to RN0.86, React19.2.3 and Node22.13.x. Expo44 downgrade is not a compatible lock repair for this application.\n\n## Decision and options\n\nNo production package/lock edits are justified until a compatible published patch is verified in registry metadata, upstream source, behavior and the complete resolved tree. This harness fetches official npm packuments and records all published versions above the two advisory bounds. A version above a bound is only a candidate, not proof of a patch.\n\nWait for real fixed releases and compatible consuming ranges; or independently evaluate a maintained, pinned fork/replacement across every consuming path. A local guard or node_modules patch can improve behavior but leaves npm's affected package/version identity and audit gate red. Moving Expo/RN to devDependencies, disabling/suppressing the gate, force-fixing or applying unpatched/nonexistent overrides is not remediation. No UI or application code changes are included.\n\n## Regression and subsequent required checks\n\nHarness controls: ordinary brace expansion, micromatch file selection, valid RSA signature and wrong-message rejection. Negative probes: nested patterns below braces' input-length limit must avoid stack overflow; RSA verifier must reject extra nested DigestAlgorithm children. Generated-key malformed signature isolates verifier parsing and does not demonstrate a public-key-only forgery. Red evidence is retained; no green remediation claim.\n\nOnce a real compatible candidate exists, use isolated cloud npm10.9.2/Node22.13.1 to regenerate package-lock alongside exact package changes, inspect npm ls/npm explain for braces/node-forge and every consumer, confirm no duplicate vulnerable nodes, peer/engine integrity and unchanged native-module resolutions. Repeat the behavior probes red/green and unchanged npm audit --omit=dev --audit-level=high (including JSON roots). Any forks require their own security review; an audit pass alone is insufficient.\n\nRun the existing complete CI on the candidate and its integration with pinned PR132: verify:product-contract; test:logic including SRT regression; tsc --noEmit; lint; expo install --check; expo-doctor1.20.4; clean Android prebuild, Gradle patch and verify:android-config; first-party lintRelease; app and all three caption modules' release unit tests; assembleRelease/bundleRelease; ABI, identity/version/targetSDK36, APK16KB zip/ELF alignment and ephemeral CI signing verification. Preserve required test reports and validation-only artifacts. Confirm required status contexts from repository rules before declaring ready. No device run, main merge or public release is authorized here.\n"
+}
