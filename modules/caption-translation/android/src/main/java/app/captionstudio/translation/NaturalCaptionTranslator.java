@@ -937,9 +937,10 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     String before = neighboringContext(request.captions, index, request.contextBefore, true);
     String after = neighboringContext(request.captions, index, request.contextAfter, false);
     for (int limit = TranslationText.FRAGMENT_BYTES; limit >= 30; limit /= 2) {
-      List<String> parts = TranslationText.split(request.captions.get(index).text, limit);
+      List<String> parts = TranslationPreservation.split(request.captions.get(index).text, limit);
       boolean fits = true;
       for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
+        if (literalOnly(parts.get(partIndex))) continue;
         String partBefore = before, partAfter = after;
         for (int i = 0; i < partIndex; i++) partBefore = extendContext(partBefore, parts.get(i), true);
         for (int i = parts.size() - 1; i > partIndex; i--) partAfter = extendContext(partAfter, parts.get(i), false);
@@ -1048,6 +1049,10 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         guidance = "Translate only this cue concisely. The previous output was too long for its source. "
             + "Do not translate neighboring cues, add explanations, repeat text or complete an unfinished phrase. ";
         break;
+      case PROTECTED_CONTENT:
+        guidance = "Retain this cue's literal URLs, backtick code, complete emoji sequences and explicit line breaks. "
+            + "Translate only the surrounding prose; do not alter protected content. ";
+        break;
       case EMPTY:
         guidance = "Return a non-empty translation of this cue's meaning in targetLanguage. "
             + "A short acknowledgement needs only a natural short acknowledgement, with no prescribed wording. ";
@@ -1107,7 +1112,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   }
 
   private static boolean literalOnly(String text) {
-    return text.codePoints().noneMatch(Character::isLetter);
+    return text.codePoints().noneMatch(Character::isLetter) || TranslationPreservation.opaqueOnly(text);
   }
 
   private static String sourceFailure(String text) {
@@ -1121,13 +1126,18 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     String separator = target.matches("zh-Hans|zh-Hant|ja|th") ? "" : " ";
     StringBuilder joined = new StringBuilder();
     for (int i = 0; i < outputs.size(); i++) {
+      String output = TranslationPreservation.trimHorizontal(outputs.get(i));
       if (i > 0) {
         String previous = sources.get(i - 1);
-        joined.append(previous.endsWith("\n") || previous.endsWith("\r") ? "\n" : separator);
+        String current = sources.get(i);
+        // Validated fragments already retain their own explicit line breaks.
+        boolean lineBoundary = (!previous.isEmpty() && TranslationPreservation.line(previous.codePointBefore(previous.length())))
+            || (!current.isEmpty() && TranslationPreservation.line(current.codePointAt(0)));
+        if (!lineBoundary) joined.append(TranslationPreservation.joinSpaceNeeded(previous, current) ? " " : separator);
       }
-      joined.append(outputs.get(i).trim());
+      joined.append(output);
     }
-    return joined.toString().trim();
+    return TranslationPreservation.trimHorizontal(joined.toString());
   }
 
   private static String escapePrompt(String json) {
@@ -1577,7 +1587,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.DUPLICATE_ID);
         if (!expectedCaptions.get(itemCount - 1).id.equals(id))
           return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.ID_ORDER);
-        String normalized = text.trim();
+        String normalized = TranslationPreservation.trimHorizontal(text);
         Caption expected = expectedById.get(id);
         FailureClass textFailure = isBlankText(normalized) ? FailureClass.BLANK_TEXT
             : textCharacterCount(normalized) > MAX_OUTPUT_TEXT_CHARACTERS ? FailureClass.TEXT_TOO_LONG
@@ -1933,7 +1943,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         return new Caption(source.id, "", false, reason);
       }
       String text = joinFragments(parts, outputs, targetLanguage);
-      if (!TranslationOutputQuality.isPlausibleCueTranslation(source.text, text)) {
+      if (!TranslationOutputQuality.isPlausibleCueTranslation(source.text, text)
+          || !TranslationPreservation.preserves(source.text, text)) {
         return new Caption(source.id, "", false, FailureClass.QUALITY_REVIEW.name());
       }
       return new Caption(source.id, text, true);

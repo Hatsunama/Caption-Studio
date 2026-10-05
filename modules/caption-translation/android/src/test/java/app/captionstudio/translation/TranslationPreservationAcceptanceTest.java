@@ -97,7 +97,124 @@ public final class TranslationPreservationAcceptanceTest {
     assertEquals(0, entries.length);
   }
 
+  @Test public void successfulPreservationRepairIsCachedAndNeverRegeneratesAcceptedText() throws Exception {
+    File directory = temporary.newFolder();
+    AtomicInteger calls = new AtomicInteger();
+    var result = run(directory, calls, "repair", true);
+    assertEquals(2, calls.get());
+    assertEquals(true, cue(result).get("valid"));
+    assertEquals("Bonjour \ud83d\udc69\ud83c\udffd\u200d\ud83d\udcbb", cue(result).get("text"));
+    AtomicInteger cachedCalls = new AtomicInteger();
+    var cached = run(directory, cachedCalls, "Must not generate", true);
+    assertEquals(0, cachedCalls.get());
+    assertEquals(result.get("captions"), cached.get("captions"));
+  }
+
+  @Test public void edgeAndInteriorLineBreaksSurviveFreshAndRestoredCheckpointOutput() throws Exception {
+    File directory = temporary.newFolder();
+    String source = "\r\nHello\n\nWorld\r\n";
+    String translated = "\nBonjour\n\nMonde\n";
+    AtomicInteger calls = new AtomicInteger();
+    var fresh = runSource(directory, calls, translated, false, source, "fr");
+    assertEquals(translated, cue(fresh).get("text"));
+    AtomicInteger restoredCalls = new AtomicInteger();
+    var restored = runSource(directory, restoredCalls, "Must not generate", false, source, "fr");
+    assertEquals(0, restoredCalls.get());
+    assertEquals(fresh.get("captions"), restored.get("captions"));
+  }
+
+  @Test public void shortDecomposedCodeAndUrlSurviveRuntimeAndCheckpointWithoutNfcMutation() throws Exception {
+    String source = "Hello https://example.test/cafe\u0301 \u0060cafe\u0301_id=42\u0060";
+    String translated = "Bonjour https://example.test/cafe\u0301 \u0060cafe\u0301_id=42\u0060";
+    File directory = temporary.newFolder();
+    AtomicInteger calls = new AtomicInteger();
+    assertEquals(translated, cue(runSource(directory, calls, translated, false, source, "fr")).get("text"));
+    AtomicInteger restored = new AtomicInteger();
+    assertEquals(translated, cue(runSource(directory, restored, "Must not generate", false, source, "fr")).get("text"));
+    assertEquals(0, restored.get());
+  }
+
+  @Test public void oversizedOpaqueLiteralBypassesInferenceAndSurvivesChineseFragmentJoining() throws Exception {
+    String url = "https://example.test/" + "a".repeat(700) + "/cafe\u0301";
+    String source = "Hello ".repeat(90) + "\r\n" + url + " World";
+    AtomicInteger calls = new AtomicInteger();
+    var result = runSource(temporary.newFolder(), calls, null, false, source, "zh-Hans");
+    assertTrue(calls.get() > 0);
+    assertEquals(true, cue(result).get("valid"));
+    String text = (String) cue(result).get("text");
+    assertTrue(text.contains(url + " "));
+    assertTrue(TranslationPreservation.preserves(source, text));
+  }
+
+  @Test public void laterTerminalFailureKeepsEarlierAcceptedProtectedBatchDurable() throws Exception {
+    File directory = temporary.newFolder();
+    File model = temporary.newFile("partial-model.litertlm");
+    Files.write(model.toPath(), new byte[]{1});
+    String firstSource = "Hello https://example.test/cafe\u0301";
+    String secondSource = "World \ud83d\udc69\ud83c\udffd\u200d\ud83d\udcbb";
+    Map<String,Object> request = Map.of("requestId", "partial-preservation", "reuseCheckpoints", true,
+        "operations", List.of(Map.of("id", "op", "sourceLanguage", "en", "targetLanguage", "fr",
+            "batches", List.of(
+                Map.of("captions", List.of(Map.of("id", "one", "text", firstSource))),
+                Map.of("captions", List.of(Map.of("id", "two", "text", secondSource)))))));
+    TranslationEnvironment environment = new TranslationEnvironment() {
+      public File prepareCacheDirectory() { return directory; }
+      public File prepareCheckpointDirectory() { return directory; }
+      public void verifyDeviceCapacity(File f) {}
+    };
+    for (int pass = 0; pass < 2; pass++) {
+      boolean interruptSecond = pass == 0;
+      AtomicInteger calls = new AtomicInteger();
+      TranslationRuntimeFactory factory = (m,c,t,s) -> new TranslationRuntime() {
+        public boolean supportsStructuredOutput() { return true; }
+        public String translate(String prompt) {
+          calls.incrementAndGet();
+          JsonArray out = new JsonArray();
+          for (var element : JsonParser.parseString(prompt).getAsJsonObject().getAsJsonArray("captions")) {
+            var input = element.getAsJsonObject();
+            String source = input.get("text").getAsString();
+            if (interruptSecond && source.equals(secondSource)) throw new IllegalStateException("test generation failed");
+            JsonObject item = new JsonObject();
+            item.add("id", input.get("id"));
+            item.addProperty("text", source.replace("Hello", "Bonjour").replace("World", "Monde"));
+            out.add(item);
+          }
+          return out.toString();
+        }
+        public String translate(String prompt, int tokens, boolean structured) { assertTrue(structured); return translate(prompt); }
+        public void cancel() {}
+        public void close() {}
+      };
+      CountDownLatch done = new CountDownLatch(1);
+      AtomicReference<String> error = new AtomicReference<>();
+      AtomicReference<Map<String,Object>> result = new AtomicReference<>();
+      try (NaturalCaptionTranslator worker = new NaturalCaptionTranslator(environment, factory, (f,c,p) -> {},
+          Executors.newSingleThreadExecutor(), line -> {})) {
+        worker.start(model.getAbsolutePath(), request, new NaturalCaptionTranslator.Callback() {
+          public void onSuccess(Map<String,Object> value) { result.set(value); done.countDown(); }
+          public void onError(String code,String message,Throwable cause) { error.set(code); done.countDown(); }
+        });
+        assertTrue(done.await(10, TimeUnit.SECONDS));
+        var first = worker.getAcceptedBatches("partial-preservation").get(0);
+        var item = (Map<?,?>)((List<?>)first.get("captions")).get(0);
+        assertEquals("Bonjour https://example.test/cafe\u0301", item.get("text"));
+        if (interruptSecond) {
+          assertEquals(NaturalCaptionTranslator.FAILED, error.get());
+          assertEquals(1, worker.getAcceptedBatches("partial-preservation").size());
+        } else {
+          assertNull(error.get());
+          assertEquals(1, calls.get());
+          assertEquals(2, ((List<?>)result.get().get("captions")).size());
+        }
+      }
+    }
+  }
+
   private Map<String,Object> run(File checkpoints, AtomicInteger calls, String output, boolean repair) throws Exception {
+    return runSource(checkpoints, calls, output, repair, "Hello \ud83d\udc69\ud83c\udffd\u200d\ud83d\udcbb", "fr");
+  }
+
+  private Map<String,Object> runSource(File checkpoints, AtomicInteger calls, String output, boolean repair, String source, String target) throws Exception {
     File model = temporary.newFile("test-" + System.nanoTime() + ".litertlm");
     Files.write(model.toPath(), new byte[]{1});
     TranslationRuntimeFactory factory = (m,c,t,s) -> new TranslationRuntime() {
@@ -107,12 +224,18 @@ public final class TranslationPreservationAcceptanceTest {
         return translate(prompt);
       }
       public String translate(String prompt) {
-        calls.incrementAndGet();
+        int call = calls.incrementAndGet();
         JsonArray response = new JsonArray();
         for (var element : JsonParser.parseString(prompt).getAsJsonObject().getAsJsonArray("captions")) {
           JsonObject item = new JsonObject();
           item.add("id", element.getAsJsonObject().get("id"));
-          item.addProperty("text", output);
+          String sourceText = element.getAsJsonObject().get("text").getAsString();
+          String answer = output;
+          if (output == null || ("repair".equals(output) && call > 1)) {
+            answer = sourceText.replace("Hello", target.equals("zh-Hans") ? "\u4f60\u597d" : "Bonjour")
+                .replace("World", target.equals("zh-Hans") ? "\u4e16\u754c" : "Monde");
+          } else if ("repair".equals(output)) answer = "Bonjour";
+          item.addProperty("text", answer);
           response.add(item);
         }
         return response.toString();
@@ -133,9 +256,9 @@ public final class TranslationPreservationAcceptanceTest {
         (f,c,p) -> {}, Executors.newSingleThreadExecutor(), line -> {})) {
       worker.start(model.getAbsolutePath(), Map.of("requestId", "preservation-test",
           "reuseCheckpoints", true, "repairUnusableOutputs", repair,
-          "operations", List.of(Map.of("id", "op", "sourceLanguage", "en", "targetLanguage", "fr",
+          "operations", List.of(Map.of("id", "op", "sourceLanguage", "en", "targetLanguage", target,
               "batches", List.of(Map.of("captions", List.of(Map.of("id", "cue",
-                  "text", "Hello \ud83d\udc69\ud83c\udffd\u200d\ud83d\udcbb"))))))),
+                  "text", source))))))),
           new NaturalCaptionTranslator.Callback() {
             public void onSuccess(Map<String,Object> result) { value.set(result); done.countDown(); }
             public void onError(String code,String message,Throwable cause) { failure.set(code); done.countDown(); }

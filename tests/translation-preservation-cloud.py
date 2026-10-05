@@ -5,17 +5,20 @@ def run(name,args,cwd=None,timeout=240):
     p=subprocess.run(args,cwd=cwd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=timeout)
     reports[name]={"exit_code":p.returncode,"output":p.stdout,"command":args}
     print(name+": exit="+str(p.returncode),flush=True)
-    print(p.stdout if name.startswith("red_") or name.startswith("compile") else p.stdout[-3500:],flush=True)
+    print(p.stdout if name.startswith("green_") or name.startswith("compile") else p.stdout[-3500:],flush=True)
     return p.returncode
 import urllib.request, io, zipfile
 def fetch(url):
     with urllib.request.urlopen(url,timeout=120) as r: return r.read()
 try:
-    if "--native-only" not in sys.argv:
-        baseline=sorted(str(p) for p in (root/"tests").glob("*.test.mjs") if p.name!="translation-preservation-acceptance.test.mjs")
-        run("baseline_full_logic",["node","--import","tsx","--test"]+baseline,root,timeout=360)
-        run("red_js",["node","--import","tsx","--test","tests/translation-preservation-acceptance.test.mjs"],root)
-        run("full_logic_with_red_regressions",["npm","run","test:logic"],root,timeout=360)
+    run("green_js",["node","--import","tsx","--test","tests/translation-preservation-acceptance.test.mjs","tests/translation-preservation-contract.test.mjs"],root)
+    run("full_logic",["npm","run","test:logic"],root,timeout=360)
+    run("product_contract",["npm","run","verify:product-contract"],root)
+    run("typescript",["node","node_modules/typescript/bin/tsc","--noEmit"],root,timeout=240)
+    run("lint",["npm","run","lint"],root,timeout=300)
+    run("production_audit",["npm","audit","--omit=dev","--audit-level=high","--json"],root,timeout=120)
+    run("expo_compatibility",["node","node_modules/expo/bin/cli","install","--check"],root,timeout=240)
+    run("expo_doctor",["npx","--yes","expo-doctor@1.20.4"],root,timeout=240)
     jars=root/"test-jars"
     jars.mkdir()
     def maven(group,artifact,version):
@@ -42,7 +45,8 @@ try:
     litert.write_bytes(aar.read("classes.jar"))
     classes=root/"test-classes"
     classes.mkdir()
-    cp=":".join(map(str,[classes,android,gson,junit,hamcrest,stdlib,annotations,litert]))
+    resources=root/"modules/caption-translation/android/src/test/resources"
+    cp=":".join(map(str,[classes,resources,android,gson,junit,hamcrest,stdlib,annotations,litert]))
     main=root/"modules/caption-translation/android/src/main/java/app/captionstudio/translation"
     tests=root/"modules/caption-translation/android/src/test/java/app/captionstudio/translation"
     java=list(map(str,main.glob("*.java")))
@@ -51,12 +55,13 @@ try:
         str(main/"LiteRtLmTranslationRuntime.kt")]+java,timeout=180)
     javac=run("compile_native_tests",["javac","-encoding","UTF-8","-cp",cp,"-d",str(classes)]+java+list(map(str,tests.glob("*.java"))),timeout=180)
     if kotlin==0 and javac==0:
-        baseline=["app.captionstudio.translation."+p.stem for p in tests.glob("*Test.java") if p.stem!="TranslationPreservationAcceptanceTest"]
-        run("baseline_full_native",["java","-cp",cp,"org.junit.runner.JUnitCore"]+baseline,timeout=240)
-        run("red_native",["java","-cp",cp,"org.junit.runner.JUnitCore","app.captionstudio.translation.TranslationPreservationAcceptanceTest"],timeout=120)
+        all_tests=sorted("app.captionstudio.translation."+p.stem for p in tests.glob("*Test.java"))
+        run("full_native",["java","-cp",cp,"org.junit.runner.JUnitCore"]+all_tests,timeout=240)
+        run("green_native",["java","-cp",cp,"org.junit.runner.JUnitCore","app.captionstudio.translation.TranslationPreservationAcceptanceTest","app.captionstudio.translation.TranslationPreservationContractTest"],timeout=120)
 except Exception as e:
     reports["infrastructure_error"]={"type":type(e).__name__,"message":str(e)}
     print("INFRASTRUCTURE_ERROR="+repr(e),flush=True)
 finally:
-    (root/"preservation-red-results.json").write_text(json.dumps({"base":"cbb60fb58ed448f2146145ae2d2ccca2ec75dde1","production_edited":False,"stage":"RED_ONLY_SCOPE_STOP","reports":reports},indent=2))
+    (root/"preservation-repair-results.json").write_text(json.dumps({"base":"cbb60fb58ed448f2146145ae2d2ccca2ec75dde1","production_edited":False,"stage":"REPAIR_VALIDATION","head":os.environ.get("GITHUB_SHA"),"red_bundle":"b2bb878c611e94cba9d9e086abbcee03e408b4c9","reports":reports},indent=2))
     print("RESULTS="+json.dumps({k:v.get("exit_code",v.get("type")) for k,v in reports.items()}),flush=True)
+sys.exit(1 if any("exit_code" not in value or value["exit_code"] != 0 for value in reports.values()) else 0)
