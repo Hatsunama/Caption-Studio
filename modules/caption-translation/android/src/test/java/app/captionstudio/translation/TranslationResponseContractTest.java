@@ -41,8 +41,8 @@ public final class TranslationResponseContractTest {
       AtomicInteger calls = new AtomicInteger();
       String source = "en".equals(target[0]) ? "请在离开之前关上房间的门，谢谢。"
           : "يرجى إغلاق الباب.".equals(target[1]) ? "Please close the door carefully." : "Please close the door.";
-      String bleed = "c1: " + target[1] + "\nc2: " + target[1];
-      // The previous length/script heuristics accept this multi-cue response.
+      String bleed = "c1: " + target[1] + " c2: " + target[1];
+      // Keep line topology intact to isolate rejection of unbound multi-cue JSON contract text.
       assertFalse(target[0], TranslationOutputQuality.needsReview(source, bleed, target[0]));
       TranslationRuntimeFactory factory = (file, folder, threads, instruction) -> new TranslationRuntime() {
         public String translate(String prompt) {
