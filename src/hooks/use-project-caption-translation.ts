@@ -122,6 +122,8 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
   const activeKindRef = useRef<TranslationRequest['kind'] | undefined>(undefined);
   const activeStageRef = useRef<CaptionTranslationProgress['stage'] | undefined>(undefined);
   const interruptedRef = useRef(false);
+  const cancellationRef = useRef<Promise<boolean> | undefined>(undefined);
+  const cancellationFailureRef = useRef<{ error: unknown } | undefined>(undefined);
   const retryRequestRef = useRef<TranslationRequest | undefined>(undefined);
   const [progress, setProgress] = useState<CaptionTranslationProgress>();
   const [cancelling, setCancelling] = useState(false);
@@ -134,23 +136,41 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     optionsRef.current = options;
   }, [options]);
 
+  const cancel = useCallback(() => {
+    if (activeKindRef.current !== 'translation') return Promise.resolve(false);
+    if (cancellationRef.current) return cancellationRef.current;
+    const operationId = activeOperationRef.current;
+    if (mountedRef.current) setCancelling(true);
+    const operation = Promise.resolve().then(() => cancelNaturalCaptionTranslation()).catch((caught: unknown) => {
+      if (activeOperationRef.current === operationId) {
+        cancellationFailureRef.current = { error: caught };
+        if (mountedRef.current) {
+          setError(caught instanceof Error ? caught.message : 'Natural caption translation failed.');
+        }
+      }
+      return false;
+    });
+    cancellationRef.current = operation;
+    return operation;
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (activeKindRef.current === 'translation') void cancelNaturalCaptionTranslation();
+      if (activeKindRef.current === 'translation') void cancel();
     };
-  }, []);
+  }, [cancel]);
 
   useEffect(() => {
     const onAppStateChange = (state: AppStateStatus) => {
       if (state === 'active' || activeKindRef.current !== 'translation') return;
       interruptedRef.current = true;
-      void cancelNaturalCaptionTranslation();
+      void cancel();
     };
     const subscription = AppState.addEventListener('change', onAppStateChange);
     return () => subscription.remove();
-  }, []);
+  }, [cancel]);
 
   const execute = useCallback(async (request: TranslationRequest) => {
     if (!mountedRef.current) return false;
@@ -164,6 +184,8 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     activeKindRef.current = kind;
     activeStageRef.current = kind === 'translation' ? 'loading-model' : undefined;
     interruptedRef.current = false;
+    cancellationRef.current = undefined;
+    cancellationFailureRef.current = undefined;
     retryRequestRef.current = undefined;
     setError(undefined);
     setWarning(undefined);
@@ -185,6 +207,8 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
         await optionsRef.current.commitProject(current, updated);
         return true;
       });
+      await cancellationRef.current;
+      if (cancellationFailureRef.current) throw cancellationFailureRef.current.error;
       if (!mountedRef.current || activeOperationRef.current !== operationId) return false;
       if (kind === 'translation' && interruptedRef.current) throw new CaptionTranslationCancelledError();
       if (request.incremental) {
@@ -214,7 +238,11 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
       }
       return true;
     } catch (caught) {
-      if (mountedRef.current && activeOperationRef.current === operationId && interruptedRef.current) {
+      await cancellationRef.current;
+      const failure = caught instanceof CaptionTranslationCancelledError && cancellationFailureRef.current
+        ? cancellationFailureRef.current.error : caught;
+      if (mountedRef.current && activeOperationRef.current === operationId && interruptedRef.current
+        && failure instanceof CaptionTranslationCancelledError) {
         const action = interruptedOperationLabel(activeStageRef.current);
         retryRequestRef.current = request.retryWith?.(optionsRef.current.getCurrentProject()) ?? request;
         setRetryAvailable(true);
@@ -222,13 +250,13 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
       } else if (
         mountedRef.current
         && activeOperationRef.current === operationId
-        && !(caught instanceof CaptionTranslationCancelledError)
+        && !(failure instanceof CaptionTranslationCancelledError)
       ) {
         if (kind === 'translation') {
           retryRequestRef.current = request.retryWith?.(optionsRef.current.getCurrentProject()) ?? request;
           setRetryAvailable(true);
         }
-        setError(caught instanceof Error ? caught.message
+        setError(failure instanceof Error ? failure.message
           : kind === 'manual-save' ? 'Dual-subtitle edits could not be saved.' : 'Natural caption translation failed.');
       }
       return false;
@@ -296,14 +324,6 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
     manualEdits: { trackId, edits },
     operation: () => Promise.resolve(baseline),
   }), [execute]);
-
-  const cancel = useCallback(async () => {
-    if (activeKindRef.current !== 'translation') return false;
-    if (mountedRef.current) setCancelling(true);
-    const cancelled = await cancelNaturalCaptionTranslation();
-    if (!cancelled && mountedRef.current) setCancelling(false);
-    return cancelled;
-  }, []);
 
   return {
     busy: saving || Boolean(progress) || cancelling,
