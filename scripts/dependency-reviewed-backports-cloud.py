@@ -111,9 +111,9 @@ def main():
   basesrc,headsrc,testchanges,sourcehash=source_tests(name,s,meta,dest)
   # Exact published baseline normal suite runs before defensive patch.
   if name=="braces":
-   normal=[ "node",mocha,"--require","./test/mocha-initialization.js","test/*.js","--grep","reject deeply|self-referencing|cycle involving|nesting exceeds|lower maximum|fractional maximum","--invert"]
-   red=["node",mocha,"--require","./test/mocha-initialization.js","test/*.js","--grep","reject deeply|self-referencing|cycle involving|nesting exceeds|lower maximum|fractional maximum","--timeout","1000"]
-   green=["node",mocha,"--require","./test/mocha-initialization.js","test/*.js","--timeout","30000"]
+   normal=[ "node",mocha,"test/*.js","--grep","reject deeply|self-referencing|cycle involving|nesting exceeds|lower maximum|fractional maximum","--invert"]
+   red=["node",mocha,"test/*.js","--grep","reject deeply|self-referencing|cycle involving|nesting exceeds|lower maximum|fractional maximum","--timeout","1000"]
+   green=["node",mocha,"test/*.js","--timeout","30000"]
   else:
    normal=["node",mocha,"-t","30000","tests/unit/index.js","--grep","nested DigestAlgorithm element count","--invert"]
    red=["node",mocha,"-t","30000","tests/unit/rsa.js","--grep","nested DigestAlgorithm element count"]
