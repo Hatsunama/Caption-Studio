@@ -175,17 +175,20 @@ final class TranslationPreservation {
     for (int i = 0; i < before.length; i++) {
       if (trimHorizontal(before[i]).isEmpty() != trimHorizontal(after[i]).isEmpty()) return false;
     }
+    // Exact counts apply only to protected tokens recognized in the source.
     Map<String, Integer> counts = new HashMap<>();
-    for (Span span : spans(translated)) {
-      String token = breaks(translated.substring(span.start, span.end));
-      counts.put(token, counts.getOrDefault(token, 0) + 1);
-    }
     for (Span span : spans(source)) {
       String token = breaks(source.substring(span.start, span.end));
-      int available = counts.getOrDefault(token, 0);
+      counts.put(token, counts.getOrDefault(token, 0) + 1);
+    }
+    for (Span span : spans(translated)) {
+      String token = breaks(translated.substring(span.start, span.end));
+      if (!counts.containsKey(token)) continue;
+      int available = counts.get(token);
       if (available == 0) return false;
       counts.put(token, available - 1);
     }
+    for (int remaining : counts.values()) if (remaining != 0) return false;
     String integer = integerDigits(source, false);
     return integer == null || integer.equals(integerDigits(translated, true));
   }

@@ -155,17 +155,20 @@ export function isPreservedIntegerTranslation(source: string, translated: string
 export function preservesTranslationContent(source: string, translated: string): boolean {
   const before = topology(source), after = topology(translated);
   if (before.length !== after.length || before.some((blank, i) => blank !== after[i])) return false;
+  // Exact counts apply only to protected tokens recognized in the source.
   const counts = new Map<string, number>();
-  for (const span of spans(translated)) {
-    const token = breaks(translated.slice(span.start, span.end));
-    counts.set(token, (counts.get(token) ?? 0) + 1);
-  }
   for (const span of spans(source)) {
     const token = breaks(source.slice(span.start, span.end));
-    const available = counts.get(token) ?? 0;
+    counts.set(token, (counts.get(token) ?? 0) + 1);
+  }
+  for (const span of spans(translated)) {
+    const token = breaks(translated.slice(span.start, span.end));
+    if (!counts.has(token)) continue;
+    const available = counts.get(token)!;
     if (!available) return false;
     counts.set(token, available - 1);
   }
+  for (const remaining of counts.values()) if (remaining !== 0) return false;
   const integer = integerDigits(source, false);
   return integer === undefined || integerDigits(translated, true) === integer;
 }
