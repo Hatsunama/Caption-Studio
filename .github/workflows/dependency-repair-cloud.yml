@@ -9,7 +9,7 @@ env:
   CI: true
 jobs:
   dependency-repair:
-    if: github.ref == 'refs/heads/codex/dependency-repair-expo57-20261007'
+    if: github.ref == 'refs/heads/codex/dependency-repair-expo57-20261007' && !startsWith(github.event.head_commit.message, 'fix(deps):')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -32,7 +32,7 @@ jobs:
         run: npm ci --no-fund
       - name: Verify baseline then repair published pins and run every compatibility check
         run: python3 scripts/dependency-repair-cloud.py repair
-      - name: Commit only tested manifests to this isolated branch
+      - name: Prepare immutable tested manifest commit for connector application
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/dependency-repair-cloud.py publish

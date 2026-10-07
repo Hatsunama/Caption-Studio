@@ -121,10 +121,12 @@ elif phase=="publish":
     newtree=api("git/trees",{"base_tree":tree,"tree":entries})["sha"]
     commit=api("git/commits",{"message":"fix(deps): pin published security fixes and align Expo 57 patches","tree":newtree,"parents":[head]})["sha"]
     if api("git/ref/heads/"+BRANCH)["object"]["sha"]!=head:raise RuntimeError("Branch moved before update")
-    api("git/refs/heads/"+BRANCH,{"sha":commit,"force":False},method="PATCH")
     state["dependency_commit"]=commit
+    state["branch_updated"]=False
+    for path in ["package.json","package-lock.json"]:
+        (OUT/path).write_bytes((ROOT/path).read_bytes())
     (OUT/"result.json").write_text(json.dumps(state,indent=2))
-    print("PUBLISHED_DEPENDENCY_COMMIT="+commit)
+    print("TESTED_CANDIDATE_DEPENDENCY_COMMIT="+commit)
 elif phase=="gate":
     state=json.loads((OUT/"result.json").read_text())
     print("FINAL_RESULT="+json.dumps(state),flush=True)
