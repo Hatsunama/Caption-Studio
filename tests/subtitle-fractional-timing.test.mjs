@@ -20,7 +20,9 @@ function fixture(startMs = 1000.6, endMs = 2000.4) {
 }
 
 function cues(project) {
-  return serializeSrt(project).trimEnd().split('\n\n').map((block) => {
+  const srt = serializeSrt(project);
+  if (!srt) return [];
+  return srt.trimEnd().split('\n\n').map((block) => {
     const [, timing, ...text] = block.split('\n');
     return { timing, text: text.join('\n') };
   });
@@ -127,4 +129,13 @@ test('playback speed derived fractions remain aligned across SRT, ASS, and MP4',
     ['0:00:00.67', '0:00:01.33'], ['0:00:00.67', '0:00:01.33'],
   ]);
   assert.deepEqual(planTimes(project), [[667, 1335], [667, 1335]]);
+});
+
+test('fractional cues rounding to the output end do not extend past the format bound', () => {
+  const project = fixture(3999.8, 4000.4);
+  assert.deepEqual(exportCaptionPairs(project).map((pair) => [pair.startMs, pair.endMs]),
+    [[3999.8, 4000]]);
+  assert.deepEqual(cues(project), []);
+  assert.deepEqual(assTimes(project), []);
+  assert.deepEqual(planTimes(project), []);
 });
