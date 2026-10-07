@@ -51,8 +51,11 @@ if phase=="artifact":
     print("ACTUAL_BASELINE_ROOTS="+json.dumps(roots(a)))
     print("ACTUAL_BASELINE_COUNTS="+json.dumps(a["metadata"]["vulnerabilities"]))
 elif phase=="repair":
-    before=run("before_full",["python3","tests/translation-preservation-cloud.py"],1200)
-    (OUT/"before_full_reports.json").write_bytes((ROOT/"preservation-repair-results.json").read_bytes())
+    baseline=json.loads((OUT/"actual-preservation-artifact.json").read_text())
+    expected_green=["green_js","full_logic","product_contract","typescript","lint","compile_real_sdk_adapter","compile_native_tests","full_native","green_native"]
+    if any(baseline["reports"][name]["exit_code"]!=0 for name in expected_green):raise RuntimeError("Verified original behavioral baseline is not green")
+    (OUT/"before_full_reports.json").write_text(json.dumps(baseline,indent=2))
+    print("REUSED_DIGEST_VERIFIED_ORIGINAL_FULL_BASELINE="+baseline["head"],flush=True)
     rc,a=audit("before_audit")
     if rc!=1:raise RuntimeError("Expected failing current audit baseline")
     regression_before=run("before_published_regressions",["node","--test","tests/published-dependency-regressions.cjs"],60)

@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const rootRequire=createRequire(path.join(process.cwd(),'package.json'));
 const sq=rootRequire('shell-quote');
 assert.deepEqual(sq.parse(sq.quote(['caption','two words','single"quote'])),['caption','two words','single"quote']);
-assert.throws(()=>sq.parse('"unterminated'), /./);
+assert.throws(()=>sq.quote([{}]), TypeError);
 const sm=rootRequire('source-map-js');
 const gen=new sm.SourceMapGenerator({file:'out.js'});
 gen.addMapping({generated:{line:1,column:0},original:{line:2,column:3},source:'input.ts'});
