@@ -204,8 +204,8 @@ final class TranslationPreservation {
     }
     prose.append(text, at, text.length());
     String value = prose.toString();
-    if (value.matches("(?i)[\\s\\p{P}\\p{Z}]*(?:ok|okay|o\\.k\\.)[\\s\\p{P}\\p{Z}]*")) return 2;
-    return !protectedSpans.isEmpty() && value.matches("[\\s\\p{P}\\p{Z}]*") ? 1 : 0;
+    if (value.matches("[\\s\\p{P}\\p{Z}\\ufeff]*(?:[oO][kK](?:[aA][yY])?|[oO]\\.[kK]\\.)[\\s\\p{P}\\p{Z}\\ufeff]*")) return 2;
+    return !protectedSpans.isEmpty() && value.matches("[\\s\\p{P}\\p{Z}\\ufeff]*") ? 1 : 0;
   }
 
   static boolean borrowedAcknowledgementComposition(String text) {

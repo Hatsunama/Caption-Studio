@@ -154,5 +154,17 @@
     "source": "Please bring the documents tomorrow https://example.com/ `src/app.ts` 😀",
     "translated": "ok https://example.com/ `src/app.ts` 😀",
     "review": true
+  },
+  {
+    "name": "BOM whitespace around protected data",
+    "source": "ok﻿😀",
+    "translated": "OK﻿😀",
+    "review": false
+  },
+  {
+    "name": "Unicode confusable is not ASCII acknowledgement",
+    "source": "oK 😀",
+    "translated": "oK 😀",
+    "review": true
   }
 ]

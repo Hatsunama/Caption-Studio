@@ -192,7 +192,7 @@ function invariantCompositionKind(text: string): number {
     at = span.end;
   }
   prose += text.slice(at);
-  if (/^[\s\p{P}\p{Z}]*(?:ok|okay|o\.k\.)[\s\p{P}\p{Z}]*$/iu.test(prose)) return 2;
+  if (/^[\s\p{P}\p{Z}]*(?:[oO][kK](?:[aA][yY])?|[oO]\.[kK]\.)[\s\p{P}\p{Z}]*$/u.test(prose)) return 2;
   return protectedSpans.length > 0 && /^[\s\p{P}\p{Z}]*$/u.test(prose) ? 1 : 0;
 }
 
