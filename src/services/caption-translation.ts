@@ -338,10 +338,10 @@ export async function translateNaturalCaptionOperations(options: {
     commitQueue = commitQueue.then(async () => {
       if (!Number.isSafeInteger(event.batchIndex)) throw new Error('The local model returned an invalid batch index.');
       await acceptBatch(event.batchIndex, event.captions);
-    }).catch((error: unknown) => {
+    }).catch(async (error: unknown) => {
       commitError = error;
       // The save failure owns the result; stop rejection must still be observed.
-      return cancelNaturalCaptionTranslation().catch(() => {});
+      await cancelNaturalCaptionTranslation().catch(() => {});
     });
   };
   const subscription = options.onAcceptedBatch
@@ -914,7 +914,6 @@ function throwIfCancelled(run: ActiveTranslation) {
 
 function translationCancelled(error: unknown) {
   return error instanceof CaptionTranslationCancelledError
-    || error instanceof ModelDownloadPausedError
     || (typeof error === 'object' && error !== null
       && 'code' in error && error.code === 'E_TRANSLATION_CANCELLED');
 }
