@@ -183,24 +183,32 @@ export function normalizeTranslationContent(text: string): string {
   return trimTranslationHorizontal(output + text.slice(at).normalize('NFC'));
 }
 
-/** Remove only recognized data spans; spaces keep separated prose words separated. */
-function invariantCompositionKind(text: string): number {
-  const protectedSpans = spans(text);
+/** Mask recognized protected data, retaining boundaries between actual prose tokens. */
+export function translationProse(text: string): string {
   let prose = '', at = 0;
-  for (const span of protectedSpans) {
+  for (const span of spans(text)) {
     prose += text.slice(at, span.start) + ' ';
     at = span.end;
   }
-  prose += text.slice(at);
-  prose = prose.normalize('NFC');
-  if (/^[\s\p{P}\p{Z}]*(?:[oO][kK](?:[aA][yY])?|[oO]\.[kK]\.)[\s\p{P}\p{Z}]*$/u.test(prose)) return 2;
-  return protectedSpans.length > 0 && /^[\s\p{P}\p{Z}]*$/u.test(prose) ? 1 : 0;
+  return (prose + text.slice(at)).normalize('NFC');
 }
 
-/** Finite invariant composition, never a prose echo exemption. Compare raw data both ways. */
+function invariantCompositionKind(text: string): number {
+  const prose = translationProse(text);
+  if (/^[\s\p{P}\p{Z}]*(?:[oO][kK](?:[aA][yY])?|[oO]\.[kK]\.)[\s\p{P}\p{Z}]*$/u.test(prose)) return 2;
+  return spans(text).length > 0 && !/\p{L}/u.test(prose) ? 1 : 0;
+}
+
+function compositionDataKey(text: string): string {
+  // Keep every number/symbol and token boundary: "4 2" must not become "42".
+  return translationProse(text).replace(/[\s\p{Z}]+/gu, ' ').trim();
+}
+
+/** Finite acknowledgement or no-prose data, with exact raw inventories both ways. */
 export function isInvariantCompositionTranslation(source: string, translated: string): boolean {
   const kind = invariantCompositionKind(source);
   return kind !== 0 && kind === invariantCompositionKind(translated)
+    && (kind !== 1 || compositionDataKey(source) === compositionDataKey(translated))
     && preservesTranslationContent(source, translated)
     && preservesTranslationContent(translated, source);
 }

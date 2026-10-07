@@ -193,19 +193,27 @@ final class TranslationPreservation {
     return integer == null || integer.equals(integerDigits(translated, true));
   }
 
-  /** Remove only recognized data spans; retain boundaries between prose words. */
-  private static int invariantCompositionKind(String text) {
-    List<Span> protectedSpans = spans(text);
+  /** Same protected-span lexer as preservation; keep boundaries between prose tokens. */
+  static String translationProse(String text) {
     StringBuilder prose = new StringBuilder();
     int at = 0;
-    for (Span span : protectedSpans) {
+    for (Span span : spans(text)) {
       prose.append(text, at, span.start).append(' ');
       at = span.end;
     }
     prose.append(text, at, text.length());
-    String value = java.text.Normalizer.normalize(prose, java.text.Normalizer.Form.NFC);
+    return java.text.Normalizer.normalize(prose, java.text.Normalizer.Form.NFC);
+  }
+
+  private static int invariantCompositionKind(String text) {
+    String value = translationProse(text);
     if (value.matches("[\\s\\p{P}\\p{Z}\\ufeff]*(?:[oO][kK](?:[aA][yY])?|[oO]\\.[kK]\\.)[\\s\\p{P}\\p{Z}\\ufeff]*")) return 2;
-    return !protectedSpans.isEmpty() && value.matches("[\\s\\p{P}\\p{Z}\\ufeff]*") ? 1 : 0;
+    return !spans(text).isEmpty() && value.codePoints().noneMatch(Character::isLetter) ? 1 : 0;
+  }
+
+  private static String compositionDataKey(String text) {
+    // Preserve numbers, symbols, and group boundaries, not just a digit inventory.
+    return translationProse(text).replaceAll("[\\s\\p{Z}\\ufeff]+", " ").trim();
   }
 
   /** Bypass inference only when protected data is present; bare OK retains strict response handling. */
@@ -221,6 +229,7 @@ final class TranslationPreservation {
   static boolean invariantCompositionEquivalent(String source, String translated) {
     int kind = invariantCompositionKind(source);
     return kind != 0 && kind == invariantCompositionKind(translated)
+        && (kind != 1 || compositionDataKey(source).equals(compositionDataKey(translated)))
         && preserves(source, translated) && preserves(translated, source);
   }
 

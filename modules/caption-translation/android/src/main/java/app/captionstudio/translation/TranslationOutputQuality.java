@@ -50,7 +50,7 @@ final class TranslationOutputQuality {
       return Reason.NONE;
     }
     if (has(source, LETTER) && echoKey(source).equals(echoKey(text))) return Reason.SOURCE_ECHO;
-    return wrongScript(text, target) ? Reason.WRONG_SCRIPT : Reason.NONE;
+    return wrongScript(TranslationPreservation.translationProse(translatedText), target) ? Reason.WRONG_SCRIPT : Reason.NONE;
   }
 
   private static boolean wrongScript(String text, String target) {
