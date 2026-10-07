@@ -34,7 +34,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           if command -v rg >/dev/null 2>&1; then
-            rg -n 'createTimelineTranscriptionSession|generateProjectCaptions|generateAndSaveProjectCaptions|cancelProjectCaptionGeneration|cancelAudioExtraction|renderTimelineAudio' src modules/caption-media/src modules/caption-media/android/src/main
+            rg -n 'createTimelineTranscriptionSession|generateProjectCaptions|generateAndSaveProjectCaptions|cancelProjectCaptionGeneration|cancelAudioExtraction|renderTimelineAudio|TimelineAudioRenderer\.(render|cancel)|finishCancelledTimelineAudioRender' src modules/caption-media/src modules/caption-media/android/src/main
           else
-            grep -RnE 'createTimelineTranscriptionSession|generateProjectCaptions|generateAndSaveProjectCaptions|cancelProjectCaptionGeneration|cancelAudioExtraction|renderTimelineAudio' src modules/caption-media/src
+            grep -RnE 'createTimelineTranscriptionSession|generateProjectCaptions|generateAndSaveProjectCaptions|cancelProjectCaptionGeneration|cancelAudioExtraction|renderTimelineAudio|TimelineAudioRenderer\.(render|cancel)|finishCancelledTimelineAudioRender' src modules/caption-media/src modules/caption-media/android/src/main
           fi
