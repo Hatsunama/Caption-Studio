@@ -15,7 +15,14 @@ def run(name,args,timeout=600):
 def get(url,token=None):
     headers={"User-Agent":"Caption-Studio-dependency-repair"}
     if token:headers["Authorization"]="Bearer "+token
-    with urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=120) as r:return r.read()
+    class SafeRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self,req,fp,code,msg,hdrs,newurl):
+            redirected=super().redirect_request(req,fp,code,msg,hdrs,newurl)
+            if urllib.parse.urlparse(req.full_url).netloc!=urllib.parse.urlparse(newurl).netloc:
+                redirected.remove_header("Authorization")
+            return redirected
+    opener=urllib.request.build_opener(SafeRedirect())
+    with opener.open(urllib.request.Request(url,headers=headers),timeout=120) as r:return r.read()
 def api(path,data=None,method=None):
     headers={"User-Agent":"Caption-Studio-dependency-repair","Authorization":"Bearer "+os.environ["GH_TOKEN"],"Accept":"application/vnd.github+json"}
     raw=None if data is None else json.dumps(data).encode()
@@ -48,6 +55,8 @@ elif phase=="repair":
     (OUT/"before_full_reports.json").write_bytes((ROOT/"preservation-repair-results.json").read_bytes())
     rc,a=audit("before_audit")
     if rc!=1:raise RuntimeError("Expected failing current audit baseline")
+    regression_before=run("before_published_regressions",["node","--test","tests/published-dependency-regressions.cjs"],60)
+    if regression_before!=1:raise RuntimeError("Expected failing safe defensive regression baseline")
     normal_before=run("before_dependency_api",["node","tests/dependency-api-compatibility.cjs"],180)
     if normal_before:raise RuntimeError("Normal API baseline failed; refusing dependency mutations")
     metadata={}
@@ -78,6 +87,8 @@ elif phase=="repair":
     for key,value in actual["packages"].items():
         if key.endswith("/shell-quote") and value["version"]!="1.11.0":raise RuntimeError("Unfixed nested shell-quote")
         if key.endswith("/source-map-js") and value["version"]!="1.2.2":raise RuntimeError("Unfixed nested source-map-js")
+    regression_after=run("after_published_regressions",["node","--test","tests/published-dependency-regressions.cjs"],60)
+    if regression_after:raise RuntimeError("Published defensive regressions failed")
     compat=run("after_dependency_api",["node","tests/dependency-api-compatibility.cjs"],180)
     for generated in ["test-jars","test-classes"]:
         target=(ROOT/generated).resolve()
