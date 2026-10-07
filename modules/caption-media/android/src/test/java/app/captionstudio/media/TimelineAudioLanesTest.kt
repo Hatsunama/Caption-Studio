@@ -46,9 +46,20 @@ class TimelineAudioLanesTest {
   )
 
   private fun captionComposition(plan: TimelineAudioPlan): Composition {
-    val method = TimelineAudioRenderer::class.java.getDeclaredMethod("buildComposition", Context::class.java, TimelineAudioPlan::class.java)
+    val taskClass = TimelineAudioRenderer::class.java.declaredClasses.first { it.simpleName == "ActiveRender" }
+    val promise = object : Promise {
+      override fun resolve(value: Any?) = Unit
+      override fun reject(code: String?, message: String?, cause: Throwable?) = Unit
+    }
+    val constructor = taskClass.declaredConstructors.first { it.parameterCount == 7 }.apply { isAccessible = true }
+    val task = constructor.newInstance(
+      File(context.cacheDir, "caption-lanes.m4a"), promise, null, false, mutableListOf<Promise>(), null, false,
+    )
+    val method = TimelineAudioRenderer::class.java.getDeclaredMethod(
+      "buildComposition", Context::class.java, TimelineAudioPlan::class.java, taskClass,
+    )
     method.isAccessible = true
-    return method.invoke(TimelineAudioRenderer, context, plan) as Composition
+    return method.invoke(TimelineAudioRenderer, context, plan, task) as Composition
   }
 
   private fun exportComposition(
