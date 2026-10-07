@@ -15,7 +15,7 @@ export function serializeSrt(project: CaptionProject, allowIncompleteTranslation
   const events = visibleCaptions(project).flatMap((caption) => {
     const timing = srtRange(caption.startMs, caption.endMs);
     const pairs = translations.get(caption.id) ?? [];
-    const aligned = pairs.filter((pair) => Math.round(pair.startMs) === timing.startMs && Math.round(pair.endMs) === timing.endMs);
+    const aligned = pairs.filter((pair) => pair.startMs === caption.startMs && pair.endMs === caption.endMs);
     const independent = pairs.filter((pair) => !aligned.includes(pair));
     return [{
       startMs: timing.startMs,
@@ -133,11 +133,11 @@ export function visibleCaptions(project: CaptionProject) {
       caption.timelineVisible !== false
       && Number.isFinite(caption.startMs)
       && Number.isFinite(caption.endMs)
-      && Math.min(durationMs, Math.round(caption.endMs)) > Math.max(0, Math.round(caption.startMs))
+      && Math.min(durationMs, caption.endMs) > Math.max(0, caption.startMs)
       && caption.text.trim()
     ))
-    .map((caption) => ({ ...caption, startMs: Math.max(0, Math.round(caption.startMs)),
-      endMs: Math.min(durationMs, Math.round(caption.endMs)) }))
+    .map((caption) => ({ ...caption, startMs: Math.max(0, caption.startMs),
+      endMs: Math.min(durationMs, caption.endMs) }))
     .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs || left.id.localeCompare(right.id));
 }
 
