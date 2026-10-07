@@ -110,6 +110,12 @@ def main():
   originals={p.relative_to(dest).as_posix():sha(p.read_bytes()) for p in dest.rglob("*") if p.is_file()}
   basesrc,headsrc,testchanges,sourcehash=source_tests(name,s,meta,dest)
   # Exact published baseline normal suite runs before defensive patch.
+  if name=="node-forge":
+   # The published source accidentally focuses one suite; remove only the focus modifier.
+   jsbn_test=dest/"tests/unit/jsbn.js"
+   jsbn_text=jsbn_test.read_text()
+   if jsbn_text.count("describe.only(")!=1:raise RuntimeError("Unexpected upstream focused suite")
+   jsbn_test.write_text(jsbn_text.replace("describe.only(","describe(",1))
   if name=="braces":
    normal=[ "node",mocha,"test/*.js","--grep","reject deeply|self-referencing|cycle involving|nesting exceeds|lower maximum|fractional maximum","--invert"]
    red=["node",mocha,"test/*.js","--grep","reject deeply|self-referencing|cycle involving|nesting exceeds|lower maximum|fractional maximum","--timeout","1000"]
@@ -139,7 +145,20 @@ webpack(configs,(err,stats)=>{if(err||stats.hasErrors()){console.error(err||stat
    require_ok("forge_browser_rebuild",["node",str(build),str(dest),str(harness/"node_modules/webpack")],timeout=180,envextra=env)
    # Also run reviewed RSA unit suite against both regenerated bundles.
    bundlecheck=OUT/"bundle-rsa.cjs"
-   bundlecheck.write_text("const path=require('path');const root=process.env.BACKPORT_BUNDLE_ROOT;require(path.join(root,'lib/index.js'));const bundle=require(path.join(root,process.env.BACKPORT_BUNDLE_FILE));require.cache[require.resolve(path.join(root,'lib/rsa.js'))].exports=bundle.pki.rsa;require(path.join(root,'tests/unit/rsa.js'));")
+   bundlecheck.write_text("""const path=require('path'),fs=require('fs'),vm=require('vm');
+const root=process.env.BACKPORT_BUNDLE_ROOT;
+require(path.join(root,'lib/index.js'));
+const sandbox={module:{exports:{}},console,setTimeout,clearTimeout,setImmediate,clearImmediate,crypto:require('node:crypto').webcrypto};
+sandbox.exports=sandbox.module.exports;sandbox.self=sandbox;sandbox.window=sandbox;
+vm.runInNewContext(fs.readFileSync(path.join(root,process.env.BACKPORT_BUNDLE_FILE),'utf8'),sandbox,{timeout:5000});
+const bundle=sandbox.module.exports;
+if(bundle.util.isNodejs)throw Error('Browser bundle used Node runtime');
+for(const [file,value] of Object.entries({'forge.js':bundle,'jsbn.js':bundle.jsbn,'md.all.js':bundle.md,'mgf.js':bundle.mgf,'pki.js':bundle.pki,'pss.js':bundle.pss,'random.js':bundle.random,'rsa.js':bundle.pki.rsa,'util.js':bundle.util})){
+ if(!value)throw Error('Missing browser API '+file);
+ require.cache[require.resolve(path.join(root,'lib',file))].exports=value;
+}
+require(path.join(root,'tests/unit/rsa.js'));
+""")
    for bn in ["forge.min.js","forge.all.min.js"]:
     require_ok("bundle_GREEN_"+bn,["node",mocha,"-t","30000",str(bundlecheck)],cwd=dest,timeout=180,envextra={**env,"BACKPORT_BUNDLE_ROOT":str(dest),"BACKPORT_BUNDLE_FILE":"dist/"+bn})
   package=json.loads((dest/"package.json").read_text())
