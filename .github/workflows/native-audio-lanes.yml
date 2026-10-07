@@ -25,6 +25,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+          cache: gradle
       - name: Install locked dependencies
         run: |
           set -o pipefail
@@ -43,7 +44,7 @@ jobs:
         run: |
           set -o pipefail
           cd android
-          ./gradlew :caption-media:testReleaseUnitTest --tests 'app.captionstudio.media.TimelineAudioLanesTest' --tests 'app.captionstudio.media.TimelineAudioRendererTest' --tests 'app.captionstudio.media.TimelineTransitionTimelineTest' --no-daemon --stacktrace --console=plain 2>&1 | tee ../evidence/native-audio.log
+          ./gradlew :caption-media:testReleaseUnitTest --tests 'app.captionstudio.media.TimelineAudioLanesTest' --tests 'app.captionstudio.media.TimelineAudioLanePlannerTest' --tests 'app.captionstudio.media.TimelineAudioRendererTest' --tests 'app.captionstudio.media.TimelineTransitionTimelineTest' --no-daemon --stacktrace --console=plain 2>&1 | tee ../evidence/native-audio.log
       - name: Retain complete raw evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
