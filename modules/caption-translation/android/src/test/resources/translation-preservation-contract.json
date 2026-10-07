@@ -538,5 +538,137 @@
     "source": "Ready + https://e.test/a+b `x+y` now",
     "translated": "现在+已就绪 https://e.test/a+b `x+y`",
     "preserved": true
+  },
+  {
+    "name": "unspaced target literal +",
+    "source": "Ready + now",
+    "translated": "现在+已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal =",
+    "source": "Ready = now",
+    "translated": "现在=已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal <",
+    "source": "Ready < now",
+    "translated": "现在<已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal >",
+    "source": "Ready > now",
+    "translated": "现在>已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal |",
+    "source": "Ready | now",
+    "translated": "现在|已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ^",
+    "source": "Ready ^ now",
+    "translated": "现在^已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ~",
+    "source": "Ready ~ now",
+    "translated": "现在~已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal *",
+    "source": "Ready * now",
+    "translated": "现在*已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal /",
+    "source": "Ready / now",
+    "translated": "现在/已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal −",
+    "source": "Ready − now",
+    "translated": "现在−已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ×",
+    "source": "Ready × now",
+    "translated": "现在×已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ÷",
+    "source": "Ready ÷ now",
+    "translated": "现在÷已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ±",
+    "source": "Ready ± now",
+    "translated": "现在±已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ≠",
+    "source": "Ready ≠ now",
+    "translated": "现在≠已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ≤",
+    "source": "Ready ≤ now",
+    "translated": "现在≤已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ≥",
+    "source": "Ready ≥ now",
+    "translated": "现在≥已就绪",
+    "preserved": true
+  },
+  {
+    "name": "source-directed boundary Japanese",
+    "source": "Ready + now",
+    "translated": "準備+完了",
+    "preserved": true
+  },
+  {
+    "name": "source-directed boundary Thai",
+    "source": "Ready + now",
+    "translated": "พร้อม+แล้ว",
+    "preserved": true
+  },
+  {
+    "name": "source-directed boundary Arabic",
+    "source": "Ready + now",
+    "translated": "جاهز+الآن",
+    "preserved": true
+  },
+  {
+    "name": "source-directed boundary Unicode signed digit",
+    "source": "Ready + now",
+    "translated": "现在 +٤٢ 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "source-directed boundary ASCII identifier",
+    "source": "Ready + now",
+    "translated": "现在 A+B 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "source-directed boundary duplicate separated",
+    "source": "Ready + now",
+    "translated": "现在+已就绪 +",
+    "preserved": false
   }
 ]
