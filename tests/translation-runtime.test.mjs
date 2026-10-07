@@ -17,9 +17,9 @@ test('opaque IDs, decomposed Unicode and malformed source strings retain exact o
     [{ id: ' cue ', text: 'Hola' }]), /incomplete/);
   const accepted = acceptTranslationBoundary(units.slice(0, 2), [
     { id: ' cue ', text: '', valid: false },
-    { id: 'cue', text: 'Hola' },
+    { id: 'cue', text: 'Hola 👩🏽‍💻' },
   ]);
-  assert.equal(accepted.translations.get('cue'), 'Hola');
+  assert.equal(accepted.translations.get('cue'), 'Hola 👩🏽‍💻');
   assert.deepEqual([...accepted.rejected], [' cue ']);
 });
 

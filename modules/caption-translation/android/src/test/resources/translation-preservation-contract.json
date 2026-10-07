@@ -1,0 +1,284 @@
+[
+  {
+    "name": "URL query",
+    "source": "Read https://example.test/a?x=2",
+    "translated": "Lisez https://example.test/a?x=3",
+    "preserved": false
+  },
+  {
+    "name": "URL combining intact",
+    "source": "Read https://example.test/café",
+    "translated": "Lisez https://example.test/café",
+    "preserved": true
+  },
+  {
+    "name": "URL combining changed",
+    "source": "Read https://example.test/café",
+    "translated": "Lisez https://example.test/café",
+    "preserved": false
+  },
+  {
+    "name": "URL apostrophe",
+    "source": "Read 'https://example.test/o'neill'",
+    "translated": "Lisez \"https://example.test/o'neill\"",
+    "preserved": true
+  },
+  {
+    "name": "URL apostrophe changed",
+    "source": "Read https://example.test/o'neill",
+    "translated": "Lisez https://example.test/o'neal",
+    "preserved": false
+  },
+  {
+    "name": "URL balanced parentheses",
+    "source": "Read (https://example.test/a(b))",
+    "translated": "Lisez https://example.test/a(b).",
+    "preserved": true
+  },
+  {
+    "name": "URL punctuation",
+    "source": "Read https://example.test/a!",
+    "translated": "Lisez https://example.test/a。",
+    "preserved": true
+  },
+  {
+    "name": "URL repeated lost",
+    "source": "Read https://e.test/a and https://e.test/a",
+    "translated": "Lisez https://e.test/a",
+    "preserved": false
+  },
+  {
+    "name": "code combining intact",
+    "source": "Run `café_id=42`",
+    "translated": "Exécutez `café_id=42`",
+    "preserved": true
+  },
+  {
+    "name": "code combining changed",
+    "source": "Run `café_id=42`",
+    "translated": "Exécutez `café_id=42`",
+    "preserved": false
+  },
+  {
+    "name": "code spaces literal",
+    "source": "Run `a b`",
+    "translated": "Exécutez `a b`",
+    "preserved": false
+  },
+  {
+    "name": "code currency/math literal",
+    "source": "Run `$12 + x*y`",
+    "translated": "Exécutez `$13 + x*y`",
+    "preserved": false
+  },
+  {
+    "name": "code multiline CRLF",
+    "source": "Run ```\r\nx=42\r\n```",
+    "translated": "Exécutez ```\nx=42\n```",
+    "preserved": true
+  },
+  {
+    "name": "skin ZWJ intact",
+    "source": "Hello 👩🏽‍💻",
+    "translated": "Bonjour 👩🏽‍💻",
+    "preserved": true
+  },
+  {
+    "name": "skin lost",
+    "source": "Hello 👩🏽‍💻",
+    "translated": "Bonjour 👩‍💻",
+    "preserved": false
+  },
+  {
+    "name": "ZWJ lost",
+    "source": "Hello 👩🏽‍💻",
+    "translated": "Bonjour 👩🏽 💻",
+    "preserved": false
+  },
+  {
+    "name": "VS lost",
+    "source": "Hello ❤️",
+    "translated": "Bonjour ❤",
+    "preserved": false
+  },
+  {
+    "name": "flags intact",
+    "source": "Hello 🇺🇸🇨🇦",
+    "translated": "Bonjour 🇺🇸🇨🇦",
+    "preserved": true
+  },
+  {
+    "name": "flag changed",
+    "source": "Hello 🇺🇸",
+    "translated": "Bonjour 🇬🇧",
+    "preserved": false
+  },
+  {
+    "name": "odd regional indicators",
+    "source": "Hello 🇺🇸🇨",
+    "translated": "Bonjour 🇺🇸🇨",
+    "preserved": true
+  },
+  {
+    "name": "keycap intact",
+    "source": "Hello 1️⃣ *️⃣ #️⃣",
+    "translated": "Bonjour 1️⃣ *️⃣ #️⃣",
+    "preserved": true
+  },
+  {
+    "name": "keycap VS lost",
+    "source": "Hello 1️⃣",
+    "translated": "Bonjour 1⃣",
+    "preserved": false
+  },
+  {
+    "name": "emoji combining intact",
+    "source": "Hello 😀̧́",
+    "translated": "Bonjour 😀̧́",
+    "preserved": true
+  },
+  {
+    "name": "emoji combining lost",
+    "source": "Hello 😀́",
+    "translated": "Bonjour 😀",
+    "preserved": false
+  },
+  {
+    "name": "emoji repeated lost",
+    "source": "Hello 😀 😀",
+    "translated": "Bonjour 😀",
+    "preserved": false
+  },
+  {
+    "name": "emoji tags lost",
+    "source": "Hello 🏴󠁧󠁢󠁥󠁮󠁧󠁿",
+    "translated": "Bonjour 🏴",
+    "preserved": false
+  },
+  {
+    "name": "Unicode17 emoji",
+    "source": "Hello 🫪",
+    "translated": "Bonjour",
+    "preserved": false
+  },
+  {
+    "name": "break dropped",
+    "source": "First\nSecond",
+    "translated": "Premier Deuxième",
+    "preserved": false
+  },
+  {
+    "name": "break blank topology",
+    "source": "First\nSecond",
+    "translated": "\nPremier Deuxième",
+    "preserved": false
+  },
+  {
+    "name": "break CRLF",
+    "source": "Hello\r\nWorld",
+    "translated": "Bonjour\nMonde",
+    "preserved": true
+  },
+  {
+    "name": "break edges",
+    "source": " \r\nHello\n\nWorld\r\n ",
+    "translated": "\nBonjour\n\nMonde\n",
+    "preserved": true
+  },
+  {
+    "name": "break edge lost",
+    "source": "\nHello\n",
+    "translated": "Bonjour",
+    "preserved": false
+  },
+  {
+    "name": "quotes adapt",
+    "source": "She said \"hello\".",
+    "translated": "Elle a dit « bonjour ».",
+    "preserved": true
+  },
+  {
+    "name": "OK",
+    "source": "Okay.",
+    "translated": "OK!",
+    "preserved": true
+  },
+  {
+    "name": "ordinary name",
+    "source": "Meet OK Go",
+    "translated": "Rencontrez OK Go",
+    "preserved": true
+  },
+  {
+    "name": "integer Arabic",
+    "source": "12",
+    "translated": "١٢",
+    "preserved": true
+  },
+  {
+    "name": "integer supplementary",
+    "source": "42",
+    "translated": "𝟜𝟚",
+    "preserved": true
+  },
+  {
+    "name": "integer grouping",
+    "source": "1234",
+    "translated": "١٬٢٣٤",
+    "preserved": true
+  },
+  {
+    "name": "integer changed",
+    "source": "42",
+    "translated": "٤٣",
+    "preserved": false
+  },
+  {
+    "name": "integer value zeros",
+    "source": "0012",
+    "translated": "١٢",
+    "preserved": true
+  },
+  {
+    "name": "mixed prose digits locale",
+    "source": "Buy 12 items",
+    "translated": "Achetez ١٢ articles",
+    "preserved": true
+  },
+  {
+    "name": "mixed prose spelling",
+    "source": "Buy 12 items",
+    "translated": "Achetez douze articles",
+    "preserved": true
+  },
+  {
+    "name": "ambiguous decimal formatting",
+    "source": "Pay 1,234.50 USD",
+    "translated": "Payez 1 234,50 USD",
+    "preserved": true
+  },
+  {
+    "name": "currency wording",
+    "source": "Pay $12",
+    "translated": "Payez 12 dollars",
+    "preserved": true
+  },
+  {
+    "name": "math adaptation",
+    "source": "Use x*y",
+    "translated": "Utilisez x×y",
+    "preserved": true
+  },
+  {
+    "name": "ordinary combining prose",
+    "source": "Meet café",
+    "translated": "Rencontrez café",
+    "preserved": true
+  },
+  {
+    "name": "copyright text presentation",
+    "source": "Copyright © 2026",
+    "translated": "Droits d'auteur 2026",
+    "preserved": true
+  }
+]

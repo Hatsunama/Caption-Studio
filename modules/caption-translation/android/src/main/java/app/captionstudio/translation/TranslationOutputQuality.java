@@ -25,7 +25,7 @@ final class TranslationOutputQuality {
 
   private TranslationOutputQuality() {}
 
-  enum Reason { NONE, EMPTY, RUNAWAY_LENGTH, SOURCE_ECHO, WRONG_SCRIPT }
+  enum Reason { NONE, EMPTY, RUNAWAY_LENGTH, SOURCE_ECHO, WRONG_SCRIPT, PROTECTED_CONTENT }
 
   static boolean needsReview(String sourceText, String translatedText, String target) {
     return classify(sourceText, translatedText, target) != Reason.NONE;
@@ -38,6 +38,8 @@ final class TranslationOutputQuality {
     if (text.codePoints().allMatch(point -> Character.isWhitespace(point)
         || Character.isSpaceChar(point) || Character.getType(point) == Character.FORMAT)) return Reason.EMPTY;
     if (!isPlausibleCueTranslation(source, text)) return Reason.RUNAWAY_LENGTH;
+    if (!TranslationPreservation.preserves(sourceText, translatedText)) return Reason.PROTECTED_CONTENT;
+    if (TranslationPreservation.integerEquivalent(sourceText, translatedText)) return Reason.NONE;
     // Conventional borrowed OK/okay is not evidence of a failed translation.
     // This exception requires both entire cues to be acknowledgements; no fixed
     // target wording and no exemption for sentences, arbitrary words or names.
