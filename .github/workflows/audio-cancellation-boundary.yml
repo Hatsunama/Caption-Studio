@@ -32,4 +32,9 @@ jobs:
         run: npm run lint
       - name: Cancellation caller impact inventory
         if: ${{ !cancelled() }}
-        run: rg -n 'createTimelineTranscriptionSession|generateProjectCaptions|generateAndSaveProjectCaptions|cancelProjectCaptionGeneration|cancelAudioExtraction|renderTimelineAudio' src modules/caption-media/src
+        run: |
+          if command -v rg >/dev/null 2>&1; then
+            rg -n 'createTimelineTranscriptionSession|generateProjectCaptions|generateAndSaveProjectCaptions|cancelProjectCaptionGeneration|cancelAudioExtraction|renderTimelineAudio' src modules/caption-media/src
+          else
+            grep -RnE 'createTimelineTranscriptionSession|generateProjectCaptions|generateAndSaveProjectCaptions|cancelProjectCaptionGeneration|cancelAudioExtraction|renderTimelineAudio' src modules/caption-media/src
+          fi
