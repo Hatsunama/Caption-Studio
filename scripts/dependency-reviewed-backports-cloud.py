@@ -77,7 +77,7 @@ def source_tests(name,spec,release_meta,dest):
   new=p.read_text()
   if old==new:continue
   # Only security regression files changed in the reviewed proposal are admitted.
-  allowed=({"test/compile.js","test/expand.js","test/expand.braces.js","test/parse.js","test/stringify.js","test/mocha-initialization.js"} if name=="braces" else {"tests/unit/rsa.js"})
+  allowed=({"test/braces.compile.js","test/braces.expand.js","test/braces.parse.js","test/braces.stringify.js","test/mocha-initialization.js"} if name=="braces" else {"tests/unit/rsa.js"})
   if rel not in allowed:raise RuntimeError("Unreviewed test delta: "+rel)
   if not (dest/rel).exists():(dest/rel).parent.mkdir(parents=True,exist_ok=True);(dest/rel).write_text("")
   changes.append(patch_between(name+"-tests",rel,old,new,dest))
@@ -138,9 +138,9 @@ webpack(configs,(err,stats)=>{if(err||stats.hasErrors()){console.error(err||stat
    require_ok("forge_browser_rebuild",["node",str(build),str(dest),str(harness/"node_modules/webpack")],timeout=180,envextra=env)
    # Also run reviewed RSA unit suite against both regenerated bundles.
    bundlecheck=OUT/"bundle-rsa.cjs"
-   bundlecheck.write_text("const path=require('path');const lib=require(path.join(process.argv[2],'lib/index.js'));const bundle=require(path.join(process.argv[2],process.argv[3]));for(const key of Object.keys(lib)){if(key in bundle)lib[key]=bundle[key];}require(path.join(process.argv[2],'tests/unit/rsa.js'));")
+   bundlecheck.write_text("const path=require('path');const root=process.env.BACKPORT_BUNDLE_ROOT;require(path.join(root,'lib/index.js'));const bundle=require(path.join(root,process.env.BACKPORT_BUNDLE_FILE));require.cache[require.resolve(path.join(root,'lib/rsa.js'))].exports=bundle.pki.rsa;require(path.join(root,'tests/unit/rsa.js'));")
    for bn in ["forge.min.js","forge.all.min.js"]:
-    require_ok("bundle_GREEN_"+bn,["node",mocha,"-t","30000",str(bundlecheck),"--",str(dest),"dist/"+bn],cwd=dest,timeout=180,envextra=env)
+    require_ok("bundle_GREEN_"+bn,["node",mocha,"-t","30000",str(bundlecheck)],cwd=dest,timeout=180,envextra={**env,"BACKPORT_BUNDLE_ROOT":str(dest),"BACKPORT_BUNDLE_FILE":"dist/"+bn})
   package=json.loads((dest/"package.json").read_text())
   package["name"]=s["identity"];package["version"]=s["release"]+"-caption-studio.1";package["private"]=True
   package["captionStudioBackport"]={"upstreamName":name,"upstreamVersion":s["release"],"upstreamGitHead":meta["gitHead"],"proposalHead":s["head"],"advisory":s["advisory"],"patches":[x for x in changes if x]}
