@@ -13,7 +13,7 @@ public final class TranslationPreservationContractTest {
     try (var input = getClass().getResourceAsStream("/translation-preservation-contract.json")) {
       assertNotNull("shared preservation corpus must be on the test classpath", input);
       JsonArray cases = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonArray();
-      assertEquals(79, cases.size());
+      assertEquals(90, cases.size());
       for (var element : cases) {
         var item = element.getAsJsonObject();
         assertEquals(item.get("name").getAsString(), item.get("preserved").getAsBoolean(),
@@ -129,4 +129,19 @@ public final class TranslationPreservationContractTest {
     }
   }
 
+  @Test public void unspacedChineseOperatorMustPassNativePreservationAndQuality() {
+    String[] sources = {"Ready + now", "42 https://example.com/\n\n\u0060src/app.ts\u0060 + is ready."};
+    String[] targets = {"现在+已就绪", "42 https://example.com/\n\n\u0060src/app.ts\u0060+已准备好。"};
+    for (int i = 0; i < sources.length; i++) {
+      assertTrue("exact plus outside opaque spans must survive without target spaces",
+          TranslationPreservation.preserves(sources[i], targets[i]));
+      assertEquals(TranslationOutputQuality.Reason.NONE,
+          TranslationOutputQuality.classify(sources[i], targets[i], "zh-Hans"));
+    }
+  }
+
+  @Test public void unspacedChineseOperatorMustPassNativeQualityIndependently() {
+    assertEquals(TranslationOutputQuality.Reason.NONE,
+        TranslationOutputQuality.classify("Ready + now", "现在+已就绪", "zh-Hans"));
+  }
 }

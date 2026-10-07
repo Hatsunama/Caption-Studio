@@ -472,5 +472,71 @@
     "source": "Read https://e.test/a+b + now",
     "translated": "Lisez https://e.test/a+b maintenant",
     "preserved": false
+  },
+  {
+    "name": "unspaced Chinese plus must preserve literal",
+    "source": "Ready + now",
+    "translated": "现在+已就绪",
+    "preserved": true
+  },
+  {
+    "name": "Seeker unspaced Chinese plus after code",
+    "source": "42 https://example.com/\n\n`src/app.ts` + is ready.",
+    "translated": "42 https://example.com/\n\n`src/app.ts`+已准备好。",
+    "preserved": true
+  },
+  {
+    "name": "unspaced Chinese plus duplicate",
+    "source": "Ready + now",
+    "translated": "现在++已就绪",
+    "preserved": false
+  },
+  {
+    "name": "unspaced Chinese plus repeated exact count",
+    "source": "Ready + + now",
+    "translated": "现在+已+就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced Chinese plus repeated lost",
+    "source": "Ready + + now",
+    "translated": "现在+已就绪",
+    "preserved": false
+  },
+  {
+    "name": "attached ASCII expression cannot replace standalone",
+    "source": "Ready + now",
+    "translated": "现在 x+y 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "attached ASCII identifier cannot replace standalone",
+    "source": "Ready + now",
+    "translated": "现在 C++ 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "attached signed number cannot replace standalone",
+    "source": "Ready + now",
+    "translated": "现在 +42 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "URL plus cannot replace standalone",
+    "source": "Ready + https://e.test/a+b now",
+    "translated": "现在 https://e.test/a+b 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "code plus cannot replace standalone",
+    "source": "Ready + `x+y` now",
+    "translated": "现在 `x+y` 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "unspaced Chinese plus with opaque decoys",
+    "source": "Ready + https://e.test/a+b `x+y` now",
+    "translated": "现在+已就绪 https://e.test/a+b `x+y`",
+    "preserved": true
   }
 ]

@@ -116,3 +116,23 @@ test('standalone operator lexer masks only tokens and keeps ordinary prose trans
   assert.equal(translationProse('well-known x+y C++'), 'well-known x+y C++');
   assert.equal(isInvariantCompositionTranslation('Ready + now', 'Ready + now'), false);
 });
+
+for (const [source, translated] of [
+  ['Ready + now', '现在+已就绪'],
+  ['42 https://example.com/\n\n\u0060src/app.ts\u0060 + is ready.',
+    '42 https://example.com/\n\n\u0060src/app.ts\u0060+已准备好。'],
+]) {
+  test('unspaced target plus passes real JS boundary: ' + source, () => {
+    const boundary = acceptTranslationBoundary([{ id: 'cue', text: source }],
+      [{ id: 'cue', text: translated, valid: true }]);
+    assert.equal(boundary.rejected.size, 0);
+    assert.equal(boundary.translations.get('cue'), translated);
+  });
+  test('unspaced target plus passes real automatic write: ' + source, () => {
+    assert.equal(usableAutomaticTranslation(source, translated, false, 'zh-Hans'), translated);
+    assert.deepEqual(automaticTranslationCueWrites({
+      captions: [{ id: 'cue', text: source }], translatedById: new Map([['cue', translated]]),
+      previousById: new Map(), targetLanguage: 'zh-Hans',
+    }), [{ sourceCaptionId: 'cue', translatedText: translated, translationStatus: 'translated' }]);
+  });
+}
