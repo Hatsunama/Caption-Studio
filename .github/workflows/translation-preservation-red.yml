@@ -1,7 +1,7 @@
 name: Translation preservation repair checks
 on:
   push:
-    branches: [codex/translation-preservation-boundary, codex/preservation-runtime-contract, codex/source-echo-protected-composition]
+    branches: [codex/standalone-symbol-preservation-8067566, codex/translation-preservation-boundary, codex/preservation-runtime-contract, codex/source-echo-protected-composition]
 permissions:
   contents: read
 env:

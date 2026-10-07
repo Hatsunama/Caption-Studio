@@ -280,5 +280,197 @@
     "source": "Copyright © 2026",
     "translated": "Droits d'auteur 2026",
     "preserved": true
+  },
+  {
+    "name": "Seeker standalone plus dropped",
+    "source": "42 https://example.com/\n\n`src/app.ts` + is ready.",
+    "translated": "42 https://example.com/\n\n`src/app.ts` 已准备好。",
+    "preserved": false
+  },
+  {
+    "name": "Seeker standalone plus preserved with translated punctuation",
+    "source": "42 https://example.com/\n\n`src/app.ts` + is ready.",
+    "translated": "42 https://example.com/\n\n`src/app.ts` + 已准备好。",
+    "preserved": true
+  },
+  {
+    "name": "standalone plus repeated lost",
+    "source": "Ready + + now",
+    "translated": "Prêt + maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone plus repeated duplicated",
+    "source": "Ready + now",
+    "translated": "Prêt + + maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone plus exact repeat count",
+    "source": "Ready + + now",
+    "translated": "Prêt + + maintenant",
+    "preserved": true
+  },
+  {
+    "name": "standalone plus substituted",
+    "source": "Ready + now",
+    "translated": "Prêt - maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone plus rewritten as word",
+    "source": "Ready + now",
+    "translated": "Prêt plus maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone plus Unicode whitespace",
+    "source": "Ready + now",
+    "translated": "Prêt　+\tmaintenant",
+    "preserved": true
+  },
+  {
+    "name": "standalone plus Unicode whitespace lost",
+    "source": "Ready + now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone plus cue start",
+    "source": "+ is ready.",
+    "translated": "+ 已准备好。",
+    "preserved": true
+  },
+  {
+    "name": "standalone plus cue end",
+    "source": "Ready +",
+    "translated": "Prêt",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost =",
+    "source": "Ready = now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost <",
+    "source": "Ready < now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost >",
+    "source": "Ready > now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost |",
+    "source": "Ready | now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ^",
+    "source": "Ready ^ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ~",
+    "source": "Ready ~ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost *",
+    "source": "Ready * now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost /",
+    "source": "Ready / now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost −",
+    "source": "Ready − now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ×",
+    "source": "Ready × now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ÷",
+    "source": "Ready ÷ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ±",
+    "source": "Ready ± now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ≠",
+    "source": "Ready ≠ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ≤",
+    "source": "Ready ≤ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ≥",
+    "source": "Ready ≥ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "word hyphen adapts",
+    "source": "The well-known app is ready.",
+    "translated": "知名应用已准备好。",
+    "preserved": true
+  },
+  {
+    "name": "ordinary sentence punctuation adapts",
+    "source": "Ready, really!",
+    "translated": "真的准备好了。",
+    "preserved": true
+  },
+  {
+    "name": "attached math remains adaptable",
+    "source": "Use x+y and x*y",
+    "translated": "Utilisez x＋y et x×y",
+    "preserved": true
+  },
+  {
+    "name": "attached name plus remains adaptable",
+    "source": "Use C++ now",
+    "translated": "Utilisez le langage C plus plus maintenant",
+    "preserved": true
+  },
+  {
+    "name": "operators inside code cannot cover standalone loss",
+    "source": "Run `+` + now",
+    "translated": "Exécutez `+` maintenant",
+    "preserved": false
+  },
+  {
+    "name": "operators inside URL cannot cover standalone loss",
+    "source": "Read https://e.test/a+b + now",
+    "translated": "Lisez https://e.test/a+b maintenant",
+    "preserved": false
   }
 ]
