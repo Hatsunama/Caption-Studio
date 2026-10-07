@@ -74,10 +74,14 @@ public final class VerificationActivity extends Activity {
             final Request request = new Request();
             active = request;
             show(unknown("WAITING_1500MS"));
-            request.timeout = () -> { if (active == request) cancel("TIMEOUT"); };
+            request.timeout = new Runnable() {
+                @Override public void run() { if (active == request) cancel("TIMEOUT"); }
+            };
             main.postDelayed(request.timeout, 12000);
             try {
-                request.future = WORKER.submit(() -> consume(uri, request));
+                request.future = WORKER.submit(new Runnable() {
+                    @Override public void run() { consume(uri, request); }
+                });
             } catch (RejectedExecutionException busy) {
                 active = null;
                 main.removeCallbacks(request.timeout);
@@ -109,11 +113,13 @@ public final class VerificationActivity extends Activity {
         catch (java.io.IOException | RuntimeException failure) { result = unknown("READ_FAILED"); }
         finally { if (bytes != null) Arrays.fill(bytes, (byte) 0); }
         final String finished = result;
-        main.post(() -> {
-            if (!request.cancelled && active == request && !isFinishing() && !isDestroyed()) {
-                main.removeCallbacks(request.timeout);
-                active = null;
-                show(finished);
+        main.post(new Runnable() {
+            @Override public void run() {
+                if (!request.cancelled && active == request && !isFinishing() && !isDestroyed()) {
+                    main.removeCallbacks(request.timeout);
+                    active = null;
+                    show(finished);
+                }
             }
         });
     }

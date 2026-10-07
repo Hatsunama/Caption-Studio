@@ -1,13 +1,6 @@
 name: Share recipient verification tool
 on:
   workflow_dispatch:
-  # Bootstrap this new workflow without writing main/integration.
-  # Scope is exclusively this disposable tool branch and its isolated paths.
-  push:
-    branches: [codex/share-recipient-verification]
-    paths:
-      - tools/share-recipient-verification/**
-      - .github/workflows/share-recipient-verification.yml
 permissions:
   contents: read
 concurrency:
@@ -37,7 +30,7 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
       - name: Build ephemeral debug APK and audit package
         run: bash tools/share-recipient-verification/build.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: caption-studio-share-recipient-verification-${{ github.sha }}
           retention-days: 7

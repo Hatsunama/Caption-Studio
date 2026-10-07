@@ -10,9 +10,9 @@ tool APK because the ephemeral certificate changes.
 ## Build and evidence
 
 Use the Share recipient verification tool manual GitHub workflow on
-codex/share-recipient-verification. A push trigger restricted to this same
-branch and these tool paths bootstraps workflow registration without modifying
-main/integration. The workflow refuses every other branch, uses stock Java and
+codex/share-recipient-verification. The initial tool-only branch push registered
+the workflow; the final workflow is manual-only. No main/integration writes.
+The workflow refuses every other branch, uses stock Java and
 official Android SDK build-tools 36.0.0/platform 36, and runs pure Java tests
 before SDK installation or APK compilation. No Gradle/Expo/npm dependencies.
 CI artifacts retain the signed APK, its exact SHA256/byte count, tests, binary
