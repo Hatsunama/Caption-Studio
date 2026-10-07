@@ -257,16 +257,21 @@ internal class TimelineVideoExporter(private val context: Context) {
       baseVideo,
       if (plan.clips.isNotEmpty()) buildNativeVideoSequence(plan) else null,
     ).toMutableList()
-    val originalAudio = buildOriginalAudioSequences(plan, task)
-    val insertedAudio = plan.audioClips.mapNotNull { buildInsertedAudioSequence(it) }
-    sequences += originalAudio
-    sequences += insertedAudio
+    val audioState = mutableMapOf<String, Boolean>()
+    val audioItems = buildOriginalAudioItems(plan, task) + plan.audioClips.mapNotNull { clip ->
+      ensureActive(task)
+      buildInsertedAudioItem(clip, plan.durationMs) { uri ->
+        audioState.getOrPut(uri) { hasAudioTrack(uri) }
+      }
+    }
+    val audioSequences = buildTimelineAudioLanes(audioItems, timelineAudioUs(plan.durationMs)) { ensureActive(task) }
+    sequences += audioSequences
     return PreparedComposition(
       Composition.Builder(sequences)
         .setVideoCompositorSettings(TimelineVideoCompositorSettings(plan))
         .setEffects(Effects(emptyList(), listOf(OverlayEffect(listOf(task.overlay)))))
         .build(),
-      audioExpected = originalAudio.isNotEmpty() || insertedAudio.isNotEmpty(),
+      audioExpected = audioSequences.isNotEmpty(),
     )
   }
 
@@ -298,41 +303,45 @@ internal class TimelineVideoExporter(private val context: Context) {
     return builder.build()
   }
 
-  private fun buildOriginalAudioSequences(plan: TimelineRenderPlan, task: ActiveExport): List<EditedMediaItemSequence> =
-    plan.clips.mapNotNull { clip ->
-      if (clip.muted || clip.volume <= 0f || task.sourceInfoByUri[clip.uri]?.hasAudio != true) return@mapNotNull null
-      val segments = task.transitionTimeline.audioSegments(clip)
-      val builder = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
-      if (segments.first().timelineStartMs > 0) builder.addGap(segments.first().timelineStartMs * 1_000L)
-      segments.forEach { segment ->
-        val gain = GainProcessor(TimelineClipGainProvider(clip, segment))
-        builder.addItem(
-          EditedMediaItem.Builder(clippedMediaItem(clip.uri, segment.sourceStartMs, segment.sourceEndMs))
-            .setRemoveVideo(true)
-            .setSpeed(ConstantSpeedProvider(segment.playbackRate))
-            .setEffects(Effects(listOf(gain), emptyList()))
-            .build(),
+  private fun buildOriginalAudioItems(plan: TimelineRenderPlan, task: ActiveExport): List<TimelineAudioLaneItem> =
+    plan.clips.flatMap { clip ->
+      ensureActive(task)
+      if (clip.muted || clip.volume <= 0f || task.sourceInfoByUri[clip.uri]?.hasAudio != true) return@flatMap emptyList()
+      task.transitionTimeline.audioSegments(clip).map { segment ->
+        ensureActive(task)
+        timelineAudioLaneItem(
+          timelineAudioUs(segment.timelineStartMs),
+          timelineAudioUs(segment.timelineEndMs),
+          clippedMediaItem(clip.uri, segment.sourceStartMs, segment.sourceEndMs),
+          ConstantSpeedProvider(segment.playbackRate),
+          Effects(listOf(GainProcessor(TimelineClipGainProvider(clip, segment))), emptyList()),
         )
       }
-      builder.build()
     }
 
-  private fun buildInsertedAudioSequence(clip: RenderAudioClip): EditedMediaItemSequence? {
+  private fun buildInsertedAudioItem(
+    clip: RenderAudioClip,
+    timelineDurationMs: Long,
+    hasAudio: (String) -> Boolean,
+  ): TimelineAudioLaneItem? {
     val sourceEndMs = clip.sourceEndMs
     if (clip.muted || clip.volume <= 0f || sourceEndMs <= clip.sourceStartMs) return null
-    check(hasAudioTrack(clip.uri)) { "An added audio clip has no readable audio track" }
-    val builder = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
-    if (clip.startMs > 0) builder.addGap(clip.startMs * 1_000L)
+    check(hasAudio(clip.uri)) { "An added audio clip has no readable audio track" }
+    val startUs = timelineAudioUs(clip.startMs)
+    val speed = ConstantSpeedProvider(clip.playbackRate)
+    val naturalDurationUs = androidx.media3.common.util.SpeedProviderUtil.getDurationAfterSpeedProviderApplied(
+      speed, timelineAudioUs(sourceEndMs - clip.sourceStartMs),
+    )
+    val endUs = min(timelineAudioUs(timelineDurationMs), Math.addExact(startUs, naturalDurationUs))
     val durationMs = ((sourceEndMs - clip.sourceStartMs) / clip.playbackRate).toLong()
     val gain = GainProcessor(ClipGainProvider(clip.volume, durationMs, clip.fadeInMs, clip.fadeOutMs))
-    builder.addItem(
-      EditedMediaItem.Builder(clippedMediaItem(clip.uri, clip.sourceStartMs, sourceEndMs))
-        .setRemoveVideo(true)
-        .setSpeed(ConstantSpeedProvider(clip.playbackRate))
-        .setEffects(Effects(listOf(gain), emptyList()))
-        .build(),
+    return timelineAudioLaneItem(
+      startUs,
+      endUs,
+      clippedMediaItem(clip.uri, clip.sourceStartMs, sourceEndMs),
+      speed,
+      Effects(listOf(gain), emptyList()),
     )
-    return builder.build()
   }
 
   private fun clippedMediaItem(uri: String, startMs: Long, endMs: Long) = MediaItem.Builder()
