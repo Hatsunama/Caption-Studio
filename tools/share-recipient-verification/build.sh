@@ -9,7 +9,8 @@ javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$android" \
   -d out/classes src/app/captionstudio/verification/sharereceiver/*.java
 "$bt/d8" --min-api 24 --lib "$android" --output out/dex \
   $(find out/classes -name '*.class' -print)
-"$bt/aapt2" link -I "$android" --manifest AndroidManifest.xml -o out/unsigned.apk
+"$bt/aapt2" link -I "$android" --manifest AndroidManifest.xml \
+  --min-sdk-version 24 --target-sdk-version 36 -o out/unsigned.apk
 (cd out/dex && zip -q -0 ../unsigned.apk classes.dex)
 "$bt/zipalign" -p -f 4 out/unsigned.apk out/aligned.apk
 key="$RUNNER_TEMP/share-recipient-ephemeral.p12"
