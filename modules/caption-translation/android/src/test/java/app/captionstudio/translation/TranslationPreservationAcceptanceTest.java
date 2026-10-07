@@ -264,10 +264,13 @@ public final class TranslationPreservationAcceptanceTest {
 
 
   @Test public void cancellationAfterInvariantBatchRetainsReplayAndResumeStillTranslatesProse() throws Exception {
+    for (String invariant : new String[] {
+        "ok https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00",
+        "42 https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00",
+        "+ https://example.com/ \u0060code\u0060 \ud83d\ude00"}) {
     File directory = temporary.newFolder();
-    File model = temporary.newFile("composition-cancel.litertlm");
+    File model = temporary.newFile("composition-cancel-" + System.nanoTime() + ".litertlm");
     Files.write(model.toPath(), new byte[]{1});
-    String invariant = "ok https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00";
     Map<String,Object> request = Map.of("requestId", "composition-cancel", "reuseCheckpoints", true,
         "operations", List.of(Map.of("id", "op", "sourceLanguage", "en", "targetLanguage", "pl",
             "batches", List.of(
@@ -341,6 +344,30 @@ public final class TranslationPreservationAcceptanceTest {
           assertEquals(1, calls.get());
           assertEquals(2, ((List<?>)result.get().get("captions")).size());
         }
+      }
+    }
+    }
+  }
+
+
+  @Test public void numericAndSymbolCompositionsBypassGenerationAndReplayForEveryTarget() throws Exception {
+    for (String source : new String[] {
+        "42 https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00",
+        "+ https://example.com/ \u0060code\u0060 \ud83d\ude00",
+        "4 2 https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00",
+        "+42 / -7 = 35 https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00"}) {
+      for (String target : new String[] {"pl", "zh-Hans", "ar", "ja"}) {
+        File directory = temporary.newFolder();
+        AtomicInteger calls = new AtomicInteger();
+        var first = runSource(directory, calls, source, true, source, target);
+        assertEquals(source + ": " + target, true, cue(first).get("valid"));
+        assertEquals(source, cue(first).get("text"));
+        assertEquals("cue", cue(first).get("id"));
+        assertEquals("metadata needs no inference", 0, calls.get());
+        AtomicInteger replayCalls = new AtomicInteger();
+        var replay = runSource(directory, replayCalls, "Must not generate", true, source, target);
+        assertEquals(first.get("captions"), replay.get("captions"));
+        assertEquals(0, replayCalls.get());
       }
     }
   }

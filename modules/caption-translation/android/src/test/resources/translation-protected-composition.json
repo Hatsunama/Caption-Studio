@@ -166,5 +166,155 @@
     "source": "oK 😀",
     "translated": "oK 😀",
     "review": false
+  },
+  {
+    "name": "numeric metadata",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀",
+    "review": false
+  },
+  {
+    "name": "symbol metadata",
+    "source": "+ https://example.com/ `src/app.ts` 😀",
+    "translated": "+ https://example.com/ `src/app.ts` 😀",
+    "review": false
+  },
+  {
+    "name": "numeric groups",
+    "source": "4 2 https://example.com/ `src/app.ts` 😀",
+    "translated": "4 2 https://example.com/ `src/app.ts` 😀",
+    "review": false
+  },
+  {
+    "name": "mathematical metadata",
+    "source": "+42 / -7 = 35 https://example.com/ `src/app.ts` 😀",
+    "translated": "+42 / -7 = 35 https://example.com/ `src/app.ts` 😀",
+    "review": false
+  },
+  {
+    "name": "currency metadata",
+    "source": "$42 https://example.com/ `src/app.ts` 😀",
+    "translated": "$42 https://example.com/ `src/app.ts` 😀",
+    "review": false
+  },
+  {
+    "name": "metadata between literals",
+    "source": "4 😀 2 + `src/app.ts` https://example.com/",
+    "translated": "4 😀 2 + `src/app.ts` https://example.com/",
+    "review": false
+  },
+  {
+    "name": "changed number",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "99 https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "dropped number",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "added number",
+    "source": "https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "duplicated number",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 42 https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "joined numeric groups",
+    "source": "4 2 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "split numeric token",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "4 2 https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "protected span cannot join digits",
+    "source": "4 😀 2 https://example.com/ `src/app.ts`",
+    "translated": "42 https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "changed symbol",
+    "source": "+ https://example.com/ `src/app.ts` 😀",
+    "translated": "- https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "dropped symbol",
+    "source": "+ https://example.com/ `src/app.ts` 😀",
+    "translated": "https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "added symbol",
+    "source": "https://example.com/ `src/app.ts` 😀",
+    "translated": "+ https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "missing numeric URL",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "duplicated numeric URL",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀 https://example.com/",
+    "review": true
+  },
+  {
+    "name": "missing numeric code",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ 😀",
+    "review": true
+  },
+  {
+    "name": "duplicated numeric code",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀 `src/app.ts`",
+    "review": true
+  },
+  {
+    "name": "missing numeric emoji",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts`",
+    "review": true
+  },
+  {
+    "name": "duplicated numeric emoji",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀 😀",
+    "review": true
+  },
+  {
+    "name": "ordinary prose and numeric data",
+    "source": "Read 42 https://example.com/ `src/app.ts` 😀",
+    "translated": "Read 42 https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "numeric name is still prose",
+    "source": "Model42 https://example.com/ `src/app.ts` 😀",
+    "translated": "Model42 https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "split acknowledgement and numeric data",
+    "source": "o 😀 k 42 https://example.com/ `src/app.ts`",
+    "translated": "o 😀 k 42 https://example.com/ `src/app.ts`",
+    "review": true
   }
 ]
