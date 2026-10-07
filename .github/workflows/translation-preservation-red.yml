@@ -21,6 +21,10 @@ jobs:
           java-version: 17
       - name: Install locked test dependencies
         run: npm ci --no-audit --no-fund
+      - name: Verify published dependency regressions and consumer compatibility
+        run: |
+          node --test tests/published-dependency-regressions.cjs
+          node tests/dependency-api-compatibility.cjs
       - name: Run full suites, preservation regressions, and repository gates
         run: python3 tests/translation-preservation-cloud.py
       - name: Retain repair check results
