@@ -132,12 +132,16 @@ public final class TranslationPreservationContractTest {
   @Test public void unspacedChineseOperatorMustPassNativePreservationAndQuality() {
     String[] sources = {"Ready + now", "42 https://example.com/\n\n\u0060src/app.ts\u0060 + is ready."};
     String[] targets = {"现在+已就绪", "42 https://example.com/\n\n\u0060src/app.ts\u0060+已准备好。"};
+    StringBuilder failures = new StringBuilder();
     for (int i = 0; i < sources.length; i++) {
-      assertTrue("exact plus outside opaque spans must survive without target spaces",
-          TranslationPreservation.preserves(sources[i], targets[i]));
-      assertEquals(TranslationOutputQuality.Reason.NONE,
-          TranslationOutputQuality.classify(sources[i], targets[i], "zh-Hans"));
+      boolean preserved = TranslationPreservation.preserves(sources[i], targets[i]);
+      var reason = TranslationOutputQuality.classify(sources[i], targets[i], "zh-Hans");
+      if (!preserved || reason != TranslationOutputQuality.Reason.NONE) {
+        failures.append("case=").append(i).append(" preserved=").append(preserved)
+            .append(" quality=").append(reason).append(';');
+      }
     }
+    assertEquals("exact plus outside opaque spans must survive without target spaces", "", failures.toString());
   }
 
   @Test public void unspacedChineseOperatorMustPassNativeQualityIndependently() {
