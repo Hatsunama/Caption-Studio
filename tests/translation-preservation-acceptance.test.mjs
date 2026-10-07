@@ -75,7 +75,7 @@ test('shared protected composition passes quality and durable writes without exe
   const { isLikelyUntranslatedCaption } = await import('../src/lib/caption-languages.ts');
   const cases = JSON.parse(await readFile(new URL('../modules/caption-translation/android/src/test/resources/translation-protected-composition.json', import.meta.url), 'utf8'));
   for (const item of cases) {
-    for (const target of ['pl', 'zh-Hans', 'ar', 'ja']) {
+    for (const target of item.targets ?? ['pl', 'zh-Hans', 'ar', 'ja']) {
       assert.equal(isLikelyUntranslatedCaption(item.source, item.translated, target), item.review,
         item.name + ': ' + target);
       assert.equal(usableAutomaticTranslation(item.source, item.translated, false, target),
@@ -93,4 +93,17 @@ test('exact Samsung composition writes under its requested ID; native invalid st
     previousById: new Map(), targetLanguage: 'pl',
   }), [{ sourceCaptionId: 'samsung-cue', translatedText: source, translationStatus: 'translated' }]);
   assert.equal(usableAutomaticTranslation(source, source, true, 'pl'), undefined);
+});
+
+test('protected data neither contaminates nor supplies translated prose script', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { isLikelyUntranslatedCaption } = await import('../src/lib/caption-languages.ts');
+  const cases = JSON.parse(await readFile(new URL('../modules/caption-translation/android/src/test/resources/translation-protected-composition.json', import.meta.url), 'utf8'));
+  for (const item of cases.filter(item => item.scriptFixture)) {
+    for (const target of item.targets) {
+      assert.equal(isLikelyUntranslatedCaption(item.source, item.translated, target), item.review, item.name);
+      assert.equal(usableAutomaticTranslation(item.source, item.translated, false, target),
+        item.review ? undefined : normalizeTranslationContent(item.translated), item.name + ': durable');
+    }
+  }
 });

@@ -211,6 +211,46 @@ public final class TranslationPreservationAcceptanceTest {
   }
 
 
+
+  @Test public void protectedDataNeitherContaminatesNorSuppliesProseScript() throws Exception {
+    try (var input = getClass().getResourceAsStream("/translation-protected-composition.json")) {
+      assertNotNull(input);
+      var cases = JsonParser.parseReader(new java.io.InputStreamReader(input,
+          java.nio.charset.StandardCharsets.UTF_8)).getAsJsonArray();
+      for (var element : cases) {
+        var item = element.getAsJsonObject();
+        if (!item.has("scriptFixture")) continue;
+        for (var target : item.getAsJsonArray("targets")) {
+          assertEquals(item.get("name").getAsString(),
+              item.get("review").getAsBoolean() ? TranslationOutputQuality.Reason.WRONG_SCRIPT
+                  : TranslationOutputQuality.Reason.NONE,
+              TranslationOutputQuality.classify(item.get("source").getAsString(),
+                  item.get("translated").getAsString(), target.getAsString()));
+        }
+      }
+    }
+  }
+
+  @Test public void translatedProseWithProtectedScriptSurvivesRuntimeAndReplay() throws Exception {
+    String source = "Bring \u0060我們\u0060.";
+    String translated = "带上 \u0060我們\u0060。";
+    File directory = temporary.newFolder();
+    AtomicInteger calls = new AtomicInteger();
+    var fresh = runSource(directory, calls, translated, false, source, "zh-Hans");
+    assertEquals(true, cue(fresh).get("valid"));
+    assertEquals(translated, cue(fresh).get("text"));
+    assertEquals(1, calls.get());
+    AtomicInteger replayCalls = new AtomicInteger();
+    var replay = runSource(directory, replayCalls, "Must not generate", false, source, "zh-Hans");
+    assertEquals(fresh.get("captions"), replay.get("captions"));
+    assertEquals(0, replayCalls.get());
+    AtomicInteger decoyCalls = new AtomicInteger();
+    var rejected = runSource(temporary.newFolder(), decoyCalls, "See \u0060東京\u0060.",
+        true, "Read \u0060東京\u0060.", "ja");
+    assertEquals(false, cue(rejected).get("valid"));
+    assertTrue(decoyCalls.get() > 0);
+  }
+
   @Test public void sharedProtectedCompositionQualityParity() throws Exception {
     try (var input = getClass().getResourceAsStream("/translation-protected-composition.json")) {
       assertNotNull(input);
@@ -218,7 +258,10 @@ public final class TranslationPreservationAcceptanceTest {
           java.nio.charset.StandardCharsets.UTF_8)).getAsJsonArray();
       for (var element : cases) {
         var item = element.getAsJsonObject();
-        for (String target : new String[] {"pl", "zh-Hans", "ar", "ja"}) {
+        for (String target : item.has("targets")
+            ? java.util.stream.StreamSupport.stream(item.getAsJsonArray("targets").spliterator(), false)
+                .map(value -> value.getAsString()).toArray(String[]::new)
+            : new String[] {"pl", "zh-Hans", "ar", "ja"}) {
           assertEquals(item.get("name").getAsString() + ": " + target,
               item.get("review").getAsBoolean(), TranslationOutputQuality.needsReview(
                   item.get("source").getAsString(), item.get("translated").getAsString(), target));

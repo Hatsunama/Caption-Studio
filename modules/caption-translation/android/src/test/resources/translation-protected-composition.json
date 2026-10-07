@@ -316,5 +316,515 @@
     "source": "o 😀 k 42 https://example.com/ `src/app.ts`",
     "translated": "o 😀 k 42 https://example.com/ `src/app.ts`",
     "review": true
+  },
+  {
+    "name": "Simplified prose preserves traditional code",
+    "source": "Bring `我們`.",
+    "translated": "带上 `我們`。",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "Traditional prose preserves simplified code",
+    "source": "Bring `我们`.",
+    "translated": "帶上 `我们`。",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "English prose preserves Han code",
+    "source": "带上 `我們`。",
+    "translated": "Bring `我們`.",
+    "targets": [
+      "en"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "ja real prose with data",
+    "source": "Read `東京`. ",
+    "translated": "持ってきて `東京`. ",
+    "targets": [
+      "ja"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "ja code cannot supply script",
+    "source": "Read `東京`.",
+    "translated": "See `東京`.",
+    "targets": [
+      "ja"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ja fenced data cannot supply script",
+    "source": "Read ```東京```.",
+    "translated": "See ```東京```.",
+    "targets": [
+      "ja"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ja invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```東京```.",
+    "targets": [
+      "ja"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ja unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "ja"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ko real prose with data",
+    "source": "Read `서울`. ",
+    "translated": "가져오세요 `서울`. ",
+    "targets": [
+      "ko"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "ko code cannot supply script",
+    "source": "Read `서울`.",
+    "translated": "See `서울`.",
+    "targets": [
+      "ko"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ko fenced data cannot supply script",
+    "source": "Read ```서울```.",
+    "translated": "See ```서울```.",
+    "targets": [
+      "ko"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ko invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```서울```.",
+    "targets": [
+      "ko"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ko unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "ko"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "th real prose with data",
+    "source": "Read `ไทย`. ",
+    "translated": "นำมา `ไทย`. ",
+    "targets": [
+      "th"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "th code cannot supply script",
+    "source": "Read `ไทย`.",
+    "translated": "See `ไทย`.",
+    "targets": [
+      "th"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "th fenced data cannot supply script",
+    "source": "Read ```ไทย```.",
+    "translated": "See ```ไทย```.",
+    "targets": [
+      "th"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "th invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```ไทย```.",
+    "targets": [
+      "th"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "th unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "th"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ar real prose with data",
+    "source": "Read `عربي`. ",
+    "translated": "أحضر `عربي`. ",
+    "targets": [
+      "ar"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "ar code cannot supply script",
+    "source": "Read `عربي`.",
+    "translated": "See `عربي`.",
+    "targets": [
+      "ar"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ar fenced data cannot supply script",
+    "source": "Read ```عربي```.",
+    "translated": "See ```عربي```.",
+    "targets": [
+      "ar"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ar invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```عربي```.",
+    "targets": [
+      "ar"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ar unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "ar"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "hi real prose with data",
+    "source": "Read `हिन्दी`. ",
+    "translated": "लाओ `हिन्दी`. ",
+    "targets": [
+      "hi"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "hi code cannot supply script",
+    "source": "Read `हिन्दी`.",
+    "translated": "See `हिन्दी`.",
+    "targets": [
+      "hi"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "hi fenced data cannot supply script",
+    "source": "Read ```हिन्दी```.",
+    "translated": "See ```हिन्दी```.",
+    "targets": [
+      "hi"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "hi invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```हिन्दी```.",
+    "targets": [
+      "hi"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "hi unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "hi"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "bn real prose with data",
+    "source": "Read `বাংলা`. ",
+    "translated": "আনুন `বাংলা`. ",
+    "targets": [
+      "bn"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "bn code cannot supply script",
+    "source": "Read `বাংলা`.",
+    "translated": "See `বাংলা`.",
+    "targets": [
+      "bn"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "bn fenced data cannot supply script",
+    "source": "Read ```বাংলা```.",
+    "translated": "See ```বাংলা```.",
+    "targets": [
+      "bn"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "bn invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```বাংলা```.",
+    "targets": [
+      "bn"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "bn unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "bn"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ru real prose with data",
+    "source": "Read `Москва`. ",
+    "translated": "Принеси `Москва`. ",
+    "targets": [
+      "ru"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "ru code cannot supply script",
+    "source": "Read `Москва`.",
+    "translated": "See `Москва`.",
+    "targets": [
+      "ru"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ru fenced data cannot supply script",
+    "source": "Read ```Москва```.",
+    "translated": "See ```Москва```.",
+    "targets": [
+      "ru"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ru invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```Москва```.",
+    "targets": [
+      "ru"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ru unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "ru"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hans real prose with data",
+    "source": "Read `我们`. ",
+    "translated": "带上 `我们`. ",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hans code cannot supply script",
+    "source": "Read `我们`.",
+    "translated": "See `我们`.",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hans fenced data cannot supply script",
+    "source": "Read ```我们```.",
+    "translated": "See ```我们```.",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hans invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```我们```.",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hans unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hant real prose with data",
+    "source": "Read `我們`. ",
+    "translated": "帶上 `我們`. ",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hant code cannot supply script",
+    "source": "Read `我們`.",
+    "translated": "See `我們`.",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hant fenced data cannot supply script",
+    "source": "Read ```我們```.",
+    "translated": "See ```我們```.",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hant invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```我們```.",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hant unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "English URL cannot supply Latin",
+    "source": "Read https://example.com/.",
+    "translated": "看看 https://example.com/。",
+    "targets": [
+      "en"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "Simplified unprotected traditional rejection",
+    "source": "Bring the item.",
+    "translated": "帶上我們。",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "Traditional unprotected simplified rejection",
+    "source": "Bring the item.",
+    "translated": "带上我们。",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": true,
+    "scriptFixture": true
   }
 ]
