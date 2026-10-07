@@ -1,0 +1,20 @@
+{
+  "base": "66705acce04ac0f4f8760847ffe1d8188772a078",
+  "tested_head": "1e9cea76af157f1d645a3c74ffd6e3f4d18e87d3",
+  "production_audit_exit": 0,
+  "all_audit_exit": 0,
+  "full_repository_blockers": [],
+  "identities": {
+    "braces": {
+      "name": "@caption-studio/braces-backport",
+      "version": "3.0.3-caption-studio.1",
+      "integrity": "sha512-IrJJROcj7YDBdrtI4bEB98kNjM5L+7JrC0J2XrKI8a6tQNkeX6EnDCa7bd65qCfBMosUO7zWtwdXdNne0LmarQ=="
+    },
+    "node-forge": {
+      "name": "@caption-studio/node-forge-backport",
+      "version": "1.4.0-caption-studio.1",
+      "integrity": "sha512-2NuwEf/qaFHQwd6I7kZgah94GqO9IVoWlj+GT/2p+Y7EQ42AwIrF+ofEa7ysCMI5tfIiLKo2pPX56FT/mL4vBQ=="
+    }
+  },
+  "audit_interpretation": "npm advisory coverage does not validate private forks. Exact-release integrity, reviewed minimal patches, RED/GREEN upstream tests, consumer tests and source hashes are the independent evidence. No advisory exclusion or gate waiver."
+}

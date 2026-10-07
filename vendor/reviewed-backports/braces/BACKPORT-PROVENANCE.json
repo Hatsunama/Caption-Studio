@@ -1,0 +1,264 @@
+{
+  "release": {
+    "bugs": {
+      "url": "https://github.com/micromatch/braces/issues"
+    },
+    "dist": {
+      "shasum": "490332f40919452272d55a8480adc0c441358789",
+      "tarball": "https://registry.npmjs.org/braces/-/braces-3.0.3.tgz",
+      "fileCount": 10,
+      "integrity": "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==",
+      "signatures": [
+        {
+          "sig": "MEQCICfWLKNcFCGtU07ikrPJ+s1dTDH3VZTE+vQZzC22s6o+AiAEVUE/YXRqHYgctcwHqNawvsOviSDFZPvgNm8+SUXD3w==",
+          "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+        }
+      ],
+      "unpackedSize": 44635
+    },
+    "main": "index.js",
+    "name": "braces",
+    "verb": {
+      "toc": false,
+      "lint": {
+        "reflinks": true
+      },
+      "tasks": [
+        "readme"
+      ],
+      "layout": "default",
+      "plugins": [
+        "gulp-format-md"
+      ]
+    },
+    "author": {
+      "url": "https://github.com/jonschlinkert",
+      "name": "Jon Schlinkert"
+    },
+    "engines": {
+      "node": ">=8"
+    },
+    "gitHead": "74b2db2938fad48a2ea54a9c8bf27a37a62c350d",
+    "license": "MIT",
+    "scripts": {
+      "test": "mocha",
+      "benchmark": "node benchmark"
+    },
+    "_npmUser": {
+      "name": "jonschlinkert",
+      "email": "github@sellside.com"
+    },
+    "homepage": "https://github.com/micromatch/braces",
+    "keywords": [
+      "alpha",
+      "alphabetical",
+      "bash",
+      "brace",
+      "braces",
+      "expand",
+      "expansion",
+      "filepath",
+      "fill",
+      "fs",
+      "glob",
+      "globbing",
+      "letter",
+      "match",
+      "matches",
+      "matching",
+      "number",
+      "numerical",
+      "path",
+      "range",
+      "ranges",
+      "sh"
+    ],
+    "repository": {
+      "url": "git+https://github.com/micromatch/braces.git",
+      "type": "git"
+    },
+    "_npmVersion": "10.7.0",
+    "description": "Bash-like brace expansion, implemented in JavaScript. Safer than other brace expansion libs, with complete support for the Bash 4.3 braces specification, without sacrificing speed.",
+    "directories": {},
+    "maintainers": [
+      {
+        "name": "es128",
+        "email": "elan.shanker+npm@gmail.com"
+      },
+      {
+        "name": "paulmillr",
+        "email": "paul@paulmillr.com"
+      },
+      {
+        "name": "jonschlinkert",
+        "email": "github@sellside.com"
+      },
+      {
+        "name": "doowb",
+        "email": "brian.woodward@gmail.com"
+      }
+    ],
+    "_nodeVersion": "20.12.1",
+    "contributors": [
+      {
+        "url": "https://twitter.com/doowb",
+        "name": "Brian Woodward"
+      },
+      {
+        "url": "https://github.com/es128",
+        "name": "Elan Shanker"
+      },
+      {
+        "url": "https://github.com/eush77",
+        "name": "Eugene Sharygin"
+      },
+      {
+        "url": "http://h3manth.com",
+        "name": "hemanth.hm"
+      },
+      {
+        "url": "http://twitter.com/jonschlinkert",
+        "name": "Jon Schlinkert"
+      }
+    ],
+    "dependencies": {
+      "fill-range": "^7.1.1"
+    },
+    "_hasShrinkwrap": false,
+    "devDependencies": {
+      "mocha": "^6.1.1",
+      "bash-path": "^2.0.1",
+      "ansi-colors": "^3.2.4",
+      "gulp-format-md": "^2.0.0"
+    },
+    "_npmOperationalInternal": {
+      "tmp": "tmp/braces_3.0.3_1716281951275_0.19583852040362504",
+      "host": "s3://npm-registry-packages"
+    },
+    "_id": "braces@3.0.3",
+    "version": "3.0.3"
+  },
+  "release_tar_sha256": "1cd18e862c8640b4568b1425a7df4ee030ff201d45b2da8f9f222d2987494ffc",
+  "release_source_sha256": "697311aa470de468a1e5cac70ab227262dce9e38f5a4e0eef306d515b71222af",
+  "release_files_sha256": {
+    "LICENSE": "35bdd8a44339719441900fb50fbefc5e2dca1ca662cbaed7a687de842c8b70f2",
+    "index.js": "332ea07c7b006361aad12aa994ca75dc1db8e8382b884909e2f38f10b85c88a4",
+    "README.md": "947b0fc3cc12eaaa070207126213fbdf9ab2bf8cd13dcc6e4007b36b79309866",
+    "package.json": "56f08b888a4f30dc7cf8a7dbb36ffe92b737912ba36abe9d069d32167c957ac7",
+    "lib/utils.js": "b5a7596aa67730412b3c029ef09e84e6b67b8e445cffd35d1d295549c89066c7",
+    "lib/parse.js": "e572166565f15fa6ad9865ae49d678218e32aabfd1b3720f6d0d43d39800d310",
+    "lib/compile.js": "dc98f22eee3d511785d92a00758d5f0d48efed5f5813bdecc2de430c529b5c9f",
+    "lib/expand.js": "41ccc196ebfa7b7781a634e721eb744e4e7bcb54cba427a7e3d6806a1b9e58f7",
+    "lib/constants.js": "c18ac5adb57308f1ce42a28552da3a31f5d83709743ebd9a636336813a744d4b",
+    "lib/stringify.js": "379f22d77bfa1478341ccd49c5e4267464aabcbba03558bab332aac23fc6f23a"
+  },
+  "proposal": {
+    "release": "3.0.3",
+    "repo": "micromatch/braces",
+    "base": "e53730e6f935498326c72d768889ac194eedc0e0",
+    "headrepo": "FSDevelop/braces",
+    "head": "28d440b5dd449dbf1fe6f3506cf94ecca4d02660",
+    "pr": 72,
+    "files": [
+      "lib/constants.js",
+      "lib/parse.js",
+      "lib/compile.js",
+      "lib/expand.js",
+      "lib/stringify.js"
+    ],
+    "tests": [
+      "test/compile.js",
+      "test/expand.js",
+      "test/parse.js",
+      "test/stringify.js"
+    ],
+    "advisory": "GHSA-vfj7-8cjw-p6xm",
+    "identity": "@caption-studio/braces-backport"
+  },
+  "patches": [
+    {
+      "path": "lib/constants.js",
+      "patch_sha256": "00fe417afbdd934fa9a3d98915dcbbf93231dd9bc89cd7254e623218c08ae2fc",
+      "before_sha256": "c18ac5adb57308f1ce42a28552da3a31f5d83709743ebd9a636336813a744d4b",
+      "after_sha256": "f9fb688959232eee3e6ad7906a5b0e3234815db49ee857ef86983d65b917dc7c"
+    },
+    {
+      "path": "lib/parse.js",
+      "patch_sha256": "cff11d42c8d948182d1bc8964bb94462f611426b0360a935a1aedfec2af91976",
+      "before_sha256": "8c69d0e94fb70805c774382317246f823ff197cd94549252cedbed55ceb03996",
+      "after_sha256": "72aabaadaa555cdfbd07fbd7c7f743373e4dc8eec04a97550cc57bbeec30eb6c"
+    },
+    {
+      "path": "lib/compile.js",
+      "patch_sha256": "08951706b4796c825b75e542294393389f2c36f55b819a79040b1e7df7041976",
+      "before_sha256": "dc98f22eee3d511785d92a00758d5f0d48efed5f5813bdecc2de430c529b5c9f",
+      "after_sha256": "b651f7715e6db8942ce61d3394357b4d81c8ece88240aa31a458ea1165edd195"
+    },
+    {
+      "path": "lib/expand.js",
+      "patch_sha256": "5610f619e8de996c5ba196981c91ccb558f36afa6521e61b198677f40f2efa1b",
+      "before_sha256": "41ccc196ebfa7b7781a634e721eb744e4e7bcb54cba427a7e3d6806a1b9e58f7",
+      "after_sha256": "7ea3e14c2b2b256ef244fd3d83b8fcaa20aa2232b4e6d768c3bb6ab567f66cf5"
+    },
+    {
+      "path": "lib/stringify.js",
+      "patch_sha256": "125d0e5c9cc8c71999f502631be3d903d4539a715c73c27602b8a18eb2d5a2a1",
+      "before_sha256": "379f22d77bfa1478341ccd49c5e4267464aabcbba03558bab332aac23fc6f23a",
+      "after_sha256": "49dc2d8bafa74f34715a18a845bcb82ce66caaf3bab4cf117998e06b1f9a50a9"
+    }
+  ],
+  "regression_patches": [
+    {
+      "path": "test/braces.compile.js",
+      "patch_sha256": "1fc83529f9dc554067b3e00a05dea31c75ba1749bbfc13ab50ead4dedd9c0fff",
+      "before_sha256": "c47a9565c0be7287958667f31f64a060a38f91fbe98d27953b770ee2736ff077",
+      "after_sha256": "a65dd309c86853afe9cc2db80f83b76fc4609da199e063ec85abc0a9d32d2ff5"
+    },
+    {
+      "path": "test/braces.expand.js",
+      "patch_sha256": "5bd484d15b43c1c7edb29ca09a17d77ea3068a1971eb264362128741ca9012f3",
+      "before_sha256": "a6d70d8bec87025c58a6e14fffa9dcb3c0ae890fc2232e8b0af0966190fa733b",
+      "after_sha256": "76a435dd5fcab259eb0d2a1a16693cb710c432a716f5a0032f1e7f87b8eb1e81"
+    },
+    {
+      "path": "test/braces.parse.js",
+      "patch_sha256": "6f6a291c23adb50e2e45691e7714014f60388d126ffff6d9bc279275b45a1fe2",
+      "before_sha256": "e13fdba88b0ed7faad92c67aae3021195d54e6456c67c07a88e74a6931281a61",
+      "after_sha256": "11e9b5d34c90b3562281351fdaa7a2bc4b6b21d3a407625fc89c795de12880b0"
+    },
+    {
+      "path": "test/braces.stringify.js",
+      "patch_sha256": "6b2e7e280c49b10fe5e15a6d75a87a5ecf75171ee8215a80a764e34dda0cdf91",
+      "before_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after_sha256": "51ddb664e461fb4c2d00bc8440fb4d0001e67d42e502e07879742bc940d6df65"
+    }
+  ],
+  "private_identity": "@caption-studio/braces-backport",
+  "backport_version": "3.0.3-caption-studio.1",
+  "backport_files_sha256": {
+    "LICENSE": "35bdd8a44339719441900fb50fbefc5e2dca1ca662cbaed7a687de842c8b70f2",
+    "index.js": "332ea07c7b006361aad12aa994ca75dc1db8e8382b884909e2f38f10b85c88a4",
+    "README.md": "947b0fc3cc12eaaa070207126213fbdf9ab2bf8cd13dcc6e4007b36b79309866",
+    "package.json": "62e1c4dc384ca558da8918a948abba003d7c24f13990cbdd4d882d178e5dab11",
+    "lib/utils.js": "b5a7596aa67730412b3c029ef09e84e6b67b8e445cffd35d1d295549c89066c7",
+    "lib/parse.js": "72aabaadaa555cdfbd07fbd7c7f743373e4dc8eec04a97550cc57bbeec30eb6c",
+    "lib/parse.js.orig": "e572166565f15fa6ad9865ae49d678218e32aabfd1b3720f6d0d43d39800d310",
+    "lib/compile.js": "b651f7715e6db8942ce61d3394357b4d81c8ece88240aa31a458ea1165edd195",
+    "lib/expand.js": "7ea3e14c2b2b256ef244fd3d83b8fcaa20aa2232b4e6d768c3bb6ab567f66cf5",
+    "lib/constants.js": "f9fb688959232eee3e6ad7906a5b0e3234815db49ee857ef86983d65b917dc7c",
+    "lib/stringify.js": "49dc2d8bafa74f34715a18a845bcb82ce66caaf3bab4cf117998e06b1f9a50a9",
+    "test/readme.js": "91202e5e3e926d47b11ebe5f2b04db560c1048aac97e67f61d521ce0cb220b15",
+    "test/minimatch.js": "6b65901c2a0a2b680dbe1178311578037ee6601eab1631929ac2d10b2e37dd08",
+    "test/bash-spec.js": "c5208d38999e0fd0ac12e4bde7240b8e93890dff160ddb78ac62883f7ef632f4",
+    "test/bash-expanded-sets.js": "b0759bb53728d98a71e4b06f566301f5aa3ccf28e8f99eaa2634fda8d877f96c",
+    "test/bash-compiled-ranges.js": "7e8a10ed467f19dd3723ebcb02c33ff13c973115ea101c8504b2fd32f9b3e9e3",
+    "test/regression.js": "1595ae9cea47947b1ea258673151c2428a780859fc1efd5d9d92b035f1887470",
+    "test/bash-expanded-ranges.js": "69c55956b57fe27160ce9dfab92a0a552001ee7aa992dc8d077410a282b92097",
+    "test/braces.parse.js": "11e9b5d34c90b3562281351fdaa7a2bc4b6b21d3a407625fc89c795de12880b0",
+    "test/bash-compiled-sets.js": "ff2dda0bdd8d1db4994f814d75117494e53b2a83cafd957048ddc9bca619d669",
+    "test/braces.compile.js": "a65dd309c86853afe9cc2db80f83b76fc4609da199e063ec85abc0a9d32d2ff5",
+    "test/braces.expand.js": "76a435dd5fcab259eb0d2a1a16693cb710c432a716f5a0032f1e7f87b8eb1e81",
+    "test/braces.stringify.js": "51ddb664e461fb4c2d00bc8440fb4d0001e67d42e502e07879742bc940d6df65",
+    "test/multiples.js": "d0b779166faf40693b5898a3766ae6c91aec600a714cf1b36a8b85067e90b7ac"
+  }
+}

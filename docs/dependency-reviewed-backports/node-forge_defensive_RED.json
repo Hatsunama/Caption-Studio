@@ -1,0 +1,13 @@
+{
+  "exit_code": 1,
+  "output": "\n\n  rsa\n    signature verification\n      1) should check nested DigestAlgorithm element count\n\n\n  0 passing (9ms)\n  1 failing\n\n  1) rsa\n       signature verification\n         should check nested DigestAlgorithm element count:\n     AssertionError [ERR_ASSERTION]: Missing expected exception.\n      at _checkBadDigestInfo (tests/unit/rsa.js:847:16)\n      at Context.<anonymous> (tests/unit/rsa.js:1191:9)\n      at process.processImmediate (node:internal/timers:491:21)\n\n\n\n",
+  "command": [
+    "node",
+    "/home/runner/work/Caption-Studio/Caption-Studio/reviewed-backport-evidence/harness/node_modules/mocha/bin/mocha.js",
+    "-t",
+    "30000",
+    "tests/unit/rsa.js",
+    "--grep",
+    "nested DigestAlgorithm element count"
+  ]
+}

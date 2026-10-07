@@ -1,0 +1,1048 @@
+{
+  "braces": {
+    "release": {
+      "bugs": {
+        "url": "https://github.com/micromatch/braces/issues"
+      },
+      "dist": {
+        "shasum": "490332f40919452272d55a8480adc0c441358789",
+        "tarball": "https://registry.npmjs.org/braces/-/braces-3.0.3.tgz",
+        "fileCount": 10,
+        "integrity": "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==",
+        "signatures": [
+          {
+            "sig": "MEQCICfWLKNcFCGtU07ikrPJ+s1dTDH3VZTE+vQZzC22s6o+AiAEVUE/YXRqHYgctcwHqNawvsOviSDFZPvgNm8+SUXD3w==",
+            "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+          }
+        ],
+        "unpackedSize": 44635
+      },
+      "main": "index.js",
+      "name": "braces",
+      "verb": {
+        "toc": false,
+        "lint": {
+          "reflinks": true
+        },
+        "tasks": [
+          "readme"
+        ],
+        "layout": "default",
+        "plugins": [
+          "gulp-format-md"
+        ]
+      },
+      "author": {
+        "url": "https://github.com/jonschlinkert",
+        "name": "Jon Schlinkert"
+      },
+      "engines": {
+        "node": ">=8"
+      },
+      "gitHead": "74b2db2938fad48a2ea54a9c8bf27a37a62c350d",
+      "license": "MIT",
+      "scripts": {
+        "test": "mocha",
+        "benchmark": "node benchmark"
+      },
+      "_npmUser": {
+        "name": "jonschlinkert",
+        "email": "github@sellside.com"
+      },
+      "homepage": "https://github.com/micromatch/braces",
+      "keywords": [
+        "alpha",
+        "alphabetical",
+        "bash",
+        "brace",
+        "braces",
+        "expand",
+        "expansion",
+        "filepath",
+        "fill",
+        "fs",
+        "glob",
+        "globbing",
+        "letter",
+        "match",
+        "matches",
+        "matching",
+        "number",
+        "numerical",
+        "path",
+        "range",
+        "ranges",
+        "sh"
+      ],
+      "repository": {
+        "url": "git+https://github.com/micromatch/braces.git",
+        "type": "git"
+      },
+      "_npmVersion": "10.7.0",
+      "description": "Bash-like brace expansion, implemented in JavaScript. Safer than other brace expansion libs, with complete support for the Bash 4.3 braces specification, without sacrificing speed.",
+      "directories": {},
+      "maintainers": [
+        {
+          "name": "es128",
+          "email": "elan.shanker+npm@gmail.com"
+        },
+        {
+          "name": "paulmillr",
+          "email": "paul@paulmillr.com"
+        },
+        {
+          "name": "jonschlinkert",
+          "email": "github@sellside.com"
+        },
+        {
+          "name": "doowb",
+          "email": "brian.woodward@gmail.com"
+        }
+      ],
+      "_nodeVersion": "20.12.1",
+      "contributors": [
+        {
+          "url": "https://twitter.com/doowb",
+          "name": "Brian Woodward"
+        },
+        {
+          "url": "https://github.com/es128",
+          "name": "Elan Shanker"
+        },
+        {
+          "url": "https://github.com/eush77",
+          "name": "Eugene Sharygin"
+        },
+        {
+          "url": "http://h3manth.com",
+          "name": "hemanth.hm"
+        },
+        {
+          "url": "http://twitter.com/jonschlinkert",
+          "name": "Jon Schlinkert"
+        }
+      ],
+      "dependencies": {
+        "fill-range": "^7.1.1"
+      },
+      "_hasShrinkwrap": false,
+      "devDependencies": {
+        "mocha": "^6.1.1",
+        "bash-path": "^2.0.1",
+        "ansi-colors": "^3.2.4",
+        "gulp-format-md": "^2.0.0"
+      },
+      "_npmOperationalInternal": {
+        "tmp": "tmp/braces_3.0.3_1716281951275_0.19583852040362504",
+        "host": "s3://npm-registry-packages"
+      },
+      "_id": "braces@3.0.3",
+      "version": "3.0.3"
+    },
+    "release_tar_sha256": "1cd18e862c8640b4568b1425a7df4ee030ff201d45b2da8f9f222d2987494ffc",
+    "release_source_sha256": "697311aa470de468a1e5cac70ab227262dce9e38f5a4e0eef306d515b71222af",
+    "release_files_sha256": {
+      "LICENSE": "35bdd8a44339719441900fb50fbefc5e2dca1ca662cbaed7a687de842c8b70f2",
+      "index.js": "332ea07c7b006361aad12aa994ca75dc1db8e8382b884909e2f38f10b85c88a4",
+      "README.md": "947b0fc3cc12eaaa070207126213fbdf9ab2bf8cd13dcc6e4007b36b79309866",
+      "package.json": "56f08b888a4f30dc7cf8a7dbb36ffe92b737912ba36abe9d069d32167c957ac7",
+      "lib/utils.js": "b5a7596aa67730412b3c029ef09e84e6b67b8e445cffd35d1d295549c89066c7",
+      "lib/parse.js": "e572166565f15fa6ad9865ae49d678218e32aabfd1b3720f6d0d43d39800d310",
+      "lib/compile.js": "dc98f22eee3d511785d92a00758d5f0d48efed5f5813bdecc2de430c529b5c9f",
+      "lib/expand.js": "41ccc196ebfa7b7781a634e721eb744e4e7bcb54cba427a7e3d6806a1b9e58f7",
+      "lib/constants.js": "c18ac5adb57308f1ce42a28552da3a31f5d83709743ebd9a636336813a744d4b",
+      "lib/stringify.js": "379f22d77bfa1478341ccd49c5e4267464aabcbba03558bab332aac23fc6f23a"
+    },
+    "proposal": {
+      "release": "3.0.3",
+      "repo": "micromatch/braces",
+      "base": "e53730e6f935498326c72d768889ac194eedc0e0",
+      "headrepo": "FSDevelop/braces",
+      "head": "28d440b5dd449dbf1fe6f3506cf94ecca4d02660",
+      "pr": 72,
+      "files": [
+        "lib/constants.js",
+        "lib/parse.js",
+        "lib/compile.js",
+        "lib/expand.js",
+        "lib/stringify.js"
+      ],
+      "tests": [
+        "test/compile.js",
+        "test/expand.js",
+        "test/parse.js",
+        "test/stringify.js"
+      ],
+      "advisory": "GHSA-vfj7-8cjw-p6xm",
+      "identity": "@caption-studio/braces-backport"
+    },
+    "patches": [
+      {
+        "path": "lib/constants.js",
+        "patch_sha256": "00fe417afbdd934fa9a3d98915dcbbf93231dd9bc89cd7254e623218c08ae2fc",
+        "before_sha256": "c18ac5adb57308f1ce42a28552da3a31f5d83709743ebd9a636336813a744d4b",
+        "after_sha256": "f9fb688959232eee3e6ad7906a5b0e3234815db49ee857ef86983d65b917dc7c"
+      },
+      {
+        "path": "lib/parse.js",
+        "patch_sha256": "cff11d42c8d948182d1bc8964bb94462f611426b0360a935a1aedfec2af91976",
+        "before_sha256": "8c69d0e94fb70805c774382317246f823ff197cd94549252cedbed55ceb03996",
+        "after_sha256": "72aabaadaa555cdfbd07fbd7c7f743373e4dc8eec04a97550cc57bbeec30eb6c"
+      },
+      {
+        "path": "lib/compile.js",
+        "patch_sha256": "08951706b4796c825b75e542294393389f2c36f55b819a79040b1e7df7041976",
+        "before_sha256": "dc98f22eee3d511785d92a00758d5f0d48efed5f5813bdecc2de430c529b5c9f",
+        "after_sha256": "b651f7715e6db8942ce61d3394357b4d81c8ece88240aa31a458ea1165edd195"
+      },
+      {
+        "path": "lib/expand.js",
+        "patch_sha256": "5610f619e8de996c5ba196981c91ccb558f36afa6521e61b198677f40f2efa1b",
+        "before_sha256": "41ccc196ebfa7b7781a634e721eb744e4e7bcb54cba427a7e3d6806a1b9e58f7",
+        "after_sha256": "7ea3e14c2b2b256ef244fd3d83b8fcaa20aa2232b4e6d768c3bb6ab567f66cf5"
+      },
+      {
+        "path": "lib/stringify.js",
+        "patch_sha256": "125d0e5c9cc8c71999f502631be3d903d4539a715c73c27602b8a18eb2d5a2a1",
+        "before_sha256": "379f22d77bfa1478341ccd49c5e4267464aabcbba03558bab332aac23fc6f23a",
+        "after_sha256": "49dc2d8bafa74f34715a18a845bcb82ce66caaf3bab4cf117998e06b1f9a50a9"
+      }
+    ],
+    "regression_patches": [
+      {
+        "path": "test/braces.compile.js",
+        "patch_sha256": "1fc83529f9dc554067b3e00a05dea31c75ba1749bbfc13ab50ead4dedd9c0fff",
+        "before_sha256": "c47a9565c0be7287958667f31f64a060a38f91fbe98d27953b770ee2736ff077",
+        "after_sha256": "a65dd309c86853afe9cc2db80f83b76fc4609da199e063ec85abc0a9d32d2ff5"
+      },
+      {
+        "path": "test/braces.expand.js",
+        "patch_sha256": "5bd484d15b43c1c7edb29ca09a17d77ea3068a1971eb264362128741ca9012f3",
+        "before_sha256": "a6d70d8bec87025c58a6e14fffa9dcb3c0ae890fc2232e8b0af0966190fa733b",
+        "after_sha256": "76a435dd5fcab259eb0d2a1a16693cb710c432a716f5a0032f1e7f87b8eb1e81"
+      },
+      {
+        "path": "test/braces.parse.js",
+        "patch_sha256": "6f6a291c23adb50e2e45691e7714014f60388d126ffff6d9bc279275b45a1fe2",
+        "before_sha256": "e13fdba88b0ed7faad92c67aae3021195d54e6456c67c07a88e74a6931281a61",
+        "after_sha256": "11e9b5d34c90b3562281351fdaa7a2bc4b6b21d3a407625fc89c795de12880b0"
+      },
+      {
+        "path": "test/braces.stringify.js",
+        "patch_sha256": "6b2e7e280c49b10fe5e15a6d75a87a5ecf75171ee8215a80a764e34dda0cdf91",
+        "before_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_sha256": "51ddb664e461fb4c2d00bc8440fb4d0001e67d42e502e07879742bc940d6df65"
+      }
+    ],
+    "private_identity": "@caption-studio/braces-backport",
+    "backport_version": "3.0.3-caption-studio.1",
+    "backport_files_sha256": {
+      "LICENSE": "35bdd8a44339719441900fb50fbefc5e2dca1ca662cbaed7a687de842c8b70f2",
+      "index.js": "332ea07c7b006361aad12aa994ca75dc1db8e8382b884909e2f38f10b85c88a4",
+      "README.md": "947b0fc3cc12eaaa070207126213fbdf9ab2bf8cd13dcc6e4007b36b79309866",
+      "package.json": "62e1c4dc384ca558da8918a948abba003d7c24f13990cbdd4d882d178e5dab11",
+      "lib/utils.js": "b5a7596aa67730412b3c029ef09e84e6b67b8e445cffd35d1d295549c89066c7",
+      "lib/parse.js": "72aabaadaa555cdfbd07fbd7c7f743373e4dc8eec04a97550cc57bbeec30eb6c",
+      "lib/parse.js.orig": "e572166565f15fa6ad9865ae49d678218e32aabfd1b3720f6d0d43d39800d310",
+      "lib/compile.js": "b651f7715e6db8942ce61d3394357b4d81c8ece88240aa31a458ea1165edd195",
+      "lib/expand.js": "7ea3e14c2b2b256ef244fd3d83b8fcaa20aa2232b4e6d768c3bb6ab567f66cf5",
+      "lib/constants.js": "f9fb688959232eee3e6ad7906a5b0e3234815db49ee857ef86983d65b917dc7c",
+      "lib/stringify.js": "49dc2d8bafa74f34715a18a845bcb82ce66caaf3bab4cf117998e06b1f9a50a9",
+      "test/readme.js": "91202e5e3e926d47b11ebe5f2b04db560c1048aac97e67f61d521ce0cb220b15",
+      "test/minimatch.js": "6b65901c2a0a2b680dbe1178311578037ee6601eab1631929ac2d10b2e37dd08",
+      "test/bash-spec.js": "c5208d38999e0fd0ac12e4bde7240b8e93890dff160ddb78ac62883f7ef632f4",
+      "test/bash-expanded-sets.js": "b0759bb53728d98a71e4b06f566301f5aa3ccf28e8f99eaa2634fda8d877f96c",
+      "test/bash-compiled-ranges.js": "7e8a10ed467f19dd3723ebcb02c33ff13c973115ea101c8504b2fd32f9b3e9e3",
+      "test/regression.js": "1595ae9cea47947b1ea258673151c2428a780859fc1efd5d9d92b035f1887470",
+      "test/bash-expanded-ranges.js": "69c55956b57fe27160ce9dfab92a0a552001ee7aa992dc8d077410a282b92097",
+      "test/braces.parse.js": "11e9b5d34c90b3562281351fdaa7a2bc4b6b21d3a407625fc89c795de12880b0",
+      "test/bash-compiled-sets.js": "ff2dda0bdd8d1db4994f814d75117494e53b2a83cafd957048ddc9bca619d669",
+      "test/braces.compile.js": "a65dd309c86853afe9cc2db80f83b76fc4609da199e063ec85abc0a9d32d2ff5",
+      "test/braces.expand.js": "76a435dd5fcab259eb0d2a1a16693cb710c432a716f5a0032f1e7f87b8eb1e81",
+      "test/braces.stringify.js": "51ddb664e461fb4c2d00bc8440fb4d0001e67d42e502e07879742bc940d6df65",
+      "test/multiples.js": "d0b779166faf40693b5898a3766ae6c91aec600a714cf1b36a8b85067e90b7ac"
+    },
+    "packed": {
+      "id": "@caption-studio/braces-backport@3.0.3-caption-studio.1",
+      "name": "@caption-studio/braces-backport",
+      "version": "3.0.3-caption-studio.1",
+      "size": 15197,
+      "unpackedSize": 48129,
+      "shasum": "d78618cf4a8a0b8c256c9b1dde72cdc07667bca3",
+      "integrity": "sha512-IrJJROcj7YDBdrtI4bEB98kNjM5L+7JrC0J2XrKI8a6tQNkeX6EnDCa7bd65qCfBMosUO7zWtwdXdNne0LmarQ==",
+      "filename": "caption-studio-braces-backport-3.0.3-caption-studio.1.tgz",
+      "files": [
+        {
+          "path": "LICENSE",
+          "size": 1091,
+          "mode": 420
+        },
+        {
+          "path": "README.md",
+          "size": 21505,
+          "mode": 420
+        },
+        {
+          "path": "index.js",
+          "size": 4380,
+          "mode": 420
+        },
+        {
+          "path": "lib/compile.js",
+          "size": 1864,
+          "mode": 420
+        },
+        {
+          "path": "lib/constants.js",
+          "size": 1607,
+          "mode": 420
+        },
+        {
+          "path": "lib/expand.js",
+          "size": 3268,
+          "mode": 420
+        },
+        {
+          "path": "lib/parse.js",
+          "size": 7379,
+          "mode": 420
+        },
+        {
+          "path": "lib/stringify.js",
+          "size": 1081,
+          "mode": 420
+        },
+        {
+          "path": "lib/utils.js",
+          "size": 2518,
+          "mode": 420
+        },
+        {
+          "path": "package.json",
+          "size": 3436,
+          "mode": 420
+        }
+      ],
+      "entryCount": 10,
+      "bundled": []
+    },
+    "immutable_url": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/174efab75d927849e53ad58b0bc61b9487347c4b/vendor/reviewed-backports/caption-studio-braces-backport-3.0.3-caption-studio.1.tgz"
+  },
+  "node-forge": {
+    "release": {
+      "nyc": {
+        "exclude": [
+          "tests"
+        ]
+      },
+      "bugs": {
+        "url": "https://github.com/digitalbazaar/forge/issues",
+        "email": "support@digitalbazaar.com"
+      },
+      "dist": {
+        "shasum": "1c7b7d8bdc2d078739f58287d589d903a11b2fc2",
+        "tarball": "https://registry.npmjs.org/node-forge/-/node-forge-1.4.0.tgz",
+        "fileCount": 59,
+        "integrity": "sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==",
+        "signatures": [
+          {
+            "sig": "MEQCIHN+qilMnh4W7N6nrRE5KXZgu26uSkmTfjPiujxr0qAvAiB2zOy5/OdnRK68PHo2WfVDpoLCo8PgFJ5pyBuWqNUO9A==",
+            "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+          }
+        ],
+        "unpackedSize": 1647637
+      },
+      "jspm": {
+        "format": "amd"
+      },
+      "main": "lib/index.js",
+      "name": "node-forge",
+      "author": {
+        "url": "http://digitalbazaar.com/",
+        "name": "Digital Bazaar, Inc.",
+        "email": "support@digitalbazaar.com"
+      },
+      "browser": {
+        "buffer": false,
+        "crypto": false,
+        "process": false
+      },
+      "engines": {
+        "node": ">= 6.13.0"
+      },
+      "gitHead": "fa385f92440879601240020f158bed68e444e83a",
+      "license": "(BSD-3-Clause OR GPL-2.0)",
+      "scripts": {
+        "lint": "eslint *.js lib/*.js tests/*.js tests/**/*.js examples/*.js flash/*.js",
+        "test": "npm run test-node",
+        "build": "webpack",
+        "coverage": "rm -rf coverage && nyc --reporter=lcov --reporter=text-summary npm test",
+        "test-node": "cross-env NODE_ENV=test mocha -t 30000 -R ${REPORTER:-spec} tests/unit/index.js",
+        "prepublish": "npm run build",
+        "test-build": "webpack --config webpack-tests.config.js",
+        "test-karma": "karma start",
+        "coverage-ci": "rm -rf coverage && nyc --reporter=lcovonly npm test",
+        "test-server": "node tests/server.js",
+        "test-server-ws": "node tests/websockets/server-ws.js",
+        "coverage-report": "nyc report",
+        "test-karma-sauce": "karma start karma-sauce.conf",
+        "test-server-webid": "node tests/websockets/server-webid.js"
+      },
+      "_npmUser": {
+        "name": "davidlehn",
+        "email": "dil@lehn.org"
+      },
+      "homepage": "https://github.com/digitalbazaar/forge",
+      "keywords": [
+        "aes",
+        "asn",
+        "asn.1",
+        "cbc",
+        "crypto",
+        "cryptography",
+        "csr",
+        "des",
+        "gcm",
+        "hmac",
+        "http",
+        "https",
+        "md5",
+        "network",
+        "pkcs",
+        "pki",
+        "prng",
+        "rc2",
+        "rsa",
+        "sha1",
+        "sha256",
+        "sha384",
+        "sha512",
+        "ssh",
+        "tls",
+        "x.509",
+        "x509"
+      ],
+      "repository": {
+        "url": "git+https://github.com/digitalbazaar/forge.git",
+        "type": "git"
+      },
+      "_npmVersion": "11.7.0",
+      "description": "JavaScript implementations of network transports, cryptography, ciphers, PKI, message digests, and various utilities.",
+      "directories": {},
+      "maintainers": [
+        {
+          "name": "davidlehn",
+          "email": "dil@lehn.org"
+        },
+        {
+          "name": "msporny",
+          "email": "msporny@digitalbazaar.com"
+        },
+        {
+          "name": "dlongley",
+          "email": "dlongley@digitalbazaar.com"
+        }
+      ],
+      "_nodeVersion": "22.22.0",
+      "contributors": [
+        {
+          "name": "Dave Longley",
+          "email": "dlongley@digitalbazaar.com"
+        },
+        {
+          "name": "David I. Lehn",
+          "email": "dlehn@digitalbazaar.com"
+        },
+        {
+          "name": "Stefan Siegl",
+          "email": "stesie@brokenpipe.de"
+        },
+        {
+          "name": "Christoph Dorn",
+          "email": "christoph@christophdorn.com"
+        }
+      ],
+      "_hasShrinkwrap": false,
+      "devDependencies": {
+        "nyc": "^15.1.0",
+        "opts": "^1.2.7",
+        "karma": "^4.4.1",
+        "mocha": "^5.2.0",
+        "eslint": "^7.27.0",
+        "express": "^4.16.2",
+        "webpack": "^4.44.1",
+        "commander": "^2.20.0",
+        "cross-env": "^5.2.1",
+        "browserify": "^16.5.2",
+        "karma-mocha": "^1.3.0",
+        "webpack-cli": "^3.3.12",
+        "karma-webpack": "^4.0.2",
+        "worker-loader": "^2.0.0",
+        "karma-browserify": "^7.0.0",
+        "nodejs-websocket": "^1.7.1",
+        "karma-ie-launcher": "^1.0.0",
+        "karma-tap-reporter": "0.0.6",
+        "karma-edge-launcher": "^0.4.2",
+        "mocha-lcov-reporter": "^1.2.0",
+        "karma-mocha-reporter": "^2.2.5",
+        "karma-sauce-launcher": "^2.0.2",
+        "karma-chrome-launcher": "^3.1.0",
+        "karma-safari-launcher": "^1.0.0",
+        "karma-firefox-launcher": "^1.3.0",
+        "karma-sourcemap-loader": "^0.3.8",
+        "eslint-config-digitalbazaar": "^2.8.0"
+      },
+      "_npmOperationalInternal": {
+        "tmp": "tmp/node-forge_1.4.0_1774388674478_0.0076310135946839885",
+        "host": "s3://npm-registry-packages-npm-production"
+      },
+      "_id": "node-forge@1.4.0",
+      "version": "1.4.0"
+    },
+    "release_tar_sha256": "bf9d7ca0d774235354697bd4b5e642af6505e7ce2066762c3b855138cf870820",
+    "release_source_sha256": "79f01b6c1dd0c4d7fbb2a4b697fdddd2adcda32c427ccbdee8c74998fcae0765",
+    "release_files_sha256": {
+      "LICENSE": "f63ff0e4e239244aa79280da2dd4811a0469e5e201caf5cbc0d97c3a1dff8e82",
+      "README.md": "4ea0e2db410fd5d87c3c9b21912b9ed3fe6c57b3107fa92e2c90b1e618121a49",
+      "package.json": "a907bca8a62d97478062f2bd8ed5cd47d00b79385d3f08a8cad1c3bd7e3eb5bf",
+      "dist/prime.worker.min.js.map": "73f786b89ef54b00e0cfb6969b2881e7cffa77b4be3f03e998f70993290716a8",
+      "dist/forge.all.min.js.map": "0b21eb8fb1c124e963d564b6462177331027f6e739f48e73184e0f6a81cac3f1",
+      "dist/forge.all.min.js": "cb9ba4045a81825f8edb646c38d53a1ac30ce07665bf26042c8dea86d7208642",
+      "dist/prime.worker.min.js": "877bd31b0cc79ecb9163649034fbafaeec45e8e2861fc4fa9fb11335f28c4ef9",
+      "dist/forge.min.js.map": "5f11be794b0ad083ce9b2bcee1079e7ee1f0771d37beb90d6f13b2b9a8a0eba3",
+      "dist/forge.min.js": "d9b9074e6861200d676e25dcfe97889db5e8f4150bb766d29c491ad709a51b58",
+      "lib/prime.worker.js": "c2fc7777c7a07c7bc3909d400f9f65dabd6c484a11840e1ef71b2b67236ffd9d",
+      "lib/des.js": "cb0ae63c8477e61be95c3948bf52f1b7ed02d8522791d9ed1704b6b8b8517734",
+      "lib/prng.js": "fc70051ea878498be4d7473ba6b0982f3e2522962e3deee558b393ac4fb18cf9",
+      "lib/log.js": "9453eeba574a617225c8f54cfd2c11f1bade2e6a39f73d6e1a9da142db1afaeb",
+      "lib/cipherModes.js": "79d74191887706cd5e14bbbcd1ff49472aa1f2baa9154e45f7578c17c3ffefbb",
+      "lib/pbkdf2.js": "1cd2f133c60cf860f23d05313a39a5dc060389adcca8423c2143ee904db9f627",
+      "lib/oids.js": "13e31fe08ccb431fefe44f9d2285891b846e65b17b24329bf14eed04de584015",
+      "lib/util.js": "a05620c922303dd687e9447754ebde42878f37e51c390a9a3aedb592434795bc",
+      "lib/pkcs1.js": "c43cf348520a3f6adc4769a3c3410cde502a6bc7a768d5a71a575fa72d19acc7",
+      "lib/pkcs12.js": "d0f9693ff8b6e755031566139f0e23a762c9a7af6a1b08a27d522810019906d3",
+      "lib/pss.js": "c9e83c50451bd90735030cf3fe3d2a68403f678853a6d300cfa3e59b813e7f9b",
+      "lib/sha1.js": "0792cc13fa342fd9d8c213c4ffd0d697fc019144258e383dd0ac985bd717564c",
+      "lib/kem.js": "6552b048e05b92278f70b2810317e1505d521ee9e2ec5496047d927f5f7d1f70",
+      "lib/ed25519.js": "b0d15f1e11168a3a6de9914cdff9bf1be0c5c2fc313499e44dfeb164f5202849",
+      "lib/mgf1.js": "9a4acd26ee423034995a811c357e69a6c2368480664b62862982f5c404cfcc0e",
+      "lib/pkcs7.js": "f5cc5a89b093262cdcf8f7e01615dddcdb87907228a1c56b5fe73db8cc4160a2",
+      "lib/pem.js": "c6509f3aae5ad5e9286da727ea4cbf3b748ad7deff407e76b226f7a6a3b6a120",
+      "lib/rc2.js": "d2eb78b77441d9784f5edfced1ad2f49cb35c2a956687ce9d754cf40bbd1b3c3",
+      "lib/rsa.js": "fd4740238145ec26470eb3f06a627c72039538ce1307dbdce40521f94dfd0a50",
+      "lib/hmac.js": "bab6d0f322458186f6d123cfdd208ab1298a64ab6925b478968a0dfb446a8fa9",
+      "lib/socket.js": "689715cdeeba3274d6763ab92716a8a3dc1d24a684ea88fee9e2aca72e2dade0",
+      "lib/x509.js": "cce5b00838c8c08486964c1f62cb8ae3491365509b26a27cfe1917f73dee3be9",
+      "lib/index.all.js": "48fa7454923f3baa3dd5a5bf9475892aa5f272c4cc8b5a0ec4f3d6c2370ac631",
+      "lib/asn1-validator.js": "6f206656ab557712c2a09f3b8bba69004dd41b2b37cee0cb836d44ea8034004b",
+      "lib/index.js": "c231851a9d065df1fae045d6e6fb17cf5688b260f9ee0db4965fe1ef3c0607ab",
+      "lib/jsbn.js": "9d2cd4ad90eadf84b0110d9e1fc02512fc89e7ad64d0fee2d578fa51af28e48d",
+      "lib/pki.js": "43f1b98dbd39a0c8277b7c0d44325a851712ce5434146ca2a2587a2a7ae1bb1e",
+      "lib/sha256.js": "54b2f4c0ee9d4a561b6d18b1713fddeb815ea1c9d50537f7cbb4fc4474ab732d",
+      "lib/tlssocket.js": "99728e72301548ee5233c16bc0417f07892022d24fd178dfb9c0a40aff541a47",
+      "lib/random.js": "13daf47db350648ebb98cc0d694f246ae7be508aa03a0d7b9c9f2dbdf127add0",
+      "lib/asn1.js": "271047be6eab614060ef361cce2c8a92abf066c40fb329f44cfac3269214b912",
+      "lib/form.js": "a2f6e0fbab87d5acb02e08c8f92ea8269445f9f35ee1706fb82246ba8f5aba12",
+      "lib/xhr.js": "d9abf523180b6d03b2cc99909eef3488a6b4bc1f822d7fb9d1e945abf555cb42",
+      "lib/tls.js": "ceee226d32c623bbae290d76b5950be0c06880310ec26dc289f66bd631de4916",
+      "lib/prime.js": "5c63550c13aa4351c210b0766a8ad4a1f23101e1968c6244be7aad8f008e4073",
+      "lib/cipher.js": "67e3547ac39aaa8862d9519f55571dc0deef6e1d3d6a48ea6d6b653fb7a35a3f",
+      "lib/md.all.js": "6a10918cc8f727cc8cec20fee5e13f55c11e30b3f03b8800108cabb299211d4d",
+      "lib/http.js": "3ad8ec7eb451c173b5980265f30f7b3d84268a1cc9b3e0e86337bc55facbc658",
+      "lib/forge.js": "4300955cc75f3cb5b71287b0fa37ec07d3a6bb721a9f6f8b7db19328801046bf",
+      "lib/aes.js": "be13b617cfff1d583f616c0ce97147cebd9bf101cf893f027cc18c3a54bd3a2f",
+      "lib/ssh.js": "6f27454e3fc028c8a6b1c02ae98969aace558ee0c1b6784e8fb12d4419e46d24",
+      "lib/aesCipherSuites.js": "bdc5762c0d6edee74e469a59e0157555463d7abeadf34c4377121673dacc2360",
+      "lib/mgf.js": "2d6d851d6791d0cc1697342edf275993e745fd8c33ef13ad7201026d8a0eea54",
+      "lib/baseN.js": "08175e677127132340002bdb63dd19ba41c0baae546936032c7d6a6335e219b6",
+      "lib/md5.js": "ed58ce89d124a276a083280bd7003b09c294c4063e6925d83fe422664a51f810",
+      "lib/pkcs7asn1.js": "9a00faef7bff964e3c983eb4a435e8218bdd631b0f0217807b1b2bff895ab76a",
+      "lib/md.js": "ebfc33ed52d3c8cf2d584310fe0f45b23d911f532deef8044844bf2271b04402",
+      "lib/sha512.js": "d600f189d7bd22630b9301a5dea0fd49bb0ac3687f2c8feb7ecdcccd3d21c092",
+      "lib/pbe.js": "2b5c931e1549f5b98478a5b7b014fd3b62260a20db0704f72612dbe64540e25c",
+      "flash/swf/SocketPool.swf": "0ebae322dc751e77e18ceef4960bcda1d1634f53a49e7030fb640cf90f1d8839"
+    },
+    "proposal": {
+      "release": "1.4.0",
+      "repo": "digitalbazaar/forge",
+      "base": "7a43db987bd0ecdc5b41f6d73f58ba6ca5bf9ae1",
+      "headrepo": "Krysthyan/forge",
+      "head": "ceba34402e329f0365134f23fe19898756527d65",
+      "pr": 1152,
+      "files": [
+        "lib/rsa.js"
+      ],
+      "tests": [
+        "tests/unit/rsa.js"
+      ],
+      "advisory": "GHSA-86w9-cpqp-85rv",
+      "identity": "@caption-studio/node-forge-backport"
+    },
+    "patches": [
+      {
+        "path": "lib/rsa.js",
+        "patch_sha256": "6ccdae367a2532797a57f57337d380112114d11faf53849e6922ee5530ffa6e0",
+        "before_sha256": "fd4740238145ec26470eb3f06a627c72039538ce1307dbdce40521f94dfd0a50",
+        "after_sha256": "acc22e5d36e27832c34e02dd3933aad7977d45b047eead5016520735efedc9c5"
+      }
+    ],
+    "regression_patches": [
+      {
+        "path": "tests/unit/rsa.js",
+        "patch_sha256": "7d10c7c8e1524e5513552f9efb91f8700df0abe8fb264e888530883b1e59403d",
+        "before_sha256": "77c425e50c0cd19529636bb45d33f1707e1ce56b6132c4fe1cc19612184f355d",
+        "after_sha256": "5079066b184c54f17d1dd6b286eb62a0330f91af94124b0f7a5786dc69a9be68"
+      }
+    ],
+    "private_identity": "@caption-studio/node-forge-backport",
+    "backport_version": "1.4.0-caption-studio.1",
+    "backport_files_sha256": {
+      "LICENSE": "f63ff0e4e239244aa79280da2dd4811a0469e5e201caf5cbc0d97c3a1dff8e82",
+      "README.md": "4ea0e2db410fd5d87c3c9b21912b9ed3fe6c57b3107fa92e2c90b1e618121a49",
+      "package.json": "48b4905ff3db696e9778bed4884b7ecaafa268d4f284b9f633b8deecf1fabe37",
+      "dist/prime.worker.min.js.map": "130a0cb08f34a88e8371bc091e9a77109d6c1e1d7d7c4d2f866be25060ee9aca",
+      "dist/forge.all.min.js.map": "690350779208514a90d238438ab0d8120cc13b43d1fff1cd003b7d81e597dce8",
+      "dist/forge.all.min.js": "d8f5478c250b339880ddd1914d7caa8fe7f6524f52d6f5d53559b99be21a32f8",
+      "dist/prime.worker.min.js": "a13a9f0617a54a11968bbb9ad0c70e2488e367326e55f7d1674ba3d6166c0098",
+      "dist/forge.min.js.map": "401bb4e2e160a9def611364795f1d06dc23b731c9a6a2a19f3529e023183da1f",
+      "dist/forge.min.js": "5ebd6081f7fa326ca3059567623251638f3f478b64870aa77a3a74a60ee10e10",
+      "lib/prime.worker.js": "c2fc7777c7a07c7bc3909d400f9f65dabd6c484a11840e1ef71b2b67236ffd9d",
+      "lib/des.js": "cb0ae63c8477e61be95c3948bf52f1b7ed02d8522791d9ed1704b6b8b8517734",
+      "lib/prng.js": "fc70051ea878498be4d7473ba6b0982f3e2522962e3deee558b393ac4fb18cf9",
+      "lib/log.js": "9453eeba574a617225c8f54cfd2c11f1bade2e6a39f73d6e1a9da142db1afaeb",
+      "lib/cipherModes.js": "79d74191887706cd5e14bbbcd1ff49472aa1f2baa9154e45f7578c17c3ffefbb",
+      "lib/pbkdf2.js": "1cd2f133c60cf860f23d05313a39a5dc060389adcca8423c2143ee904db9f627",
+      "lib/oids.js": "13e31fe08ccb431fefe44f9d2285891b846e65b17b24329bf14eed04de584015",
+      "lib/util.js": "a05620c922303dd687e9447754ebde42878f37e51c390a9a3aedb592434795bc",
+      "lib/pkcs1.js": "c43cf348520a3f6adc4769a3c3410cde502a6bc7a768d5a71a575fa72d19acc7",
+      "lib/pkcs12.js": "d0f9693ff8b6e755031566139f0e23a762c9a7af6a1b08a27d522810019906d3",
+      "lib/pss.js": "c9e83c50451bd90735030cf3fe3d2a68403f678853a6d300cfa3e59b813e7f9b",
+      "lib/sha1.js": "0792cc13fa342fd9d8c213c4ffd0d697fc019144258e383dd0ac985bd717564c",
+      "lib/kem.js": "6552b048e05b92278f70b2810317e1505d521ee9e2ec5496047d927f5f7d1f70",
+      "lib/ed25519.js": "b0d15f1e11168a3a6de9914cdff9bf1be0c5c2fc313499e44dfeb164f5202849",
+      "lib/mgf1.js": "9a4acd26ee423034995a811c357e69a6c2368480664b62862982f5c404cfcc0e",
+      "lib/pkcs7.js": "f5cc5a89b093262cdcf8f7e01615dddcdb87907228a1c56b5fe73db8cc4160a2",
+      "lib/pem.js": "c6509f3aae5ad5e9286da727ea4cbf3b748ad7deff407e76b226f7a6a3b6a120",
+      "lib/rc2.js": "d2eb78b77441d9784f5edfced1ad2f49cb35c2a956687ce9d754cf40bbd1b3c3",
+      "lib/rsa.js": "acc22e5d36e27832c34e02dd3933aad7977d45b047eead5016520735efedc9c5",
+      "lib/hmac.js": "bab6d0f322458186f6d123cfdd208ab1298a64ab6925b478968a0dfb446a8fa9",
+      "lib/socket.js": "689715cdeeba3274d6763ab92716a8a3dc1d24a684ea88fee9e2aca72e2dade0",
+      "lib/x509.js": "cce5b00838c8c08486964c1f62cb8ae3491365509b26a27cfe1917f73dee3be9",
+      "lib/index.all.js": "48fa7454923f3baa3dd5a5bf9475892aa5f272c4cc8b5a0ec4f3d6c2370ac631",
+      "lib/asn1-validator.js": "6f206656ab557712c2a09f3b8bba69004dd41b2b37cee0cb836d44ea8034004b",
+      "lib/index.js": "c231851a9d065df1fae045d6e6fb17cf5688b260f9ee0db4965fe1ef3c0607ab",
+      "lib/jsbn.js": "9d2cd4ad90eadf84b0110d9e1fc02512fc89e7ad64d0fee2d578fa51af28e48d",
+      "lib/pki.js": "43f1b98dbd39a0c8277b7c0d44325a851712ce5434146ca2a2587a2a7ae1bb1e",
+      "lib/sha256.js": "54b2f4c0ee9d4a561b6d18b1713fddeb815ea1c9d50537f7cbb4fc4474ab732d",
+      "lib/tlssocket.js": "99728e72301548ee5233c16bc0417f07892022d24fd178dfb9c0a40aff541a47",
+      "lib/random.js": "13daf47db350648ebb98cc0d694f246ae7be508aa03a0d7b9c9f2dbdf127add0",
+      "lib/asn1.js": "271047be6eab614060ef361cce2c8a92abf066c40fb329f44cfac3269214b912",
+      "lib/form.js": "a2f6e0fbab87d5acb02e08c8f92ea8269445f9f35ee1706fb82246ba8f5aba12",
+      "lib/xhr.js": "d9abf523180b6d03b2cc99909eef3488a6b4bc1f822d7fb9d1e945abf555cb42",
+      "lib/tls.js": "ceee226d32c623bbae290d76b5950be0c06880310ec26dc289f66bd631de4916",
+      "lib/prime.js": "5c63550c13aa4351c210b0766a8ad4a1f23101e1968c6244be7aad8f008e4073",
+      "lib/cipher.js": "67e3547ac39aaa8862d9519f55571dc0deef6e1d3d6a48ea6d6b653fb7a35a3f",
+      "lib/md.all.js": "6a10918cc8f727cc8cec20fee5e13f55c11e30b3f03b8800108cabb299211d4d",
+      "lib/http.js": "3ad8ec7eb451c173b5980265f30f7b3d84268a1cc9b3e0e86337bc55facbc658",
+      "lib/forge.js": "4300955cc75f3cb5b71287b0fa37ec07d3a6bb721a9f6f8b7db19328801046bf",
+      "lib/aes.js": "be13b617cfff1d583f616c0ce97147cebd9bf101cf893f027cc18c3a54bd3a2f",
+      "lib/ssh.js": "6f27454e3fc028c8a6b1c02ae98969aace558ee0c1b6784e8fb12d4419e46d24",
+      "lib/aesCipherSuites.js": "bdc5762c0d6edee74e469a59e0157555463d7abeadf34c4377121673dacc2360",
+      "lib/mgf.js": "2d6d851d6791d0cc1697342edf275993e745fd8c33ef13ad7201026d8a0eea54",
+      "lib/baseN.js": "08175e677127132340002bdb63dd19ba41c0baae546936032c7d6a6335e219b6",
+      "lib/md5.js": "ed58ce89d124a276a083280bd7003b09c294c4063e6925d83fe422664a51f810",
+      "lib/pkcs7asn1.js": "9a00faef7bff964e3c983eb4a435e8218bdd631b0f0217807b1b2bff895ab76a",
+      "lib/md.js": "ebfc33ed52d3c8cf2d584310fe0f45b23d911f532deef8044844bf2271b04402",
+      "lib/sha512.js": "d600f189d7bd22630b9301a5dea0fd49bb0ac3687f2c8feb7ecdcccd3d21c092",
+      "lib/pbe.js": "2b5c931e1549f5b98478a5b7b014fd3b62260a20db0704f72612dbe64540e25c",
+      "tests/server.key": "c2f88e49e34cbe841e0bed19d87bdbd81fecb1b9d5ab3e3e0cb7d89e55b27723",
+      "tests/index.html": "e104d639af10881c2f0a911ade420a66d60b4cc6853cc7e8b941af070268f923",
+      "tests/server.crt": "a5d22cc7a31c37e709e2c1b646982ca6ec9942d76fa825854b83e2a4223ca0b7",
+      "tests/server.js": "539207a06a1b4005507f576ed6880c47fac5a3dfba288fffa27c3e8153dbc820",
+      "tests/README.md": "2220d8110f3e338b41f518dfdb72efc750937678415721b5106372226612cae3",
+      "tests/tests.css": "c7c08a2f7091b2b9ca7df0fa6715c1bdb6283e382da44999bc9d51c4594bc754",
+      "tests/.eslintrc.js": "f6a040f6468b1108b3b8444946a60721c77aeab0a8083a789645d7af504a9fa3",
+      "flash/swf/SocketPool.swf": "0ebae322dc751e77e18ceef4960bcda1d1634f53a49e7030fb640cf90f1d8839",
+      "tests/support/task.js": "79313ba6522049ba654b6827a9ca300cb383cd676987d640090f0c08e4128fe0",
+      "tests/karma/testWorker.js": "52ae38a2f4afe29a8126767f9ae309b61dd69d6f09a47f242ed3088e177d6142",
+      "tests/karma/index.js": "07b55600f64ab273563411f4dffbb95b0077a8ed8f2eb1af9686b5f00eb1d4d9",
+      "tests/karma/web-worker-rsa.js": "dad4fc75984d21ffb281ef8620571d37ac02c485723a54698869132179a5edf2",
+      "tests/benchmarks/so-44303784.js": "1b8670c027c6a3e81651d1a32872bd70f99c57d792b94d83cd4bc64b3a89dac8",
+      "tests/benchmarks/aes-speed.js": "d32ff920bdb2bcb37360ac7357f370e829eba651a8a34bdc5df0faa8e66e9eb6",
+      "tests/websockets/server-webid.js": "ffc7f19b56c72b418391d5bae68d54a069cb9359d5d3e817df86066d79fc4992",
+      "tests/websockets/server-ws.js": "d767f81395490db3ed82dc2b73ca99fe603e672a44cc7c509ccdcaf8bbc77abb",
+      "tests/flash/index.html": "37e27925d0b20f47ecefdbf3ebfb2981489c56eae8df9bde22eb1ab316b75f28",
+      "tests/flash/Test.as": "7aceb911bb997cc62cbc3e63d9d8c8e06db896a8d7d7a01eac0d2f2c353e87bf",
+      "tests/flash/README.md": "c5d383f82dbb6d697da770f7940d6cd01263a2d2cd701fe34f404944450d2df9",
+      "tests/flash/build-flash.xml": "3ecd106d89d5716587cdaf02cdba256ffd57d1db4d6999c47011dfa2a9ca03bf",
+      "tests/issues/heartbleed.js": "476e315cd0faeadf2e7c20a71d4bed4d6001f923e1a606c15bb319c3982f767b",
+      "tests/issues/issue-428.html": "3cfe994a1480e014b726889b4d116afd6d5fd28c47cca5da008cd5ea022596bf",
+      "tests/issues/issue-428.js": "5d96cb749d0f8abb46f3c6003b89d76af798cd8f7a003b15a3d99b79a0cc3f37",
+      "tests/security/cve-2025-12816.js": "919fef3938cc659b09953b9e7f4e7596c9d1a30a38e9a79d7189bb8129a729ce",
+      "tests/security/ghsa-554w-wpv2-vw27.js": "e98814c35ff4f5ea5a0ccd9f792c4f12c4b1c19690e48901a30144eb08675c50",
+      "tests/security/index.js": "be0cf674d5cd364d3b4992e807099d51e49721dfb45e9a927a49ceb999f22a8a",
+      "tests/unit/des.js": "e7f450f4e681731aaa8b82aad0032d15fe7b053fd62944f3e266d94c9a7a788b",
+      "tests/unit/pbkdf2.js": "e36bbfad629cad6fb31d1a8b2e3e73794afdd1cdbdda1c8f6454a447f645a83e",
+      "tests/unit/util.js": "37f7efd764967e4102fa0849f1417c1d8acc0fded35e766442eef02dbec14f26",
+      "tests/unit/csr.js": "26a2bbf13b4a943e5bea10cb1760d401fcf396551a7aafebd75ac72a7a5c6ba1",
+      "tests/unit/pkcs1.js": "8511e65fc3caefb62e98186be7bf927bf48191c61b8ee3c2e3ec6e88c6765c11",
+      "tests/unit/pkcs12.js": "51a600873c49c9e879bca5398e6e2463abd179dbe93e9ab9ef9f3f011ebb97f2",
+      "tests/unit/sha1.js": "d7d7e2f3ea096938b637f4928ec81d2465c768bf7a5924f6d217b62fc91248b0",
+      "tests/unit/kem.js": "774dfbf2187d8dfa0c206e9f21f617dc90a02acf612b76227e2618365e3c5a47",
+      "tests/unit/ed25519.js": "fa4d96a058a6966955272c8d37c5507dc685dadadb8b0db6f0ce2afc80bbcdec",
+      "tests/unit/mgf1.js": "d50a8e71550ef3954a7124fdce416d00f7dade57215638a8b7e9ed45aa271dee",
+      "tests/unit/pkcs7.js": "197ffc60cb163434be925820a1a4154cec1db3addef2163001500c19c92e48e3",
+      "tests/unit/pem.js": "d05e7cc154e59caedc6180d937f1215700260453eee423e11df98bf3b8891b6c",
+      "tests/unit/rc2.js": "9ab05e4d5f9d3fb44104cbb123dbb37457629449baaac01cccee4c4f9a323a54",
+      "tests/unit/rsa.js": "5079066b184c54f17d1dd6b286eb62a0330f91af94124b0f7a5786dc69a9be68",
+      "tests/unit/hmac.js": "700db0e68520adaa34f0e408dfefac34c3ac8eebbc57c1d2cbb2a547d2e8b0a0",
+      "tests/unit/x509.js": "22da02f90cffaf26ac1dd7e5ce54428542d6b7f614c6e75f0b49db3b0de8e106",
+      "tests/unit/index.html": "bf951ae333ede763a94fc77e16a1dfb211237ab1fd74ff5fa356f7591fa0f618",
+      "tests/unit/index.js": "bcf8ec02125fcd524f1738a735017090b2d4cb035e2b2c44b96b990b1d7c4517",
+      "tests/unit/jsbn.js": "27123df1a1869c8cc88b682348341a439e30ae0250c5ed87922ff05547e0d1aa",
+      "tests/unit/sha256.js": "07a7c01eb4036ea9cd785d2bbd1d76c91112590d694fb1cddc504a58a5c035a9",
+      "tests/unit/random.js": "8ab4ad98e7000c165e903fb176aef412b0cac618f195377ec1eed802f7ce44a2",
+      "tests/unit/asn1.js": "773a9ae42427de0815368dc0e3c63250dd5c78a9ffa72d1156f6b179834bc546",
+      "tests/unit/tls.js": "48715b55b13607c1ac9d63e7586f061be55ac8ef6884ca1c7fecca3a8b9c0263",
+      "tests/unit/forge.js": "f9d43b1e137c248f7a16cf27db4af079b1d7400841036f91183f88052a877eda",
+      "tests/unit/aes.js": "658cf06212a0fb73a75464024852f1e73e69597c8fa2719eeef6bc96a2c5daf9",
+      "tests/unit/ssh.js": "05a5712bd2cd1bd929cd5d5a236dfc4de98d9a49c7ad0a2e78c0d58833978c1f",
+      "tests/unit/md5.js": "92ce83d7f0615598e992df73cf1cf3eb3dfa73b78e3e8a99682a650a890b3ba6",
+      "tests/unit/sha512.js": "eec000ed4827b0b02a4db1950be3418a38bac0a14862186d689623de677f81d2",
+      "tests/legacy/webid.html": "ab5b642861ae8ae0f16e0b8a64b1fdcd5dba69fb2e5d6c46536d3b4057bff763",
+      "tests/legacy/loginDemo.html": "e14b0528cca733b4cc41d9a86fabe15b1b80a26aa5f5283744e98d536f93ab2e",
+      "tests/legacy/xhr.html": "8e90cda316dbf275ea5fc7d3176e8c28bfe3591359916b2876db31a930e6796c",
+      "tests/legacy/form.html": "1cf445932b73d226f7459b0e5572d8b2c91f4afc4cbff65fff9a0dde00ea69de",
+      "tests/legacy/tls.html": "8e4f9b46a37797306994045cbed32b279af5feaab191a2b96bcc45abbce1707a",
+      "tests/legacy/keygen.html": "c70ddf0467b70781b1c85217afafe88a2696f61e17890947ec87e3ff35ffce5e",
+      "tests/legacy/performance.html": "98f9311ed2dbb43762c16c39705ba992b2e6126a584de0aa24ad6ed745354546",
+      "tests/legacy/webid.js": "ca9eeccebc320dd7b9d6282d472dd04492e2225c39042cb9bc90a6cc79302502",
+      "tests/legacy/login.css": "1ee1331be9f1daede2e6297825072061ba1a73bb005c63cf7c3a6b84e53d2cac",
+      "tests/legacy/result.txt": "8d90267bbc294861895320a20f0d0ccb06576f0d85aba88b82d33a958090095b",
+      "tests/legacy/index.html": "64da535c32b84caae94bd3ef77114721fe2fb0eb751bc7890336bf33befc67a5",
+      "tests/legacy/common.js": "42fa1d071eeed97301170337632319cb64174dbf7b61a81d128371ed6908c47b",
+      "tests/legacy/tasks.js": "0f07268422e3d29b6caf88941c1dc03d5622d011fcbe16478ffa259ce413c555",
+      "tests/legacy/common.html": "1eb53d700df761cc16b60133b6c5b96315c36e2727bdbb17e83fc1edf615bbe0",
+      "tests/legacy/form.js": "d7e5146379f47ecbe67f9cfd15d7b8dc6ddc7be227191cffaab809b71a64c966",
+      "tests/legacy/xhr.js": "2009816f1dc953b0cee729b7116bb7b5b5ffa4777c32c90b6de8130ddd66dd28",
+      "tests/legacy/http.html": "270e08ba04ce6424cf26b735195f088b27e60e9e33e02756dfc9fac2098301d5",
+      "tests/legacy/socketPool.html": "1d7612773bf202102ec65e04023fe07997afd55a71993018d722dc05676490a0",
+      "tests/legacy/ws-webid.js": "96bc1b6a060a4cbc5b3b15470df0843a168141f7e7695f9affd2c4e79c22d46f",
+      "tests/legacy/loginDemo.js": "701ad9d8f412b92595cbf481ec63cd7b7d98c14de614a5468726d54fb57bf802",
+      "tests/legacy/tasks.html": "146d72487f4d757e5f2665f233e0aac32321f96922554b743dea80b149eddb1c",
+      "tests/pocs/ghsa-2328-f5f3-gj25.js": "06a7fe94d174e901d9209a7512b2374bf623ebb29d7e997c244e5ab2a4a11852",
+      "tests/pocs/ghsa-ppp5-5v6c-4jwp.js": "3301767227cb2a5f4d8f09b4fc4626097daf753c269d436e0ab8434d1a83b04d",
+      "tests/pocs/ghsa-q67f-28xg-22rw.js": "eae9ade945e3706bf3b61c66ce7b6c609bf956507e7c53ec7e01980e3edbeb31"
+    },
+    "packed": {
+      "id": "@caption-studio/node-forge-backport@1.4.0-caption-studio.1",
+      "name": "@caption-studio/node-forge-backport",
+      "version": "1.4.0-caption-studio.1",
+      "size": 1090704,
+      "unpackedSize": 4323600,
+      "shasum": "cd45756f7a80d643ddcac859b8504371d2f9445b",
+      "integrity": "sha512-2NuwEf/qaFHQwd6I7kZgah94GqO9IVoWlj+GT/2p+Y7EQ42AwIrF+ofEa7ysCMI5tfIiLKo2pPX56FT/mL4vBQ==",
+      "filename": "caption-studio-node-forge-backport-1.4.0-caption-studio.1.tgz",
+      "files": [
+        {
+          "path": "LICENSE",
+          "size": 17972,
+          "mode": 420
+        },
+        {
+          "path": "README.md",
+          "size": 59605,
+          "mode": 420
+        },
+        {
+          "path": "dist/forge.all.min.js",
+          "size": 303738,
+          "mode": 420
+        },
+        {
+          "path": "dist/forge.all.min.js.map",
+          "size": 1358800,
+          "mode": 420
+        },
+        {
+          "path": "dist/forge.min.js",
+          "size": 282217,
+          "mode": 420
+        },
+        {
+          "path": "dist/forge.min.js.map",
+          "size": 1244105,
+          "mode": 420
+        },
+        {
+          "path": "dist/prime.worker.min.js",
+          "size": 20589,
+          "mode": 420
+        },
+        {
+          "path": "dist/prime.worker.min.js.map",
+          "size": 77083,
+          "mode": 420
+        },
+        {
+          "path": "flash/swf/SocketPool.swf",
+          "size": 21162,
+          "mode": 420
+        },
+        {
+          "path": "lib/aes.js",
+          "size": 39025,
+          "mode": 420
+        },
+        {
+          "path": "lib/aesCipherSuites.js",
+          "size": 9112,
+          "mode": 420
+        },
+        {
+          "path": "lib/asn1-validator.js",
+          "size": 2295,
+          "mode": 420
+        },
+        {
+          "path": "lib/asn1.js",
+          "size": 45406,
+          "mode": 420
+        },
+        {
+          "path": "lib/baseN.js",
+          "size": 5068,
+          "mode": 420
+        },
+        {
+          "path": "lib/cipher.js",
+          "size": 6668,
+          "mode": 420
+        },
+        {
+          "path": "lib/cipherModes.js",
+          "size": 28917,
+          "mode": 420
+        },
+        {
+          "path": "lib/des.js",
+          "size": 20445,
+          "mode": 420
+        },
+        {
+          "path": "lib/ed25519.js",
+          "size": 25349,
+          "mode": 420
+        },
+        {
+          "path": "lib/forge.js",
+          "size": 200,
+          "mode": 420
+        },
+        {
+          "path": "lib/form.js",
+          "size": 3880,
+          "mode": 420
+        },
+        {
+          "path": "lib/hmac.js",
+          "size": 3833,
+          "mode": 420
+        },
+        {
+          "path": "lib/http.js",
+          "size": 39070,
+          "mode": 420
+        },
+        {
+          "path": "lib/index.all.js",
+          "size": 366,
+          "mode": 420
+        },
+        {
+          "path": "lib/index.js",
+          "size": 640,
+          "mode": 420
+        },
+        {
+          "path": "lib/jsbn.js",
+          "size": 36893,
+          "mode": 420
+        },
+        {
+          "path": "lib/kem.js",
+          "size": 5217,
+          "mode": 420
+        },
+        {
+          "path": "lib/log.js",
+          "size": 9264,
+          "mode": 420
+        },
+        {
+          "path": "lib/md.all.js",
+          "size": 251,
+          "mode": 420
+        },
+        {
+          "path": "lib/md.js",
+          "size": 253,
+          "mode": 420
+        },
+        {
+          "path": "lib/md5.js",
+          "size": 7983,
+          "mode": 420
+        },
+        {
+          "path": "lib/mgf.js",
+          "size": 274,
+          "mode": 420
+        },
+        {
+          "path": "lib/mgf1.js",
+          "size": 1645,
+          "mode": 420
+        },
+        {
+          "path": "lib/oids.js",
+          "size": 6874,
+          "mode": 420
+        },
+        {
+          "path": "lib/pbe.js",
+          "size": 30999,
+          "mode": 420
+        },
+        {
+          "path": "lib/pbkdf2.js",
+          "size": 5809,
+          "mode": 420
+        },
+        {
+          "path": "lib/pem.js",
+          "size": 6693,
+          "mode": 420
+        },
+        {
+          "path": "lib/pkcs1.js",
+          "size": 8375,
+          "mode": 420
+        },
+        {
+          "path": "lib/pkcs7.js",
+          "size": 39869,
+          "mode": 420
+        },
+        {
+          "path": "lib/pkcs7asn1.js",
+          "size": 11484,
+          "mode": 420
+        },
+        {
+          "path": "lib/pkcs12.js",
+          "size": 33596,
+          "mode": 420
+        },
+        {
+          "path": "lib/pki.js",
+          "size": 2651,
+          "mode": 420
+        },
+        {
+          "path": "lib/prime.js",
+          "size": 8776,
+          "mode": 420
+        },
+        {
+          "path": "lib/prime.worker.js",
+          "size": 4805,
+          "mode": 420
+        },
+        {
+          "path": "lib/prng.js",
+          "size": 12326,
+          "mode": 420
+        },
+        {
+          "path": "lib/pss.js",
+          "size": 7854,
+          "mode": 420
+        },
+        {
+          "path": "lib/random.js",
+          "size": 5438,
+          "mode": 420
+        },
+        {
+          "path": "lib/rc2.js",
+          "size": 11949,
+          "mode": 420
+        },
+        {
+          "path": "lib/rsa.js",
+          "size": 61199,
+          "mode": 420
+        },
+        {
+          "path": "lib/sha1.js",
+          "size": 9089,
+          "mode": 420
+        },
+        {
+          "path": "lib/sha256.js",
+          "size": 9574,
+          "mode": 420
+        },
+        {
+          "path": "lib/sha512.js",
+          "size": 17133,
+          "mode": 420
+        },
+        {
+          "path": "lib/socket.js",
+          "size": 8329,
+          "mode": 420
+        },
+        {
+          "path": "lib/ssh.js",
+          "size": 7163,
+          "mode": 420
+        },
+        {
+          "path": "lib/tls.js",
+          "size": 132975,
+          "mode": 420
+        },
+        {
+          "path": "lib/tlssocket.js",
+          "size": 6967,
+          "mode": 420
+        },
+        {
+          "path": "lib/util.js",
+          "size": 69861,
+          "mode": 420
+        },
+        {
+          "path": "lib/x509.js",
+          "size": 102130,
+          "mode": 420
+        },
+        {
+          "path": "lib/xhr.js",
+          "size": 22117,
+          "mode": 420
+        },
+        {
+          "path": "package.json",
+          "size": 2240,
+          "mode": 420
+        }
+      ],
+      "entryCount": 59,
+      "bundled": []
+    },
+    "immutable_url": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/174efab75d927849e53ad58b0bc61b9487347c4b/vendor/reviewed-backports/caption-studio-node-forge-backport-1.4.0-caption-studio.1.tgz"
+  }
+}
