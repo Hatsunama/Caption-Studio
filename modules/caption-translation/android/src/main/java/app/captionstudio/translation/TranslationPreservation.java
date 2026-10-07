@@ -208,6 +208,10 @@ final class TranslationPreservation {
     return !protectedSpans.isEmpty() && value.matches("[\\s\\p{P}\\p{Z}]*") ? 1 : 0;
   }
 
+  static boolean borrowedAcknowledgementComposition(String text) {
+    return invariantCompositionKind(text) == 2;
+  }
+
   /** Same finite invariant policy as JS; raw data inventories must match both ways. */
   static boolean invariantCompositionEquivalent(String source, String translated) {
     int kind = invariantCompositionKind(source);

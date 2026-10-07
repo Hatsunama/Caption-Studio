@@ -1,5 +1,5 @@
 import { isInvariantTranslation } from '@/lib/translation-invariants';
-import { isInvariantCompositionTranslation, preservesTranslationContent } from '@/lib/translation-preservation';
+import { isBorrowedAcknowledgementComposition, isInvariantCompositionTranslation, preservesTranslationContent } from '@/lib/translation-preservation';
 
 export type EnglishChineseCaptionLanguage = 'en' | 'zh-Hans' | 'zh-Hant';
 
@@ -165,7 +165,7 @@ export function isLikelyUntranslatedCaption(sourceText: string, translatedText: 
   if (!translated || source === translated) return true;
   if (/\p{L}/u.test(source) && translationEchoKey(source) === translationEchoKey(translated)) return true;
   // A whole-cue borrowed acknowledgement cannot stand in for a longer source.
-  if (Array.from(source).length > 20 && /^[\s\p{P}\p{Z}]*(?:ok|okay|o\.k\.)[\s\p{P}\p{Z}]*$/iu.test(translated)) return true;
+  if (Array.from(source).length > 20 && isBorrowedAcknowledgementComposition(translatedText)) return true;
   const multilingualTarget = resolveCaptionLanguage(targetLanguage)?.tag;
   if (multilingualTarget && multilingualTarget !== 'en' && multilingualTarget !== 'zh-Hans' && multilingualTarget !== 'zh-Hant') {
     if (multilingualTarget === 'ja') return !/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(translated);

@@ -203,3 +203,8 @@ export function isInvariantCompositionTranslation(source: string, translated: st
     && preservesTranslationContent(source, translated)
     && preservesTranslationContent(translated, source);
 }
+
+/** The existing long-source collapse guard also applies around protected data. */
+export function isBorrowedAcknowledgementComposition(text: string): boolean {
+  return invariantCompositionKind(text) === 2;
+}
