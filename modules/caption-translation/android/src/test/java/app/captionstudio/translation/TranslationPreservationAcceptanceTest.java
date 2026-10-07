@@ -212,6 +212,24 @@ public final class TranslationPreservationAcceptanceTest {
 
 
 
+
+  @Test public void protectedTargetScriptDecoysAreRejectedIndependently() throws Exception {
+    try (var input = getClass().getResourceAsStream("/translation-protected-composition.json")) {
+      assertNotNull(input);
+      var cases = JsonParser.parseReader(new java.io.InputStreamReader(input,
+          java.nio.charset.StandardCharsets.UTF_8)).getAsJsonArray();
+      for (var element : cases) {
+        var item = element.getAsJsonObject();
+        if (!item.has("scriptFixture") || !item.get("review").getAsBoolean()) continue;
+        for (var target : item.getAsJsonArray("targets")) {
+          assertEquals(item.get("name").getAsString(), TranslationOutputQuality.Reason.WRONG_SCRIPT,
+              TranslationOutputQuality.classify(item.get("source").getAsString(),
+                  item.get("translated").getAsString(), target.getAsString()));
+        }
+      }
+    }
+  }
+
   @Test public void protectedDataNeitherContaminatesNorSuppliesProseScript() throws Exception {
     try (var input = getClass().getResourceAsStream("/translation-protected-composition.json")) {
       assertNotNull(input);
@@ -244,6 +262,9 @@ public final class TranslationPreservationAcceptanceTest {
     var replay = runSource(directory, replayCalls, "Must not generate", false, source, "zh-Hans");
     assertEquals(fresh.get("captions"), replay.get("captions"));
     assertEquals(0, replayCalls.get());
+  }
+
+  @Test public void protectedTargetScriptDecoyCannotBeAcceptedByRuntime() throws Exception {
     AtomicInteger decoyCalls = new AtomicInteger();
     var rejected = runSource(temporary.newFolder(), decoyCalls, "See \u0060東京\u0060.",
         true, "Read \u0060東京\u0060.", "ja");
@@ -261,7 +282,7 @@ public final class TranslationPreservationAcceptanceTest {
         for (String target : item.has("targets")
             ? java.util.stream.StreamSupport.stream(item.getAsJsonArray("targets").spliterator(), false)
                 .map(value -> value.getAsString()).toArray(String[]::new)
-            : new String[] {"pl", "zh-Hans", "ar", "ja"}) {
+            : new String[] {"en", "zh-Hans", "zh-Hant", "hi", "es", "fr", "ar", "bn", "pt", "ru", "id", "de", "ja", "ko", "tr", "vi", "th", "it", "pl"}) {
           assertEquals(item.get("name").getAsString() + ": " + target,
               item.get("review").getAsBoolean(), TranslationOutputQuality.needsReview(
                   item.get("source").getAsString(), item.get("translated").getAsString(), target));
@@ -287,7 +308,7 @@ public final class TranslationPreservationAcceptanceTest {
 
   @Test public void literalCompositionBypassesGenerationForEveryTarget() throws Exception {
     String source = "https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00";
-    for (String target : new String[] {"pl", "zh-Hans", "ar", "ja"}) {
+    for (String target : new String[] {"en", "zh-Hans", "zh-Hant", "hi", "es", "fr", "ar", "bn", "pt", "ru", "id", "de", "ja", "ko", "tr", "vi", "th", "it", "pl"}) {
       AtomicInteger calls = new AtomicInteger();
       var result = runSource(temporary.newFolder(), calls, "Must not generate", true, source, target);
       assertEquals(true, cue(result).get("valid"));
@@ -399,7 +420,7 @@ public final class TranslationPreservationAcceptanceTest {
         "+ https://example.com/ \u0060code\u0060 \ud83d\ude00",
         "4 2 https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00",
         "+42 / -7 = 35 https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00"}) {
-      for (String target : new String[] {"pl", "zh-Hans", "ar", "ja"}) {
+      for (String target : new String[] {"en", "zh-Hans", "zh-Hant", "hi", "es", "fr", "ar", "bn", "pt", "ru", "id", "de", "ja", "ko", "tr", "vi", "th", "it", "pl"}) {
         File directory = temporary.newFolder();
         AtomicInteger calls = new AtomicInteger();
         var first = runSource(directory, calls, source, true, source, target);
