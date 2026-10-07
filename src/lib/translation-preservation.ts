@@ -1,7 +1,7 @@
 /**
  * Conservative preservation, not semantic/language validation.
  * Explicit URL/backtick literals stay raw; only actual emoji presentations and
- * their complete sequences are protected. Mixed-prose numbers, bare names,
+ * their complete sequences and isolated operator tokens are protected. Mixed-prose numbers, bare names,
  * currency wording and math meaning intentionally have no semantic gate.
  * Tables: Unicode 17.0 emoji-data, GraphemeBreakProperty, UnicodeData (UCD license).
  */
@@ -117,12 +117,21 @@ function urlEnd(text: string, start: number): number {
   }
   return end > start + (text.startsWith('https://', start) ? 8 : 7) ? end : start;
 }
+/** Only isolated operator tokens: no sentence punctuation, word hyphens or attached math. */
+function operatorEnd(text: string, start: number): number {
+  const cp = text.codePointAt(start)!;
+  if (!'+=<>|^~*/\u2212\u00d7\u00f7\u00b1\u2260\u2264\u2265'.includes(String.fromCodePoint(cp))) return start;
+  const end = start + width(cp);
+  if (start > 0 && !white(text.codePointAt(start - 1)!)) return start;
+  return end === text.length || white(text.codePointAt(end)!) ? end : start;
+}
 function spans(text: string): Span[] {
   const result: Span[] = [];
   for (let at = 0; at < text.length;) {
     let end = codeEnd(text, at);
     if (end === at) end = urlEnd(text, at);
     if (end === at) end = emojiEnd(text, at);
+    if (end === at) end = operatorEnd(text, at);
     if (end > at) {
       result.push({ start: at, end }); at = end;
     } else at += width(text.codePointAt(at)!);
