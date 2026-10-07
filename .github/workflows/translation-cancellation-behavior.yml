@@ -1,0 +1,39 @@
+name: Translation cancellation behavioral checks
+on:
+  push:
+    branches: [codex/translation-cancellation-failure-masking-20261007]
+permissions:
+  contents: read
+env:
+  CI: true
+jobs:
+  behavior:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.1
+      - name: Install locked dependencies on remote runner
+        run: npm ci --no-audit --no-fund
+      - name: Execute cancellation regressions
+        run: npx tsx --test tests/translation-cancellation-failure.test.mjs
+      - name: Full logic suite
+        if: always()
+        run: npm run test:logic
+      - name: Product contract
+        if: always()
+        run: npm run verify:product-contract
+      - name: Typecheck
+        if: always()
+        run: npx tsc --noEmit
+      - name: Lint
+        if: always()
+        run: npm run lint
+      - name: Published dependency regressions
+        if: always()
+        run: node --test tests/published-dependency-regressions.cjs
+      - name: Dependency API compatibility
+        if: always()
+        run: node tests/dependency-api-compatibility.cjs
