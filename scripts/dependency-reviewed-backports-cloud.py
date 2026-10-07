@@ -178,8 +178,24 @@ require(path.join(root,'tests/unit/rsa.js'));after(()=>dom.window.close());
   packed=json.loads(reports["pack_"+name]["output"])[0]
   p["packed"]=packed
   save(name+"-provenance",p)
+ # Relative file overrides resolve from nested consumers; immutable URLs preserve
+ # identical tarball bytes and normal npm integrity without host-specific paths.
+ head=api("git/ref/heads/"+BRANCH)["object"]["sha"]
+ if head!=os.environ["GITHUB_SHA"]:raise RuntimeError("Branch moved before package pin")
+ base_tree=api("git/commits/"+head)["tree"]["sha"];package_entries=[]
+ for name,p in provenance.items():
+  path="vendor/reviewed-backports/"+p["packed"]["filename"]
+  data=(ROOT/path).read_bytes()
+  blob=api("git/blobs",{"content":base64.b64encode(data).decode(),"encoding":"base64"})
+  package_entries.append({"path":path,"mode":"100644","type":"blob","sha":blob["sha"]})
+ package_tree=api("git/trees",{"base_tree":base_tree,"tree":package_entries})["sha"]
+ package_commit=api("git/commits",{"message":"build(deps): retain immutable reviewed package bytes","tree":package_tree,"parents":[head]})["sha"]
  pkg=json.loads((ROOT/"package.json").read_text())
- for name,p in provenance.items():pkg["overrides"][name]="file:vendor/reviewed-backports/"+p["packed"]["filename"]
+ for name,p in provenance.items():
+  url="https://raw.githubusercontent.com/Hatsunama/Caption-Studio/"+package_commit+"/vendor/reviewed-backports/"+p["packed"]["filename"]
+  if sha(fetch(url))!=sha((vendor/p["packed"]["filename"]).read_bytes()):raise RuntimeError("Immutable package readback mismatch: "+name)
+  p["immutable_url"]=url
+  pkg["overrides"][name]=url
  (ROOT/"package.json").write_text(json.dumps(pkg,indent=2)+"\n")
  require_ok("resolve_backport_lock",["npm","install","--package-lock-only","--ignore-scripts","--no-fund"],timeout=360)
  require_ok("install_backport_lock",["npm","ci","--no-fund"],timeout=360)
@@ -190,6 +206,7 @@ require(path.join(root,'tests/unit/rsa.js'));after(()=>dom.window.close());
   for k,v in matches:
    if v.get("name")!=p["private_identity"] or v["version"]!=p["backport_version"]:raise RuntimeError("Unpatched nested instance: "+k)
    if v.get("integrity")!=p["packed"]["integrity"]:raise RuntimeError("Lock integrity mismatch: "+k)
+   if v.get("resolved")!=p["immutable_url"]:raise RuntimeError("Unpinned package resolution: "+k)
  require_ok("consumer_GREEN",["node","tests/dependency-api-compatibility.cjs"],timeout=180)
  require_ok("published_GREEN",["node","--test","tests/published-dependency-regressions.cjs"],timeout=60)
  run("full_repository",["python3","tests/translation-preservation-cloud.py"],timeout=1200)
@@ -227,7 +244,7 @@ Full repository evidence includes JS logic, product contracts, TypeScript, lint,
   blob=api("git/blobs",{"content":base64.b64encode(data).decode(),"encoding":"base64"})
   entries.append({"path":path,"mode":"100644","type":"blob","sha":blob["sha"]})
  newtree=api("git/trees",{"base_tree":tree,"tree":entries})["sha"]
- commit=api("git/commits",{"message":"fix(deps): vendor reviewed defensive backports with RED GREEN evidence","tree":newtree,"parents":[head]})["sha"]
+ commit=api("git/commits",{"message":"fix(deps): vendor reviewed defensive backports with RED GREEN evidence","tree":newtree,"parents":[package_commit]})["sha"]
  summary["candidate_commit"]=commit;save("summary",summary)
  print("IMMUTABLE_CANDIDATE_COMMIT="+commit,flush=True)
  if production_rc or all_rc or blocked:raise RuntimeError("Validation/audit blocked; candidate is evidence only, do not adopt")
