@@ -1,0 +1,47 @@
+name: Isolated published dependency repair
+on:
+  push:
+    branches: [codex/dependency-repair-expo57-20261007]
+permissions:
+  contents: write
+  actions: read
+env:
+  CI: true
+jobs:
+  dependency-repair:
+    if: github.ref == 'refs/heads/codex/dependency-repair-expo57-20261007'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.1
+          package-manager-cache: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Verify actual preservation artifact in cloud RAM
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/dependency-repair-cloud.py artifact
+      - name: Install baseline locked dependencies
+        run: npm ci --no-fund
+      - name: Verify baseline then repair published pins and run every compatibility check
+        run: python3 scripts/dependency-repair-cloud.py repair
+      - name: Commit only tested manifests to this isolated branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/dependency-repair-cloud.py publish
+      - name: Enforce unchanged high severity audit gate
+        run: python3 scripts/dependency-repair-cloud.py gate
+      - name: Retain complete evidence even when audit remains blocked
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dependency-repair-evidence-${{ github.sha }}
+          path: dependency-repair-evidence/
+          retention-days: 14
