@@ -57,7 +57,9 @@
     "@xmldom/xmldom": "0.8.15",
     "query-string": "9.5.1",
     "shell-quote": "1.11.0",
-    "source-map-js": "1.2.2"
+    "source-map-js": "1.2.2",
+    "braces": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/174efab75d927849e53ad58b0bc61b9487347c4b/vendor/reviewed-backports/caption-studio-braces-backport-3.0.3-caption-studio.1.tgz",
+    "node-forge": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/174efab75d927849e53ad58b0bc61b9487347c4b/vendor/reviewed-backports/caption-studio-node-forge-backport-1.4.0-caption-studio.1.tgz"
   },
   "scripts": {
     "postinstall": "node ./scripts/patch-react-native-gradle.js",

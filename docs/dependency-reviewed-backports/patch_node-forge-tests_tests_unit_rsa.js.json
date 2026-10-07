@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "output": "patching file tests/unit/rsa.js\n",
+  "command": [
+    "patch",
+    "--batch",
+    "--fuzz=0",
+    "-p1",
+    "-i",
+    "/home/runner/work/Caption-Studio/Caption-Studio/reviewed-backport-evidence/node-forge-tests-tests_unit_rsa.js.patch"
+  ]
+}

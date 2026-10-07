@@ -1,0 +1,9 @@
+{
+  "exit_code": 0,
+  "output": "npm warn deprecated eslint@9.39.5: This version is no longer supported. Please see https://eslint.org/version-support for other options.\n\n> caption-studio@1.4.101 postinstall\n> node ./scripts/patch-react-native-gradle.js\n\n\nadded 826 packages, and audited 830 packages in 14s\n\nfound 0 vulnerabilities\n",
+  "command": [
+    "npm",
+    "ci",
+    "--no-fund"
+  ]
+}

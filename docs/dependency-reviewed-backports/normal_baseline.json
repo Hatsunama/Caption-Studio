@@ -1,0 +1,8 @@
+{
+  "exit_code": 0,
+  "output": "METRO_API_OK metro-file-map\nMETRO_API_OK @expo/metro-file-map\nCERT_HELPER_EXPORTS [\"expoProjectInformationOID\",\"generateKeyPair\",\"convertKeyPairToPEM\",\"convertCertificateToCertificatePEM\",\"convertKeyPairPEMToKeyPair\",\"convertPublicKeyPEMToPublicKey\",\"convertPrivateKeyPEMToPrivateKey\",\"convertCertificatePEMToCertificate\",\"convertCSRToCSRPEM\",\"convertCSRPEMToCSR\",\"generateSelfSignedCodeSigningCertificate\",\"validateSelfSignedCertificate\",\"signBufferRSASHA256AndVerify\",\"generateCSR\",\"generateDevelopmentCertificateFromCSR\"]\nDEPENDENCY_NORMAL_AND_NEGATIVE_APIS_OK\n",
+  "command": [
+    "node",
+    "tests/dependency-api-compatibility.cjs"
+  ]
+}

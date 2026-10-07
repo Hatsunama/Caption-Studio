@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "output": "asset forge.min.js 276 KiB [emitted] [minimized] (name: main) 1 related asset\n\nWARNING in asset size limit: The following asset(s) exceed the recommended size limit (244 KiB).\nThis can impact web performance.\nAssets: \n  forge.min.js (276 KiB)\n\nWARNING in entrypoint size limit: The following entrypoint(s) combined asset size exceeds the recommended limit (244 KiB). This can impact web performance.\nEntrypoints:\n  main (276 KiB)\n      forge.min.js\n\nWARNING in webpack performance recommendations: \nYou can limit the size of your bundles by using import() or require.ensure to lazy load some parts of your application.\nFor more info visit https://webpack.js.org/guides/code-splitting/\n\n\nasset forge.all.min.js 297 KiB [emitted] [minimized] (name: main) 1 related asset\n\nWARNING in asset size limit: The following asset(s) exceed the recommended size limit (244 KiB).\nThis can impact web performance.\nAssets: \n  forge.all.min.js (297 KiB)\n\nWARNING in entrypoint size limit: The following entrypoint(s) combined asset size exceeds the recommended limit (244 KiB). This can impact web performance.\nEntrypoints:\n  main (297 KiB)\n      forge.all.min.js\n\nWARNING in webpack performance recommendations: \nYou can limit the size of your bundles by using import() or require.ensure to lazy load some parts of your application.\nFor more info visit https://webpack.js.org/guides/code-splitting/\n\n\nasset prime.worker.min.js 20.1 KiB [emitted] [minimized] (name: main) 1 related asset\n",
+  "command": [
+    "node",
+    "/home/runner/work/Caption-Studio/Caption-Studio/reviewed-backport-evidence/rebuild-forge.cjs",
+    "/home/runner/work/Caption-Studio/Caption-Studio/vendor/reviewed-backports/node-forge",
+    "/home/runner/work/Caption-Studio/Caption-Studio/reviewed-backport-evidence/harness/node_modules/webpack"
+  ]
+}
