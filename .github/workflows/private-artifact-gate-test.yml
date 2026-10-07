@@ -1,0 +1,45 @@
+name: Private artifact gate behavioral test
+
+on:
+  push:
+    branches: [codex/private-artifact-gate, codex/preservation-runtime-contract]
+    paths:
+      - .github/workflows/publish-sidecar.yml
+      - .github/workflows/private-artifact-gate-test.yml
+      - scripts/test-private-artifact-gate.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        state: [success, failure, cancelled, recovery]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 4
+          sparse-checkout: |
+            .github/workflows
+            scripts/test-private-artifact-gate.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.13.1
+      - name: Execute actual release expressions and guard
+        env:
+          GATE_STATE: ${{ matrix.state }}
+          GATE_WORKSPACE: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          harness="$RUNNER_TEMP/private-artifact-gate"
+          mkdir -p "$harness"
+          npm install --prefix "$harness" --ignore-scripts --no-audit --no-fund --package-lock=false @actions/expressions@0.3.61 yaml@2.8.1
+          cp scripts/test-private-artifact-gate.mjs "$harness/test.mjs"
+          node "$harness/test.mjs"
