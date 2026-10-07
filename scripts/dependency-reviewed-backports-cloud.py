@@ -147,13 +147,13 @@ webpack(configs,(err,stats)=>{if(err||stats.hasErrors()){console.error(err||stat
    bundlecheck=OUT/"bundle-rsa.cjs"
    bundlecheck.write_text("""const path=require('path'),fs=require('fs'),vm=require('vm');
 const root=process.env.BACKPORT_BUNDLE_ROOT;
-const dom=new (require('jsdom').JSDOM)('<!doctype html><html><body></body></html>',{url:'https://example.test'});
+const dom=new (require('jsdom').JSDOM)('<!doctype html><html><body></body></html>',{url:'https://example.test',runScripts:'outside-only'});
 require(path.join(root,'lib/index.js'));
-const sandbox={module:{exports:{}},console,setTimeout,clearTimeout,setImmediate,clearImmediate,crypto:require('node:crypto').webcrypto};
-Object.assign(sandbox,{ArrayBuffer,Uint8Array,DataView});
-Object.assign(sandbox,{document:dom.window.document,navigator:dom.window.navigator,location:dom.window.location,jQuery:require('jquery')(dom.window)});
-sandbox.exports=sandbox.module.exports;sandbox.self=sandbox;sandbox.window=sandbox;
-try{vm.runInNewContext(fs.readFileSync(path.join(root,process.env.BACKPORT_BUNDLE_FILE),'utf8'),sandbox,{timeout:5000});}catch(error){throw new Error(error.name+': '+error.message);}
+const sandbox=dom.window;
+Object.defineProperty(sandbox,'crypto',{value:require('node:crypto').webcrypto,configurable:true});
+Object.assign(sandbox,{module:{exports:{}},console,setImmediate,clearImmediate,ArrayBuffer,Uint8Array,DataView});
+sandbox.exports=sandbox.module.exports;sandbox.jQuery=require('jquery')(sandbox);
+try{vm.runInContext(fs.readFileSync(path.join(root,process.env.BACKPORT_BUNDLE_FILE),'utf8'),dom.getInternalVMContext(),{timeout:5000});}catch(error){throw new Error(error.name+': '+error.message);}
 const bundle=sandbox.module.exports;
 if(bundle.util.isNodejs)throw Error('Browser bundle used Node runtime');
 if(!bundle.util.isArrayBuffer(new ArrayBuffer(8))||bundle.util.createBuffer(new Uint8Array([1,2])).length()!==2)throw Error('WebCrypto and bundle buffer realms differ');
