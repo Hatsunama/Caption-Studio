@@ -76,6 +76,7 @@ def source_tests(name,spec,release_meta,dest):
   old=(basesrc/rel).read_text() if (basesrc/rel).exists() else ""
   new=p.read_text()
   if old==new:continue
+  if rel=="test/mocha-initialization.js":continue  # Node 22 already provides assert.doesNotThrow; omit legacy shim.
   # Only security regression files changed in the reviewed proposal are admitted.
   allowed=({"test/braces.compile.js","test/braces.expand.js","test/braces.parse.js","test/braces.stringify.js","test/mocha-initialization.js"} if name=="braces" else {"tests/unit/rsa.js"})
   if rel not in allowed:raise RuntimeError("Unreviewed test delta: "+rel)
