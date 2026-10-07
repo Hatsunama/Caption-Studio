@@ -203,9 +203,14 @@ final class TranslationPreservation {
       at = span.end;
     }
     prose.append(text, at, text.length());
-    String value = prose.toString();
+    String value = java.text.Normalizer.normalize(prose, java.text.Normalizer.Form.NFC);
     if (value.matches("[\\s\\p{P}\\p{Z}\\ufeff]*(?:[oO][kK](?:[aA][yY])?|[oO]\\.[kK]\\.)[\\s\\p{P}\\p{Z}\\ufeff]*")) return 2;
     return !protectedSpans.isEmpty() && value.matches("[\\s\\p{P}\\p{Z}\\ufeff]*") ? 1 : 0;
+  }
+
+  /** Bypass inference only when protected data is present; bare OK retains strict response handling. */
+  static boolean protectedCompositionOnly(String text) {
+    return !spans(text).isEmpty() && invariantCompositionEquivalent(text, text);
   }
 
   static boolean borrowedAcknowledgementComposition(String text) {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { normalizeTranslationContent } from '../src/lib/translation-preservation.ts';
 import { acceptTranslationBoundary } from '../src/lib/translation-invariants.ts';
 import { usableAutomaticTranslation, automaticTranslationCueWrites } from '../src/lib/caption-translation-commit.ts';
 
@@ -78,7 +79,7 @@ test('shared protected composition passes quality and durable writes without exe
       assert.equal(isLikelyUntranslatedCaption(item.source, item.translated, target), item.review,
         item.name + ': ' + target);
       assert.equal(usableAutomaticTranslation(item.source, item.translated, false, target),
-        item.review ? undefined : item.translated, item.name + ': durable ' + target);
+        item.review ? undefined : normalizeTranslationContent(item.translated), item.name + ': durable ' + target);
     }
   }
 });

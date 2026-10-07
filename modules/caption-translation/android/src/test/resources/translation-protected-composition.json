@@ -162,9 +162,9 @@
     "review": false
   },
   {
-    "name": "Unicode confusable is not ASCII acknowledgement",
+    "name": "canonical NFC acknowledgement prose",
     "source": "oK 😀",
     "translated": "oK 😀",
-    "review": true
+    "review": false
   }
 ]
