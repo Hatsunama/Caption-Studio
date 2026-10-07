@@ -20,7 +20,7 @@ assert not re.search(r"uses-permission|permission:", permissions)
 badging = Path("out/badging.txt").read_text()
 assert "package: name='app.captionstudio.verification.sharereceiver'" in badging
 assert "application-debuggable" in badging
-assert re.search(r"sdkVersion:\s*'24'", badging), badging
+assert re.search(r"(?m)^(?:minSdkVersion|sdkVersion):\s*'24'", badging), badging
 assert re.search(r"targetSdkVersion:\s*'36'", badging), badging
 assert "launchable-activity: name='app.captionstudio.verification.sharereceiver.VerificationActivity'" in badging
 assert "label='Caption Studio Verification'" in badging
@@ -28,7 +28,7 @@ manifest = Path("out/manifest.txt").read_text()
 assert len(re.findall(r"E: activity(?:\s|$)", manifest)) == 1
 assert not re.search(r"E: (?:uses-permission\S*|provider|service|receiver)(?:\s|$)", manifest)
 for attr in ("exported", "debuggable"):
-    assert re.search(r"android:" + attr + r".*0xffffffff", manifest), attr
+    assert re.search(r"android:" + attr + r".*0xffffffff", manifest), manifest
 for attr in ("allowBackup", "usesCleartextTraffic"):
     assert re.search(r"android:" + attr + r".*\)0x0(?:\s|$)", manifest), attr
 for literal in ("android.intent.action.SEND", "android.intent.action.MAIN",
