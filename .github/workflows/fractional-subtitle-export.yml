@@ -1,0 +1,55 @@
+name: Fractional subtitle export checks
+on:
+  push:
+    branches: [codex/fractional-subtitle-export-20261007]
+permissions:
+  contents: read
+env:
+  CI: true
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.1
+      - run: npm ci --no-audit --no-fund
+      - name: Fractional subtitle behavioral regressions
+        run: node --import tsx --test tests/subtitle-fractional-timing.test.mjs
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.1
+      - run: npm ci --no-audit --no-fund
+      - name: Full logic suite
+        run: npm run test:logic
+      - name: Product contract
+        if: always()
+        run: npm run verify:product-contract
+      - name: TypeScript
+        if: always()
+        run: npx tsc --noEmit
+      - name: Lint
+        if: always()
+        run: npm run lint
+      - name: Production dependency audit
+        if: always()
+        run: npm audit --omit=dev --audit-level=high
+      - name: Expo SDK compatibility
+        if: always()
+        run: npx expo install --check
+      - name: Expo doctor
+        if: always()
+        run: npx --yes expo-doctor@1.20.4
+      - name: Published dependency regressions
+        if: always()
+        run: node --test tests/published-dependency-regressions.cjs
+      - name: Dependency consumer compatibility
+        if: always()
+        run: node tests/dependency-api-compatibility.cjs
