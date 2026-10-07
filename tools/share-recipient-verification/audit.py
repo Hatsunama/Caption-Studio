@@ -30,7 +30,7 @@ assert not re.search(r"E: (?:uses-permission\S*|provider|service|receiver)(?:\s|
 for attr in ("exported", "debuggable"):
     assert re.search(r":" + attr + r"\(0x[0-9a-f]+\)=true(?:\s|$)", manifest), manifest
 for attr in ("allowBackup", "usesCleartextTraffic"):
-    assert re.search(r"android:" + attr + r".*\)0x0(?:\s|$)", manifest), attr
+    assert re.search(r":" + attr + r"\(0x[0-9a-f]+\)=false(?:\s|$)", manifest), manifest
 for literal in ("android.intent.action.SEND", "android.intent.action.MAIN",
                 "android.intent.category.DEFAULT", "android.intent.category.LAUNCHER",
                 "text/*", "application/x-subrip", "*/*", "Caption Studio Verification"):
