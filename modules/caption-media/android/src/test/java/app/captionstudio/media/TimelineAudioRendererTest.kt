@@ -37,7 +37,9 @@ class TimelineAudioRendererTest {
     @Implementation
     fun setDataSource(context: Context, uri: Uri, headers: Map<String, String>?) {
       entered.countDown()
-      release.await(3, TimeUnit.SECONDS)
+      while (release.count > 0) {
+        try { release.await() } catch (_: InterruptedException) { /* Simulate a native probe that must settle naturally. */ }
+      }
     }
 
     @Implementation
@@ -79,16 +81,40 @@ class TimelineAudioRendererTest {
   }
 
   @Test
-  fun throwingTransformerCancelStillCleansOutputAndRejectsOnce() {
+  fun throwingTransformerCancelPreservesFailureAndDoesNotReleaseRunningOutput() {
     var cleanupCount = 0
     var rejectionCount = 0
+    val failure = IllegalStateException("Transformer cancel failed")
+    val caught = assertThrows(IllegalStateException::class.java) {
+      finishCancelledTimelineAudioRender(
+        cancelTransformer = { throw failure },
+        cleanup = { cleanupCount++ },
+        reject = { rejectionCount++ },
+      )
+    }
+    assertTrue(caught === failure)
+    assertEquals(0, cleanupCount)
+    assertEquals(0, rejectionCount)
+  }
+
+  @Test
+  fun cooperativeProbeCancellationIsNotWrappedAsSourceFailure() {
+    val failure = java.util.concurrent.CancellationException("cancelled probe")
+    val caught = assertThrows(java.util.concurrent.CancellationException::class.java) {
+      selectAudibleTimelineSegments(TimelineAudioPlan(1_000, listOf(segment("probe")), emptyList())) { throw failure }
+    }
+    assertTrue(caught === failure)
+  }
+
+  @Test
+  fun successfulCancellationCleansAndRejectsOnlyAfterTransformerStops() {
+    val events = mutableListOf<String>()
     finishCancelledTimelineAudioRender(
-      cancelTransformer = { throw IllegalStateException("Transformer cancel failed") },
-      cleanup = { cleanupCount++ },
-      reject = { rejectionCount++ },
+      cancelTransformer = { events.add("stopped") },
+      cleanup = { events.add("cleanup") },
+      reject = { events.add("rejected") },
     )
-    assertEquals(1, cleanupCount)
-    assertEquals(1, rejectionCount)
+    assertEquals(listOf("stopped", "cleanup", "rejected"), events)
   }
 
   @Test
@@ -128,7 +154,7 @@ class TimelineAudioRendererTest {
   }
 
   @Test
-  fun blockedAudioProbeDoesNotHoldMainLooperAndCancelSettlesPromise() {
+  fun cancelledAudioProbeKeepsPromiseAndRetryHeldUntilWorkerSettles() {
     BlockingExtractor.entered = CountDownLatch(1)
     BlockingExtractor.release = CountDownLatch(1)
     val context = RuntimeEnvironment.getApplication()
@@ -153,6 +179,19 @@ class TimelineAudioRendererTest {
       assertTrue("Audio probe was not reached", BlockingExtractor.entered.await(2, TimeUnit.SECONDS))
 
       TimelineAudioRenderer.cancel()
+      shadowOf(Looper.getMainLooper()).idle()
+      assertEquals(null, rejection.get())
+      val busy = AtomicReference<String?>()
+      TimelineAudioRenderer.render(context, File(context.cacheDir, "too-early.m4a").absolutePath, plan, object : Promise {
+        override fun resolve(value: Any?) { throw AssertionError("Early retry resolved") }
+        override fun reject(code: String?, message: String?, cause: Throwable?) { busy.set(code) }
+      })
+      shadowOf(Looper.getMainLooper()).idle()
+      assertEquals("E_TIMELINE_AUDIO_BUSY", busy.get())
+      BlockingExtractor.release.countDown()
+      val field = TimelineAudioRenderer::class.java.getDeclaredField("preflightWorkers")
+      field.isAccessible = true
+      (field.get(TimelineAudioRenderer) as ThreadPoolExecutor).submit {}.get(5, TimeUnit.SECONDS)
       shadowOf(Looper.getMainLooper()).idle()
       assertEquals("E_TIMELINE_AUDIO_CANCELLED", rejection.get())
     } finally {
