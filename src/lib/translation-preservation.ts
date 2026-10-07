@@ -182,3 +182,24 @@ export function normalizeTranslationContent(text: string): string {
   }
   return trimTranslationHorizontal(output + text.slice(at).normalize('NFC'));
 }
+
+/** Remove only recognized data spans; spaces keep separated prose words separated. */
+function invariantCompositionKind(text: string): number {
+  const protectedSpans = spans(text);
+  let prose = '', at = 0;
+  for (const span of protectedSpans) {
+    prose += text.slice(at, span.start) + ' ';
+    at = span.end;
+  }
+  prose += text.slice(at);
+  if (/^[\s\p{P}\p{Z}]*(?:ok|okay|o\.k\.)[\s\p{P}\p{Z}]*$/iu.test(prose)) return 2;
+  return protectedSpans.length > 0 && /^[\s\p{P}\p{Z}]*$/u.test(prose) ? 1 : 0;
+}
+
+/** Finite invariant composition, never a prose echo exemption. Compare raw data both ways. */
+export function isInvariantCompositionTranslation(source: string, translated: string): boolean {
+  const kind = invariantCompositionKind(source);
+  return kind !== 0 && kind === invariantCompositionKind(translated)
+    && preservesTranslationContent(source, translated)
+    && preservesTranslationContent(translated, source);
+}

@@ -40,11 +40,13 @@ final class TranslationOutputQuality {
     if (!isPlausibleCueTranslation(source, text)) return Reason.RUNAWAY_LENGTH;
     if (!TranslationPreservation.preserves(sourceText, translatedText)) return Reason.PROTECTED_CONTENT;
     if (TranslationPreservation.integerEquivalent(sourceText, translatedText)) return Reason.NONE;
-    // Conventional borrowed OK/okay is not evidence of a failed translation.
-    // This exception requires both entire cues to be acknowledgements; no fixed
-    // target wording and no exemption for sentences, arbitrary words or names.
-    if (BORROWED_ACKNOWLEDGEMENT.matcher(source).matches()
-        && BORROWED_ACKNOWLEDGEMENT.matcher(text).matches()) return Reason.NONE;
+    // Protected data plus one whole borrowed acknowledgement is invariant.
+    // Use raw spans, not NFC-mutated URL/code interiors; reject inventory changes.
+    if (TranslationPreservation.invariantCompositionEquivalent(sourceText, sourceText)
+        && TranslationPreservation.invariantCompositionEquivalent(translatedText, translatedText)) {
+      return TranslationPreservation.invariantCompositionEquivalent(sourceText, translatedText)
+          ? Reason.NONE : Reason.PROTECTED_CONTENT;
+    }
     if (source.codePointCount(0, source.length()) > 20
         && BORROWED_ACKNOWLEDGEMENT.matcher(text).matches()) return Reason.SOURCE_ECHO;
     if (source.equals(text) && (!has(text, LETTER) || text.matches("https?://[^\\s]+"))) {

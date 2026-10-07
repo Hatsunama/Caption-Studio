@@ -62,6 +62,6 @@ except Exception as e:
     reports["infrastructure_error"]={"type":type(e).__name__,"message":str(e)}
     print("INFRASTRUCTURE_ERROR="+repr(e),flush=True)
 finally:
-    (root/"preservation-repair-results.json").write_text(json.dumps({"base":"6ec571a158e82a1c13e434cda73dd1e737ad9c78","production_edited":False,"stage":"COMPOSITION_RED","head":os.environ.get("GITHUB_SHA"),"red_bundle":os.environ.get("GITHUB_SHA"),"reports":reports},indent=2))
+    (root/"preservation-repair-results.json").write_text(json.dumps({"base":"6ec571a158e82a1c13e434cda73dd1e737ad9c78","production_edited":True,"stage":"COMPOSITION_GREEN","head":os.environ.get("GITHUB_SHA"),"red_bundle":"65e08c098a0e19cad6069f85372f13d2b76fa180","reports":reports},indent=2))
     print("RESULTS="+json.dumps({k:v.get("exit_code",v.get("type")) for k,v in reports.items()}),flush=True)
 sys.exit(1 if any("exit_code" not in value or value["exit_code"] != 0 for value in reports.values()) else 0)

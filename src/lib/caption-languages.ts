@@ -1,4 +1,5 @@
 import { isInvariantTranslation } from '@/lib/translation-invariants';
+import { isInvariantCompositionTranslation, preservesTranslationContent } from '@/lib/translation-preservation';
 
 export type EnglishChineseCaptionLanguage = 'en' | 'zh-Hans' | 'zh-Hant';
 
@@ -153,9 +154,14 @@ function translationEchoKey(text: string) {
 }
 
 export function isLikelyUntranslatedCaption(sourceText: string, translatedText: string, targetLanguage: string) {
+  if (!preservesTranslationContent(sourceText, translatedText)) return true;
+  if (isInvariantCompositionTranslation(sourceText, sourceText)
+    && isInvariantCompositionTranslation(translatedText, translatedText)) {
+    return !isInvariantCompositionTranslation(sourceText, translatedText);
+  }
   const source = sourceText.normalize('NFC').trim();
   const translated = translatedText.normalize('NFC').trim();
-  if (isInvariantTranslation(source, translated, targetLanguage)) return false;
+  if (isInvariantTranslation(sourceText, translatedText, targetLanguage)) return false;
   if (!translated || source === translated) return true;
   if (/\p{L}/u.test(source) && translationEchoKey(source) === translationEchoKey(translated)) return true;
   // A whole-cue borrowed acknowledgement cannot stand in for a longer source.

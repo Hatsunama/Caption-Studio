@@ -192,6 +192,29 @@ final class TranslationPreservation {
     String integer = integerDigits(source, false);
     return integer == null || integer.equals(integerDigits(translated, true));
   }
+
+  /** Remove only recognized data spans; retain boundaries between prose words. */
+  private static int invariantCompositionKind(String text) {
+    List<Span> protectedSpans = spans(text);
+    StringBuilder prose = new StringBuilder();
+    int at = 0;
+    for (Span span : protectedSpans) {
+      prose.append(text, at, span.start).append(' ');
+      at = span.end;
+    }
+    prose.append(text, at, text.length());
+    String value = prose.toString();
+    if (value.matches("(?i)[\\s\\p{P}\\p{Z}]*(?:ok|okay|o\\.k\\.)[\\s\\p{P}\\p{Z}]*")) return 2;
+    return !protectedSpans.isEmpty() && value.matches("[\\s\\p{P}\\p{Z}]*") ? 1 : 0;
+  }
+
+  /** Same finite invariant policy as JS; raw data inventories must match both ways. */
+  static boolean invariantCompositionEquivalent(String source, String translated) {
+    int kind = invariantCompositionKind(source);
+    return kind != 0 && kind == invariantCompositionKind(translated)
+        && preserves(source, translated) && preserves(translated, source);
+  }
+
   static boolean joinSpaceNeeded(String previous, String current) {
     boolean space = (!previous.isEmpty() && white(previous.codePointBefore(previous.length())))
         || (!current.isEmpty() && white(current.codePointAt(0)));

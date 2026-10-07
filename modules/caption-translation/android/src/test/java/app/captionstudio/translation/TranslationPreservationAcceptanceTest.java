@@ -262,6 +262,89 @@ public final class TranslationPreservationAcceptanceTest {
     assertEquals("", cue(result).get("text"));
   }
 
+
+  @Test public void cancellationAfterInvariantBatchRetainsReplayAndResumeStillTranslatesProse() throws Exception {
+    File directory = temporary.newFolder();
+    File model = temporary.newFile("composition-cancel.litertlm");
+    Files.write(model.toPath(), new byte[]{1});
+    String invariant = "ok https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00";
+    Map<String,Object> request = Map.of("requestId", "composition-cancel", "reuseCheckpoints", true,
+        "operations", List.of(Map.of("id", "op", "sourceLanguage", "en", "targetLanguage", "pl",
+            "batches", List.of(
+                Map.of("captions", List.of(Map.of("id", "data", "text", invariant)),
+                    "contextAfter", "Hello"),
+                Map.of("captions", List.of(Map.of("id", "prose", "text", "Hello")),
+                    "contextBefore", invariant)))));
+    TranslationEnvironment environment = new TranslationEnvironment() {
+      public File prepareCacheDirectory() { return directory; }
+      public File prepareCheckpointDirectory() { return directory; }
+      public void verifyDeviceCapacity(File f) {}
+    };
+    for (int pass = 0; pass < 2; pass++) {
+      boolean interrupt = pass == 0;
+      AtomicInteger opens = new AtomicInteger();
+      AtomicInteger calls = new AtomicInteger();
+      TranslationRuntimeFactory factory = (m,c,t,s) -> {
+        opens.incrementAndGet();
+        return new TranslationRuntime() {
+          public boolean supportsStructuredOutput() { return true; }
+          public String translate(String prompt) {
+            calls.incrementAndGet();
+            var payload = JsonParser.parseString(prompt).getAsJsonObject();
+            assertEquals(invariant, payload.get("contextBefore").getAsString());
+            var inputs = payload.getAsJsonArray("captions");
+            assertEquals(1, inputs.size());
+            assertEquals("Hello", inputs.get(0).getAsJsonObject().get("text").getAsString());
+            JsonObject item = new JsonObject();
+            item.add("id", inputs.get(0).getAsJsonObject().get("id"));
+            item.addProperty("text", "Czesc");
+            JsonArray output = new JsonArray();
+            output.add(item);
+            return output.toString();
+          }
+          public String translate(String prompt, int tokens, boolean structured, String schema) {
+            assertTrue(structured);
+            assertNotNull(schema);
+            return translate(prompt);
+          }
+          public void cancel() {}
+          public void close() {}
+        };
+      };
+      CountDownLatch done = new CountDownLatch(1);
+      AtomicReference<String> error = new AtomicReference<>();
+      AtomicReference<Map<String,Object>> result = new AtomicReference<>();
+      try (NaturalCaptionTranslator worker = new NaturalCaptionTranslator(environment, factory,
+          (f,c,p) -> {}, Executors.newSingleThreadExecutor(), line -> {})) {
+        worker.start(model.getAbsolutePath(), request, new NaturalCaptionTranslator.Callback() {
+          public void onSuccess(Map<String,Object> value) { result.set(value); done.countDown(); }
+          public void onError(String code, String message, Throwable cause) { error.set(code); done.countDown(); }
+          public void onBatchAccepted(Map<String,Object> batch) {
+            if (interrupt) worker.cancel();
+          }
+        });
+        assertTrue(done.await(10, TimeUnit.SECONDS));
+        var accepted = worker.getAcceptedBatches("composition-cancel");
+        assertEquals(interrupt ? 1 : 2, accepted.size());
+        var first = (Map<?,?>)((List<?>)accepted.get(0).get("captions")).get(0);
+        assertEquals("data", first.get("id"));
+        assertEquals(invariant, first.get("text"));
+        assertEquals(true, first.get("valid"));
+        if (interrupt) {
+          assertEquals(NaturalCaptionTranslator.CANCELLED, error.get());
+          assertNull(result.get());
+          assertEquals(0, opens.get());
+          assertEquals(0, calls.get());
+        } else {
+          assertNull(error.get());
+          assertEquals(1, opens.get());
+          assertEquals(1, calls.get());
+          assertEquals(2, ((List<?>)result.get().get("captions")).size());
+        }
+      }
+    }
+  }
+
   private Map<String,Object> run(File checkpoints, AtomicInteger calls, String output, boolean repair) throws Exception {
     return runSource(checkpoints, calls, output, repair, "Hello \ud83d\udc69\ud83c\udffd\u200d\ud83d\udcbb", "fr");
   }

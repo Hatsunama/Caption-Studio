@@ -1112,7 +1112,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   }
 
   private static boolean literalOnly(String text) {
-    return text.codePoints().noneMatch(Character::isLetter) || TranslationPreservation.opaqueOnly(text);
+    return text.codePoints().noneMatch(Character::isLetter)
+        || TranslationPreservation.invariantCompositionEquivalent(text, text);
   }
 
   private static String sourceFailure(String text) {

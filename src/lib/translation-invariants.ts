@@ -1,12 +1,12 @@
-import { isPreservedIntegerTranslation, normalizeTranslationContent, preservesTranslationContent } from './translation-preservation';
+import { isInvariantCompositionTranslation, isPreservedIntegerTranslation, normalizeTranslationContent, preservesTranslationContent } from './translation-preservation';
 
 /** Accept invariant tokens, never an arbitrary echoed source sentence. */
 export function isInvariantTranslation(source: string, translated: string, _target: string): boolean {
-  if (!translated) return false;
+  if (!translated || !preservesTranslationContent(source, translated)) return false;
+  if (isInvariantCompositionTranslation(source, translated)) return true;
   if (isPreservedIntegerTranslation(source, translated)) return true;
-  // Match native's whole-cue borrowed acknowledgement rule for every target.
-  const borrowedAcknowledgement = /^[\s\p{P}\p{Z}]*(?:ok|okay|o\.k\.)[\s\p{P}\p{Z}]*$/iu;
-  if (borrowedAcknowledgement.test(source) && borrowedAcknowledgement.test(translated)) return true;
+  source = source.normalize('NFC').trim();
+  translated = translated.normalize('NFC').trim();
   if (source !== translated) return false;
   return !/\p{L}/u.test(source) || /^https?:\/\/[^\s]+$/u.test(source);
 }
