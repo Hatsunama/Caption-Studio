@@ -12,8 +12,6 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.audio.GainProcessor
 import androidx.media3.transformer.Composition
-import androidx.media3.transformer.EditedMediaItem
-import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
@@ -277,7 +275,7 @@ internal object TimelineAudioRenderer {
   }
 
   private fun buildComposition(context: Context, plan: TimelineAudioPlan): Composition {
-    val sequences = selectAudibleTimelineSegments(plan) { mediaHasAudioTrack(context, it) }.map { segment ->
+    val items = selectAudibleTimelineSegments(plan) { mediaHasAudioTrack(context, it) }.map { segment ->
       checkPreflightCancellation()
       val clipping = MediaItem.ClippingConfiguration.Builder()
         .setStartPositionMs(segment.sourceStartMs)
@@ -287,16 +285,15 @@ internal object TimelineAudioRenderer {
         .setUri(MediaInputPolicy(context).requireInput(segment.sourceUri))
         .setClippingConfiguration(clipping)
         .build()
-      val edited = EditedMediaItem.Builder(mediaItem)
-        .setRemoveVideo(true)
-        .setSpeed(ConstantTimelineSpeed(segment.playbackRate))
-        .setEffects(Effects(listOf(GainProcessor(TimelineAudioGainProvider(segment.volume))), emptyList()))
-        .build()
-      EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).apply {
-        if (segment.timelineStartMs > 0L) addGap(segment.timelineStartMs * 1_000L)
-        addItem(edited)
-      }.build()
+      timelineAudioLaneItem(
+        timelineAudioUs(segment.timelineStartMs),
+        timelineAudioUs(segment.timelineEndMs),
+        mediaItem,
+        ConstantTimelineSpeed(segment.playbackRate),
+        Effects(listOf(GainProcessor(TimelineAudioGainProvider(segment.volume))), emptyList()),
+      )
     }
+    val sequences = buildTimelineAudioLanes(items, timelineAudioUs(plan.durationMs), ::checkPreflightCancellation)
     if (sequences.isEmpty()) {
       throw IllegalArgumentException("No audible audio is available on this timeline")
     }
