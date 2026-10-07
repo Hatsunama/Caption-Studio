@@ -134,13 +134,26 @@ final class TranslationPreservation {
     if (start > 0 && !white(text.codePointBefore(start))) return start;
     return end == text.length() || white(point(text, end)) ? end : start;
   }
-  private static List<Span> spans(String text) {
+  private static boolean attachedOperatorData(int cp) {
+    return cp >= 0 && ((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z')
+        || cp == '_' || digitValue(cp) >= 0
+        || "+=<>|^~*/\u2212\u00d7\u00f7\u00b1\u2260\u2264\u2265".indexOf(cp) >= 0);
+  }
+  private static int targetOperatorEnd(String text, int start, java.util.Set<String> operators) {
+    int cp = point(text, start);
+    if (!operators.contains(new String(Character.toChars(cp)))) return start;
+    int end = start + Character.charCount(cp);
+    int before = start > 0 ? text.codePointBefore(start) : -1;
+    return attachedOperatorData(before) || attachedOperatorData(point(text, end)) ? start : end;
+  }
+  private static List<Span> spans(String text) { return spans(text, null); }
+  private static List<Span> spans(String text, java.util.Set<String> targetOperators) {
     List<Span> result = new ArrayList<>();
     for (int at = 0; at < text.length();) {
       int end = codeEnd(text, at);
       if (end == at) end = urlEnd(text, at);
       if (end == at) end = emojiEnd(text, at);
-      if (end == at) end = operatorEnd(text, at);
+      if (end == at) end = targetOperators == null ? operatorEnd(text, at) : targetOperatorEnd(text, at, targetOperators);
       if (end > at) { result.add(new Span(at, end)); at = end; }
       else at += Character.charCount(point(text, at));
     }
@@ -190,7 +203,11 @@ final class TranslationPreservation {
       String token = breaks(source.substring(span.start, span.end));
       counts.put(token, counts.getOrDefault(token, 0) + 1);
     }
-    for (Span span : spans(translated)) {
+    java.util.Set<String> operators = new java.util.HashSet<>();
+    for (String token : counts.keySet()) {
+      if (operatorEnd(token, 0) == token.length()) operators.add(token);
+    }
+    for (Span span : spans(translated, operators)) {
       String token = breaks(translated.substring(span.start, span.end));
       if (!counts.containsKey(token)) continue;
       int available = counts.get(token);
