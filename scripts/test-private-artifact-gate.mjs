@@ -26,7 +26,7 @@ function convert(value) {
   if (typeof value === 'boolean') return new data.BooleanData(value);
   if (typeof value === 'number') return new data.NumberData(value);
   if (typeof value === 'string') return new data.StringData(value);
-  return new data.Dictionary(Object.entries(value).map(([key, item]) => ({ key, value: convert(item) })));
+  return new data.Dictionary(...Object.entries(value).map(([key, item]) => ({ key, value: convert(item) })));
 }
 function evaluate(source, context, conditional = false) {
   let expression = String(source).trim().replace(/^\$\{\{\s*|\s*\}\}$/g, '');
