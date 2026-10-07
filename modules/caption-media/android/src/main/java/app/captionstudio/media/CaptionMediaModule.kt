@@ -119,9 +119,9 @@ class CaptionMediaModule : Module() {
       TimelineAudioRenderer.render(context, outputFile(outputUri).absolutePath, parseTimelineAudioPlan(rawPlan), promise)
     }
 
-    AsyncFunction("cancelAudioExtraction") {
-      TimelineAudioRenderer.cancel()
+    AsyncFunction("cancelAudioExtraction") { promise: Promise ->
       audioExtractionEpoch.incrementAndGet()
+      TimelineAudioRenderer.cancel(promise)
     }
 
     AsyncFunction("extractAudioTrack") { inputUri: String, outputUri: String ->

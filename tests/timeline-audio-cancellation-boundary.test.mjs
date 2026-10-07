@@ -133,7 +133,11 @@ function harness(options = {}) {
 
 test('success restores original media ownership and cleans temporary audio after checkpointing', async () => {
   const h = harness();
-  const running = h.generateAndSaveProjectCaptions(h.project);
+  const running = h.generateAndSaveProjectCaptions(h.project, (progress) => {
+    if (progress.detail === 'Preparing the audible timeline') h.events.push(['preparing']);
+  });
+  assert.equal(h.events[0][0], 'preparing');
+  assert.equal(h.events[1][0], 'render');
   h.succeed();
   const result = await running;
   assert.equal(result.sources, h.project.sources);

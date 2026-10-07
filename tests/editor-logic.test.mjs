@@ -266,10 +266,8 @@ test('one verified caption model owns generation and first-use consent', () => {
   assert.match(workflows, /CAPTION_TRANSCRIPTION_MODEL_ID/);
   assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint\)/);
   assert.match(pipeline, /CaptionMedia\.sha256\(source\.uri\)/);
-  assert.ok(
-    pipeline.indexOf("detail: 'Preparing the audible timeline'")
-      < pipeline.indexOf('createTimelineTranscriptionSession(project)'),
-  );
+  // Progress-before-native ordering is exercised by the callable audio
+  // cancellation boundary regressions, rather than an exact call-string match.
 });
 
 test('Expo owns video-player release and editor teardown never commands a released player', () => {
