@@ -94,7 +94,7 @@ def main():
  audit("red_production_audit",["--omit=dev"])
  require_ok("normal_baseline",["node","tests/dependency-api-compatibility.cjs"],timeout=180)
  harness=OUT/"harness";harness.mkdir()
- (harness/"package.json").write_text(json.dumps({"private":True,"dependencies":{"mocha":"11.7.5","bash-path":"2.0.1","ansi-colors":"3.2.4","webpack":"5.102.1","webpack-cli":"6.0.1"}}))
+ (harness/"package.json").write_text(json.dumps({"private":True,"dependencies":{"mocha":"11.7.5","bash-path":"2.0.1","ansi-colors":"3.2.4","webpack":"5.102.1","webpack-cli":"6.0.1","jquery":"3.7.1","jsdom":"26.1.0"}}))
  require_ok("test_tool_install",["npm","install","--ignore-scripts","--no-audit","--no-fund"],cwd=harness,timeout=240)
  env={"NODE_PATH":str(harness/"node_modules")+os.pathsep+str(ROOT/"node_modules"),"NODE_ENV":"test"}
  mocha=str(harness/"node_modules/mocha/bin/mocha.js")
@@ -147,11 +147,13 @@ webpack(configs,(err,stats)=>{if(err||stats.hasErrors()){console.error(err||stat
    bundlecheck=OUT/"bundle-rsa.cjs"
    bundlecheck.write_text("""const path=require('path'),fs=require('fs'),vm=require('vm');
 const root=process.env.BACKPORT_BUNDLE_ROOT;
+const dom=new (require('jsdom').JSDOM)('<!doctype html><html><body></body></html>',{url:'https://example.test'});
 require(path.join(root,'lib/index.js'));
 const sandbox={module:{exports:{}},console,setTimeout,clearTimeout,setImmediate,clearImmediate,crypto:require('node:crypto').webcrypto};
 Object.assign(sandbox,{ArrayBuffer,Uint8Array,DataView});
+Object.assign(sandbox,{document:dom.window.document,navigator:dom.window.navigator,location:dom.window.location,jQuery:require('jquery')(dom.window)});
 sandbox.exports=sandbox.module.exports;sandbox.self=sandbox;sandbox.window=sandbox;
-vm.runInNewContext(fs.readFileSync(path.join(root,process.env.BACKPORT_BUNDLE_FILE),'utf8'),sandbox,{timeout:5000});
+try{vm.runInNewContext(fs.readFileSync(path.join(root,process.env.BACKPORT_BUNDLE_FILE),'utf8'),sandbox,{timeout:5000});}catch(error){throw new Error(error.name+': '+error.message);}
 const bundle=sandbox.module.exports;
 if(bundle.util.isNodejs)throw Error('Browser bundle used Node runtime');
 if(!bundle.util.isArrayBuffer(new ArrayBuffer(8))||bundle.util.createBuffer(new Uint8Array([1,2])).length()!==2)throw Error('WebCrypto and bundle buffer realms differ');
@@ -159,7 +161,7 @@ for(const [file,value] of Object.entries({'forge.js':bundle,'jsbn.js':bundle.jsb
  if(!value)throw Error('Missing browser API '+file);
  require.cache[require.resolve(path.join(root,'lib',file))].exports=value;
 }
-require(path.join(root,'tests/unit/rsa.js'));
+require(path.join(root,'tests/unit/rsa.js'));after(()=>dom.window.close());
 """)
    for bn in ["forge.min.js","forge.all.min.js"]:
     require_ok("bundle_GREEN_"+bn,["node",mocha,"-t","30000",str(bundlecheck)],cwd=dest,timeout=180,envextra={**env,"BACKPORT_BUNDLE_ROOT":str(dest),"BACKPORT_BUNDLE_FILE":"dist/"+bn})
