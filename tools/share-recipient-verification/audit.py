@@ -28,7 +28,7 @@ manifest = Path("out/manifest.txt").read_text()
 assert len(re.findall(r"E: activity(?:\s|$)", manifest)) == 1
 assert not re.search(r"E: (?:uses-permission\S*|provider|service|receiver)(?:\s|$)", manifest)
 for attr in ("exported", "debuggable"):
-    assert re.search(r"android:" + attr + r".*0xffffffff", manifest), manifest
+    assert re.search(r":" + attr + r"\(0x[0-9a-f]+\)=true(?:\s|$)", manifest), manifest
 for attr in ("allowBackup", "usesCleartextTraffic"):
     assert re.search(r"android:" + attr + r".*\)0x0(?:\s|$)", manifest), attr
 for literal in ("android.intent.action.SEND", "android.intent.action.MAIN",
