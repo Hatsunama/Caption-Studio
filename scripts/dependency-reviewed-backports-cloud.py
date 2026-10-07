@@ -149,10 +149,12 @@ webpack(configs,(err,stats)=>{if(err||stats.hasErrors()){console.error(err||stat
 const root=process.env.BACKPORT_BUNDLE_ROOT;
 require(path.join(root,'lib/index.js'));
 const sandbox={module:{exports:{}},console,setTimeout,clearTimeout,setImmediate,clearImmediate,crypto:require('node:crypto').webcrypto};
+Object.assign(sandbox,{ArrayBuffer,Uint8Array,DataView});
 sandbox.exports=sandbox.module.exports;sandbox.self=sandbox;sandbox.window=sandbox;
 vm.runInNewContext(fs.readFileSync(path.join(root,process.env.BACKPORT_BUNDLE_FILE),'utf8'),sandbox,{timeout:5000});
 const bundle=sandbox.module.exports;
 if(bundle.util.isNodejs)throw Error('Browser bundle used Node runtime');
+if(!bundle.util.isArrayBuffer(new ArrayBuffer(8))||bundle.util.createBuffer(new Uint8Array([1,2])).length()!==2)throw Error('WebCrypto and bundle buffer realms differ');
 for(const [file,value] of Object.entries({'forge.js':bundle,'jsbn.js':bundle.jsbn,'md.all.js':bundle.md,'mgf.js':bundle.mgf,'pki.js':bundle.pki,'pss.js':bundle.pss,'random.js':bundle.random,'rsa.js':bundle.pki.rsa,'util.js':bundle.util})){
  if(!value)throw Error('Missing browser API '+file);
  require.cache[require.resolve(path.join(root,'lib',file))].exports=value;
