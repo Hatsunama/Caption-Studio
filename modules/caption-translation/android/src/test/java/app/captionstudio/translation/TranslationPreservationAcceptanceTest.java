@@ -210,6 +210,58 @@ public final class TranslationPreservationAcceptanceTest {
     }
   }
 
+
+  @Test public void sharedProtectedCompositionQualityParity() throws Exception {
+    try (var input = getClass().getResourceAsStream("/translation-protected-composition.json")) {
+      assertNotNull(input);
+      var cases = JsonParser.parseReader(new java.io.InputStreamReader(input,
+          java.nio.charset.StandardCharsets.UTF_8)).getAsJsonArray();
+      for (var element : cases) {
+        var item = element.getAsJsonObject();
+        for (String target : new String[] {"pl", "zh-Hans", "ar", "ja"}) {
+          assertEquals(item.get("name").getAsString() + ": " + target,
+              item.get("review").getAsBoolean(), TranslationOutputQuality.needsReview(
+                  item.get("source").getAsString(), item.get("translated").getAsString(), target));
+        }
+      }
+    }
+  }
+
+  @Test public void samsungCompositionBypassesGenerationAndReplaysAcceptedBatch() throws Exception {
+    String source = "ok https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00";
+    File directory = temporary.newFolder();
+    AtomicInteger calls = new AtomicInteger();
+    var fresh = runSource(directory, calls, source, true, source, "pl");
+    assertEquals(true, cue(fresh).get("valid"));
+    assertEquals(source, cue(fresh).get("text"));
+    assertEquals("cue", cue(fresh).get("id"));
+    assertEquals("no needless model inference for invariant composition", 0, calls.get());
+    AtomicInteger replayCalls = new AtomicInteger();
+    var replay = runSource(directory, replayCalls, "Must not generate", true, source, "pl");
+    assertEquals(fresh.get("captions"), replay.get("captions"));
+    assertEquals(0, replayCalls.get());
+  }
+
+  @Test public void literalCompositionBypassesGenerationForEveryTarget() throws Exception {
+    String source = "https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00";
+    for (String target : new String[] {"pl", "zh-Hans", "ar", "ja"}) {
+      AtomicInteger calls = new AtomicInteger();
+      var result = runSource(temporary.newFolder(), calls, "Must not generate", true, source, target);
+      assertEquals(true, cue(result).get("valid"));
+      assertEquals(source, cue(result).get("text"));
+      assertEquals(0, calls.get());
+    }
+  }
+
+  @Test public void ordinaryProseWithLiteralsStillGeneratesAndRejectsEcho() throws Exception {
+    String source = "Read https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00";
+    AtomicInteger calls = new AtomicInteger();
+    var result = runSource(temporary.newFolder(), calls, source, true, source, "pl");
+    assertTrue(calls.get() > 0);
+    assertEquals(false, cue(result).get("valid"));
+    assertEquals("", cue(result).get("text"));
+  }
+
   private Map<String,Object> run(File checkpoints, AtomicInteger calls, String output, boolean repair) throws Exception {
     return runSource(checkpoints, calls, output, repair, "Hello \ud83d\udc69\ud83c\udffd\u200d\ud83d\udcbb", "fr");
   }

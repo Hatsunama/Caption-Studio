@@ -1,0 +1,158 @@
+[
+  {
+    "name": "Samsung exact composition",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀",
+    "review": false
+  },
+  {
+    "name": "all protected literals",
+    "source": "https://example.com/ `src/app.ts` 😀",
+    "translated": "https://example.com/ `src/app.ts` 😀",
+    "review": false
+  },
+  {
+    "name": "closed code only",
+    "source": "`src/app.ts`",
+    "translated": "`src/app.ts`",
+    "review": false
+  },
+  {
+    "name": "emoji and acknowledgement",
+    "source": "ok 😀",
+    "translated": "ok 😀",
+    "review": false
+  },
+  {
+    "name": "acknowledgement variation",
+    "source": "Okay. https://example.com/ `src/app.ts` 😀",
+    "translated": "OK! https://example.com/ `src/app.ts` 😀",
+    "review": false
+  },
+  {
+    "name": "reordered literals",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "😀 `src/app.ts` ok https://example.com/",
+    "review": false
+  },
+  {
+    "name": "repeated literals exact",
+    "source": "ok https://example.com/ `src/app.ts` 😀 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀 😀",
+    "review": false
+  },
+  {
+    "name": "opaque raw combining",
+    "source": "ok `café` https://example.com/café 😀",
+    "translated": "ok `café` https://example.com/café 😀",
+    "review": false
+  },
+  {
+    "name": "explicit break",
+    "source": "ok\nhttps://example.com/ `src/app.ts` 😀",
+    "translated": "ok\nhttps://example.com/ `src/app.ts` 😀",
+    "review": false
+  },
+  {
+    "name": "normal prose echo",
+    "source": "Read https://example.com/ `src/app.ts` 😀",
+    "translated": "Read https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "normalized prose echo",
+    "source": "Read https://example.com/ `src/app.ts` 😀",
+    "translated": "READ! https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "ordinary short English",
+    "source": "hello 😀",
+    "translated": "hello 😀",
+    "review": true
+  },
+  {
+    "name": "name not acknowledgement",
+    "source": "OK Go https://example.com/ `src/app.ts` 😀",
+    "translated": "OK Go https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "split acknowledgement",
+    "source": "o 😀 k",
+    "translated": "o 😀 k",
+    "review": true
+  },
+  {
+    "name": "unclosed code",
+    "source": "ok `src/app.ts 😀",
+    "translated": "ok `src/app.ts 😀",
+    "review": true
+  },
+  {
+    "name": "missing URL",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "missing code",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ 😀",
+    "review": true
+  },
+  {
+    "name": "missing emoji",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts`",
+    "review": true
+  },
+  {
+    "name": "duplicate URL",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀 https://example.com/",
+    "review": true
+  },
+  {
+    "name": "duplicate code",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀 `src/app.ts`",
+    "review": true
+  },
+  {
+    "name": "duplicate emoji",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀 😀",
+    "review": true
+  },
+  {
+    "name": "repeated emoji missing",
+    "source": "ok https://example.com/ `src/app.ts` 😀 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀",
+    "review": true
+  },
+  {
+    "name": "changed code",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.js` 😀",
+    "review": true
+  },
+  {
+    "name": "raw combining mutated",
+    "source": "ok `café` 😀",
+    "translated": "ok `café` 😀",
+    "review": true
+  },
+  {
+    "name": "extra protected token",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀 👋",
+    "review": true
+  },
+  {
+    "name": "long prose collapsed",
+    "source": "Please bring the documents tomorrow https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀",
+    "review": true
+  }
+]

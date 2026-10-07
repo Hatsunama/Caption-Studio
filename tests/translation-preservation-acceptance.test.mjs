@@ -68,3 +68,28 @@ test('strict ID set and explicit native invalid remain authoritative', () => {
   const result = acceptTranslationBoundary([{ id:'cue',text:'Hello' }], [{ id:'cue',text:'Bonjour',valid:false }]);
   assert.equal(result.rejected.has('cue'),true);
 });
+
+test('shared protected composition passes quality and durable writes without exempting prose', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { isLikelyUntranslatedCaption } = await import('../src/lib/caption-languages.ts');
+  const cases = JSON.parse(await readFile(new URL('../modules/caption-translation/android/src/test/resources/translation-protected-composition.json', import.meta.url), 'utf8'));
+  for (const item of cases) {
+    for (const target of ['pl', 'zh-Hans', 'ar', 'ja']) {
+      assert.equal(isLikelyUntranslatedCaption(item.source, item.translated, target), item.review,
+        item.name + ': ' + target);
+      assert.equal(usableAutomaticTranslation(item.source, item.translated, false, target),
+        item.review ? undefined : item.translated, item.name + ': durable ' + target);
+    }
+  }
+});
+
+test('exact Samsung composition writes under its requested ID; native invalid stays authoritative', () => {
+  const source = 'ok https://example.com/ \u0060src/app.ts\u0060 \ud83d\ude00';
+  const captions = [{ id: 'samsung-cue', text: source }];
+  const result = acceptTranslationBoundary(captions, [{ id: 'samsung-cue', text: source, valid: true }]);
+  assert.deepEqual(automaticTranslationCueWrites({
+    captions, translatedById: result.translations, needsReviewById: result.rejected,
+    previousById: new Map(), targetLanguage: 'pl',
+  }), [{ sourceCaptionId: 'samsung-cue', translatedText: source, translationStatus: 'translated' }]);
+  assert.equal(usableAutomaticTranslation(source, source, true, 'pl'), undefined);
+});
