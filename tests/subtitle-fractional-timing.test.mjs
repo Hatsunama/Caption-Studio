@@ -263,3 +263,43 @@ test('positive terminal tails are dropped only in formats without a representabl
     }
   }
 });
+
+test('native speed-derived terminal render plans have a quantized duration and bounded integer cue timings', () => {
+  for (const [startMs, independent, status] of [
+    [3000, false, 'translated'],
+    [3000, true, 'translated'],
+    [3999.7, false, 'translated'],
+    [3999.7, true, 'failed'],
+  ]) {
+    const original = fixture(startMs, 4000);
+    original.transcription.words = [{ id: 'terminal-word', text: 'Primary', startMs, endMs: 4000 }];
+    original.captions[0].wordIds = ['terminal-word'];
+    const secondary = original.captionTracks.translations[0].cues[0];
+    Object.assign(secondary, { status, text: status === 'failed' ? '' : 'Secondary' });
+    if (independent) secondary.startMs = 2900;
+    const project = setClipPlaybackRate(original, original.clips[0].id, 1.5);
+    const before = structuredClone(project);
+    const exactEndMs = totalClipDuration(project.clips);
+    assert.equal(exactEndMs, 4000 / 1.5);
+    assert.ok(!Number.isInteger(exactEndMs));
+    if (status === 'failed') assert.throws(() => buildTimelineRenderPlan(project), /Export anyway/u);
+    const plan = buildTimelineRenderPlan(project, undefined, status === 'failed');
+    const native = toNativeRenderPlan(plan);
+    assert.equal(plan.durationMs, Math.ceil(exactEndMs));
+    assert.equal(native.durationMs, 2667);
+    assert.ok(Number.isInteger(native.durationMs));
+    assert.equal(native.captions.length, 2);
+    assert.equal(native.captions[0].words.length, 1);
+    for (const interval of native.captions.flatMap((caption) => [caption, ...caption.words])) {
+      assert.ok(Number.isInteger(interval.startMs));
+      assert.ok(Number.isInteger(interval.endMs));
+      assert.ok(interval.startMs >= 0 && interval.endMs > interval.startMs);
+      assert.ok(interval.endMs <= native.durationMs);
+      assert.equal(interval.endMs, 2667);
+    }
+    assert.equal(native.captions[0].startMs, Math.round(project.captions[0].startMs));
+    assert.equal(native.captions[1].startMs,
+      Math.round(project.captionTracks.translations[0].cues[0].startMs));
+    assert.deepEqual(project, before);
+  }
+});
