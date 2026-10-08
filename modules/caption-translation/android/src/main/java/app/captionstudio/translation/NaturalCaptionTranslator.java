@@ -541,9 +541,6 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           sanitizedCause("Local translation cleanup failed")
       );
       result = null;
-    } else if (run.cancelled.get()) {
-      error = new TranslationError(CANCELLED, "Caption translation was cancelled.", null);
-      result = null;
     }
 
     finish(run, result, error);
@@ -1207,7 +1204,17 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     Map<String, Object> terminalResult = result;
     synchronized (stateLock) {
       if (activeRun == run) {
-        if (run.cancelled.get() && !run.cleanupFailed.get()) {
+        // Cleanup owns the highest precedence. A genuine work failure must survive
+        // a concurrent stop request; a failed stop signal must survive a clean stop.
+        if (!run.cleanupFailed.get()
+            && (terminalError == null || CANCELLED.equals(terminalError.code))) {
+          TranslationError signalError = run.cancelSignalFailure.get();
+          if (signalError != null) {
+            terminalError = signalError;
+            terminalResult = null;
+          }
+        }
+        if (terminalError == null && run.cancelled.get()) {
           terminalError = new TranslationError(CANCELLED, "Caption translation was cancelled.", null);
           terminalResult = null;
         }
@@ -1304,8 +1311,10 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     try {
       TranslationRuntime runtime = run.runtime.get();
       if (runtime != null) runtime.cancel();
-    } catch (RuntimeException error) {
-      Log.w(LOG_TAG, "Native translation cancellation signal failed: " + error.getClass().getSimpleName());
+    } catch (Throwable error) {
+      // Keep this run owned until execute exits and closes the runtime. The worker
+      // reads this under the same lifecycle lock before selecting its terminal error.
+      run.cancelSignalFailure.compareAndSet(null, classify(error, run, "cancelling"));
     } finally {
       run.nativeLifecycleLock.unlock();
     }
@@ -1708,10 +1717,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   }
 
   private static TranslationError classify(Throwable error, ActiveRun run, String stage) {
-    if (run.cancelled.get()
-        || Thread.currentThread().isInterrupted()
-        || error instanceof CancellationException
-        || error instanceof InterruptedException) {
+    if (error instanceof CancellationException || error instanceof InterruptedException) {
       run.cancelled.set(true);
       return new TranslationError(CANCELLED, "Caption translation was cancelled.", null);
     }
@@ -2076,6 +2082,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     final AtomicBoolean cancelSignalStarted = new AtomicBoolean(false);
     final AtomicBoolean cleanupFailed = new AtomicBoolean(false);
     final AtomicBoolean terminalDelivered = new AtomicBoolean(false);
+    final AtomicReference<TranslationError> cancelSignalFailure = new AtomicReference<>();
     final AtomicReference<TranslationRuntime> runtime = new AtomicReference<>();
     final AtomicReference<Future<?>> future = new AtomicReference<>();
 
