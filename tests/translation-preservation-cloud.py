@@ -7,7 +7,7 @@ def run(name,args,cwd=None,timeout=240):
     print(name+": exit="+str(p.returncode),flush=True)
     print(p.stdout if name.startswith("green_") or name.startswith("compile") else p.stdout[-3500:],flush=True)
     return p.returncode
-import urllib.request, io, zipfile
+import urllib.request, io, zipfile, hashlib
 def fetch(url):
     with urllib.request.urlopen(url,timeout=120) as r: return r.read()
 try:
@@ -40,7 +40,10 @@ try:
         maven("org.jetbrains.kotlin","kotlin-daemon-embeddable","2.3.0"),
         maven("org.jetbrains.kotlinx","kotlinx-coroutines-core-jvm","1.10.2"),
         annotations])
-    aar=zipfile.ZipFile(io.BytesIO(fetch("https://dl.google.com/dl/android/maven2/com/google/ai/edge/litertlm/litertlm-android/0.16.1/litertlm-android-0.16.1.aar")))
+    aar_bytes=fetch("https://dl.google.com/dl/android/maven2/com/google/ai/edge/litertlm/litertlm-android/0.16.1/litertlm-android-0.16.1.aar")
+    if hashlib.sha256(aar_bytes).hexdigest() != "e407719c1a29f2685fcb6aa3feea0b9f7155fe316c66dae053c1b5b2f54cda73":
+        raise RuntimeError("Pinned LiteRT-LM AAR SHA-256 mismatch")
+    aar=zipfile.ZipFile(io.BytesIO(aar_bytes))
     litert=jars/"litertlm-0.16.1.jar"
     litert.write_bytes(aar.read("classes.jar"))
     classes=root/"test-classes"
@@ -52,7 +55,7 @@ try:
     java=list(map(str,main.glob("*.java")))
     kotlin=run("compile_real_sdk_adapter",["java","-cp",compiler,"org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
         "-no-stdlib","-no-reflect","-jvm-target","17","-classpath",cp,"-d",str(classes),
-        str(main/"LiteRtLmTranslationRuntime.kt")]+java,timeout=180)
+        *list(map(str, main.glob("*.kt")))]+java,timeout=180)
     javac=run("compile_native_tests",["javac","-encoding","UTF-8","-cp",cp,"-d",str(classes)]+java+list(map(str,tests.glob("*.java"))),timeout=180)
     if kotlin==0 and javac==0:
         all_tests=sorted("app.captionstudio.translation."+p.stem for p in tests.glob("*Test.java"))
