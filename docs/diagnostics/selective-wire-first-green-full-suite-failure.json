@@ -1,0 +1,39 @@
+{
+  "artifact_id": 11550211277,
+  "artifact_zip_sha256": "d54becc07551fb4ad88b5903be4664a0a31b98725f9f703b2595db793bcfa445",
+  "defects_identified_before_test_correction": [
+    "v9 profile assertion became stale after intentional checkpoint invalidation",
+    "ordinary HTML no-literal assertion contradicts selective policy; replace with explicit marker boundary and unchanged scalar checks",
+    "capacity fixture hardcodes obsolete blanket-escaped serialization; use actual production serializer with bounded guarded-prefix data"
+  ],
+  "focused": {
+    "assertion_failures": 0,
+    "errors": 0,
+    "failures": [],
+    "source_behavior": "compiled actual production NaturalCaptionTranslator",
+    "stage": "GREEN",
+    "successful": true,
+    "tests": 8
+  },
+  "full_native_output": "JUnit version 4.13.2\n......................................................E............................................................................E.............................E.....\nTime: 2.163\nThere were 3 failures:\n1) checkpointIdentityIncludesBoundedContextOrderedNeighborsWithoutBatchPosition(app.captionstudio.translation.TranslationCheckpointResumeTest)\njava.lang.AssertionError\n\tat org.junit.Assert.fail(Assert.java:87)\n\tat org.junit.Assert.assertTrue(Assert.java:42)\n\tat org.junit.Assert.assertTrue(Assert.java:53)\n\tat app.captionstudio.translation.TranslationCheckpointResumeTest.checkpointIdentityIncludesBoundedContextOrderedNeighborsWithoutBatchPosition(TranslationCheckpointResumeTest.java:210)\n2) retryContextUsesCodePointBoundsAndEscapesUntrustedNeighbors(app.captionstudio.translation.TranslationRepairTest)\njava.lang.AssertionError\n\tat org.junit.Assert.fail(Assert.java:87)\n\tat org.junit.Assert.assertTrue(Assert.java:42)\n\tat org.junit.Assert.assertFalse(Assert.java:65)\n\tat org.junit.Assert.assertFalse(Assert.java:75)\n\tat app.captionstudio.translation.TranslationRepairTest.retryContextUsesCodePointBoundsAndEscapesUntrustedNeighbors(TranslationRepairTest.java:251)\n3) contextCapacityPreventsExpansionWithoutDroppingNeighbors(app.captionstudio.translation.TranslationTruncationRecoveryTest)\njava.lang.AssertionError: expected:<false> but was:<true>\n\tat org.junit.Assert.fail(Assert.java:89)\n\tat org.junit.Assert.failNotEquals(Assert.java:835)\n\tat org.junit.Assert.assertEquals(Assert.java:120)\n\tat org.junit.Assert.assertEquals(Assert.java:146)\n\tat app.captionstudio.translation.TranslationTruncationRecoveryTest.assertRejected(TranslationTruncationRecoveryTest.java:163)\n\tat app.captionstudio.translation.TranslationTruncationRecoveryTest.contextCapacityPreventsExpansionWithoutDroppingNeighbors(TranslationTruncationRecoveryTest.java:140)\n\nFAILURES!!!\nTests run: 164,  Failures: 3\n\n",
+  "gates": {
+    "compile_native_tests": 0,
+    "compile_real_sdk_adapter": 0,
+    "dependency_api": 0,
+    "dependency_regressions": 0,
+    "expo_compatibility": 0,
+    "expo_doctor": 0,
+    "full_logic": 0,
+    "full_native": 1,
+    "green_js": 0,
+    "green_native": 0,
+    "lint": 0,
+    "product_contract": 0,
+    "production_audit": 0,
+    "serialization_behavior": 0,
+    "typescript": 0
+  },
+  "head": "419e530f5165a33d27801f9ab05765af04170381",
+  "original_eight_regressions_unchanged": true,
+  "run": 37776534335
+}
