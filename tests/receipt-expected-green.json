@@ -1,0 +1,9 @@
+{
+  "stage": "GREEN",
+  "tests": 8,
+  "successful": true,
+  "source_behavior": "compiled actual production NaturalCaptionTranslator",
+  "assertion_failures": 0,
+  "errors": 0,
+  "failures": []
+}
