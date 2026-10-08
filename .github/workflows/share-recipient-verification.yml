@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 3
           sparse-checkout: |
             tools/share-recipient-verification
           sparse-checkout-cone-mode: false
@@ -57,3 +58,4 @@ jobs:
             tools/share-recipient-verification/out/signature.txt
             tools/share-recipient-verification/out/alignment.txt
             tools/share-recipient-verification/out/subtitle-regressions.txt
+            tools/share-recipient-verification/out/change-impact.txt

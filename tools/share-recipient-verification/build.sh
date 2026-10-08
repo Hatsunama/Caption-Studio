@@ -35,10 +35,16 @@ python3 audit.py
 sha256sum "$apk" | tee out/apk.sha256
 {
   echo "HEAD=$GITHUB_SHA"
+  echo "RECEIVER_BASE=ad7a90455d971ae27d4cf16d083e4f1abeeeea82"
+  echo "RED_SOURCE=0d79f7059bf69c9e261b5c5fc7f4f4ce6719888d"
+  echo "RED_RUN=https://github.com/Hatsunama/Caption-Studio/actions/runs/37746199648"
+  echo "PARENT_PRIVATE_APK122_SHA256=703008d89d03ccf008c5839cb254e4d3b54505fe47e6f247a7c8928a176d66db"
   echo "APK_NAME=$(basename "$apk")"
   echo "APK_BYTES=$(stat -c %s "$apk")"
   echo "APK_SHA256=$(sha256sum "$apk" | cut -d ' ' -f 1)"
   cat out/tests.txt
+  cat out/subtitle-regressions.txt
+  cat out/change-impact.txt
   cat out/audit.txt
 } | tee out/evidence.txt
 cat out/evidence.txt >> "$GITHUB_STEP_SUMMARY"

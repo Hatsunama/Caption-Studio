@@ -33,7 +33,8 @@ public final class VerificationActivity extends Activity {
         Runnable timeout;
     }
     private static String unknown(String error) {
-        return "Bytes: unavailable\nSHA256: unavailable\nCue count: unavailable\nError: " + error;
+        return "Format: UNKNOWN\nBytes: unavailable\nSHA256: unavailable\nCue count: unavailable"
+            + "\nFirst start ms: unavailable\nMaximum end ms: unavailable\nError: " + error;
     }
     @Override public void onCreate(Bundle ignored) {
         super.onCreate(null);
