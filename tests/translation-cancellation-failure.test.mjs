@@ -580,3 +580,40 @@ test('listener cleanup preserves resource-readiness failure and attempts failing
   assert.equal(restores, 1);
   assert.equal(await service.cancelNaturalCaptionTranslation(), false);
 });
+
+test('failed listener removal leaves late callbacks unable to save or cancel an immediate retry', async () => {
+  const native = failure('original translation failed');
+  const remove = new Error('listener removal failed');
+  let staleListener, staleEvent, saves = 0, stops = 0;
+  const config = {
+    remove: () => { throw remove; },
+    stop: async () => { stops++; },
+    translate: async (request, listeners) => {
+      staleListener = [...listeners][0];
+      staleEvent = { requestId: request.requestId, batchIndex: 0,
+        captions: [{ id: request.operations[0].batches[0].captions[0].id, text: 'Bonjour', valid: true }] };
+      throw native;
+    },
+  };
+  const { service } = await serviceFixture(config);
+  await assert.rejects(start(service, { onAcceptedBatch: async () => { saves++; } }), sameFailure(native));
+  const entered = deferred(), work = deferred();
+  config.remove = undefined;
+  config.translate = () => { entered.resolve(); return work.promise; };
+  const retry = start(service);
+  const rejection = assert.rejects(retry, sameFailure(native));
+  void rejection.catch(() => {});
+  await entered.promise;
+  try {
+    staleListener(staleEvent);
+    await tick();
+    assert.equal(saves, 0, 'a callback retained by failed removal must not save after ownership ends');
+    staleListener({ ...staleEvent, batchIndex: -1 });
+    await tick();
+    assert.equal(stops, 0, 'a stale callback must not cancel the retry');
+  } finally {
+    work.reject(native);
+    await rejection;
+  }
+  assert.equal(await service.cancelNaturalCaptionTranslation(), false);
+});
