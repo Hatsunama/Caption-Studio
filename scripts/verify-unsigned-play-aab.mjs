@@ -66,6 +66,13 @@ export function assertUnsigned(entries, jarsignerOutput, jarManifest = '') {
   assert.doesNotMatch(jarsignerOutput, /jar verified\./i, 'AAB is already signed');
 }
 
+export function verifyUnsignedArchive(bundle) {
+  const entries = run('unzip', ['-Z', '-1', bundle]).split(/\r?\n/).filter(Boolean);
+  const manifest = entries.includes('META-INF/MANIFEST.MF') ? run('unzip', ['-p', bundle, 'META-INF/MANIFEST.MF']) : '';
+  assertUnsigned(entries, run('jarsigner', ['-verify', '-verbose', bundle]), manifest);
+  return entries;
+}
+
 export function assertDifferentPlayCertificate(value) {
   const certificate = value.replaceAll(':', '').toLowerCase();
   assert.match(certificate, /^[0-9a-f]{64}$/);
@@ -162,9 +169,7 @@ async function verify(source, bundletool, objdump) {
   assert.equal(targetSdk, '36');
   const config = run('java', ['-jar', bundletool, 'dump', 'config', '--bundle=' + bundle]);
   assert.match(config, /PAGE_ALIGNMENT_16K/, 'Bundle configuration must request 16KB APK page alignment');
-  const entries = run('unzip', ['-Z', '-1', bundle]).split(/\r?\n/).filter(Boolean);
-  const manifest = entries.includes('META-INF/MANIFEST.MF') ? run('unzip', ['-p', bundle, 'META-INF/MANIFEST.MF']) : '';
-  assertUnsigned(entries, run('jarsigner', ['-verify', '-verbose', bundle]), manifest);
+  const entries = verifyUnsignedArchive(bundle);
   run('node', [path.join(source, 'scripts/verify-android-abi.mjs'), '--aab', bundle]);
   // Reuse the existing ELF checker on the base-module native ZIP. AAB ZIP
   // offsets are not installed APK offsets; final APK zipalign is a local check.

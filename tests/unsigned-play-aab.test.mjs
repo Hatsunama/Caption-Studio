@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
-  pin, assertApproval, assertUnsigned, assertDifferentPlayCertificate,
+  pin, assertApproval, assertUnsigned, verifyUnsignedArchive, assertDifferentPlayCertificate,
   assertMapping, assertProvenance,
 } from '../scripts/verify-unsigned-play-aab.mjs';
 import { createHash } from 'node:crypto';
@@ -52,7 +55,8 @@ test('unsigned gate rejects signed, partially signed and ambiguous bundles', () 
 test('local Play signing precondition explicitly refuses APK key', () => {
   assert.throws(() => assertDifferentPlayCertificate(pin.apkCertificateSha256), /Refusing APK signing key/);
   assert.throws(() => assertDifferentPlayCertificate(pin.apkCertificateSha256.match(/../g).join(':').toUpperCase()), /Refusing APK/);
-  assert.equal(assertDifferentPlayCertificate('A'.repeat(64)), 'a'.repeat(64));
+  const newLocalPlayCertificate = '50d77dfe5b3239d2fa86856613cb193898662a6a9dad2103812ea099ba102ddb';
+  assert.equal(assertDifferentPlayCertificate(newLocalPlayCertificate), newLocalPlayCertificate);
   assert.throws(() => assertDifferentPlayCertificate('unknown'));
 });
 test('mapping must match bundle bytes and cannot be empty', () => {
@@ -96,4 +100,29 @@ test('cloud workflow has no signing secrets and applies unsigned init to every G
     ':caption-diagnostics:testReleaseUnitTest', ':caption-media:testReleaseUnitTest',
     ':caption-translation:testReleaseUnitTest', ':app:bundleRelease']) assert.ok(workflow.includes(command), command);
   assert.ok(workflow.indexOf('npm run test:logic') < workflow.indexOf(' --prepare release-source'));
+});
+
+test('actual archive verifier runs unzip and jarsigner and rejects signature material without any private key', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'unsigned-play-archive-test-'));
+  try {
+    const archive = path.join(directory, 'fixture.aab');
+    const base = [['base/manifest/AndroidManifest.xml', 'fixture'], ['base/dex/classes.dex', 'fixture']];
+    const zip = (entries) => execFileSync('python3', ['-c',
+      "import json,sys,zipfile\nwith zipfile.ZipFile(sys.argv[1], 'w') as z:\n for name,content in json.loads(sys.argv[2]): z.writestr(name, content)\n",
+      archive, JSON.stringify(entries)], { stdio: 'pipe' });
+    zip(base);
+    assert.deepEqual(verifyUnsignedArchive(archive), base.map(([name]) => name));
+    for (const name of ['META-INF/APK.SF', 'META-INF/APK.RSA', 'META-INF/PLAY.EC', 'META-INF/SIG-TEST']) {
+      zip([...base, [name, 'invalid signature marker; contains no key']]);
+      assert.throws(() => verifyUnsignedArchive(archive));
+    }
+    zip([...base, ['META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\n\nName: base/dex/classes.dex\nSHA-256-Digest: AAA=\n\n']]);
+    assert.throws(() => verifyUnsignedArchive(archive));
+    zip([...base, base[0]]);
+    assert.throws(() => verifyUnsignedArchive(archive), /Duplicate/);
+    await writeFile(archive, 'not a ZIP archive');
+    assert.throws(() => verifyUnsignedArchive(archive));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

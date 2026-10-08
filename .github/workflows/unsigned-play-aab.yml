@@ -16,6 +16,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22.13.1
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
+        with:
+          distribution: temurin
+          java-version: 17
       - name: Reproduce old APK certificate coupling before implementation
         run: |
           node --input-type=module <<'JS'
@@ -80,6 +84,18 @@ jobs:
           npx expo prebuild --platform android --clean --no-install
           node scripts/patch-react-native-gradle.js
           npm run verify:android-config
+      - name: Behaviorally refuse credential input to unsigned Gradle path
+        working-directory: release-source/android
+        env:
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          if ./gradlew help -PCAPTION_STUDIO_RELEASE_KEY_ALIAS=FORBIDDEN-TEST-INPUT --init-script ../../scripts/unsigned-play-release.gradle --no-daemon > "$RUNNER_TEMP/unsigned-credential-refusal.log" 2>&1; then
+            echo "Unsigned init accepted credential input" >&2
+            exit 1
+          fi
+          grep -Fq 'Unsigned packaging refuses signing credential input: CAPTION_STUDIO_RELEASE_KEY_ALIAS' "$RUNNER_TEMP/unsigned-credential-refusal.log"
+          echo "Verified: supplied release credential input was refused."
       - name: Native release lint with unsigned configuration
         working-directory: release-source/android
         env:
