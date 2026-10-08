@@ -1,4 +1,4 @@
-name: Share recipient verification tool
+name: Subtitle export verification 122 tool
 on:
   workflow_dispatch:
 permissions:
@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   verification-tool:
-    if: github.ref == 'refs/heads/codex/share-recipient-verification'
+    if: github.ref == 'refs/heads/codex/subtitle-export-verification-122'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -24,6 +24,16 @@ jobs:
           echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
       - name: Execute pure Java tests first
         run: bash tools/share-recipient-verification/test.sh
+      - name: Retain executing regression evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: subtitle-regressions-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            tools/share-recipient-verification/out/tests.txt
+            tools/share-recipient-verification/out/subtitle-regressions.txt
       - name: Install official Android SDK tools only
         run: |
           (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
@@ -32,7 +42,7 @@ jobs:
         run: bash tools/share-recipient-verification/build.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: caption-studio-share-recipient-verification-${{ github.sha }}
+          name: caption-studio-subtitle-verification-122-${{ github.sha }}
           retention-days: 7
           if-no-files-found: error
           path: |
@@ -46,3 +56,4 @@ jobs:
             tools/share-recipient-verification/out/manifest.txt
             tools/share-recipient-verification/out/signature.txt
             tools/share-recipient-verification/out/alignment.txt
+            tools/share-recipient-verification/out/subtitle-regressions.txt
