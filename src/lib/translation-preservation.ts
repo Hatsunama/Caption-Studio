@@ -125,19 +125,27 @@ function operatorEnd(text: string, start: number): number {
   if (start > 0 && !white(text.codePointAt(start - 1)!)) return start;
   return end === text.length || white(text.codePointAt(end)!) ? end : start;
 }
+function previousPoint(text: string, end: number): number {
+  let at = end - 1;
+  if (at > 0 && text.charCodeAt(at) >= 0xdc00 && text.charCodeAt(at) <= 0xdfff
+      && text.charCodeAt(at - 1) >= 0xd800 && text.charCodeAt(at - 1) <= 0xdbff) at--;
+  return text.codePointAt(at) ?? -1;
+}
 function targetOperatorEnd(text: string, start: number, operators: ReadonlySet<string>): number {
   const cp = text.codePointAt(start)!;
   if (!operators.has(String.fromCodePoint(cp))) return start;
   const end = start + width(cp);
-  const before = start > 0 ? Array.from(text.slice(Math.max(0, start - 2), start)).at(-1)!.codePointAt(0)! : -1;
-  const after = text.codePointAt(end) ?? -1;
-  // Do not let identifiers, signed numbers or operator clusters substitute for source tokens.
+  const operator = (point: number) => point >= 0
+    && '+=<>|^~*/\u2212\u00d7\u00f7\u00b1\u2260\u2264\u2265'.includes(String.fromCodePoint(point));
+  let left = start, right = end;
+  while (left > 0 && operator(previousPoint(text, left))) left -= width(previousPoint(text, left));
+  while (right < text.length && operator(text.codePointAt(right)!)) right += width(text.codePointAt(right)!);
+  // Count every source-selected literal in a cluster, but never within an identifier or signed number.
   const attachedData = (point: number) => point >= 0 && (
     (point >= 65 && point <= 90) || (point >= 97 && point <= 122)
     || point === 95 || digitValue(point) >= 0
-    || '+=<>|^~*/\u2212\u00d7\u00f7\u00b1\u2260\u2264\u2265'.includes(String.fromCodePoint(point))
   );
-  return attachedData(before) || attachedData(after) ? start : end;
+  return attachedData(previousPoint(text, left)) || attachedData(text.codePointAt(right) ?? -1) ? start : end;
 }
 function spans(text: string, targetOperators?: ReadonlySet<string>): Span[] {
   const result: Span[] = [];

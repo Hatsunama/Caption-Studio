@@ -136,15 +136,23 @@ final class TranslationPreservation {
   }
   private static boolean attachedOperatorData(int cp) {
     return cp >= 0 && ((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z')
-        || cp == '_' || digitValue(cp) >= 0
-        || "+=<>|^~*/\u2212\u00d7\u00f7\u00b1\u2260\u2264\u2265".indexOf(cp) >= 0);
+        || cp == '_' || digitValue(cp) >= 0);
+  }
+  private static boolean operatorPoint(int cp) {
+    return cp >= 0 && "+=<>|^~*/\u2212\u00d7\u00f7\u00b1\u2260\u2264\u2265".indexOf(cp) >= 0;
   }
   private static int targetOperatorEnd(String text, int start, java.util.Set<String> operators) {
     int cp = point(text, start);
     if (!operators.contains(new String(Character.toChars(cp)))) return start;
-    int end = start + Character.charCount(cp);
-    int before = start > 0 ? text.codePointBefore(start) : -1;
-    return attachedOperatorData(before) || attachedOperatorData(point(text, end)) ? start : end;
+    int end = start + Character.charCount(cp), left = start, right = end;
+    while (left > 0 && operatorPoint(text.codePointBefore(left))) {
+      left -= Character.charCount(text.codePointBefore(left));
+    }
+    while (right < text.length() && operatorPoint(point(text, right))) {
+      right += Character.charCount(point(text, right));
+    }
+    int before = left > 0 ? text.codePointBefore(left) : -1;
+    return attachedOperatorData(before) || attachedOperatorData(point(text, right)) ? start : end;
   }
   private static List<Span> spans(String text) { return spans(text, null); }
   private static List<Span> spans(String text, java.util.Set<String> targetOperators) {
