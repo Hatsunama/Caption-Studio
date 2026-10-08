@@ -1,6 +1,7 @@
 package app.captionstudio.translation;
 import com.google.gson.*;
 import java.nio.file.*;
+import java.nio.charset.StandardCharsets;
 import org.junit.runner.*;
 import org.junit.runner.notification.Failure;
 public final class SerializationTestReceipt {
@@ -22,7 +23,7 @@ public final class SerializationTestReceipt {
     }
     out.addProperty("assertion_failures", assertions); out.addProperty("errors", errors);
     out.add("failures", failures);
-    Files.writeString(Path.of(args[1]), new GsonBuilder().setPrettyPrinting().create().toJson(out));
+    Files.write(Paths.get(args[1]), new GsonBuilder().setPrettyPrinting().create().toJson(out).getBytes(StandardCharsets.UTF_8));
     System.out.println(out);
     if (result.getRunCount()!=8 || errors!=0 || ("RED".equals(args[0]) ? assertions==0 : !result.wasSuccessful()))
       System.exit(1);
