@@ -92,3 +92,47 @@ test('strict ID errors cannot produce a partial accepted map', () => {
   assert.throws(() => acceptTranslationBoundary([{ id: 'a', text: 'Hello' }, { id: 'b', text: 'World' }],
     [{ id: 'a', text: 'Bonjour' }, { id: 'a', text: 'Monde' }]));
 });
+
+test('Seeker standalone operator loss cannot reach boundary acceptance or automatic writes', () => {
+  const source = '42 https://example.com/\n\n\u0060src/app.ts\u0060 + is ready.';
+  const good = '42 https://example.com/\n\n\u0060src/app.ts\u0060 + 已准备好。';
+  const dropped = good.replace(' +', '');
+  const captions = [{ id: 'seeker', text: source }];
+  const rejected = acceptTranslationBoundary(captions, [{ id: 'seeker', text: dropped, valid: true }]);
+  assert.equal(rejected.rejected.has('seeker'), true);
+  assert.equal(rejected.translations.get('seeker'), '');
+  assert.equal(usableAutomaticTranslation(source, dropped, false, 'zh-Hans'), undefined);
+  assert.deepEqual(automaticTranslationCueWrites({ captions, translatedById: rejected.translations,
+    needsReviewById: rejected.rejected, previousById: new Map(), targetLanguage: 'zh-Hans' }), []);
+  const accepted = acceptTranslationBoundary(captions, [{ id: 'seeker', text: good, valid: true }]);
+  assert.equal(accepted.rejected.size, 0);
+  assert.equal(usableAutomaticTranslation(source, good, false, 'zh-Hans'), good);
+  assert.equal(usableAutomaticTranslation(source, source, false, 'zh-Hans'), undefined);
+});
+
+test('standalone operator lexer masks only tokens and keeps ordinary prose translatable', async () => {
+  const { translationProse, isInvariantCompositionTranslation } = await import('../src/lib/translation-preservation.ts');
+  assert.equal(translationProse('Ready + now'), 'Ready   now');
+  assert.equal(translationProse('well-known x+y C++'), 'well-known x+y C++');
+  assert.equal(isInvariantCompositionTranslation('Ready + now', 'Ready + now'), false);
+});
+
+for (const [source, translated] of [
+  ['Ready + now', '现在+已就绪'],
+  ['42 https://example.com/\n\n\u0060src/app.ts\u0060 + is ready.',
+    '42 https://example.com/\n\n\u0060src/app.ts\u0060+已准备好。'],
+]) {
+  test('unspaced target plus passes real JS boundary: ' + source, () => {
+    const boundary = acceptTranslationBoundary([{ id: 'cue', text: source }],
+      [{ id: 'cue', text: translated, valid: true }]);
+    assert.equal(boundary.rejected.size, 0);
+    assert.equal(boundary.translations.get('cue'), translated);
+  });
+  test('unspaced target plus passes real automatic write: ' + source, () => {
+    assert.equal(usableAutomaticTranslation(source, translated, false, 'zh-Hans'), translated);
+    assert.deepEqual(automaticTranslationCueWrites({
+      captions: [{ id: 'cue', text: source }], translatedById: new Map([['cue', translated]]),
+      previousById: new Map(), targetLanguage: 'zh-Hans',
+    }), [{ sourceCaptionId: 'cue', translatedText: translated, translationStatus: 'translated' }]);
+  });
+}

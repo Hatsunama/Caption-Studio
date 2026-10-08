@@ -280,5 +280,413 @@
     "source": "Copyright © 2026",
     "translated": "Droits d'auteur 2026",
     "preserved": true
+  },
+  {
+    "name": "Seeker standalone plus dropped",
+    "source": "42 https://example.com/\n\n`src/app.ts` + is ready.",
+    "translated": "42 https://example.com/\n\n`src/app.ts` 已准备好。",
+    "preserved": false
+  },
+  {
+    "name": "Seeker standalone plus preserved with translated punctuation",
+    "source": "42 https://example.com/\n\n`src/app.ts` + is ready.",
+    "translated": "42 https://example.com/\n\n`src/app.ts` + 已准备好。",
+    "preserved": true
+  },
+  {
+    "name": "standalone plus repeated lost",
+    "source": "Ready + + now",
+    "translated": "Prêt + maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone plus repeated duplicated",
+    "source": "Ready + now",
+    "translated": "Prêt + + maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone plus exact repeat count",
+    "source": "Ready + + now",
+    "translated": "Prêt + + maintenant",
+    "preserved": true
+  },
+  {
+    "name": "standalone plus substituted",
+    "source": "Ready + now",
+    "translated": "Prêt - maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone plus rewritten as word",
+    "source": "Ready + now",
+    "translated": "Prêt plus maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone plus Unicode whitespace",
+    "source": "Ready + now",
+    "translated": "Prêt　+\tmaintenant",
+    "preserved": true
+  },
+  {
+    "name": "standalone plus Unicode whitespace lost",
+    "source": "Ready + now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone plus cue start",
+    "source": "+ is ready.",
+    "translated": "+ 已准备好。",
+    "preserved": true
+  },
+  {
+    "name": "standalone plus cue end",
+    "source": "Ready +",
+    "translated": "Prêt",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost =",
+    "source": "Ready = now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost <",
+    "source": "Ready < now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost >",
+    "source": "Ready > now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost |",
+    "source": "Ready | now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ^",
+    "source": "Ready ^ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ~",
+    "source": "Ready ~ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost *",
+    "source": "Ready * now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost /",
+    "source": "Ready / now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost −",
+    "source": "Ready − now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ×",
+    "source": "Ready × now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ÷",
+    "source": "Ready ÷ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ±",
+    "source": "Ready ± now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ≠",
+    "source": "Ready ≠ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ≤",
+    "source": "Ready ≤ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "standalone operator lost ≥",
+    "source": "Ready ≥ now",
+    "translated": "Prêt maintenant",
+    "preserved": false
+  },
+  {
+    "name": "word hyphen adapts",
+    "source": "The well-known app is ready.",
+    "translated": "知名应用已准备好。",
+    "preserved": true
+  },
+  {
+    "name": "ordinary sentence punctuation adapts",
+    "source": "Ready, really!",
+    "translated": "真的准备好了。",
+    "preserved": true
+  },
+  {
+    "name": "attached math remains adaptable",
+    "source": "Use x+y and x*y",
+    "translated": "Utilisez x＋y et x×y",
+    "preserved": true
+  },
+  {
+    "name": "attached name plus remains adaptable",
+    "source": "Use C++ now",
+    "translated": "Utilisez le langage C plus plus maintenant",
+    "preserved": true
+  },
+  {
+    "name": "operators inside code cannot cover standalone loss",
+    "source": "Run `+` + now",
+    "translated": "Exécutez `+` maintenant",
+    "preserved": false
+  },
+  {
+    "name": "operators inside URL cannot cover standalone loss",
+    "source": "Read https://e.test/a+b + now",
+    "translated": "Lisez https://e.test/a+b maintenant",
+    "preserved": false
+  },
+  {
+    "name": "unspaced Chinese plus must preserve literal",
+    "source": "Ready + now",
+    "translated": "现在+已就绪",
+    "preserved": true
+  },
+  {
+    "name": "Seeker unspaced Chinese plus after code",
+    "source": "42 https://example.com/\n\n`src/app.ts` + is ready.",
+    "translated": "42 https://example.com/\n\n`src/app.ts`+已准备好。",
+    "preserved": true
+  },
+  {
+    "name": "unspaced Chinese plus duplicate",
+    "source": "Ready + now",
+    "translated": "现在++已就绪",
+    "preserved": false
+  },
+  {
+    "name": "unspaced Chinese plus repeated exact count",
+    "source": "Ready + + now",
+    "translated": "现在+已+就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced Chinese plus repeated lost",
+    "source": "Ready + + now",
+    "translated": "现在+已就绪",
+    "preserved": false
+  },
+  {
+    "name": "attached ASCII expression cannot replace standalone",
+    "source": "Ready + now",
+    "translated": "现在 x+y 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "attached ASCII identifier cannot replace standalone",
+    "source": "Ready + now",
+    "translated": "现在 C++ 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "attached signed number cannot replace standalone",
+    "source": "Ready + now",
+    "translated": "现在 +42 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "URL plus cannot replace standalone",
+    "source": "Ready + https://e.test/a+b now",
+    "translated": "现在 https://e.test/a+b 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "code plus cannot replace standalone",
+    "source": "Ready + `x+y` now",
+    "translated": "现在 `x+y` 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "unspaced Chinese plus with opaque decoys",
+    "source": "Ready + https://e.test/a+b `x+y` now",
+    "translated": "现在+已就绪 https://e.test/a+b `x+y`",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal +",
+    "source": "Ready + now",
+    "translated": "现在+已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal =",
+    "source": "Ready = now",
+    "translated": "现在=已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal <",
+    "source": "Ready < now",
+    "translated": "现在<已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal >",
+    "source": "Ready > now",
+    "translated": "现在>已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal |",
+    "source": "Ready | now",
+    "translated": "现在|已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ^",
+    "source": "Ready ^ now",
+    "translated": "现在^已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ~",
+    "source": "Ready ~ now",
+    "translated": "现在~已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal *",
+    "source": "Ready * now",
+    "translated": "现在*已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal /",
+    "source": "Ready / now",
+    "translated": "现在/已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal −",
+    "source": "Ready − now",
+    "translated": "现在−已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ×",
+    "source": "Ready × now",
+    "translated": "现在×已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ÷",
+    "source": "Ready ÷ now",
+    "translated": "现在÷已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ±",
+    "source": "Ready ± now",
+    "translated": "现在±已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ≠",
+    "source": "Ready ≠ now",
+    "translated": "现在≠已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ≤",
+    "source": "Ready ≤ now",
+    "translated": "现在≤已就绪",
+    "preserved": true
+  },
+  {
+    "name": "unspaced target literal ≥",
+    "source": "Ready ≥ now",
+    "translated": "现在≥已就绪",
+    "preserved": true
+  },
+  {
+    "name": "source-directed boundary Japanese",
+    "source": "Ready + now",
+    "translated": "準備+完了",
+    "preserved": true
+  },
+  {
+    "name": "source-directed boundary Thai",
+    "source": "Ready + now",
+    "translated": "พร้อม+แล้ว",
+    "preserved": true
+  },
+  {
+    "name": "source-directed boundary Arabic",
+    "source": "Ready + now",
+    "translated": "جاهز+الآن",
+    "preserved": true
+  },
+  {
+    "name": "source-directed boundary Unicode signed digit",
+    "source": "Ready + now",
+    "translated": "现在 +٤٢ 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "source-directed boundary ASCII identifier",
+    "source": "Ready + now",
+    "translated": "现在 A+B 已就绪",
+    "preserved": false
+  },
+  {
+    "name": "source-directed boundary duplicate separated",
+    "source": "Ready + now",
+    "translated": "现在+已就绪 +",
+    "preserved": false
+  },
+  {
+    "name": "operator cluster cannot hide extra source-selected literals",
+    "source": "Ready + now",
+    "translated": "现在+已就绪 ++",
+    "preserved": false
+  },
+  {
+    "name": "operator cluster respects repeated source inventory",
+    "source": "Ready + + now",
+    "translated": "现在++已就绪",
+    "preserved": true
+  },
+  {
+    "name": "identifier cluster stays a decoy beside genuine literal",
+    "source": "Ready + now",
+    "translated": "现在 C++ + 已就绪",
+    "preserved": true
   }
 ]

@@ -13,7 +13,7 @@ public final class TranslationPreservationContractTest {
     try (var input = getClass().getResourceAsStream("/translation-preservation-contract.json")) {
       assertNotNull("shared preservation corpus must be on the test classpath", input);
       JsonArray cases = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonArray();
-      assertEquals(47, cases.size());
+      assertEquals(115, cases.size());
       for (var element : cases) {
         var item = element.getAsJsonObject();
         assertEquals(item.get("name").getAsString(), item.get("preserved").getAsBoolean(),
@@ -52,5 +52,100 @@ public final class TranslationPreservationContractTest {
     assertTrue(caption.valid);
     assertEquals("\nBonjour\n\nMonde\n", caption.text);
     assertFalse(TranslationOutputQuality.needsReview(source, caption.text, "fr"));
+  }
+  @Test public void seekerStandaloneOperatorQualityAndLexicalBoundaries() {
+    String source = "42 https://example.com/\n\n\u0060src/app.ts\u0060 + is ready.";
+    String good = "42 https://example.com/\n\n\u0060src/app.ts\u0060 + 已准备好。";
+    assertEquals(TranslationOutputQuality.Reason.PROTECTED_CONTENT,
+        TranslationOutputQuality.classify(source, good.replace(" +", ""), "zh-Hans"));
+    assertEquals(TranslationOutputQuality.Reason.NONE,
+        TranslationOutputQuality.classify(source, good, "zh-Hans"));
+    assertEquals(TranslationOutputQuality.Reason.SOURCE_ECHO,
+        TranslationOutputQuality.classify(source, source, "zh-Hans"));
+    assertEquals("Ready   now", TranslationPreservation.translationProse("Ready + now"));
+    assertEquals("well-known x+y C++", TranslationPreservation.translationProse("well-known x+y C++"));
+    assertFalse(TranslationPreservation.protectedCompositionOnly(source));
+  }
+
+  @Test public void seekerRuntimeRejectsDroppedOperatorAndGeneratesTranslatedProse() throws Exception {
+    String source = "42 https://example.com/\n\n\u0060src/app.ts\u0060 + is ready.";
+    String good = "42 https://example.com/\n\n\u0060src/app.ts\u0060 + 已准备好。";
+    for (String answer : new String[] {good.replace(" +", ""), good, source}) {
+      java.nio.file.Path directory = java.nio.file.Files.createTempDirectory("operator-contract");
+      try {
+        java.io.File model = directory.resolve("fake.litertlm").toFile();
+        java.nio.file.Files.write(model.toPath(), new byte[] {1});
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        TranslationEnvironment environment = new TranslationEnvironment() {
+          public java.io.File prepareCacheDirectory() { return directory.toFile(); }
+          public java.io.File prepareCheckpointDirectory() { return directory.toFile(); }
+          public void verifyDeviceCapacity(java.io.File file) {}
+        };
+        TranslationRuntimeFactory factory = (m,c,t,s) -> new TranslationRuntime() {
+          public boolean supportsStructuredOutput() { return true; }
+          public String translate(String prompt) {
+            calls.incrementAndGet();
+            JsonArray response = new JsonArray();
+            for (var element : JsonParser.parseString(prompt).getAsJsonObject().getAsJsonArray("captions")) {
+              var item = new com.google.gson.JsonObject();
+              item.add("id", element.getAsJsonObject().get("id"));
+              item.addProperty("text", answer);
+              response.add(item);
+            }
+            return response.toString();
+          }
+          public String translate(String prompt, int tokens, boolean structured) { return translate(prompt); }
+          public void cancel() {}
+          public void close() {}
+        };
+        var done = new java.util.concurrent.CountDownLatch(1);
+        var result = new java.util.concurrent.atomic.AtomicReference<java.util.Map<String,Object>>();
+        var error = new java.util.concurrent.atomic.AtomicReference<String>();
+        try (var worker = new NaturalCaptionTranslator(environment, factory, (file,c,p) -> {},
+            java.util.concurrent.Executors.newSingleThreadExecutor(), line -> {})) {
+          worker.start(model.getAbsolutePath(), java.util.Map.of("requestId", "operator-contract",
+              "reuseCheckpoints", true, "repairUnusableOutputs", false,
+              "operations", java.util.List.of(java.util.Map.of("id", "op", "sourceLanguage", "en",
+                  "targetLanguage", "zh-Hans", "batches", java.util.List.of(java.util.Map.of("captions",
+                      java.util.List.of(java.util.Map.of("id", "seeker", "text", source))))))),
+              new NaturalCaptionTranslator.Callback() {
+                public void onSuccess(java.util.Map<String,Object> value) { result.set(value); done.countDown(); }
+                public void onError(String code, String message, Throwable cause) { error.set(code); done.countDown(); }
+              });
+          assertTrue(done.await(10, java.util.concurrent.TimeUnit.SECONDS));
+          assertNull(error.get());
+          assertTrue("ordinary prose must invoke generation", calls.get() > 0);
+          var cue = (java.util.Map<?,?>)((java.util.List<?>)result.get().get("captions")).get(0);
+          boolean accepted = answer.equals(good);
+          assertEquals(accepted, cue.get("valid"));
+          assertEquals(accepted ? good : "", cue.get("text"));
+          assertEquals(accepted ? 1 : 0, directory.toFile().listFiles((d,n) -> n.endsWith(".checkpoint")).length);
+        }
+      } finally {
+        try (var files = java.nio.file.Files.walk(directory)) {
+          for (var path : files.sorted(java.util.Comparator.reverseOrder()).toList()) java.nio.file.Files.delete(path);
+        }
+      }
+    }
+  }
+
+  @Test public void unspacedChineseOperatorMustPassNativePreservationAndQuality() {
+    String[] sources = {"Ready + now", "42 https://example.com/\n\n\u0060src/app.ts\u0060 + is ready."};
+    String[] targets = {"现在+已就绪", "42 https://example.com/\n\n\u0060src/app.ts\u0060+已准备好。"};
+    StringBuilder failures = new StringBuilder();
+    for (int i = 0; i < sources.length; i++) {
+      boolean preserved = TranslationPreservation.preserves(sources[i], targets[i]);
+      var reason = TranslationOutputQuality.classify(sources[i], targets[i], "zh-Hans");
+      if (!preserved || reason != TranslationOutputQuality.Reason.NONE) {
+        failures.append("case=").append(i).append(" preserved=").append(preserved)
+            .append(" quality=").append(reason).append(';');
+      }
+    }
+    assertEquals("exact plus outside opaque spans must survive without target spaces", "", failures.toString());
+  }
+
+  @Test public void unspacedChineseOperatorMustPassNativeQualityIndependently() {
+    assertEquals(TranslationOutputQuality.Reason.NONE,
+        TranslationOutputQuality.classify("Ready + now", "现在+已就绪", "zh-Hans"));
   }
 }

@@ -1,7 +1,7 @@
 /**
  * Conservative preservation, not semantic/language validation.
  * Explicit URL/backtick literals stay raw; only actual emoji presentations and
- * their complete sequences are protected. Mixed-prose numbers, bare names,
+ * their complete sequences and isolated operator tokens are protected. Mixed-prose numbers, bare names,
  * currency wording and math meaning intentionally have no semantic gate.
  * Tables: Unicode 17.0 emoji-data, GraphemeBreakProperty, UnicodeData (UCD license).
  */
@@ -117,12 +117,43 @@ function urlEnd(text: string, start: number): number {
   }
   return end > start + (text.startsWith('https://', start) ? 8 : 7) ? end : start;
 }
-function spans(text: string): Span[] {
+/** Only isolated operator tokens: no sentence punctuation, word hyphens or attached math. */
+function operatorEnd(text: string, start: number): number {
+  const cp = text.codePointAt(start)!;
+  if (!'+=<>|^~*/\u2212\u00d7\u00f7\u00b1\u2260\u2264\u2265'.includes(String.fromCodePoint(cp))) return start;
+  const end = start + width(cp);
+  if (start > 0 && !white(text.codePointAt(start - 1)!)) return start;
+  return end === text.length || white(text.codePointAt(end)!) ? end : start;
+}
+function previousPoint(text: string, end: number): number {
+  let at = end - 1;
+  if (at > 0 && text.charCodeAt(at) >= 0xdc00 && text.charCodeAt(at) <= 0xdfff
+      && text.charCodeAt(at - 1) >= 0xd800 && text.charCodeAt(at - 1) <= 0xdbff) at--;
+  return text.codePointAt(at) ?? -1;
+}
+function targetOperatorEnd(text: string, start: number, operators: ReadonlySet<string>): number {
+  const cp = text.codePointAt(start)!;
+  if (!operators.has(String.fromCodePoint(cp))) return start;
+  const end = start + width(cp);
+  const operator = (point: number) => point >= 0
+    && '+=<>|^~*/\u2212\u00d7\u00f7\u00b1\u2260\u2264\u2265'.includes(String.fromCodePoint(point));
+  let left = start, right = end;
+  while (left > 0 && operator(previousPoint(text, left))) left -= width(previousPoint(text, left));
+  while (right < text.length && operator(text.codePointAt(right)!)) right += width(text.codePointAt(right)!);
+  // Count every source-selected literal in a cluster, but never within an identifier or signed number.
+  const attachedData = (point: number) => point >= 0 && (
+    (point >= 65 && point <= 90) || (point >= 97 && point <= 122)
+    || point === 95 || digitValue(point) >= 0
+  );
+  return attachedData(previousPoint(text, left)) || attachedData(text.codePointAt(right) ?? -1) ? start : end;
+}
+function spans(text: string, targetOperators?: ReadonlySet<string>): Span[] {
   const result: Span[] = [];
   for (let at = 0; at < text.length;) {
     let end = codeEnd(text, at);
     if (end === at) end = urlEnd(text, at);
     if (end === at) end = emojiEnd(text, at);
+    if (end === at) end = targetOperators ? targetOperatorEnd(text, at, targetOperators) : operatorEnd(text, at);
     if (end > at) {
       result.push({ start: at, end }); at = end;
     } else at += width(text.codePointAt(at)!);
@@ -161,7 +192,8 @@ export function preservesTranslationContent(source: string, translated: string):
     const token = breaks(source.slice(span.start, span.end));
     counts.set(token, (counts.get(token) ?? 0) + 1);
   }
-  for (const span of spans(translated)) {
+  const operators = new Set([...counts.keys()].filter(token => operatorEnd(token, 0) === token.length));
+  for (const span of spans(translated, operators)) {
     const token = breaks(translated.slice(span.start, span.end));
     if (!counts.has(token)) continue;
     const available = counts.get(token)!;

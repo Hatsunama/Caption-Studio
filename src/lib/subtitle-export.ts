@@ -3,6 +3,7 @@ import { resolveLayerGeometry } from '@/lib/layer-geometry';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import { exportCaptionPairs } from '@/lib/export-caption-pairs';
 import { projectRenderDuration } from '@/lib/project-timeline';
+import { totalClipDuration } from '@/lib/video-timeline';
 import {
   captionLayoutText,
   captionSpokenTokenSpans,
@@ -11,30 +12,31 @@ import {
 import type { CaptionBlock, CaptionProject, CaptionStyle, WordToken } from '@/types/project';
 
 export function serializeSrt(project: CaptionProject, allowIncompleteTranslations = false) {
+  const durationMs = subtitleDuration(project);
   const translations = translationsByCaption(project, allowIncompleteTranslations);
   const events = visibleCaptions(project).flatMap((caption) => {
-    const timing = srtRange(caption.startMs, caption.endMs);
+    const timing = srtRange(caption.startMs, caption.endMs, durationMs);
     const pairs = translations.get(caption.id) ?? [];
-    const aligned = pairs.filter((pair) => Math.round(pair.startMs) === timing.startMs && Math.round(pair.endMs) === timing.endMs);
+    const aligned = pairs.filter((pair) => pair.startMs === caption.startMs && pair.endMs === caption.endMs);
     const independent = pairs.filter((pair) => !aligned.includes(pair));
     return [{
       startMs: timing.startMs,
       endMs: timing.endMs,
       text: [normalizeLineEndings(caption.text).trim(), ...aligned.map((pair) => normalizeLineEndings(pair.displayText).trim())].join('\n'),
     }, ...independent.map((pair) => ({
-      ...srtRange(pair.startMs, pair.endMs),
+      ...srtRange(pair.startMs, pair.endMs, durationMs),
       text: normalizeLineEndings(pair.displayText).trim(),
     }))];
   }).sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
   const primaryIds = new Set(visibleCaptions(project).map((caption) => caption.id));
   for (const [id, pairs] of translations) {
     if (primaryIds.has(id)) continue;
-    pairs.forEach((pair) => events.push({ ...srtRange(pair.startMs, pair.endMs),
+    pairs.forEach((pair) => events.push({ ...srtRange(pair.startMs, pair.endMs, durationMs),
       text: normalizeLineEndings(pair.displayText).trim() }));
   }
   events.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
   const cues = events.map((event) => ({ ...event, text: srtCaptionText(event.text) }))
-    .filter((event) => event.text);
+    .filter((event) => event.text && event.endMs > event.startMs);
   return cues.length > 0 ? `${cues.map((event, index) => [
     String(index + 1),
     `${srtTime(event.startMs)} --> ${srtTime(event.endMs)}`,
@@ -43,6 +45,7 @@ export function serializeSrt(project: CaptionProject, allowIncompleteTranslation
 }
 
 export function serializeAss(project: CaptionProject, allowIncompleteTranslations = false) {
+  const durationMs = subtitleDuration(project);
   const { width, height } = subtitleCanvasSize(project);
   const scale = width / 360;
   const header = [
@@ -64,12 +67,12 @@ export function serializeAss(project: CaptionProject, allowIncompleteTranslation
   const translations = translationsByCaption(project, allowIncompleteTranslations);
   const events = visibleCaptions(project).flatMap((caption) => {
     const style = resolveCaptionStyle(project.projectStyle, caption);
-    const timing = assRange(caption.startMs, caption.endMs);
+    const timing = assRange(caption.startMs, caption.endMs, durationMs);
     return [
       assDialogue(0, timing, style, width, height, scale, assCaptionText(project, caption, style, scale)),
       ...(translations.get(caption.id) ?? []).map((pair, index) => assDialogue(
         index + 1,
-        assRange(pair.startMs, pair.endMs),
+        assRange(pair.startMs, pair.endMs, durationMs),
         pair.style,
         width,
         height,
@@ -82,10 +85,10 @@ export function serializeAss(project: CaptionProject, allowIncompleteTranslation
   for (const [id, pairs] of translations) {
     if (primaryIds.has(id)) continue;
     pairs.forEach((pair, index) => events.push(assDialogue(index + 1,
-      assRange(pair.startMs, pair.endMs), pair.style, width, height, scale,
+      assRange(pair.startMs, pair.endMs, durationMs), pair.style, width, height, scale,
       assText(transformText(normalizeLineEndings(pair.displayText).trim(), pair.style.textTransform)))));
   }
-  return [...header, ...events, ''].join('\n');
+  return [...header, ...events.filter(Boolean), ''].join('\n');
 }
 
 function assDialogue(
@@ -97,6 +100,7 @@ function assDialogue(
   scale: number,
   text: string,
 ) {
+  if (timing.endCs <= timing.startCs) return '';
   const x = Math.round(style.position.x * width);
   const y = Math.round(style.position.y * height);
   const alignment = style.alignment === 'left' ? 4 : style.alignment === 'right' ? 6 : 5;
@@ -133,11 +137,11 @@ export function visibleCaptions(project: CaptionProject) {
       caption.timelineVisible !== false
       && Number.isFinite(caption.startMs)
       && Number.isFinite(caption.endMs)
-      && Math.min(durationMs, Math.round(caption.endMs)) > Math.max(0, Math.round(caption.startMs))
+      && Math.min(durationMs, caption.endMs) > Math.max(0, caption.startMs)
       && caption.text.trim()
     ))
-    .map((caption) => ({ ...caption, startMs: Math.max(0, Math.round(caption.startMs)),
-      endMs: Math.min(durationMs, Math.round(caption.endMs)) }))
+    .map((caption) => ({ ...caption, startMs: Math.max(0, caption.startMs),
+      endMs: Math.min(durationMs, caption.endMs) }))
     .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs || left.id.localeCompare(right.id));
 }
 
@@ -232,15 +236,20 @@ function comparableText(value: string) {
   return value.normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
 }
 
-function srtRange(startMs: number, endMs: number) {
+/** Retain the exact footage end until the subtitle format quantizes its bound. */
+function subtitleDuration(project: CaptionProject) {
+  return project.clips?.length ? totalClipDuration(project.clips) : projectRenderDuration(project);
+}
+
+function srtRange(startMs: number, endMs: number, durationMs: number) {
   const start = Math.max(0, Math.round(startMs));
-  const end = Math.max(start + 1, Math.round(endMs));
+  const end = Math.min(Math.floor(durationMs), Math.max(start + 1, Math.round(endMs)));
   return { startMs: start, endMs: end };
 }
 
-function assRange(startMs: number, endMs: number) {
+function assRange(startMs: number, endMs: number, durationMs: number) {
   const start = Math.max(0, Math.round(startMs / 10));
-  const end = Math.max(start + 1, Math.round(endMs / 10));
+  const end = Math.min(Math.floor(durationMs / 10), Math.max(start + 1, Math.round(endMs / 10)));
   return { startCs: start, endCs: end };
 }
 

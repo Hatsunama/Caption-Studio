@@ -183,7 +183,8 @@ test('subtitle serializers emit standards-compliant timing and escaped styling',
   };
   assert.match(serializeSrt(project), /00:00:01,234 --> 00:00:04,567/);
   const ass = serializeAss(project);
-  assert.match(ass, /Dialogue: 0,0:00:01\.23,0:00:04\.57/);
+  // The canvas ends at 4,567 ms; its last representable ASS endpoint is 4.56 s.
+  assert.match(ass, /Dialogue: 0,0:00:01\.23,0:00:04\.56/);
   assert.match(ass, /\\fnAnton/);
   assert.match(ass, /Hello, \\{world\\}/);
   assert.doesNotMatch(ass, /Hello\\,/);
