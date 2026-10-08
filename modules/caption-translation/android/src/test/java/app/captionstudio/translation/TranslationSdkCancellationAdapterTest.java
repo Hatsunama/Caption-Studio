@@ -30,7 +30,9 @@ public class TranslationSdkCancellationAdapterTest {
     volatile ResponseFormat format;
     volatile ConversationConfig createdConfig;
     volatile Throwable dispatchFailure, cancelFailure, cleanupFailure;
-    volatile CountDownLatch dispatchGate, cancelGate;
+    volatile CountDownLatch dispatchGate, cancelGate, publicationGate;
+    final CountDownLatch beforePublication = new CountDownLatch(1);
+    final AtomicBoolean tearingDown = new AtomicBoolean();
     final CountDownLatch cancelEntered = new CountDownLatch(1);
     volatile Runnable duringDispatch;
     volatile Thread dispatchThread;
@@ -42,10 +44,15 @@ public class TranslationSdkCancellationAdapterTest {
           (proxy, method, args) -> {
             switch (method.getName()) {
               case "sendMessageAsync":
+                if (publicationGate != null) {
+                  beforePublication.countDown();
+                  assertTrue(publicationGate.await(5, TimeUnit.SECONDS));
+                }
                 prompt = (String) args[0]; callback = (MessageCallback) args[1];
                 tokens = (Integer) args[2]; format = (ResponseFormat) args[3];
                 dispatchThread = Thread.currentThread();
                 entered.countDown();
+                if (tearingDown.get()) callback.onDone();
                 if (duringDispatch != null) duringDispatch.run();
                 if (dispatchGate != null) assertTrue(dispatchGate.await(5, TimeUnit.SECONDS));
                 if (dispatchFailure != null) throw dispatchFailure;
@@ -107,6 +114,8 @@ public class TranslationSdkCancellationAdapterTest {
     }
     public void close() throws Exception {
       // Test cleanup releases a deliberately held fake native operation before joining the worker.
+      tearingDown.set(true);
+      if (publicationGate != null) publicationGate.countDown();
       if (dispatchGate != null) dispatchGate.countDown();
       if (cancelGate != null) cancelGate.countDown();
       if (callback != null) callback.onDone();
@@ -313,6 +322,20 @@ public class TranslationSdkCancellationAdapterTest {
         work.get(5, TimeUnit.SECONDS); closing.get(5, TimeUnit.SECONDS);
         assertEquals(1, f.closes.get()); assertEquals(1, f.engineCloses.get());
       } finally { closer.shutdown(); assertTrue(closer.awaitTermination(5, TimeUnit.SECONDS)); }
+    }
+  }
+
+  @Test public void teardownBeforeCallbackPublicationStillJoinsTheWaitingWorker() throws Exception {
+    Fixture f = new Fixture();
+    try {
+      f.publicationGate = new CountDownLatch(1);
+      Future<String> work = f.start();
+      assertTrue(f.beforePublication.await(5, TimeUnit.SECONDS));
+      f.close();
+      assertEquals("", work.get(5, TimeUnit.SECONDS));
+      assertEquals(1, f.closes.get()); assertEquals(1, f.engineCloses.get());
+    } finally {
+      f.close();
     }
   }
 

@@ -7,6 +7,10 @@ group = 'app.captionstudio.translation'
 version = '1.0.0'
 
 android {
+  compileOptions {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+  }
   namespace = 'app.captionstudio.translation'
   defaultConfig {
     versionCode 1
@@ -18,4 +22,34 @@ android {
 dependencies {
   implementation 'com.google.ai.edge.litertlm:litertlm-android:0.16.1'
   testImplementation 'junit:junit:4.13.2'
+}
+
+
+// SDK 0.16.1 contains Java 21 classes. Compile against it with JDK 21 while
+// keeping this module's Java/Kotlin output at the existing Java 17 target.
+tasks.withType(JavaCompile).configureEach {
+  javaCompiler = javaToolchains.compilerFor {
+    languageVersion = JavaLanguageVersion.of(21)
+  }
+}
+
+configurations {
+  translationMockitoAgent {
+    canBeConsumed = false
+    transitive = false
+  }
+}
+
+dependencies {
+  testImplementation 'org.mockito:mockito-core:5.14.2'
+  translationMockitoAgent 'net.bytebuddy:byte-buddy-agent:1.15.4'
+}
+
+tasks.withType(Test).configureEach {
+  javaLauncher = javaToolchains.launcherFor {
+    languageVersion = JavaLanguageVersion.of(21)
+  }
+  doFirst {
+    jvmArgs "-javaagent:${configurations.translationMockitoAgent.singleFile.absolutePath}"
+  }
 }

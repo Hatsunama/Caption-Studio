@@ -27,6 +27,24 @@ jobs:
           node tests/dependency-api-compatibility.cjs
       - name: Run full suites, preservation regressions, and repository gates
         run: python3 tests/translation-preservation-cloud.py
+      - name: Verify Android module release unit tests through Gradle
+        env:
+          NODE_ENV: production
+        run: |
+          npx expo prebuild --platform android --clean --no-install
+          node ./scripts/patch-react-native-gradle.js
+          npm run verify:android-config
+          cd android
+          ./gradlew :caption-translation:testReleaseUnitTest --no-daemon --stacktrace --warning-mode all
+      - name: Retain Gradle module test reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: translation-sdk-gradle-unit-tests
+          path: |
+            modules/caption-translation/android/build/reports/tests/testReleaseUnitTest/
+            modules/caption-translation/android/build/test-results/testReleaseUnitTest/
+          retention-days: 14
       - name: Retain repair check results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
