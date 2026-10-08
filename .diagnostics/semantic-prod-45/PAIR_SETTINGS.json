@@ -1,0 +1,76 @@
+{
+  "sdk": "0.17.1",
+  "cpu_threads": 4,
+  "cache_tokens": 4096,
+  "sampling": {
+    "top_k": 1,
+    "top_p": 1.0,
+    "temperature": 0.0,
+    "seed": 0
+  },
+  "thinking_disabled": true,
+  "fresh_conversation_per_case": true,
+  "one_engine_per_model_sequential": true,
+  "model_order": [
+    "Qwen",
+    "Hy"
+  ],
+  "models": {
+    "Qwen": {
+      "repo": "litert-community/Qwen2.5-1.5B-Instruct",
+      "revision": "19edb84c69a0212f29a6ef17ba0d6f278b6a1614",
+      "file": "Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm",
+      "bytes": 1597931520,
+      "sha256": "faa60663b333290c1496c499828b21d3e3254a788cacd8cce917ce0f761a2dc9"
+    },
+    "Hy": {
+      "repo": "Hatsunama/caption-studio-natural-v2-qlora",
+      "revision": "16c4210537ed0ee4421fc165a12a7332006bbf25",
+      "file": "quality-round/20261004/candidate-cache4096/model.litertlm",
+      "bytes": 1815668080,
+      "sha256": "853685c01074b8fb94024e81d1fdb487239cecbefaf5b02053c03376bd5db221"
+    }
+  },
+  "conditions": {
+    "QJ": "Pinned production system+serialized user data; actual strong per-request forIds schema.",
+    "HJ": "Bounded quoted_context_v8_json_batch_v1_review_required; same strong per-request forIds schema, original contexts/IDs preserved."
+  },
+  "current_app_schema_difference_from_prior24": "Strong per-ID schema, minItems=maxItems=cue count, id enum ordered requested IDs, text minLength1, exactfields/noextras.",
+  "output_budget_formula": "min(1024,max(128,64+sum(3*UTF8_bytes(source_text)+24 for each requested cue)))",
+  "schema_identical_within_pair": true,
+  "references_not_sent_to_model": true,
+  "signature_provenance": {
+    "revision": "bdafc318606c6d0ddb5e6f6e3eefc6d5b5c2807a",
+    "path": "provider-profile/20261007/eddb8ce3/retry1/evidence/PREFLIGHT.json",
+    "not_refetched_or_reaudited_in_this_design_turn": true
+  },
+  "required_sdk_calls": {
+    "Engine": "Engine(model_path, backend=Backend.CPU(thread_count=4), max_num_tokens=4096, cache_dir=cloud_only_path, enable_benchmark=True)",
+    "create_conversation": "create_conversation(system_message=..., sampler_config=..., thinking_config=..., automatic_tool_calling=False, constrained_decoding_config=ConstrainedDecodingConfig(enable=True, provider=LL_GUIDANCE), max_output_tokens=case_cap)",
+    "send_message": "send_message(message, response_format=ResponseFormat.json(common_case_schema))"
+  },
+  "production_equivalence_limitations": [
+    "Python SDK 0.17.1 diagnostic, not a Kotlin/app SDK upgrade validation.",
+    "Fixed CPU4 is a cloud control, not a claim about the app auto backend or phone thread count.",
+    "No production repair/recovery, context dropping, fragment splitting or literal-only bypass is exercised.",
+    "Hy multi-cue and sourceNeighbors generalization is new evaluation prompt work requiring design approval; not exact previously tested single-cue profile behavior."
+  ],
+  "serialization_audit": "Execute verbatim pinned Java methods with pinned Gson 2.13.2, compare Python wire strings and initial/retry output caps for all48 plus edge fixtures. Await actual remote result, not source-string checks.",
+  "app_source_revision": "41f8c443df43cb03a6718457fc85138269b00c67",
+  "profile_name": "quoted_context_v8_json_batch_v1_review_required",
+  "schema_policy": "Actual structured production path: per-request TranslationResponseSchema.forIds, compiled JVM parity required for BOTH QJ/HJ. Generic fallback is not used.",
+  "coverage": {
+    "preserved_cases": 48,
+    "active_cases": 45,
+    "quarantined_cases": [
+      "U19",
+      "U20",
+      "U41"
+    ],
+    "ui_total_languages": 19,
+    "nonEnglish_targets": 18,
+    "planned_outputs": 90
+  },
+  "historical_app_source_revision": "9a030f1bda4a59e2c9ecc4966e5258e56f35bf15",
+  "revision_metadata_note": "Current production contract audited at 41f8; previous 9a value preserved as historical, not current."
+}

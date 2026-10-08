@@ -1,0 +1,27 @@
+{
+  "classification": "TOOLING_INITIALIZATION_TIMEOUT_NOT_MODEL_FAILURE",
+  "job": "6ac75094df2184ac91ac945e",
+  "hf_status": "ERROR Job timeout",
+  "hf_limit_seconds": 600,
+  "log_lines": 87,
+  "log_sha256": "de37ed6efc400b0627808f4998145ca9a38b53cff6540ef51cdf0c93eeae396b",
+  "last_demonstrated_phase": "apt unpack/configure libc6/dev 2.36-9+deb12u14",
+  "zero_log_markers": [
+    "PIN_VERIFIED",
+    "SCHEMA_RED_REMOTE",
+    "ACTUAL_LDD",
+    "TEST_ONLY_SUMMARY",
+    "EVIDENCE_COMMIT"
+  ],
+  "remote_harness_execution_receipt_uploaded": false,
+  "no_native_JVM_model_execution_demonstrated": true,
+  "debconf_fallback_not_proof_of_hang": true,
+  "prior_native_reuse": {
+    "sdk": "0.17.1",
+    "job": "6ac74e0be7a0dae8a2781f18",
+    "revision": "5b428877ee246a1da268ecd3d199548ed8a6d574",
+    "path": "coverage-design/20261007/afd40291/correction1-1e9e09d1/evidence/NATIVE_PREFLIGHT.json",
+    "sha256": "1ea1287316491fcdfa2bd6128a0a82e57d9216c60601eefbc7335808b5a916de"
+  },
+  "current_action": "No job launch; GitHub stock contract-only route proposed"
+}

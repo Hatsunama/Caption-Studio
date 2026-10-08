@@ -1,0 +1,87 @@
+{
+  "app_revision": "41f8c443df43cb03a6718457fc85138269b00c67",
+  "files": {
+    "LiteRtLmTranslationRuntime.kt": {
+      "sha256": "56c85ca368c281817f99d94f65b3b9e87efd0410bc3353665055ebd31447a00a",
+      "git_blob_sha": "dfb7f7bcb55d573794c6dfb5c9efa18bd4b4f432",
+      "source_revision": "41f8c443df43cb03a6718457fc85138269b00c67"
+    },
+    "NaturalCaptionTranslator.java": {
+      "sha256": "4031a13faeb15be3e5d73e00e4ef24db35ea1a29d188b12e6f6b096c5f317178",
+      "git_blob_sha": "0dd0895567e1aab4103eb7989cd36fec364cf683",
+      "source_revision": "41f8c443df43cb03a6718457fc85138269b00c67"
+    },
+    "TranslationText.java": {
+      "sha256": "c9f6ceb414b7e1d91565def9857782598ee4e6b14d8b0539138e01b8aa431f41",
+      "git_blob_sha": "40d997d7ccad2162f7f579290f9e1a1cf4f8cfcf",
+      "source_revision": "41f8c443df43cb03a6718457fc85138269b00c67"
+    },
+    "build.gradle": {
+      "sha256": "44cbb9259969499aaeb35950ae9dcd528f9d96a752d2cb86ff1bd8c1e63baa04",
+      "git_blob_sha": "36817c3f93e63ca5198bbf5af83ae56a0a75886f"
+    },
+    "TranslationResponseSchema.java": {
+      "sha256": "bd719ea1d3c0c500602b6c9c20c767513df9a0d06e8c777afe4a337cc4d71a64",
+      "git_blob_sha": "eff7da1a7458c8cb7de5a481296e24fd7c1e2fb3"
+    },
+    "TranslationBatchMetrics.java": {
+      "sha256": "2ef6ffe213c1b349e7308b9098b804afc139b720abf9b15e29daa8453b4716ae",
+      "git_blob_sha": "6b581fd2a7772ec6695b3bdc22120bb8f5df864b",
+      "source_revision": "41f8c443df43cb03a6718457fc85138269b00c67"
+    },
+    "caption-languages.ts": {
+      "sha256": "dacb7d88ebeef0d29344e4c691469efd22d973fdb6b83df4933343014ae0920c",
+      "git_blob_sha": "f3c4c92b9bfc8394c0a0db74ccfb579c24405573",
+      "source_revision": "41f8c443df43cb03a6718457fc85138269b00c67"
+    }
+  },
+  "verbatim_method_sha256": {
+    "  static String buildUserPrompt(": "b575aa2f999990db12666bd960cd2c74cdecfd92fa706b38823287560f55a74b",
+    "  private static String withSourceNeighbors(": "85f74cba13fe261daba302ebfa897515487b982717106f089bfb039da57db228",
+    "  private static String boundedContext(": "5819b5c5c82213e3d4078e2b915160005e8bf8550ee0e4ec6c3fe7ffaaf1f379",
+    "  private static String escapePrompt(": "b817849c5ef583cb11902d0d9d986781e8df79497d43562ff321b99d50d55f22",
+    "  private static String languageLabel(": "87d1b1951f695b369e5a1421d430d8faa85a156f88cb20e463f21bb752e8560f",
+    "  private static int outputTokenLimit(List<Caption>": "5d06ec4f473a1c7e195c0db04e44d4b750b20a7eb9ff4ab1ea6273b59f40a9df",
+    "  static final class Caption {": "334989ffa525c0b3bc2f746d3db642382d4b23c23eadfaf2a82df000620fa125",
+    "  static final class ValidatedRequest {": "e14193488378ac4dd1f2d3de99a995b1795d305ed35202a3a9662466a70837a3"
+  },
+  "generic_schema": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "red_commit": "c5f86e21a0c61e214b1e1c40060f7daba4f15b47",
+  "design_revision": "a7506bcac0c88be73df9d2e24795ecf2978bacfc",
+  "references_sha256": "7630401f4cd06dbbf0776b754ff7a530b599de9c81f98e3156108cd0d3ea7c8e",
+  "oracle_dependency": {
+    "gson_version": "2.13.2",
+    "gson_sha256": "dd0ce1b55a3ed2080cb70f9c655850cda86c206862310009dcb5e5c95265a5e0",
+    "android_sdk_version": "0.16.1"
+  },
+  "profile_generalization_pending_review": true,
+  "profile_origin": {
+    "revision": "98dad7224461891e6e7b5c2466193310a1d2d8ce",
+    "path": "candidate-synthetic/20261007/25c4d0bde6/code/hy_prompt_profiles.py",
+    "sha256": "5b10a331099b0daa5158426d2f964442c1f4b18543fcc5996e07756b5753bb9b"
+  },
+  "strong_schema_integration_revision": "41f8c443df43cb03a6718457fc85138269b00c67",
+  "strong_schema_blob_identical_to_prior": true,
+  "production_schema": "TranslationResponseSchema.forIds(requested ordered IDs) for both QJ/HJ",
+  "production_path_red_revision": "ebd615bb5401f5e62e9d25301bd466eb34dffd22",
+  "coverage_scope": "19 total UI/native tags including en; evaluation EN to18 nonEnglish targets;45cases;90planned outputs"
+}

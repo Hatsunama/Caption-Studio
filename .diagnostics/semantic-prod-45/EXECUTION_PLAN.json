@@ -1,0 +1,85 @@
+{
+  "status": "PARENT_REVIEW_REQUIRED_NO_INFERENCE",
+  "source": "en",
+  "active_case_ids": [
+    "U01",
+    "U02",
+    "U03",
+    "U04",
+    "U05",
+    "U06",
+    "U07",
+    "U08",
+    "U09",
+    "U10",
+    "U11",
+    "U12",
+    "U13",
+    "U14",
+    "U15",
+    "U16",
+    "U17",
+    "U18",
+    "U21",
+    "U22",
+    "U23",
+    "U24",
+    "U25",
+    "U26",
+    "U27",
+    "U28",
+    "U29",
+    "U30",
+    "U31",
+    "U32",
+    "U33",
+    "U34",
+    "U35",
+    "U36",
+    "U37",
+    "U38",
+    "U39",
+    "U40",
+    "U42",
+    "U43",
+    "U44",
+    "U45",
+    "U46",
+    "U47",
+    "U48"
+  ],
+  "quarantined_case_ids": [
+    "U19",
+    "U20",
+    "U41"
+  ],
+  "ui_total_languages": 19,
+  "nonEnglish_targets": 18,
+  "active_cases": 45,
+  "planned_outputs": 90,
+  "planned_cues_per_condition": 63,
+  "identity_padding": false,
+  "schema_policy": "per-request compiled production forIds; same in QJ/HJ",
+  "preserved_file_sha256": {
+    "CASES.json": "4a40ba6a3c38edb431992e1e5747fc2b59943ca9531c9d418655f110d34e6685",
+    "SEMANTIC_REFERENCES.json": "7630401f4cd06dbbf0776b754ff7a530b599de9c81f98e3156108cd0d3ea7c8e",
+    "SCHEDULE.json": "f7c95e91903a2983fa8e88406bc62e149fabd8e0029278ebb6c39f43d0b851ee"
+  },
+  "quarantine": {
+    "U19": {
+      "reason": "Urdu unsupported by current production UI/native whitelist",
+      "case_canonical_sha256": "32f72d336a4b7ff02a34dc3c2a5b46544a91585964b060c194451cbd6c91d254",
+      "reference_canonical_sha256": "bd52f80effa004d7becb635e54827ba212875bea27cc803ccc0da0cda6bb1b41"
+    },
+    "U20": {
+      "reason": "Urdu unsupported by current production UI/native whitelist",
+      "case_canonical_sha256": "4ff8392f4c2df01dcbbe9e8e124ecae54a998a6c2d7207c18e308798403b1fb5",
+      "reference_canonical_sha256": "565b2fe61ffd695af780d38a9763b0b7a9baf86d5209b2eeddcc49435b56cb17"
+    },
+    "U41": {
+      "reason": "Urdu unsupported by current production UI/native whitelist",
+      "case_canonical_sha256": "cc31276993b622fd070a36b7d15c788cefd559a1f8bef6afbe45c3a45a22ec12",
+      "reference_canonical_sha256": "f3ddfe536491fb0e9185ee7159836d4d62e439f7e9b9e5984ad04784bec310f4"
+    }
+  }
+}
