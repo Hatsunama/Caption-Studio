@@ -227,7 +227,7 @@ test('independent dual terminal intervals stay independent at a fractional proje
 test('positive terminal tails are dropped only in formats without a representable interval', () => {
   for (const [startMs, expectedSrt, expectedAss] of [
     [3999.9, '', []],
-    [3999.7, '1\\n00:00:02,666 --> 00:00:02,667\\nPrimary\\nSecondary\\n', []],
+    [3999.7, '1\n00:00:02,666 --> 00:00:02,667\nPrimary\nSecondary\n', []],
     [3994.6, '1\n00:00:02,663 --> 00:00:02,667\nPrimary\nSecondary\n', []],
   ]) {
     for (const status of ['translated', 'failed']) {
