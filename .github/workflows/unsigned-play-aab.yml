@@ -1,0 +1,29 @@
+name: Unsigned Play AAB packaging
+on:
+  push:
+    branches: [codex/unsigned-play-aab-1.4.124]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.1
+      - name: Reproduce old APK certificate coupling before implementation
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          import { parseCertificate } from './scripts/verify-play-aab.mjs';
+          const pin = JSON.parse(readFileSync('config/product-contract.json')).android.release.signingCertificateSha256;
+          assert.equal(parseCertificate('SHA256: ' + pin), pin);
+          assert.throws(() => parseCertificate('SHA256: ' + 'a'.repeat(64)), /production pin/);
+          console.log('REPRODUCED: old Play gate accepts APK pin and rejects a different Play certificate.');
+          JS
