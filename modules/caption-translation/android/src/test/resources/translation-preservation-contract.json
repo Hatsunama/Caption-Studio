@@ -670,5 +670,23 @@
     "source": "Ready + now",
     "translated": "现在+已就绪 +",
     "preserved": false
+  },
+  {
+    "name": "operator cluster cannot hide extra source-selected literals",
+    "source": "Ready + now",
+    "translated": "现在+已就绪 ++",
+    "preserved": false
+  },
+  {
+    "name": "operator cluster respects repeated source inventory",
+    "source": "Ready + + now",
+    "translated": "现在++已就绪",
+    "preserved": true
+  },
+  {
+    "name": "identifier cluster stays a decoy beside genuine literal",
+    "source": "Ready + now",
+    "translated": "现在 C++ + 已就绪",
+    "preserved": true
   }
 ]

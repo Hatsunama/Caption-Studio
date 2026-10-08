@@ -13,7 +13,7 @@ public final class TranslationPreservationContractTest {
     try (var input = getClass().getResourceAsStream("/translation-preservation-contract.json")) {
       assertNotNull("shared preservation corpus must be on the test classpath", input);
       JsonArray cases = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonArray();
-      assertEquals(112, cases.size());
+      assertEquals(115, cases.size());
       for (var element : cases) {
         var item = element.getAsJsonObject();
         assertEquals(item.get("name").getAsString(), item.get("preserved").getAsBoolean(),
