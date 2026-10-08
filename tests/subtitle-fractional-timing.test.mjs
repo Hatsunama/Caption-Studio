@@ -1,14 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import ts from 'typescript';
 
 import { createEnglishChineseCaptionTrack } from '../src/lib/caption-tracks.ts';
 import { exportCaptionPairs } from '../src/lib/export-caption-pairs.ts';
 import { buildTimelineRenderPlan, toNativeRenderPlan } from '../src/lib/export-render-plan.ts';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { serializeAss, serializeSrt, visibleCaptions } from '../src/lib/subtitle-export.ts';
+import { projectRenderDuration } from '../src/lib/project-timeline.ts';
 import { totalClipDuration, setClipPlaybackRate } from '../src/lib/video-timeline.ts';
 
 function fixture(startMs = 1000.6, endMs = 2000.4) {
@@ -161,37 +159,26 @@ function assertSrtTimes(value, durationMs) {
   }
 }
 
-// Execute the complete current serializer with an exact-duration dependency.
-// This covers fractional bounds even though the shared MP4 helper currently ceils them.
-function serializersAtExactDuration(durationMs) {
-  const require = createRequire(import.meta.url);
-  const source = readFileSync(new URL('../src/lib/subtitle-export.ts', import.meta.url), 'utf8');
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  const module = { exports: {} };
-  new Function('require', 'module', 'exports', compiled)((id) => {
-    assert.ok(id.startsWith('@/'));
-    const dependency = require('../src/' + id.slice(2) + '.ts');
-    return id === '@/lib/project-timeline'
-      ? { ...dependency, projectRenderDuration: () => durationMs } : dependency;
-  }, module, module.exports);
-  return module.exports;
-}
-
-test('full SRT serializer never emits a fractional comma timestamp at a speed-derived project end', () => {
+test('real speed-derived project duration is quantized before full SRT and native serialization', () => {
   const project = terminalFixture();
-  const durationMs = totalClipDuration(project.clips);
   const before = structuredClone(project);
-  assert.equal(durationMs, 4000 / 1.5);
-  const serializer = serializersAtExactDuration(durationMs);
-  const srt = serializer.serializeSrt(project);
+  assert.equal(totalClipDuration(project.clips), 4000 / 1.5);
+  assert.ok(!Number.isInteger(project.captions[0].endMs));
+  const durationMs = projectRenderDuration(project);
+  assert.equal(durationMs, 2667);
+  assert.ok(Number.isInteger(durationMs));
+  assert.equal(exportCaptionPairs(project)[0].endMs, project.captions[0].endMs);
+  const srt = serializeSrt(project);
   assertSrtTimes(srt, durationMs);
-  assert.equal(srt, '1\n00:00:02,000 --> 00:00:02,666\nPrimary\nSecondary\n');
+  assert.equal(srt, '1\n00:00:02,000 --> 00:00:02,667\nPrimary\nSecondary\n');
+  const native = toNativeRenderPlan(buildTimelineRenderPlan(project));
+  assert.equal(native.durationMs, durationMs);
+  assert.deepEqual(native.captions.map((caption) => [caption.startMs, caption.endMs]),
+    [[2000, 2667], [2000, 2667]]);
   assert.deepEqual(project, before);
 });
 
-test('actual speed-derived terminal subtitles floor the format bound, including saved and failed tracks', () => {
+test('real speed-derived ASS terminal bounds do not overrun the integer project duration', () => {
   for (const [status, text, allowIncomplete, displayed] of [
     ['translated', 'Secondary', false, 'Secondary'],
     ['reviewed', 'Secondary', false, 'Secondary'],
@@ -201,20 +188,21 @@ test('actual speed-derived terminal subtitles floor the format bound, including 
     const project = terminalFixture();
     Object.assign(project.captionTracks.translations[0].cues[0], { status, text });
     const before = structuredClone(project);
-    const durationMs = totalClipDuration(project.clips);
+    const durationMs = projectRenderDuration(project);
     const planBefore = buildTimelineRenderPlan(project, undefined, allowIncomplete);
     if (status === 'failed') {
       assert.throws(() => serializeSrt(project), /Export anyway/u);
       assert.throws(() => serializeAss(project), /Export anyway/u);
     }
-    const srt = serializeSrt(project, allowIncomplete);
-    assertSrtTimes(srt, durationMs);
-    assert.equal(srt, '1\n00:00:02,000 --> 00:00:02,666\nPrimary\n' + displayed + '\n');
     const times = serializeAss(project, allowIncomplete).split('\n')
       .filter((line) => line.startsWith('Dialogue:')).map((line) => line.split(',').slice(1, 3));
     assert.deepEqual(times, [
       ['0:00:02.00', '0:00:02.66'], ['0:00:02.00', '0:00:02.66'],
     ]);
+    assert.ok(2660 <= durationMs && 2670 > durationMs);
+    const srt = serializeSrt(project, allowIncomplete);
+    assertSrtTimes(srt, durationMs);
+    assert.equal(srt, '1\n00:00:02,000 --> 00:00:02,667\nPrimary\n' + displayed + '\n');
     assert.deepEqual(buildTimelineRenderPlan(project, undefined, allowIncomplete), planBefore);
     assert.deepEqual(project, before);
   }
@@ -226,10 +214,10 @@ test('independent dual terminal intervals stay independent at a fractional proje
   const project = setClipPlaybackRate(original, original.clips[0].id, 1.5);
   const before = structuredClone(project);
   assert.deepEqual(cues(project), [
-    { timing: '00:00:01,933 --> 00:00:02,666', text: 'Secondary' },
-    { timing: '00:00:02,000 --> 00:00:02,666', text: 'Primary' },
+    { timing: '00:00:01,933 --> 00:00:02,667', text: 'Secondary' },
+    { timing: '00:00:02,000 --> 00:00:02,667', text: 'Primary' },
   ]);
-  assertSrtTimes(serializeSrt(project), totalClipDuration(project.clips));
+  assertSrtTimes(serializeSrt(project), projectRenderDuration(project));
   assert.deepEqual(assTimes(project), [
     ['0:00:02.00', '0:00:02.66'], ['0:00:01.93', '0:00:02.66'],
   ]);
@@ -238,8 +226,9 @@ test('independent dual terminal intervals stay independent at a fractional proje
 
 test('positive terminal tails are dropped only in formats without a representable interval', () => {
   for (const [startMs, expectedSrt, expectedAss] of [
-    [3999.7, '', []],
-    [3994.6, '1\n00:00:02,663 --> 00:00:02,666\nPrimary\nSecondary\n', []],
+    [3999.9, '', []],
+    [3999.7, '1\\n00:00:02,666 --> 00:00:02,667\\nPrimary\\nSecondary\\n', []],
+    [3994.6, '1\n00:00:02,663 --> 00:00:02,667\nPrimary\nSecondary\n', []],
   ]) {
     for (const status of ['translated', 'failed']) {
       const project = terminalFixture(startMs);
@@ -255,7 +244,7 @@ test('positive terminal tails are dropped only in formats without a representabl
       }
       const srt = serializeSrt(project, true);
       assert.equal(srt, status === 'failed' ? expectedSrt.replace('Secondary', 'Primary') : expectedSrt);
-      assertSrtTimes(srt, totalClipDuration(project.clips));
+      assertSrtTimes(srt, projectRenderDuration(project));
       const dialogues = serializeAss(project, true).split('\n').filter((line) => line.startsWith('Dialogue:'));
       assert.deepEqual(dialogues, expectedAss);
       assert.deepEqual(buildTimelineRenderPlan(project, undefined, true), planBefore);
