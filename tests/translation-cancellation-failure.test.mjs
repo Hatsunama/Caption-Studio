@@ -46,8 +46,9 @@ async function serviceFixture(config = {}) {
   const native = {
     limits,
     addListener(_name, callback) {
+      config.addListener?.();
       listeners.add(callback);
-      return { remove: () => listeners.delete(callback) };
+      return { remove: () => { config.remove?.(); listeners.delete(callback); } };
     },
     async translateNaturalCaptions(_model, request) {
       if (config.translate) return config.translate(request, listeners, acceptedBatches);
@@ -383,3 +384,199 @@ for (const mode of ['background', 'unmount', 'explicit']) {
     }
   });
 }
+
+test('listener acquisition failure releases ownership and permits immediate retry', async () => {
+  const acquire = new Error('listener acquisition failed');
+  let acquisitions = 0, leases = 0, restores = 0;
+  const { service, calls } = await serviceFixture({
+    addListener: () => { if (++acquisitions === 1) throw acquire; },
+  });
+  service.registerCaptionTranslationResources(() => {
+    leases++;
+    return { ready: Promise.resolve(), restore: async () => { restores++; } };
+  });
+  await assert.rejects(start(service, { onAcceptedBatch: async () => {} }), sameFailure(acquire));
+  assert.equal(calls.length, 0);
+  assert.equal(leases, restores, 'every acquired lease must be restored');
+  assert.equal(await service.cancelNaturalCaptionTranslation(), false, 'failed acquisition must release ownership');
+  const retried = await start(service, { onAcceptedBatch: async () => {} });
+  assert.equal(retried.captions.size, captions.length);
+  assert.equal(acquisitions, 2);
+  assert.equal(leases, 1);
+  assert.equal(restores, 1);
+});
+
+test('listener removal failure restores the resource lease and permits immediate retry', async () => {
+  const remove = new Error('listener removal failed');
+  let removals = 0, restores = 0;
+  const { service, calls } = await serviceFixture({
+    remove: () => { if (++removals === 1) throw remove; },
+  });
+  service.registerCaptionTranslationResources(() => ({
+    ready: Promise.resolve(), restore: async () => { restores++; },
+  }));
+  const saved = [];
+  await assert.rejects(start(service, {
+    onAcceptedBatch: async (batch) => { saved.push(...batch.captions.keys()); },
+  }), sameFailure(remove));
+  assert.equal(restores, 1, 'removal failure must not skip resource restoration');
+  assert.deepEqual(saved, ['first', 'second']);
+  assert.equal(await service.cancelNaturalCaptionTranslation(), false);
+  const retried = await start(service, { onAcceptedBatch: async () => {} });
+  assert.equal(retried.captions.size, captions.length);
+  assert.equal(calls.length, 2);
+  assert.equal(restores, 2);
+});
+
+test('listener removal failure preserves an earlier native failure and still restores resources', async () => {
+  const native = failure('native generation failed');
+  const remove = new Error('listener removal failed');
+  let restores = 0;
+  const config = { translate: async () => { throw native; }, remove: () => { throw remove; } };
+  const { service } = await serviceFixture(config);
+  service.registerCaptionTranslationResources(() => ({
+    ready: Promise.resolve(), restore: async () => { restores++; },
+  }));
+  await assert.rejects(start(service, { onAcceptedBatch: async () => {} }), sameFailure(native));
+  assert.equal(restores, 1);
+  config.translate = undefined;
+  config.remove = undefined;
+  assert.equal((await start(service, { onAcceptedBatch: async () => {} })).captions.size, captions.length);
+});
+
+test('listener removal failure preserves a save failure and partial-save reporting', async () => {
+  const disk = new Error('project save failed');
+  const remove = new Error('listener removal failed');
+  let restores = 0, saves = 0;
+  const { service } = await serviceFixture({ remove: () => { throw remove; } });
+  service.registerCaptionTranslationResources(() => ({
+    ready: Promise.resolve(), restore: async () => { restores++; },
+  }));
+  await assert.rejects(start(service, { onAcceptedBatch: async () => {
+    if (++saves === 2) throw disk;
+  } }), (error) => {
+    assert.equal(error.cause, disk);
+    assert.match(error.message, /1 translation batch was saved/);
+    return true;
+  });
+  assert.equal(saves, 2);
+  assert.equal(restores, 1);
+  assert.equal(await service.cancelNaturalCaptionTranslation(), false);
+});
+
+test('listener removal failure is reported after genuine cancellation and releases ownership', async () => {
+  const remove = new Error('listener removal failed after cancellation');
+  let restores = 0;
+  const config = { translate: async () => { throw { code: 'E_TRANSLATION_CANCELLED' }; },
+    remove: () => { throw remove; } };
+  const { service } = await serviceFixture(config);
+  service.registerCaptionTranslationResources(() => ({
+    ready: Promise.resolve(), restore: async () => { restores++; },
+  }));
+  await assert.rejects(start(service, { onAcceptedBatch: async () => {} }), sameFailure(remove));
+  assert.equal(restores, 1);
+  assert.equal(await service.cancelNaturalCaptionTranslation(), false);
+  config.translate = undefined;
+  config.remove = undefined;
+  assert.equal((await start(service, { onAcceptedBatch: async () => {} })).captions.size, captions.length);
+});
+
+test('listener removal failure cannot skip a pending stop or restore, and retry remains blocked until both settle', async () => {
+  const entered = deferred(), work = deferred(), stop = deferred(), restoring = deferred(), restore = deferred();
+  const remove = new Error('listener removal failed');
+  const order = [];
+  const config = {
+    translate: () => { entered.resolve(); return work.promise; },
+    stop: () => stop.promise.then(() => { order.push('stop'); }),
+    remove: () => { order.push('remove'); throw remove; },
+  };
+  const { service } = await serviceFixture(config);
+  service.registerCaptionTranslationResources(() => ({
+    ready: Promise.resolve(), restore: () => {
+      order.push('restore'); restoring.resolve(); return restore.promise;
+    },
+  }));
+  let settled = false;
+  const result = start(service, { onAcceptedBatch: async () => {} });
+  const rejection = assert.rejects(result, sameFailure(remove)).finally(() => { settled = true; });
+  // Observe the assertion immediately even when the broken implementation settles too early.
+  void rejection.catch(() => {});
+  await entered.promise;
+  const cancellation = service.cancelNaturalCaptionTranslation();
+  work.reject({ code: 'E_TRANSLATION_CANCELLED' });
+  try {
+    await tick();
+    assert.equal(settled, false, 'ownership must wait for native stop after remove throws');
+    assert.deepEqual(order, ['remove']);
+    await assert.rejects(start(service), /already running/);
+    await assert.rejects(service.removeDownloadedNaturalTranslationModel(), /Wait/);
+    stop.resolve();
+    await cancellation;
+    await restoring.promise;
+    assert.deepEqual(order, ['remove', 'stop', 'restore']);
+    await assert.rejects(start(service), /already running/);
+  } finally {
+    stop.resolve();
+    restore.resolve();
+    await cancellation;
+    await rejection;
+  }
+  assert.equal(await service.cancelNaturalCaptionTranslation(), false);
+  config.translate = undefined;
+  config.remove = undefined;
+  assert.equal((await start(service, { onAcceptedBatch: async () => {} })).captions.size, captions.length);
+});
+
+test('listener removal failure does not release ownership before an accepted save and restore finish', async () => {
+  const entered = deferred(), work = deferred(), saving = deferred(), save = deferred();
+  const native = failure('native generation failed while saving');
+  const remove = new Error('listener removal failed');
+  const order = [];
+  const config = { remove: () => { order.push('remove'); throw remove; },
+    translate: (request, listeners) => {
+      listeners.forEach((listener) => listener({ requestId: request.requestId, batchIndex: 0,
+        captions: [{ id: request.operations[0].batches[0].captions[0].id, text: 'Bonjour', valid: true }] }));
+      entered.resolve();
+      return work.promise;
+    },
+  };
+  const { service } = await serviceFixture(config);
+  service.registerCaptionTranslationResources(() => ({
+    ready: Promise.resolve(), restore: async () => { order.push('restore'); },
+  }));
+  const result = start(service, { onAcceptedBatch: async () => {
+    saving.resolve(); await save.promise; order.push('save');
+  } });
+  const rejection = assert.rejects(result, (error) => {
+    assert.equal(error.cause, native);
+    assert.match(error.message, /1 translation batch was saved/);
+    return true;
+  });
+  void rejection.catch(() => {});
+  await entered.promise; await saving.promise;
+  work.reject(native);
+  try {
+    await tick();
+    assert.deepEqual(order, []);
+    await assert.rejects(start(service), /already running/);
+  } finally {
+    save.resolve();
+    await rejection;
+  }
+  assert.deepEqual(order, ['save', 'remove', 'restore']);
+  assert.equal(await service.cancelNaturalCaptionTranslation(), false);
+});
+
+test('listener cleanup preserves resource-readiness failure and attempts failing restore independently', async () => {
+  const ready = new Error('resource suspension failed');
+  const remove = new Error('listener removal failed');
+  const restore = new Error('resource restore failed');
+  let restores = 0;
+  const { service } = await serviceFixture({ remove: () => { throw remove; } });
+  service.registerCaptionTranslationResources(() => ({
+    ready: Promise.reject(ready), restore: async () => { restores++; throw restore; },
+  }));
+  await assert.rejects(start(service, { onAcceptedBatch: async () => {} }), sameFailure(ready));
+  assert.equal(restores, 1);
+  assert.equal(await service.cancelNaturalCaptionTranslation(), false);
+});
