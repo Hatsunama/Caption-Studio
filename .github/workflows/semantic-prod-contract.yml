@@ -1,44 +1,28 @@
-# Authorized contract-only RED/GREEN; no model, SDK or HF credentials.
-name: Semantic production contract only
+name: Semantic lifecycle contract only
 on:
   push:
     branches: [eval/semantic-prod-45-test-only]
     paths:
-      - .diagnostics/semantic-prod-45/**
+      - .diagnostics/semantic-lifecycle/**
       - .github/workflows/semantic-prod-contract.yml
 permissions:
   contents: read
 jobs:
-  contract:
-    if: github.repository == 'Hatsunama/Caption-Studio'
+  lifecycle:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 3
     env:
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Stock Java/Python contract check, no SDK or models
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${JAVA_HOME_17_X64:-}"
-          export JAVA_HOME="$JAVA_HOME_17_X64"
-          export PATH="$JAVA_HOME/bin:$PATH"
-          python3 -B -m venv /tmp/semantic-contract-venv
-          /tmp/semantic-contract-venv/bin/python -B -m pip install --disable-pip-version-check --timeout 20 --retries 0 jsonschema==4.23.0
-          curl --fail --silent --show-error --max-time 30 \
-            https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.13.2/gson-2.13.2.jar \
-            -o .diagnostics/semantic-prod-45/gson-2.13.2.jar
-          /tmp/semantic-contract-venv/bin/python -B .diagnostics/semantic-prod-45/run_red_green_contract.py
-      - name: Preserve results including failures and fixture raw envelopes
+      - name: Execute actual POSIX lifecycle regressions, no packages SDK or models
+        run: python3 -B .diagnostics/semantic-lifecycle/run_lifecycle_tests.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: semantic-production-contract-only
-          path: .diagnostics/semantic-prod-45/evidence
+          name: semantic-lifecycle-contract
+          path: .diagnostics/semantic-lifecycle/evidence
           if-no-files-found: error
           retention-days: 14
-# Before publishing: parent reviews existing repository push workflows and pins
-# checkout/upload-artifact actions to approved immutable commits.
