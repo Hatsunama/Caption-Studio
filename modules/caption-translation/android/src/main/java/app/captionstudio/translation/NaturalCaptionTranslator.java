@@ -59,7 +59,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final String PROMPT_CONTRACT = GeneratedProductContract.PROMPT_CONTRACT;
   // Preserve this legacy identity (including its cpu label) across backend selection:
   // accepted text still passes the same prompt/output contract and must remain resumable.
-  static final String CHECKPOINT_PROFILE = "v9;litertlm-0.16.1;cpu;4096;128-1024;topk1;topp1;temperature0;seed0;microbatch8-bounded-isolation;strict-boundary;cue-context-identity;reserved-neighbors192";
+  static final String CHECKPOINT_PROFILE = "v10;litertlm-0.16.1;cpu;4096;128-1024;topk1;topp1;temperature0;seed0;microbatch8-bounded-isolation;strict-boundary;cue-context-identity;reserved-neighbors192;selective-qwen-added-token-wire";
 
   static final String INVALID_REQUEST = "E_TRANSLATION_INVALID_REQUEST";
   static final String BUSY = "E_TRANSLATION_BUSY";
@@ -1142,8 +1142,12 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   }
 
   private static String escapePrompt(String json) {
-    // A literal chat delimiter in caption data must not become a tokenizer control token.
-    return json.replace("<", "\\u003c").replace(">", "\\u003e");
+    // Guard every Qwen chat-prefix spelling, including unknown or unclosed markers.
+    // The pinned vocabulary also adds these exact tool markers with special=false.
+    // Operate on serialized JSON only: never unescape user backslash-u text.
+    return json.replace("<|", "\\u003c|")
+        .replace("<tool_call>", "\\u003ctool_call>")
+        .replace("</tool_call>", "\\u003c/tool_call>");
   }
 
   private static String checkpointResponse(List<Caption> captions) {
