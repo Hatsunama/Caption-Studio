@@ -53,7 +53,8 @@ try:
     classes=root/"test-classes"
     classes.mkdir()
     resources=root/"modules/caption-translation/android/src/test/resources"
-    cp=":".join(map(str,[classes,resources,android,gson,junit,hamcrest,stdlib,annotations,litert,mockito,bytebuddy,bytebuddy_agent,objenesis]))
+    coroutines=str(jars/"kotlinx-coroutines-core-jvm-1.10.2.jar")
+    cp=":".join(map(str,[classes,resources,android,gson,junit,hamcrest,stdlib,annotations,litert,mockito,bytebuddy,bytebuddy_agent,objenesis,coroutines]))
     main=root/"modules/caption-translation/android/src/main/java/app/captionstudio/translation"
     tests=root/"modules/caption-translation/android/src/test/java/app/captionstudio/translation"
     java=list(map(str,main.glob("*.java")))
@@ -69,6 +70,6 @@ except Exception as e:
     reports["infrastructure_error"]={"type":type(e).__name__,"message":str(e)}
     print("INFRASTRUCTURE_ERROR="+repr(e),flush=True)
 finally:
-    (root/"preservation-repair-results.json").write_text(json.dumps({"base":"8067566f2e7e80667090bbe0a30ee8a083e920cc","stage":"STANDALONE_SYMBOL_CHECK","head":os.environ.get("GITHUB_SHA"),"reports":reports},indent=2))
+    (root/"preservation-repair-results.json").write_text(json.dumps({"base":"95cdecc54fa6efaa0f52e7cab19f61d8de4873a1","stage":"SDK_TYPED_CANCEL_ADAPTER","head":os.environ.get("GITHUB_SHA"),"reports":reports},indent=2))
     print("RESULTS="+json.dumps({k:v.get("exit_code",v.get("type")) for k,v in reports.items()}),flush=True)
 sys.exit(1 if any("exit_code" not in value or value["exit_code"] != 0 for value in reports.values()) else 0)
