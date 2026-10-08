@@ -1,0 +1,29 @@
+{
+  "image": "ghcr.io/astral-sh/uv:python3.12-bookworm",
+  "flavor": "cpu-upgrade",
+  "timeout_seconds": 7200,
+  "command": [
+    "sh",
+    "-c",
+    "export RUN_STARTED_EPOCH=$(date +%s); exec timeout -k 5s 7170s sh -c 'timeout -k 5s 300s sh -c '\"'\"'apt-get update -qq && apt-get install -y --no-install-recommends libvulkan1'\"'\"' > /tmp/semantic-native-setup.stdout 2> /tmp/semantic-native-setup.stderr; rc=$?; printf '\"'\"'%s\\n'\"'\"' \"$rc\" > /tmp/semantic-native-setup.returncode; cat /tmp/semantic-native-setup.stdout; cat /tmp/semantic-native-setup.stderr >&2; test \"$rc\" -eq 0 || exit \"$rc\"; uv run --with huggingface-hub==0.30.2 --with lm-format-enforcer==0.11.3 --with litert-lm-api==0.17.1 --with requests==2.32.3 --with jsonschema==4.23.0 python -B -c '\"'\"'import os,hashlib,json,tempfile,sys,runpy\nfrom pathlib import Path\nfrom concurrent.futures import ThreadPoolExecutor\nimport requests\nif os.environ.get('\"'\"'\"'\"'\"'\"'\"'\"'RUN_MODE'\"'\"'\"'\"'\"'\"'\"'\"')!='\"'\"'\"'\"'\"'\"'\"'\"'inference'\"'\"'\"'\"'\"'\"'\"'\"' or os.environ.get('\"'\"'\"'\"'\"'\"'\"'\"'APPROVED_RUN_PACK_SHA256'\"'\"'\"'\"'\"'\"'\"'\"')!=os.environ.get('\"'\"'\"'\"'\"'\"'\"'\"'CODE_MANIFEST_SHA256'\"'\"'\"'\"'\"'\"'\"'\"'):raise RuntimeError('\"'\"'\"'\"'\"'\"'\"'\"'exact inference pack approval required'\"'\"'\"'\"'\"'\"'\"'\"')\nrepo=os.environ['\"'\"'\"'\"'\"'\"'\"'\"'RUN_REPO'\"'\"'\"'\"'\"'\"'\"'\"'];rev=os.environ['\"'\"'\"'\"'\"'\"'\"'\"'RUN_CODE_REVISION'\"'\"'\"'\"'\"'\"'\"'\"'];prefix=os.environ['\"'\"'\"'\"'\"'\"'\"'\"'RUN_PREFIX'\"'\"'\"'\"'\"'\"'\"'\"']+'\"'\"'\"'\"'\"'\"'\"'\"'/code/'\"'\"'\"'\"'\"'\"'\"'\"'\nheaders={'\"'\"'\"'\"'\"'\"'\"'\"'Authorization'\"'\"'\"'\"'\"'\"'\"'\"':'\"'\"'\"'\"'\"'\"'\"'\"'Bearer '\"'\"'\"'\"'\"'\"'\"'\"'+os.environ['\"'\"'\"'\"'\"'\"'\"'\"'HF_TOKEN'\"'\"'\"'\"'\"'\"'\"'\"']}\ndef get(name):\n r=requests.get('\"'\"'\"'\"'\"'\"'\"'\"'https://huggingface.co/'\"'\"'\"'\"'\"'\"'\"'\"'+repo+'\"'\"'\"'\"'\"'\"'\"'\"'/resolve/'\"'\"'\"'\"'\"'\"'\"'\"'+rev+'\"'\"'\"'\"'\"'\"'\"'\"'/'\"'\"'\"'\"'\"'\"'\"'\"'+prefix+name,headers=headers,timeout=(15,30));r.raise_for_status();return r.content\nb=get('\"'\"'\"'\"'\"'\"'\"'\"'CODE_SHA256.json'\"'\"'\"'\"'\"'\"'\"'\"')\nif hashlib.sha256(b).hexdigest()!=os.environ['\"'\"'\"'\"'\"'\"'\"'\"'CODE_MANIFEST_SHA256'\"'\"'\"'\"'\"'\"'\"'\"']:raise RuntimeError('\"'\"'\"'\"'\"'\"'\"'\"'manifest hash mismatch'\"'\"'\"'\"'\"'\"'\"'\"')\nmanifest=json.loads(b);root=Path(tempfile.mkdtemp(prefix='\"'\"'\"'\"'\"'\"'\"'\"'coverage-test-only-'\"'\"'\"'\"'\"'\"'\"'\"'))\ndef fetch_file(item):\n name,expected=item\n if name.endswith('\"'\"'\"'\"'\"'\"'\"'\"'.litertlm'\"'\"'\"'\"'\"'\"'\"'\"') or name.startswith('\"'\"'\"'\"'\"'\"'\"'\"'/'\"'\"'\"'\"'\"'\"'\"'\"') or '\"'\"'\"'\"'\"'\"'\"'\"'..'\"'\"'\"'\"'\"'\"'\"'\"' in Path(name).parts:raise RuntimeError('\"'\"'\"'\"'\"'\"'\"'\"'artifact path prohibited'\"'\"'\"'\"'\"'\"'\"'\"')\n b=get(name)\n if hashlib.sha256(b).hexdigest()!=expected:raise RuntimeError('\"'\"'\"'\"'\"'\"'\"'\"'code/data hash mismatch '\"'\"'\"'\"'\"'\"'\"'\"'+name)\n path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b)\n print('\"'\"'\"'\"'\"'\"'\"'\"'PIN_VERIFIED '\"'\"'\"'\"'\"'\"'\"'\"'+name+'\"'\"'\"'\"'\"'\"'\"'\"' '\"'\"'\"'\"'\"'\"'\"'\"'+expected,flush=True)\nwith ThreadPoolExecutor(max_workers=4) as pool:list(pool.map(fetch_file,manifest['\"'\"'\"'\"'\"'\"'\"'\"'files'\"'\"'\"'\"'\"'\"'\"'\"'].items()))\n(root/'\"'\"'\"'\"'\"'\"'\"'\"'CODE_SHA256.json'\"'\"'\"'\"'\"'\"'\"'\"').write_bytes(b);sys.path.insert(0,str(root))\nos.environ['\"'\"'\"'\"'\"'\"'\"'\"'PYTHONPATH'\"'\"'\"'\"'\"'\"'\"'\"']=str(root);os.environ['\"'\"'\"'\"'\"'\"'\"'\"'PYTHONDONTWRITEBYTECODE'\"'\"'\"'\"'\"'\"'\"'\"']='\"'\"'\"'\"'\"'\"'\"'\"'1'\"'\"'\"'\"'\"'\"'\"'\"'\nevidence=root/'\"'\"'\"'\"'\"'\"'\"'\"'evidence'\"'\"'\"'\"'\"'\"'\"'\"';evidence.mkdir(exist_ok=True)\nfor name in ['\"'\"'\"'\"'\"'\"'\"'\"'stdout'\"'\"'\"'\"'\"'\"'\"'\"','\"'\"'\"'\"'\"'\"'\"'\"'stderr'\"'\"'\"'\"'\"'\"'\"'\"','\"'\"'\"'\"'\"'\"'\"'\"'returncode'\"'\"'\"'\"'\"'\"'\"'\"']:\n source=Path('\"'\"'\"'\"'\"'\"'\"'\"'/tmp/semantic-native-setup.'\"'\"'\"'\"'\"'\"'\"'\"'+name)\n if not source.is_file():raise RuntimeError('\"'\"'\"'\"'\"'\"'\"'\"'native setup receipt absent'\"'\"'\"'\"'\"'\"'\"'\"')\n (evidence/('\"'\"'\"'\"'\"'\"'\"'\"'NATIVE_SETUP.'\"'\"'\"'\"'\"'\"'\"'\"'+name)).write_bytes(source.read_bytes())\nif (evidence/'\"'\"'\"'\"'\"'\"'\"'\"'NATIVE_SETUP.returncode'\"'\"'\"'\"'\"'\"'\"'\"').read_text().strip()!='\"'\"'\"'\"'\"'\"'\"'\"'0'\"'\"'\"'\"'\"'\"'\"'\"':raise RuntimeError('\"'\"'\"'\"'\"'\"'\"'\"'native setup failed'\"'\"'\"'\"'\"'\"'\"'\"')\nrunpy.run_path(str(root/'\"'\"'\"'\"'\"'\"'\"'\"'supervisor.py'\"'\"'\"'\"'\"'\"'\"'\"'),run_name='\"'\"'\"'\"'\"'\"'\"'\"'__main__'\"'\"'\"'\"'\"'\"'\"'\"')\n'\"'\"''"
+  ],
+  "native_setup_seconds": 300,
+  "worker_seconds": 6600,
+  "upload_seconds": 120,
+  "one_job_no_retry": true,
+  "maximum_authorized_usd": 0.08,
+  "secrets": [
+    "HF_TOKEN"
+  ],
+  "approval_env_required": [
+    "APPROVED_RUN_PACK_SHA256",
+    "CODE_MANIFEST_SHA256",
+    "APPROVED_GREEN_ARTIFACT_SHA256",
+    "APPROVED_CODE_REVISION",
+    "RUN_CODE_REVISION",
+    "APPROVED_CASES_SHA256",
+    "APPROVED_EXECUTION_PLAN_SHA256"
+  ],
+  "approval_values_not_issued": true,
+  "native_first_real_execution_pending": true
+}

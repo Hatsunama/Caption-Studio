@@ -1,14 +1,14 @@
-name: Semantic lifecycle contract only
+name: Semantic launch shell contract only
 on:
   push:
     branches: [eval/semantic-prod-45-test-only]
     paths:
-      - .diagnostics/semantic-lifecycle/**
+      - .diagnostics/semantic-launch-shell/**
       - .github/workflows/semantic-prod-contract.yml
 permissions:
   contents: read
 jobs:
-  lifecycle:
+  launch-shell:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     env:
@@ -17,12 +17,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Execute actual POSIX lifecycle regressions, no packages SDK or models
-        run: python3 -B .diagnostics/semantic-lifecycle/run_lifecycle_tests.py
+      - name: Exact launch command with mocked native tools, no installations or inference
+        run: python3 -B .diagnostics/semantic-launch-shell/run_shell_tests.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: semantic-lifecycle-contract
-          path: .diagnostics/semantic-lifecycle/evidence
+          name: semantic-launch-shell-contract
+          path: .diagnostics/semantic-launch-shell/evidence
           if-no-files-found: error
           retention-days: 14

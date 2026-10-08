@@ -1,0 +1,49 @@
+--- 54e/bootstrap.py
++++ f42/bootstrap.py
+@@ -20,4 +20,10 @@
+ with ThreadPoolExecutor(max_workers=4) as pool:list(pool.map(fetch_file,manifest['files'].items()))
+ (root/'CODE_SHA256.json').write_bytes(b);sys.path.insert(0,str(root))
+ os.environ['PYTHONPATH']=str(root);os.environ['PYTHONDONTWRITEBYTECODE']='1'
++evidence=root/'evidence';evidence.mkdir(exist_ok=True)
++for name in ['stdout','stderr','returncode']:
++ source=Path('/tmp/semantic-native-setup.'+name)
++ if not source.is_file():raise RuntimeError('native setup receipt absent')
++ (evidence/('NATIVE_SETUP.'+name)).write_bytes(source.read_bytes())
++if (evidence/'NATIVE_SETUP.returncode').read_text().strip()!='0':raise RuntimeError('native setup failed')
+ runpy.run_path(str(root/'supervisor.py'),run_name='__main__')
+--- 54e/upload_evidence.py
++++ f42/upload_evidence.py
+@@ -6,8 +6,19 @@
+ def main():
+  root=Path(__file__).resolve().parent;folder=root/'evidence'
+  files={str(p.relative_to(folder)):p.read_bytes() for p in folder.rglob('*') if p.is_file() and p.suffix!='.litertlm' and not any(x.endswith('_cache') for x in p.relative_to(folder).parts) and p.name not in ('UPLOAD_STDOUT.txt','UPLOAD_STDERR.txt')}
+- raw=sum(n.endswith('.raw.json') and '/' not in n for n in files)
+- manifest={'code_revision':os.environ['RUN_CODE_REVISION'],'job_id':os.environ.get('HF_JOB_ID'),'run_mode':'inference','file_sha256':{k:hashlib.sha256(v).hexdigest() for k,v in files.items()},'single_upload_attempt':True,'observed_raw_envelopes':raw,'expected_raw_envelopes':90,'semantic_quality_certified':False,'completeness':raw==90}
++ plan=json.loads((root/'EXECUTION_PLAN.json').read_bytes())
++ expected={k+'_'+i for k in ['QJ','HJ'] for i in plan['active_case_ids']}
++ rawfiles={n[:-9]:b for n,b in files.items() if n.endswith('.raw.json') and '/' not in n}
++ raw=len(rawfiles);invalid={}
++ for tid,b in rawfiles.items():
++  try:
++   embedded=json.loads(b)['trial']['trial_id']
++   if embedded!=tid:invalid[tid]='embedded trial ID mismatch'
++  except (ValueError,KeyError,TypeError):invalid[tid]='raw trial metadata unreadable'
++ complete=set(rawfiles)==expected and not invalid
++ observed_counts={k:sum(t.startswith(k+'_') for t in rawfiles) for k in ['QJ','HJ']}
++ expected_counts={k:len(plan['active_case_ids']) for k in ['QJ','HJ']}
++ manifest={'code_revision':os.environ['RUN_CODE_REVISION'],'job_id':os.environ.get('HF_JOB_ID'),'run_mode':'inference','file_sha256':{k:hashlib.sha256(v).hexdigest() for k,v in files.items()},'single_upload_attempt':True,'observed_raw_envelopes':raw,'expected_raw_envelopes':len(expected),'semantic_quality_certified':False,'completeness':complete,'completeness_scope':'raw capture index only, not schema or meaning','expected_trial_ids':sorted(expected),'observed_trial_ids':sorted(rawfiles),'missing_trial_ids':sorted(expected-set(rawfiles)),'unexpected_trial_ids':sorted(set(rawfiles)-expected),'invalid_raw_trial_metadata':invalid,'observed_counts':observed_counts,'expected_counts':expected_counts}
+  files['EVIDENCE_MANIFEST.json']=json.dumps(manifest,indent=2).encode()
+  print('EVIDENCE_MANIFEST '+json.dumps(manifest),flush=True)
+  commit=HfApi(token=os.environ['HF_TOKEN']).create_commit(repo_id=os.environ['RUN_REPO'],revision=os.environ['RUN_BRANCH'],parent_commit=os.environ['RUN_CODE_REVISION'],operations=[CommitOperationAdd(path_in_repo=os.environ['RUN_PREFIX']+'/evidence/'+k,path_or_fileobj=b) for k,b in files.items()],commit_message='Bounded inference evidence, raw envelopes retained including errors')
+--- /dev/null
++++ f42/runtime_setup.sh
+@@ -0,0 +1,9 @@
++#!/bin/sh
++# Cloud only. Exactly one bounded native runtime setup; no upgrade/dev/JDK.
++set +e
++timeout -k 5s 300s sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends libvulkan1' > /tmp/semantic-native-setup.stdout 2> /tmp/semantic-native-setup.stderr
++rc=$?
++printf '%s\n' "$rc" > /tmp/semantic-native-setup.returncode
++cat /tmp/semantic-native-setup.stdout
++cat /tmp/semantic-native-setup.stderr >&2
++exit "$rc"
