@@ -29,6 +29,10 @@ try:
     gson=maven("com.google.code.gson","gson","2.13.2")
     junit=maven("junit","junit","4.13.2")
     hamcrest=maven("org.hamcrest","hamcrest-core","1.3")
+    mockito=maven("org.mockito","mockito-core","5.14.2")
+    bytebuddy=maven("net.bytebuddy","byte-buddy","1.15.4")
+    bytebuddy_agent=maven("net.bytebuddy","byte-buddy-agent","1.15.4")
+    objenesis=maven("org.objenesis","objenesis","3.3")
     android=str(pathlib.Path(os.environ["ANDROID_HOME"])/"platforms/android-36/android.jar")
     if not pathlib.Path(android).is_file(): raise RuntimeError("Runner Android 36 platform jar unavailable")
     stdlib=maven("org.jetbrains.kotlin","kotlin-stdlib","2.3.0")
@@ -49,7 +53,7 @@ try:
     classes=root/"test-classes"
     classes.mkdir()
     resources=root/"modules/caption-translation/android/src/test/resources"
-    cp=":".join(map(str,[classes,resources,android,gson,junit,hamcrest,stdlib,annotations,litert]))
+    cp=":".join(map(str,[classes,resources,android,gson,junit,hamcrest,stdlib,annotations,litert,mockito,bytebuddy,bytebuddy_agent,objenesis]))
     main=root/"modules/caption-translation/android/src/main/java/app/captionstudio/translation"
     tests=root/"modules/caption-translation/android/src/test/java/app/captionstudio/translation"
     java=list(map(str,main.glob("*.java")))
@@ -59,7 +63,7 @@ try:
     javac=run("compile_native_tests",["javac","-encoding","UTF-8","-cp",cp,"-d",str(classes)]+java+list(map(str,tests.glob("*.java"))),timeout=180)
     if kotlin==0 and javac==0:
         all_tests=sorted("app.captionstudio.translation."+p.stem for p in tests.glob("*Test.java"))
-        run("full_native",["java","-cp",cp,"org.junit.runner.JUnitCore"]+all_tests,timeout=240)
+        run("full_native",["java","-javaagent:"+bytebuddy_agent,"-cp",cp,"org.junit.runner.JUnitCore"]+all_tests,timeout=240)
         run("green_native",["java","-cp",cp,"org.junit.runner.JUnitCore","app.captionstudio.translation.TranslationPreservationAcceptanceTest","app.captionstudio.translation.TranslationPreservationContractTest"],timeout=120)
 except Exception as e:
     reports["infrastructure_error"]={"type":type(e).__name__,"message":str(e)}

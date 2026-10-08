@@ -30,7 +30,8 @@ public class TranslationSdkCancellationAdapterTest {
     volatile ResponseFormat format;
     volatile ConversationConfig createdConfig;
     volatile Throwable dispatchFailure, cancelFailure, cleanupFailure;
-    volatile CountDownLatch dispatchGate;
+    volatile CountDownLatch dispatchGate, cancelGate;
+    final CountDownLatch cancelEntered = new CountDownLatch(1);
     volatile Runnable duringDispatch;
     volatile Thread dispatchThread;
     final TranslationRuntime runtime;
@@ -52,6 +53,8 @@ public class TranslationSdkCancellationAdapterTest {
               case "cancelProcess":
                 assertEquals(0, closes.get());
                 cancels.incrementAndGet();
+                cancelEntered.countDown();
+                if (cancelGate != null) assertTrue(cancelGate.await(5, TimeUnit.SECONDS));
                 if (cancelFailure != null) throw cancelFailure;
                 return null;
               case "getBenchmarkInfo": return null;
@@ -101,6 +104,7 @@ public class TranslationSdkCancellationAdapterTest {
     public void close() throws Exception {
       // Test cleanup releases a deliberately held fake native operation before joining the worker.
       if (dispatchGate != null) dispatchGate.countDown();
+      if (cancelGate != null) cancelGate.countDown();
       if (callback != null) callback.onDone();
       worker.shutdown();
       assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
@@ -122,6 +126,7 @@ public class TranslationSdkCancellationAdapterTest {
       assertTrue(f.createdConfig.getEnableResponseFormat());
       assertEquals("SYSTEM", f.createdConfig.getSystemInstruction().toString());
       assertEquals(1, f.closes.get());
+      assertSame(f.dispatchThread, f.worker.submit(Thread::currentThread).get(5, TimeUnit.SECONDS));
       assertEquals(296, f.runtime.lastGenerationDiagnostics().get("outputTokenLimit"));
       assertEquals(false, f.runtime.lastGenerationDiagnostics().get("benchmarkAvailable"));
       MessageCallback old = f.callback;
@@ -182,6 +187,14 @@ public class TranslationSdkCancellationAdapterTest {
     try (Fixture f = new Fixture()) {
       Future<String> work = f.start(); f.entered(); f.runtime.cancel(); sdkError(f.callback, 13);
       assertEquals("LiteRtLmJniException", f.failure(work).getClass().getSimpleName());
+    }
+  }
+
+  @Test public void cancellationAfterTerminalDoesNotReplaceSuccessfulNativeResult() throws Exception {
+    try (Fixture f = new Fixture()) {
+      Future<String> work = f.start(); f.entered(); f.chunk("complete");
+      f.callback.onDone(); f.runtime.cancel();
+      assertEquals("complete", work.get(5, TimeUnit.SECONDS)); assertEquals(0, f.cancels.get());
     }
   }
 
@@ -251,6 +264,26 @@ public class TranslationSdkCancellationAdapterTest {
       assertSame(signal, assertThrows(IllegalStateException.class, () -> f.runtime.cancel()));
       f.stillOwned(work); sdkError(f.callback, 1);
       assertSame(signal, f.failure(work)); assertEquals(1, f.cancels.get());
+    }
+  }
+
+  @Test public void terminalDuringFailedStopSignalWaitsForSignalReturnAndKeepsFailure() throws Exception {
+    try (Fixture f = new Fixture()) {
+      Future<String> work = f.start(); f.entered();
+      f.cancelGate = new CountDownLatch(1);
+      f.cancelFailure = new IllegalStateException("stop signal failed after callback");
+      ExecutorService caller = Executors.newSingleThreadExecutor();
+      try {
+        Future<?> stopping = caller.submit(() -> { f.runtime.cancel(); return null; });
+        assertTrue(f.cancelEntered.await(5, TimeUnit.SECONDS));
+        sdkError(f.callback, 1); f.stillOwned(work);
+        f.cancelGate.countDown();
+        assertSame(f.cancelFailure, f.failure(stopping));
+        assertSame(f.cancelFailure, f.failure(work));
+      } finally {
+        f.cancelGate.countDown(); caller.shutdown();
+        assertTrue(caller.awaitTermination(5, TimeUnit.SECONDS));
+      }
     }
   }
 
