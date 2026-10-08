@@ -3,7 +3,7 @@ name: Android commercial release gate
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, codex/source-echo-protected-composition]
     tags: ["v*"]
   workflow_dispatch:
 

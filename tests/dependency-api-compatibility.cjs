@@ -1,0 +1,57 @@
+'use strict';
+const assert = require('node:assert/strict');
+const {createRequire} = require('node:module');
+const path = require('node:path');
+const fs = require('node:fs');
+const rootRequire=createRequire(path.join(process.cwd(),'package.json'));
+const sq=rootRequire('shell-quote');
+assert.deepEqual(sq.parse(sq.quote(['caption','two words','single"quote'])),['caption','two words','single"quote']);
+assert.throws(()=>sq.quote([{}]), TypeError);
+const sm=rootRequire('source-map-js');
+const gen=new sm.SourceMapGenerator({file:'out.js'});
+gen.addMapping({generated:{line:1,column:0},original:{line:2,column:3},source:'input.ts'});
+gen.setSourceContent('input.ts','const caption = 1;');
+const consumer=new sm.SourceMapConsumer(gen.toJSON());
+assert.equal(consumer.originalPositionFor({line:1,column:0}).line,2);
+assert.throws(()=>gen.addMapping({generated:{line:0,column:0},original:{line:1,column:0},source:'input.ts'}), /./);
+const {SourceNode}=sm;
+assert.equal(SourceNode.fromStringWithSourceMap('const caption = 1;',consumer).toString(),'const caption = 1;');
+for (const owner of ['metro-file-map','@expo/metro-file-map']) {
+  const req=createRequire(rootRequire.resolve(owner));
+  const mm=req('micromatch');
+  assert.deepEqual(mm(['src/a.ts','src/b.tsx','src/c.js'],'src/*.{ts,tsx}'),['src/a.ts','src/b.tsx']);
+  const br=createRequire(req.resolve('micromatch'))('braces');
+  assert.deepEqual(br.expand('src/{a,b}.{ts,tsx}'),['src/a.ts','src/a.tsx','src/b.ts','src/b.tsx']);
+  assert.equal(br.stringify(br.parse('{{a}}'),{escapeInvalid:true}),'{{a}}');
+  assert.ok(new RegExp('^'+br.compile('src/{a,b}.ts')+'$').test('src/a.ts'));
+  assert.throws(()=>br.parse(null), /./);
+  console.log('METRO_API_OK '+owner);
+}
+const expoReq=createRequire(rootRequire.resolve('expo/package.json'));
+const cliPath=expoReq.resolve('@expo/cli/package.json');
+const cliReq=createRequire(cliPath);
+const helper=cliReq('@expo/code-signing-certificates');
+console.log('CERT_HELPER_EXPORTS '+JSON.stringify(Object.keys(helper)));
+for(const req of [cliReq,createRequire(cliReq.resolve('@expo/code-signing-certificates'))]) {
+ const forge=req('node-forge');
+ const pair=forge.pki.rsa.generateKeyPair({bits:1024,e:65537});
+ const digest=()=>forge.md.sha256.create().update('caption compatibility','utf8');
+ const sig=pair.privateKey.sign(digest());
+ assert.equal(pair.publicKey.verify(digest().digest().bytes(),sig),true);
+ assert.equal(pair.publicKey.verify(forge.md.sha256.create().update('different caption','utf8').digest().bytes(),sig),false);
+ const pem=forge.pki.privateKeyToPem(pair.privateKey);
+ const reread=forge.pki.privateKeyFromPem(pem);
+ assert.equal(reread.n.toString(16),pair.privateKey.n.toString(16));
+ const cert=forge.pki.createCertificate();
+ cert.publicKey=pair.publicKey;cert.serialNumber='01';
+ cert.validity.notBefore=new Date();cert.validity.notAfter=new Date(Date.now()+86400000);
+ const attrs=[{name:'commonName',value:'Caption compatibility fixture'}];
+ cert.setSubject(attrs);cert.setIssuer(attrs);
+ cert.sign(pair.privateKey,forge.md.sha256.create());
+ const parsed=forge.pki.certificateFromPem(forge.pki.certificateToPem(cert));
+ assert.equal(parsed.verify(parsed),true);
+ const csr=forge.pki.createCertificationRequest();csr.publicKey=pair.publicKey;csr.setSubject(attrs);
+ csr.sign(pair.privateKey,forge.md.sha256.create());
+ assert.equal(forge.pki.certificationRequestFromPem(forge.pki.certificationRequestToPem(csr)).verify(),true);
+}
+console.log('DEPENDENCY_NORMAL_AND_NEGATIVE_APIS_OK');

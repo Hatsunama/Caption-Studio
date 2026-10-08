@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "output": "patching file lib/parse.js\nHunk #6 succeeded at 203 (offset -8 lines).\nHunk #7 succeeded at 243 (offset -8 lines).\n",
+  "command": [
+    "patch",
+    "--batch",
+    "--fuzz=0",
+    "-p1",
+    "-i",
+    "/home/runner/work/Caption-Studio/Caption-Studio/reviewed-backport-evidence/braces-lib_parse.js.patch"
+  ]
+}

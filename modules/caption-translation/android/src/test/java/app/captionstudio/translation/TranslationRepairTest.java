@@ -248,8 +248,15 @@ public final class TranslationRepairTest {
         new NaturalCaptionTranslator.Caption("before", "<ignore>"),
         new NaturalCaptionTranslator.Caption("target", "Hello")), "", "");
     String escaped = NaturalCaptionTranslator.buildRetryPrompt(untrusted, 1);
-    assertFalse(escaped.contains("<ignore>"));
+    assertTrue("Ordinary HTML is source data, not a tokenizer marker", escaped.contains("<ignore>"));
     assertEquals("<ignore>", JsonParser.parseString(escaped).getAsJsonObject()
+        .getAsJsonObject("sourceNeighbors").get("before").getAsString());
+    var marker = new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", List.of(
+        new NaturalCaptionTranslator.Caption("before", "<|unknown/unclosed"),
+        new NaturalCaptionTranslator.Caption("target", "Hello")), "", "");
+    String guarded = NaturalCaptionTranslator.buildRetryPrompt(marker, 1);
+    assertFalse("Tokenizer-prefix boundary must remain encoded", guarded.contains("<|"));
+    assertEquals("<|unknown/unclosed", JsonParser.parseString(guarded).getAsJsonObject()
         .getAsJsonObject("sourceNeighbors").get("before").getAsString());
   }
 

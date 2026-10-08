@@ -120,6 +120,8 @@ export class CaptionTranslationDownloadError extends Error {
 type ActiveTranslation = {
   id: symbol;
   cancelled: boolean;
+  stopOperation?: Promise<void>;
+  stopFailure?: { error: unknown };
   pauseDownload?: () => Promise<void>;
 };
 
@@ -331,21 +333,24 @@ export async function translateNaturalCaptionOperations(options: {
     if (committed === false) throw new Error('The translation batch was not saved to the project. Refresh to retry.');
     committedBatches.add(batchIndex);
   };
+  let acceptingBatches = true;
   const queueBatch = (event: NaturalCaptionTranslationAcceptedBatch) => {
-    if (event.requestId !== requestId || commitError) return;
+    if (!acceptingBatches || event.requestId !== requestId || commitError) return;
     commitQueue = commitQueue.then(async () => {
       if (!Number.isSafeInteger(event.batchIndex)) throw new Error('The local model returned an invalid batch index.');
       await acceptBatch(event.batchIndex, event.captions);
-    }).catch((error: unknown) => {
+    }).catch(async (error: unknown) => {
       commitError = error;
-      void CaptionTranslation.cancelNaturalCaptionTranslation();
+      // The save failure owns the result; stop rejection must still be observed.
+      await cancelNaturalCaptionTranslation().catch(() => {});
     });
   };
-  const subscription = options.onAcceptedBatch
-    ? CaptionTranslation.addListener('onNaturalCaptionBatchAccepted', queueBatch)
-    : undefined;
-
+  let subscription: ReturnType<typeof CaptionTranslation.addListener> | undefined;
+  let terminalFailure: { error: unknown } | undefined;
   try {
+    subscription = options.onAcceptedBatch
+      ? CaptionTranslation.addListener('onNaturalCaptionBatchAccepted', queueBatch)
+      : undefined;
     resourceLease = translationResourceOwner?.();
     if (resourceLease) await resourceLease.ready;
     throwIfCancelled(run);
@@ -361,12 +366,19 @@ export async function translateNaturalCaptionOperations(options: {
         result = await translateWithModelRecovery(run, nativeRequest.operations, options.onProgress,
           options.onAcceptedBatch ? requestId : undefined, options.checkpointPolicy);
       } catch (error) {
+        let recoveryFailure: { error: unknown } | undefined;
         if (options.onAcceptedBatch) {
-          const accepted = await CaptionTranslation.getNaturalCaptionAcceptedBatches(requestId);
-          for (const batch of accepted) queueBatch(batch);
+          try {
+            const accepted = await CaptionTranslation.getNaturalCaptionAcceptedBatches(requestId);
+            for (const batch of accepted) queueBatch(batch);
+          } catch (caught) {
+            recoveryFailure = { error: caught };
+          }
         }
         await commitQueue;
         if (commitError) throw commitError;
+        // A failed recovery read must not replace the original terminal failure.
+        if (recoveryFailure && translationCancelled(error)) throw recoveryFailure.error;
         throw error;
       }
       await commitQueue;
@@ -443,7 +455,10 @@ export async function translateNaturalCaptionOperations(options: {
         provider,
       } satisfies NaturalCaptionTranslationSession;
     } catch (error) {
-      if (run.cancelled || translationCancelled(error)) throw new CaptionTranslationCancelledError();
+      if (translationCancelled(error)) {
+        if (run.stopFailure) throw run.stopFailure.error;
+        throw new CaptionTranslationCancelledError();
+      }
       if (committedBatches.size > 0 && error instanceof Error) {
         const detail = error.message.replace(/\s*No captions were changed\./g, '').trim();
         const count = committedBatches.size;
@@ -451,12 +466,40 @@ export async function translateNaturalCaptionOperations(options: {
       }
       throw error;
     }
+  } catch (error) {
+    terminalFailure = { error };
+    throw error;
   } finally {
-    subscription?.remove();
+    // A failed removal can retain the callback; it must no longer own saves or stops.
+    acceptingBatches = false;
+    let cleanupFailure: { error: unknown } | undefined;
     try {
-      if (resourceLease) await resourceLease.restore();
+      try {
+        subscription?.remove();
+      } catch (error) {
+        cleanupFailure = { error };
+      }
+      try {
+        await commitQueue;
+      } catch (error) {
+        cleanupFailure ??= { error };
+      }
+      try {
+        await run.stopOperation;
+      } catch (error) {
+        cleanupFailure ??= { error };
+      }
+      try {
+        if (resourceLease) await resourceLease.restore();
+      } catch (error) {
+        cleanupFailure ??= { error };
+      }
     } finally {
       if (activeTranslation?.id === run.id) activeTranslation = undefined;
+    }
+    // Cleanup can fail after a genuine cancellation, but never erase an earlier failure.
+    if (cleanupFailure && (!terminalFailure || translationCancelled(terminalFailure.error))) {
+      throw cleanupFailure.error;
     }
   }
 }
@@ -465,13 +508,22 @@ export async function cancelNaturalCaptionTranslation() {
   const run = activeTranslation;
   if (!run) return false;
   run.cancelled = true;
-  const pauseOperation = run.pauseDownload?.();
-  try {
-    await CaptionTranslation.cancelNaturalCaptionTranslation();
-  } catch (error) {
-    if (!pauseOperation) throw error;
+  if (!run.stopOperation) {
+    const pause = run.pauseDownload;
+    run.stopOperation = Promise.allSettled([
+      Promise.resolve().then(() => pause?.()),
+      Promise.resolve().then(() => CaptionTranslation.cancelNaturalCaptionTranslation()),
+    ]).then((results) => {
+      const failed = results.find((result) => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+    }).catch((error: unknown) => {
+      run.stopFailure = { error };
+      throw error;
+    });
+    // Ownership also observes this promise in finally, including detached callers.
+    void run.stopOperation.catch(() => {});
   }
-  await pauseOperation;
+  await run.stopOperation;
   return true;
 }
 
@@ -534,12 +586,12 @@ async function downloadNaturalTranslationModel(
       onVerifying: () => onProgress?.({ stage: 'verifying-model', progress: null, detail: 'Verifying the downloaded model' }),
     });
   } catch (error) {
-    if (run.cancelled || error instanceof ModelDownloadPausedError) throw new CaptionTranslationCancelledError();
+    if (error instanceof ModelDownloadPausedError) throw new CaptionTranslationCancelledError();
     if (error instanceof ModelDownloadIntegrityError) {
       throw new Error('The natural translation model failed its security check and was discarded.');
     }
     if (error instanceof ModelDownloadTransferError) throw new CaptionTranslationDownloadError(error.message);
-    throw new CaptionTranslationDownloadError();
+    throw error;
   }
   throwIfCancelled(run);
   await writeTranslationModelVerificationMarker(target, NATURAL_TRANSLATION_MODEL.sha256);
@@ -770,7 +822,7 @@ async function translateWithModelRecovery(
     try {
       return await translateWithNative(model.uri, operations, requestId, checkpointPolicy);
     } catch (error) {
-      if (!isNativeModelIntegrityFailure(error)) throw error;
+      if (!isNativeModelIntegrityFailure(error) || run.cancelled) throw error;
       const marker = new File(model.parentDirectory, `${model.name}.sha256`);
       if (marker.exists) marker.delete();
       throwIfCancelled(run);
@@ -785,9 +837,8 @@ async function translateWithModelRecovery(
       let verified: boolean;
       try {
         verified = await verifyTranslationModel(model);
-      } catch {
-        throwIfCancelled(run);
-        throw new Error('The translation model could not be checked. Your downloaded file was kept. Try again; no replacement was downloaded.');
+      } catch (error) {
+        throw new Error('The translation model could not be checked. Your downloaded file was kept. Try again; no replacement was downloaded.', { cause: error });
       }
       throwIfCancelled(run);
       if (!verified) {
@@ -870,11 +921,14 @@ function translationModelFile() {
 }
 
 function throwIfCancelled(run: ActiveTranslation) {
+  if (run.stopFailure) throw run.stopFailure.error;
   if (run.cancelled) throw new CaptionTranslationCancelledError();
 }
 
 function translationCancelled(error: unknown) {
-  return error instanceof Error && (error.name.includes('Cancel') || error.message.toLowerCase().includes('cancel'));
+  return error instanceof CaptionTranslationCancelledError
+    || (typeof error === 'object' && error !== null
+      && 'code' in error && error.code === 'E_TRANSLATION_CANCELLED');
 }
 
 function formatModelProgress(written: number, total: number) {

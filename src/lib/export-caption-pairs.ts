@@ -29,10 +29,9 @@ function eligibleExportCaptionPairs(project: CaptionProject) {
     if (!track.visible) return [];
     const pairs = resolveCaptionPairs(project, track.id).filter((pair) => (
       pair.timelineVisible && Number.isFinite(pair.startMs) && Number.isFinite(pair.endMs)
-      && pair.endMs > pair.startMs
-      && pair.startMs < duration
-    )).map((pair) => ({ ...pair, startMs: Math.max(0, Math.floor(pair.startMs)),
-      endMs: Math.min(duration, Math.ceil(pair.endMs)) }));
+      && Math.min(duration, pair.endMs) > Math.max(0, pair.startMs)
+    )).map((pair) => ({ ...pair, startMs: Math.max(0, pair.startMs),
+      endMs: Math.min(duration, pair.endMs) }));
     return pairs;
   });
 }

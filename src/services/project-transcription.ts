@@ -152,6 +152,7 @@ export async function generateProjectCaptions(
   ...args: Parameters<typeof generateProjectCaptionsFromSources>
 ): Promise<Awaited<ReturnType<typeof generateProjectCaptionsFromSources>>> {
   const [project] = args;
+  args[4]?.throwIfCancelled();
   const usesTimelineComposition = shouldTranscribeAudibleTimeline(project);
   if (!usesTimelineComposition) return generateProjectCaptionsFromSources(...args);
 
@@ -160,18 +161,18 @@ export async function generateProjectCaptions(
     progress: 0,
     detail: 'Preparing the audible timeline',
   });
-  const timelineSession = await createTimelineTranscriptionSession(project);
-  const forwarded = [...args] as unknown as Parameters<typeof generateProjectCaptionsFromSources>;
-  forwarded[0] = timelineSession.project;
-  forwarded[5] = {
-    read: (fingerprint, modelId) => readTimelineTranscription(project.id, fingerprint, modelId),
-    write: (fingerprint, result) => writeTimelineTranscription(project.id, fingerprint, result),
-  };
-  const checkpoint = args[3];
-  if (checkpoint) {
-    forwarded[3] = async (candidate) => checkpoint(timelineSession.restore(candidate));
-  }
+  const timelineSession = await createTimelineTranscriptionSession(project, args[4]);
   try {
+    const forwarded = [...args] as unknown as Parameters<typeof generateProjectCaptionsFromSources>;
+    forwarded[0] = timelineSession.project;
+    forwarded[5] = {
+      read: (fingerprint, modelId) => readTimelineTranscription(project.id, fingerprint, modelId),
+      write: (fingerprint, result) => writeTimelineTranscription(project.id, fingerprint, result),
+    };
+    const checkpoint = args[3];
+    if (checkpoint) {
+      forwarded[3] = async (candidate) => checkpoint(timelineSession.restore(candidate));
+    }
     const generated = await generateProjectCaptionsFromSources(...forwarded);
     return timelineSession.restore(generated);
   } finally {

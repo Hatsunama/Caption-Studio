@@ -1,0 +1,108 @@
+{
+  "name": "@caption-studio/braces-backport",
+  "description": "Bash-like brace expansion, implemented in JavaScript. Safer than other brace expansion libs, with complete support for the Bash 4.3 braces specification, without sacrificing speed.",
+  "version": "3.0.3-caption-studio.1",
+  "homepage": "https://github.com/micromatch/braces",
+  "author": "Jon Schlinkert (https://github.com/jonschlinkert)",
+  "contributors": [
+    "Brian Woodward (https://twitter.com/doowb)",
+    "Elan Shanker (https://github.com/es128)",
+    "Eugene Sharygin (https://github.com/eush77)",
+    "hemanth.hm (http://h3manth.com)",
+    "Jon Schlinkert (http://twitter.com/jonschlinkert)"
+  ],
+  "repository": "micromatch/braces",
+  "bugs": {
+    "url": "https://github.com/micromatch/braces/issues"
+  },
+  "license": "MIT",
+  "files": [
+    "index.js",
+    "lib"
+  ],
+  "main": "index.js",
+  "engines": {
+    "node": ">=8"
+  },
+  "scripts": {},
+  "dependencies": {
+    "fill-range": "^7.1.1"
+  },
+  "keywords": [
+    "alpha",
+    "alphabetical",
+    "bash",
+    "brace",
+    "braces",
+    "expand",
+    "expansion",
+    "filepath",
+    "fill",
+    "fs",
+    "glob",
+    "globbing",
+    "letter",
+    "match",
+    "matches",
+    "matching",
+    "number",
+    "numerical",
+    "path",
+    "range",
+    "ranges",
+    "sh"
+  ],
+  "verb": {
+    "toc": false,
+    "layout": "default",
+    "tasks": [
+      "readme"
+    ],
+    "lint": {
+      "reflinks": true
+    },
+    "plugins": [
+      "gulp-format-md"
+    ]
+  },
+  "private": true,
+  "captionStudioBackport": {
+    "upstreamName": "braces",
+    "upstreamVersion": "3.0.3",
+    "upstreamGitHead": "74b2db2938fad48a2ea54a9c8bf27a37a62c350d",
+    "proposalHead": "28d440b5dd449dbf1fe6f3506cf94ecca4d02660",
+    "advisory": "GHSA-vfj7-8cjw-p6xm",
+    "patches": [
+      {
+        "path": "lib/constants.js",
+        "patch_sha256": "00fe417afbdd934fa9a3d98915dcbbf93231dd9bc89cd7254e623218c08ae2fc",
+        "before_sha256": "c18ac5adb57308f1ce42a28552da3a31f5d83709743ebd9a636336813a744d4b",
+        "after_sha256": "f9fb688959232eee3e6ad7906a5b0e3234815db49ee857ef86983d65b917dc7c"
+      },
+      {
+        "path": "lib/parse.js",
+        "patch_sha256": "cff11d42c8d948182d1bc8964bb94462f611426b0360a935a1aedfec2af91976",
+        "before_sha256": "8c69d0e94fb70805c774382317246f823ff197cd94549252cedbed55ceb03996",
+        "after_sha256": "72aabaadaa555cdfbd07fbd7c7f743373e4dc8eec04a97550cc57bbeec30eb6c"
+      },
+      {
+        "path": "lib/compile.js",
+        "patch_sha256": "08951706b4796c825b75e542294393389f2c36f55b819a79040b1e7df7041976",
+        "before_sha256": "dc98f22eee3d511785d92a00758d5f0d48efed5f5813bdecc2de430c529b5c9f",
+        "after_sha256": "b651f7715e6db8942ce61d3394357b4d81c8ece88240aa31a458ea1165edd195"
+      },
+      {
+        "path": "lib/expand.js",
+        "patch_sha256": "5610f619e8de996c5ba196981c91ccb558f36afa6521e61b198677f40f2efa1b",
+        "before_sha256": "41ccc196ebfa7b7781a634e721eb744e4e7bcb54cba427a7e3d6806a1b9e58f7",
+        "after_sha256": "7ea3e14c2b2b256ef244fd3d83b8fcaa20aa2232b4e6d768c3bb6ab567f66cf5"
+      },
+      {
+        "path": "lib/stringify.js",
+        "patch_sha256": "125d0e5c9cc8c71999f502631be3d903d4539a715c73c27602b8a18eb2d5a2a1",
+        "before_sha256": "379f22d77bfa1478341ccd49c5e4267464aabcbba03558bab332aac23fc6f23a",
+        "after_sha256": "49dc2d8bafa74f34715a18a845bcb82ce66caaf3bab4cf117998e06b1f9a50a9"
+      }
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "app_base": "41f8c443df43cb03a6718457fc85138269b00c67",
+  "capacity_policy": "TranslationText.escapedBytes stays conservative; context bounds/splitting/output caps unchanged",
+  "causal_result_revision": "941d0aef2e535dac276fc1a12fd16a863c026287",
+  "checkpoint_policy": "native profile bump only; JSON contract v2/system instruction/schema unchanged; existing saved project translations not rewritten",
+  "official_chat_template_reference": "https://qwen.readthedocs.io/en/v2.5/inference/chat.html",
+  "ordinary_html_literal_except_exact_added_tokens": true,
+  "production_model_card": {
+    "base_model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "limit": "model card identifies base; embedded binary tokenizer not re-extracted in this patch audit",
+    "path": "README.md",
+    "repo": "litert-community/Qwen2.5-1.5B-Instruct",
+    "revision": "19edb84c69a0212f29a6ef17ba0d6f278b6a1614",
+    "sha256": "f52ccb61379a5a4e7379f7977e67574e9583a81873517603e2adfb2c61ae6216"
+  },
+  "source_calls": {
+    "buildRetryPrompt": "parse buildUserPrompt, add bounded internal guidance, withSourceNeighbors",
+    "buildUserPrompt": "payload.toString then escapePrompt",
+    "withSourceNeighbors": "parse JSON/add bounded neighbors/toString then escapePrompt"
+  },
+  "tokenizer": {
+    "all_added_tokens": [
+      "<|endoftext|>",
+      "<|im_start|>",
+      "<|im_end|>",
+      "<|object_ref_start|>",
+      "<|object_ref_end|>",
+      "<|box_start|>",
+      "<|box_end|>",
+      "<|quad_start|>",
+      "<|quad_end|>",
+      "<|vision_start|>",
+      "<|vision_end|>",
+      "<|vision_pad|>",
+      "<|image_pad|>",
+      "<|video_pad|>",
+      "<tool_call>",
+      "</tool_call>",
+      "<|fim_prefix|>",
+      "<|fim_middle|>",
+      "<|fim_suffix|>",
+      "<|fim_pad|>",
+      "<|repo_name|>",
+      "<|file_sep|>"
+    ],
+    "path": "tokenizer_config.json",
+    "repo": "Qwen/Qwen2.5-1.5B-Instruct",
+    "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "sha256": "5b5d4f65d0acd3b2d56a35b56d374a36cbc1c8fa5cf3b3febbbfabf22f359583",
+    "tool_markers_special": false
+  },
+  "tool_calling_false_limit": "does not establish that added-token IDs are harmless; conservative encoding retained",
+  "workflow_push_audit": "new isolated branch matches none of existing CI/release/pages push branches; no PR opened; no release/build workflow dispatch"
+}

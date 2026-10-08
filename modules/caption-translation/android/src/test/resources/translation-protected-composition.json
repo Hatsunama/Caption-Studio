@@ -1,0 +1,1943 @@
+[
+  {
+    "name": "Samsung exact composition",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "all protected literals",
+    "source": "https://example.com/ `src/app.ts` 😀",
+    "translated": "https://example.com/ `src/app.ts` 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "closed code only",
+    "source": "`src/app.ts`",
+    "translated": "`src/app.ts`",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "emoji and acknowledgement",
+    "source": "ok 😀",
+    "translated": "ok 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "acknowledgement variation",
+    "source": "Okay. https://example.com/ `src/app.ts` 😀",
+    "translated": "OK! https://example.com/ `src/app.ts` 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "reordered literals",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "😀 `src/app.ts` ok https://example.com/",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "repeated literals exact",
+    "source": "ok https://example.com/ `src/app.ts` 😀 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "opaque raw combining",
+    "source": "ok `café` https://example.com/café 😀",
+    "translated": "ok `café` https://example.com/café 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "explicit break",
+    "source": "ok\nhttps://example.com/ `src/app.ts` 😀",
+    "translated": "ok\nhttps://example.com/ `src/app.ts` 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "normal prose echo",
+    "source": "Read https://example.com/ `src/app.ts` 😀",
+    "translated": "Read https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "normalized prose echo",
+    "source": "Read https://example.com/ `src/app.ts` 😀",
+    "translated": "READ! https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "ordinary short English",
+    "source": "hello 😀",
+    "translated": "hello 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "name not acknowledgement",
+    "source": "OK Go https://example.com/ `src/app.ts` 😀",
+    "translated": "OK Go https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "split acknowledgement",
+    "source": "o 😀 k",
+    "translated": "o 😀 k",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "unclosed code",
+    "source": "ok `src/app.ts 😀",
+    "translated": "ok `src/app.ts 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "missing URL",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "missing code",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "missing emoji",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts`",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "duplicate URL",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀 https://example.com/",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "duplicate code",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀 `src/app.ts`",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "duplicate emoji",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "repeated emoji missing",
+    "source": "ok https://example.com/ `src/app.ts` 😀 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "changed code",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.js` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "raw combining mutated",
+    "source": "ok `café` 😀",
+    "translated": "ok `café` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "extra protected token",
+    "source": "ok https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀 👋",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "long prose collapsed",
+    "source": "Please bring the documents tomorrow https://example.com/ `src/app.ts` 😀",
+    "translated": "ok https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "BOM whitespace around protected data",
+    "source": "ok﻿😀",
+    "translated": "OK﻿😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "canonical NFC acknowledgement prose",
+    "source": "oK 😀",
+    "translated": "oK 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "numeric metadata",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "symbol metadata",
+    "source": "+ https://example.com/ `src/app.ts` 😀",
+    "translated": "+ https://example.com/ `src/app.ts` 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "numeric groups",
+    "source": "4 2 https://example.com/ `src/app.ts` 😀",
+    "translated": "4 2 https://example.com/ `src/app.ts` 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "mathematical metadata",
+    "source": "+42 / -7 = 35 https://example.com/ `src/app.ts` 😀",
+    "translated": "+42 / -7 = 35 https://example.com/ `src/app.ts` 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "currency metadata",
+    "source": "$42 https://example.com/ `src/app.ts` 😀",
+    "translated": "$42 https://example.com/ `src/app.ts` 😀",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "metadata between literals",
+    "source": "4 😀 2 + `src/app.ts` https://example.com/",
+    "translated": "4 😀 2 + `src/app.ts` https://example.com/",
+    "review": false,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "changed number",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "99 https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "dropped number",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "added number",
+    "source": "https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "duplicated number",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 42 https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "joined numeric groups",
+    "source": "4 2 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "split numeric token",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "4 2 https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "protected span cannot join digits",
+    "source": "4 😀 2 https://example.com/ `src/app.ts`",
+    "translated": "42 https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "changed symbol",
+    "source": "+ https://example.com/ `src/app.ts` 😀",
+    "translated": "- https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "dropped symbol",
+    "source": "+ https://example.com/ `src/app.ts` 😀",
+    "translated": "https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "added symbol",
+    "source": "https://example.com/ `src/app.ts` 😀",
+    "translated": "+ https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "missing numeric URL",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "duplicated numeric URL",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀 https://example.com/",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "missing numeric code",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "duplicated numeric code",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀 `src/app.ts`",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "missing numeric emoji",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts`",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "duplicated numeric emoji",
+    "source": "42 https://example.com/ `src/app.ts` 😀",
+    "translated": "42 https://example.com/ `src/app.ts` 😀 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "ordinary prose and numeric data",
+    "source": "Read 42 https://example.com/ `src/app.ts` 😀",
+    "translated": "Read 42 https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "numeric name is still prose",
+    "source": "Model42 https://example.com/ `src/app.ts` 😀",
+    "translated": "Model42 https://example.com/ `src/app.ts` 😀",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "split acknowledgement and numeric data",
+    "source": "o 😀 k 42 https://example.com/ `src/app.ts`",
+    "translated": "o 😀 k 42 https://example.com/ `src/app.ts`",
+    "review": true,
+    "targets": [
+      "en",
+      "zh-Hans",
+      "zh-Hant",
+      "hi",
+      "es",
+      "fr",
+      "ar",
+      "bn",
+      "pt",
+      "ru",
+      "id",
+      "de",
+      "ja",
+      "ko",
+      "tr",
+      "vi",
+      "th",
+      "it",
+      "pl"
+    ]
+  },
+  {
+    "name": "Simplified prose preserves traditional code",
+    "source": "Bring `我們`.",
+    "translated": "带上 `我們`。",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "Traditional prose preserves simplified code",
+    "source": "Bring `我们`.",
+    "translated": "帶上 `我们`。",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "English prose preserves Han code",
+    "source": "带上 `我們`。",
+    "translated": "Bring `我們`.",
+    "targets": [
+      "en"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "ja real prose with data",
+    "source": "Read `東京`. ",
+    "translated": "持ってきて `東京`. ",
+    "targets": [
+      "ja"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "ja code cannot supply script",
+    "source": "Read `東京`.",
+    "translated": "See `東京`.",
+    "targets": [
+      "ja"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ja fenced data cannot supply script",
+    "source": "Read ```東京```.",
+    "translated": "See ```東京```.",
+    "targets": [
+      "ja"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ja invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```東京```.",
+    "targets": [
+      "ja"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ja unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "ja"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ko real prose with data",
+    "source": "Read `서울`. ",
+    "translated": "가져오세요 `서울`. ",
+    "targets": [
+      "ko"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "ko code cannot supply script",
+    "source": "Read `서울`.",
+    "translated": "See `서울`.",
+    "targets": [
+      "ko"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ko fenced data cannot supply script",
+    "source": "Read ```서울```.",
+    "translated": "See ```서울```.",
+    "targets": [
+      "ko"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ko invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```서울```.",
+    "targets": [
+      "ko"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ko unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "ko"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "th real prose with data",
+    "source": "Read `ไทย`. ",
+    "translated": "นำมา `ไทย`. ",
+    "targets": [
+      "th"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "th code cannot supply script",
+    "source": "Read `ไทย`.",
+    "translated": "See `ไทย`.",
+    "targets": [
+      "th"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "th fenced data cannot supply script",
+    "source": "Read ```ไทย```.",
+    "translated": "See ```ไทย```.",
+    "targets": [
+      "th"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "th invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```ไทย```.",
+    "targets": [
+      "th"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "th unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "th"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ar real prose with data",
+    "source": "Read `عربي`. ",
+    "translated": "أحضر `عربي`. ",
+    "targets": [
+      "ar"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "ar code cannot supply script",
+    "source": "Read `عربي`.",
+    "translated": "See `عربي`.",
+    "targets": [
+      "ar"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ar fenced data cannot supply script",
+    "source": "Read ```عربي```.",
+    "translated": "See ```عربي```.",
+    "targets": [
+      "ar"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ar invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```عربي```.",
+    "targets": [
+      "ar"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ar unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "ar"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "hi real prose with data",
+    "source": "Read `हिन्दी`. ",
+    "translated": "लाओ `हिन्दी`. ",
+    "targets": [
+      "hi"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "hi code cannot supply script",
+    "source": "Read `हिन्दी`.",
+    "translated": "See `हिन्दी`.",
+    "targets": [
+      "hi"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "hi fenced data cannot supply script",
+    "source": "Read ```हिन्दी```.",
+    "translated": "See ```हिन्दी```.",
+    "targets": [
+      "hi"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "hi invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```हिन्दी```.",
+    "targets": [
+      "hi"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "hi unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "hi"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "bn real prose with data",
+    "source": "Read `বাংলা`. ",
+    "translated": "আনুন `বাংলা`. ",
+    "targets": [
+      "bn"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "bn code cannot supply script",
+    "source": "Read `বাংলা`.",
+    "translated": "See `বাংলা`.",
+    "targets": [
+      "bn"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "bn fenced data cannot supply script",
+    "source": "Read ```বাংলা```.",
+    "translated": "See ```বাংলা```.",
+    "targets": [
+      "bn"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "bn invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```বাংলা```.",
+    "targets": [
+      "bn"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "bn unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "bn"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ru real prose with data",
+    "source": "Read `Москва`. ",
+    "translated": "Принеси `Москва`. ",
+    "targets": [
+      "ru"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "ru code cannot supply script",
+    "source": "Read `Москва`.",
+    "translated": "See `Москва`.",
+    "targets": [
+      "ru"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ru fenced data cannot supply script",
+    "source": "Read ```Москва```.",
+    "translated": "See ```Москва```.",
+    "targets": [
+      "ru"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ru invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```Москва```.",
+    "targets": [
+      "ru"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "ru unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "ru"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hans real prose with data",
+    "source": "Read `我们`. ",
+    "translated": "带上 `我们`. ",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hans code cannot supply script",
+    "source": "Read `我们`.",
+    "translated": "See `我们`.",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hans fenced data cannot supply script",
+    "source": "Read ```我们```.",
+    "translated": "See ```我们```.",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hans invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```我们```.",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hans unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hant real prose with data",
+    "source": "Read `我們`. ",
+    "translated": "帶上 `我們`. ",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": false,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hant code cannot supply script",
+    "source": "Read `我們`.",
+    "translated": "See `我們`.",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hant fenced data cannot supply script",
+    "source": "Read ```我們```.",
+    "translated": "See ```我們```.",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hant invented fenced data cannot supply script",
+    "source": "Read the item.",
+    "translated": "See ```我們```.",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "zh-Hant unprotected wrong script",
+    "source": "Read the item.",
+    "translated": "See the item.",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "English URL cannot supply Latin",
+    "source": "Read https://example.com/.",
+    "translated": "看看 https://example.com/。",
+    "targets": [
+      "en"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "Simplified unprotected traditional rejection",
+    "source": "Bring the item.",
+    "translated": "帶上我們。",
+    "targets": [
+      "zh-Hans"
+    ],
+    "review": true,
+    "scriptFixture": true
+  },
+  {
+    "name": "Traditional unprotected simplified rejection",
+    "source": "Bring the item.",
+    "translated": "带上我们。",
+    "targets": [
+      "zh-Hant"
+    ],
+    "review": true,
+    "scriptFixture": true
+  }
+]

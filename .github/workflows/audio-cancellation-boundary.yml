@@ -1,0 +1,40 @@
+name: Audio cancellation boundary JS checks
+on:
+  push:
+    branches: [codex/audio-cancellation-boundary]
+permissions:
+  contents: read
+jobs:
+  javascript:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.1
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Audio cancellation behavioral regressions
+        run: npx tsx --test tests/timeline-audio-cancellation-boundary.test.mjs
+      - name: Full JavaScript and TypeScript behavioral suite
+        if: ${{ !cancelled() }}
+        run: npm run test:logic
+      - name: Product contract
+        if: ${{ !cancelled() }}
+        run: npm run verify:product-contract
+      - name: TypeScript
+        if: ${{ !cancelled() }}
+        run: npx tsc --noEmit
+      - name: Lint
+        if: ${{ !cancelled() }}
+        run: npm run lint
+      - name: Cancellation caller impact inventory
+        if: ${{ !cancelled() }}
+        run: |
+          if command -v rg >/dev/null 2>&1; then
+            rg -n 'createTimelineTranscriptionSession|generateProjectCaptions|generateAndSaveProjectCaptions|cancelProjectCaptionGeneration|cancelAudioExtraction|renderTimelineAudio|TimelineAudioRenderer\.(render|cancel)|finishCancelledTimelineAudioRender' src modules/caption-media/src modules/caption-media/android/src/main
+          else
+            grep -RnE 'createTimelineTranscriptionSession|generateProjectCaptions|generateAndSaveProjectCaptions|cancelProjectCaptionGeneration|cancelAudioExtraction|renderTimelineAudio|TimelineAudioRenderer\.(render|cancel)|finishCancelledTimelineAudioRender' src modules/caption-media/src modules/caption-media/android/src/main
+          fi

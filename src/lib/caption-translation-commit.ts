@@ -1,5 +1,6 @@
 import { isLikelyUntranslatedCaption } from '@/lib/caption-languages';
 import { isPlausibleCueTranslation } from '@/lib/translation-invariants';
+import { normalizeTranslationContent, preservesTranslationContent } from '@/lib/translation-preservation';
 
 export type AutomaticTranslationCueWrite = {
   sourceCaptionId: string;
@@ -13,11 +14,14 @@ export function usableAutomaticTranslation(
   needsReview = false,
   targetLanguage?: string,
 ) {
-  const source = sourceText.normalize('NFC').trim();
-  const translated = translatedText?.normalize('NFC').trim() ?? '';
+  const source = normalizeTranslationContent(sourceText);
+  const rawTranslated = translatedText ?? '';
+  const translated = normalizeTranslationContent(rawTranslated);
   if (
     needsReview
     || !translated
+    || !preservesTranslationContent(sourceText, rawTranslated)
+    || !preservesTranslationContent(sourceText, translated)
     || (!targetLanguage && translated === source)
     || !isPlausibleCueTranslation(source, translated)
     || (targetLanguage ? isLikelyUntranslatedCaption(source, translated, targetLanguage) : false)
@@ -58,8 +62,8 @@ export function automaticTranslationCueWrites(options: {
         translationStatus: 'translated',
       }];
     }
-    const previous = options.previousById.get(caption.id)?.trim() ?? '';
-    if (!previous) return [];
+    const previous = options.previousById.get(caption.id) ?? '';
+    if (!previous.trim()) return [];
     return [{
       sourceCaptionId: caption.id,
       translatedText: previous,

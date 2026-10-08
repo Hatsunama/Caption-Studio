@@ -1,4 +1,5 @@
 import { isInvariantTranslation } from '@/lib/translation-invariants';
+import { isBorrowedAcknowledgementComposition, isInvariantCompositionTranslation, preservesTranslationContent, translationProse } from '@/lib/translation-preservation';
 
 export type EnglishChineseCaptionLanguage = 'en' | 'zh-Hans' | 'zh-Hant';
 
@@ -153,29 +154,35 @@ function translationEchoKey(text: string) {
 }
 
 export function isLikelyUntranslatedCaption(sourceText: string, translatedText: string, targetLanguage: string) {
+  if (!preservesTranslationContent(sourceText, translatedText)) return true;
+  if (isInvariantCompositionTranslation(sourceText, sourceText)
+    && isInvariantCompositionTranslation(translatedText, translatedText)) {
+    return !isInvariantCompositionTranslation(sourceText, translatedText);
+  }
   const source = sourceText.normalize('NFC').trim();
   const translated = translatedText.normalize('NFC').trim();
-  if (isInvariantTranslation(source, translated, targetLanguage)) return false;
+  if (isInvariantTranslation(sourceText, translatedText, targetLanguage)) return false;
   if (!translated || source === translated) return true;
   if (/\p{L}/u.test(source) && translationEchoKey(source) === translationEchoKey(translated)) return true;
   // A whole-cue borrowed acknowledgement cannot stand in for a longer source.
-  if (Array.from(source).length > 20 && /^[\s\p{P}\p{Z}]*(?:ok|okay|o\.k\.)[\s\p{P}\p{Z}]*$/iu.test(translated)) return true;
+  if (Array.from(source).length > 20 && isBorrowedAcknowledgementComposition(translatedText)) return true;
+  const prose = translationProse(translatedText).trim();
   const multilingualTarget = resolveCaptionLanguage(targetLanguage)?.tag;
   if (multilingualTarget && multilingualTarget !== 'en' && multilingualTarget !== 'zh-Hans' && multilingualTarget !== 'zh-Hant') {
-    if (multilingualTarget === 'ja') return !/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(translated);
-    if (multilingualTarget === 'ko') return !/\p{Script=Hangul}/u.test(translated);
-    if (multilingualTarget === 'th') return !/\p{Script=Thai}/u.test(translated);
-    if (multilingualTarget === 'ar') return !/\p{Script=Arabic}/u.test(translated);
-    if (multilingualTarget === 'hi') return !/\p{Script=Devanagari}/u.test(translated);
-    if (multilingualTarget === 'bn') return !/\p{Script=Bengali}/u.test(translated);
-    if (multilingualTarget === 'ru') return !/\p{Script=Cyrillic}/u.test(translated);
-    return !/\p{Script=Latin}/u.test(translated);
+    if (multilingualTarget === 'ja') return !/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(prose);
+    if (multilingualTarget === 'ko') return !/\p{Script=Hangul}/u.test(prose);
+    if (multilingualTarget === 'th') return !/\p{Script=Thai}/u.test(prose);
+    if (multilingualTarget === 'ar') return !/\p{Script=Arabic}/u.test(prose);
+    if (multilingualTarget === 'hi') return !/\p{Script=Devanagari}/u.test(prose);
+    if (multilingualTarget === 'bn') return !/\p{Script=Bengali}/u.test(prose);
+    if (multilingualTarget === 'ru') return !/\p{Script=Cyrillic}/u.test(prose);
+    return !/\p{Script=Latin}/u.test(prose);
   }
   try {
     const target = normalizeEnglishChineseCaptionLanguage(targetLanguage);
-    if (target === 'en') return !/\p{Script=Latin}/u.test(translated) || containsChineseCaptionText(translated);
-    return !containsChineseCaptionText(translated)
-      || (target === 'zh-Hans' ? TRADITIONAL_ONLY : SIMPLIFIED_ONLY).test(translated);
+    if (target === 'en') return !/\p{Script=Latin}/u.test(prose) || containsChineseCaptionText(prose);
+    return !containsChineseCaptionText(prose)
+      || (target === 'zh-Hans' ? TRADITIONAL_ONLY : SIMPLIFIED_ONLY).test(prose);
   } catch {
     return false;
   }

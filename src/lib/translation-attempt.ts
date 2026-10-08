@@ -20,6 +20,7 @@ export function commitTranslationAttempt(
     && write.translationStatus === 'translated'
     && usableAutomaticTranslation(attempted.get(write.sourceCaptionId)!, write.translatedText, false, targetTrack.languageTag));
   const successful = new Set(accepted.map((write) => write.sourceCaptionId));
+  const acceptedText = new Map(accepted.map((write) => [write.sourceCaptionId, write.translatedText]));
   const next = updatePairedCaptionTexts(project, accepted.map((write) => ({
     trackId,
     sourceCaptionId: write.sourceCaptionId,
@@ -38,7 +39,9 @@ export function commitTranslationAttempt(
             failureReason: normalizedTranslationFailureReason(failureReasons.get(cue.sourceCaptionId))
               ?? 'translation-output-unavailable',
             sourceTextSnapshot: cue.text.trim() ? cue.sourceTextSnapshot : attempted.get(cue.sourceCaptionId)! }
-          : cue),
+          // The shared editor updater trims text. Automatic acceptance preserves explicit
+          // edge line breaks and opaque literals without changing editor behavior.
+          : successful.has(cue.sourceCaptionId) ? { ...cue, text: acceptedText.get(cue.sourceCaptionId)! } : cue),
       }),
     },
   };

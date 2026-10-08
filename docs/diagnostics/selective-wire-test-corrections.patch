@@ -1,0 +1,67 @@
+--- a/modules/caption-translation/android/src/test/java/app/captionstudio/translation/TranslationCheckpointResumeTest.java
++++ b/modules/caption-translation/android/src/test/java/app/captionstudio/translation/TranslationCheckpointResumeTest.java
+@@ -207,7 +207,7 @@
+         NaturalCaptionTranslator.checkpointBatchKey(
+             new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", captions,
+                 "discarded prefix" + bounded, bounded + "discarded suffix"), 0));
+-    assertTrue(NaturalCaptionTranslator.CHECKPOINT_PROFILE.startsWith("v9;"));
++    assertTrue(NaturalCaptionTranslator.CHECKPOINT_PROFILE.startsWith("v10;"));
+   }
+ 
+   private static class Result implements NaturalCaptionTranslator.Callback {
+--- a/modules/caption-translation/android/src/test/java/app/captionstudio/translation/TranslationRepairTest.java
++++ b/modules/caption-translation/android/src/test/java/app/captionstudio/translation/TranslationRepairTest.java
+@@ -248,8 +248,15 @@
+         new NaturalCaptionTranslator.Caption("before", "<ignore>"),
+         new NaturalCaptionTranslator.Caption("target", "Hello")), "", "");
+     String escaped = NaturalCaptionTranslator.buildRetryPrompt(untrusted, 1);
+-    assertFalse(escaped.contains("<ignore>"));
++    assertTrue("Ordinary HTML is source data, not a tokenizer marker", escaped.contains("<ignore>"));
+     assertEquals("<ignore>", JsonParser.parseString(escaped).getAsJsonObject()
++        .getAsJsonObject("sourceNeighbors").get("before").getAsString());
++    var marker = new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", List.of(
++        new NaturalCaptionTranslator.Caption("before", "<|unknown/unclosed"),
++        new NaturalCaptionTranslator.Caption("target", "Hello")), "", "");
++    String guarded = NaturalCaptionTranslator.buildRetryPrompt(marker, 1);
++    assertFalse("Tokenizer-prefix boundary must remain encoded", guarded.contains("<|"));
++    assertEquals("<|unknown/unclosed", JsonParser.parseString(guarded).getAsJsonObject()
+         .getAsJsonObject("sourceNeighbors").get("before").getAsString());
+   }
+ 
+--- a/modules/caption-translation/android/src/test/java/app/captionstudio/translation/TranslationTruncationRecoveryTest.java
++++ b/modules/caption-translation/android/src/test/java/app/captionstudio/translation/TranslationTruncationRecoveryTest.java
+@@ -115,10 +115,10 @@
+   }
+ 
+   @Test public void contextCapacityPreventsExpansionWithoutDroppingNeighbors() throws Exception {
+-    String context = "<".repeat(32);
++    String context = "<|".repeat(24);
+     String source = null;
+-    for (int length = 20; length <= 78; length++) {
+-      String candidate = "Please " + "<".repeat(length);
++    for (int length = 10; length <= 60; length++) {
++      String candidate = "Please " + "<|".repeat(length);
+       var request = new NaturalCaptionTranslator.ValidatedRequest("en", "ar",
+           List.of(new NaturalCaptionTranslator.Caption("cue", candidate)), context, context);
+       JsonObject prompt = JsonParser.parseString(NaturalCaptionTranslator.buildRetryPrompt(request, 0)).getAsJsonObject();
+@@ -129,7 +129,9 @@
+       int base = NaturalCaptionTranslator.outputTokenLimit(candidate, true);
+       int first = Math.min(1024, base + Math.max(32, base / 4));
+       int larger = first + Math.max(64, first / 2);
+-      String encoded = prompt.toString().replace("<", "\\u003c").replace(">", "\\u003e");
++      Method serializer = NaturalCaptionTranslator.class.getDeclaredMethod("escapePrompt", String.class);
++      serializer.setAccessible(true);
++      String encoded = (String) serializer.invoke(null, prompt.toString());
+       if (larger <= 1024 && fits(encoded, first) && !fits(encoded, larger)) {
+         source = candidate; break;
+       }
+@@ -143,6 +145,9 @@
+       int first = runtime.tokens.get(1);
+       assertTrue(fits(prompt, first));
+       assertFalse(fits(prompt, first + Math.max(64, first / 2)));
++      assertFalse("Capacity fixture must retain tokenizer boundary protection", prompt.contains("<|"));
++      assertEquals(source, JsonParser.parseString(prompt).getAsJsonObject()
++          .getAsJsonArray("captions").get(0).getAsJsonObject().get("text").getAsString());
+       assertEquals(context, JsonParser.parseString(prompt).getAsJsonObject()
+           .getAsJsonObject("sourceNeighbors").get("before").getAsString());
+     }

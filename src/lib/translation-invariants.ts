@@ -1,9 +1,12 @@
+import { isInvariantCompositionTranslation, isPreservedIntegerTranslation, normalizeTranslationContent, preservesTranslationContent } from './translation-preservation';
+
 /** Accept invariant tokens, never an arbitrary echoed source sentence. */
 export function isInvariantTranslation(source: string, translated: string, _target: string): boolean {
-  if (!translated) return false;
-  // Match native's whole-cue borrowed acknowledgement rule for every target.
-  const borrowedAcknowledgement = /^[\s\p{P}\p{Z}]*(?:ok|okay|o\.k\.)[\s\p{P}\p{Z}]*$/iu;
-  if (borrowedAcknowledgement.test(source) && borrowedAcknowledgement.test(translated)) return true;
+  if (!translated || !preservesTranslationContent(source, translated)) return false;
+  if (isInvariantCompositionTranslation(source, translated)) return true;
+  if (isPreservedIntegerTranslation(source, translated)) return true;
+  source = source.normalize('NFC').trim();
+  translated = translated.normalize('NFC').trim();
   if (source !== translated) return false;
   return !/\p{L}/u.test(source) || /^https?:\/\/[^\s]+$/u.test(source);
 }
@@ -60,12 +63,15 @@ export function acceptTranslationBoundary(
       throw new Error('The local model returned an incomplete translation. No captions were changed.');
     }
     seen.add(id);
-    const text = typeof item.text === 'string' ? item.text.normalize('NFC').trim() : '';
+    const rawText = typeof item.text === 'string' ? item.text : '';
+    const text = normalizeTranslationContent(rawText);
     const source = sourceById.get(id) ?? '';
     if (
       item.valid === false
       || !text
       || !isPlausibleCueTranslation(source, text)
+      || !preservesTranslationContent(source, rawText)
+      || !preservesTranslationContent(source, text)
     ) {
       translations.set(id, '');
       rejected.add(id);

@@ -1,0 +1,11 @@
+{
+  "exit_code": 0,
+  "output": "\nup to date, audited 890 packages in 863ms\n\nfound 0 vulnerabilities\n",
+  "command": [
+    "npm",
+    "install",
+    "--package-lock-only",
+    "--ignore-scripts",
+    "--no-fund"
+  ]
+}

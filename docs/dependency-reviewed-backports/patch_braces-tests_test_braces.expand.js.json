@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "output": "patching file test/braces.expand.js\n",
+  "command": [
+    "patch",
+    "--batch",
+    "--fuzz=0",
+    "-p1",
+    "-i",
+    "/home/runner/work/Caption-Studio/Caption-Studio/reviewed-backport-evidence/braces-tests-test_braces.expand.js.patch"
+  ]
+}

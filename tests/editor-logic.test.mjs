@@ -183,7 +183,8 @@ test('subtitle serializers emit standards-compliant timing and escaped styling',
   };
   assert.match(serializeSrt(project), /00:00:01,234 --> 00:00:04,567/);
   const ass = serializeAss(project);
-  assert.match(ass, /Dialogue: 0,0:00:01\.23,0:00:04\.57/);
+  // The canvas ends at 4,567 ms; its last representable ASS endpoint is 4.56 s.
+  assert.match(ass, /Dialogue: 0,0:00:01\.23,0:00:04\.56/);
   assert.match(ass, /\\fnAnton/);
   assert.match(ass, /Hello, \\{world\\}/);
   assert.doesNotMatch(ass, /Hello\\,/);
@@ -266,10 +267,8 @@ test('one verified caption model owns generation and first-use consent', () => {
   assert.match(workflows, /CAPTION_TRANSCRIPTION_MODEL_ID/);
   assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint\)/);
   assert.match(pipeline, /CaptionMedia\.sha256\(source\.uri\)/);
-  assert.ok(
-    pipeline.indexOf("detail: 'Preparing the audible timeline'")
-      < pipeline.indexOf('createTimelineTranscriptionSession(project)'),
-  );
+  // Progress-before-native ordering is exercised by the callable audio
+  // cancellation boundary regressions, rather than an exact call-string match.
 });
 
 test('Expo owns video-player release and editor teardown never commands a released player', () => {

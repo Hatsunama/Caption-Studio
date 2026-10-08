@@ -59,7 +59,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   static final String PROMPT_CONTRACT = GeneratedProductContract.PROMPT_CONTRACT;
   // Preserve this legacy identity (including its cpu label) across backend selection:
   // accepted text still passes the same prompt/output contract and must remain resumable.
-  static final String CHECKPOINT_PROFILE = "v9;litertlm-0.16.1;cpu;4096;128-1024;topk1;topp1;temperature0;seed0;microbatch8-bounded-isolation;strict-boundary;cue-context-identity;reserved-neighbors192";
+  static final String CHECKPOINT_PROFILE = "v11;litertlm-0.16.1;cpu;4096;128-1024;topk1;topp1;temperature0;seed0;microbatch8-bounded-isolation;strict-boundary;cue-context-identity;reserved-neighbors192;selective-qwen-added-token-wire;source-marker-inventory;wire-byte-budget";
 
   static final String INVALID_REQUEST = "E_TRANSLATION_INVALID_REQUEST";
   static final String BUSY = "E_TRANSLATION_BUSY";
@@ -541,9 +541,6 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           sanitizedCause("Local translation cleanup failed")
       );
       result = null;
-    } else if (run.cancelled.get()) {
-      error = new TranslationError(CANCELLED, "Caption translation was cancelled.", null);
-      result = null;
     }
 
     finish(run, result, error);
@@ -926,7 +923,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     int boundary = keepTail ? end : start;
     while (keepTail ? boundary > start : boundary < end) {
       int cp = keepTail ? context.codePointBefore(boundary) : context.codePointAt(boundary);
-      cost += TranslationText.escapedBytes(cp);
+      int offset = keepTail ? boundary - Character.charCount(cp) : boundary;
+      cost += TranslationPromptData.escapedBytesAt(context, offset);
       if (cost > CONTEXT_ESCAPED_BYTE_LIMIT) break;
       boundary += keepTail ? -Character.charCount(cp) : Character.charCount(cp);
     }
@@ -937,9 +935,10 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     String before = neighboringContext(request.captions, index, request.contextBefore, true);
     String after = neighboringContext(request.captions, index, request.contextAfter, false);
     for (int limit = TranslationText.FRAGMENT_BYTES; limit >= 30; limit /= 2) {
-      List<String> parts = TranslationText.split(request.captions.get(index).text, limit);
+      List<String> parts = TranslationPreservation.split(request.captions.get(index).text, limit);
       boolean fits = true;
       for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
+        if (literalOnly(parts.get(partIndex))) continue;
         String partBefore = before, partAfter = after;
         for (int i = 0; i < partIndex; i++) partBefore = extendContext(partBefore, parts.get(i), true);
         for (int i = parts.size() - 1; i > partIndex; i--) partAfter = extendContext(partAfter, parts.get(i), false);
@@ -1048,6 +1047,10 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         guidance = "Translate only this cue concisely. The previous output was too long for its source. "
             + "Do not translate neighboring cues, add explanations, repeat text or complete an unfinished phrase. ";
         break;
+      case PROTECTED_CONTENT:
+        guidance = "Retain this cue's literal URLs, backtick code, complete emoji sequences and explicit line breaks. "
+            + "Translate only the surrounding prose; do not alter protected content. ";
+        break;
       case EMPTY:
         guidance = "Return a non-empty translation of this cue's meaning in targetLanguage. "
             + "A short acknowledgement needs only a natural short acknowledgement, with no prescribed wording. ";
@@ -1107,7 +1110,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   }
 
   private static boolean literalOnly(String text) {
-    return text.codePoints().noneMatch(Character::isLetter);
+    return text.codePoints().noneMatch(Character::isLetter)
+        || TranslationPreservation.protectedCompositionOnly(text);
   }
 
   private static String sourceFailure(String text) {
@@ -1121,18 +1125,25 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     String separator = target.matches("zh-Hans|zh-Hant|ja|th") ? "" : " ";
     StringBuilder joined = new StringBuilder();
     for (int i = 0; i < outputs.size(); i++) {
+      String output = TranslationPreservation.trimHorizontal(outputs.get(i));
       if (i > 0) {
         String previous = sources.get(i - 1);
-        joined.append(previous.endsWith("\n") || previous.endsWith("\r") ? "\n" : separator);
+        String current = sources.get(i);
+        // Validated fragments already retain their own explicit line breaks.
+        boolean lineBoundary = (!previous.isEmpty() && TranslationPreservation.line(previous.codePointBefore(previous.length())))
+            || (!current.isEmpty() && TranslationPreservation.line(current.codePointAt(0)));
+        if (!lineBoundary) joined.append(TranslationPreservation.joinSpaceNeeded(previous, current) ? " " : separator);
       }
-      joined.append(outputs.get(i).trim());
+      joined.append(output);
     }
-    return joined.toString().trim();
+    return TranslationPreservation.trimHorizontal(joined.toString());
   }
 
   private static String escapePrompt(String json) {
-    // A literal chat delimiter in caption data must not become a tokenizer control token.
-    return json.replace("<", "\\u003c").replace(">", "\\u003e");
+    // Guard every Qwen chat-prefix spelling, including unknown or unclosed markers.
+    // The pinned vocabulary also adds these exact tool markers with special=false.
+    // Operate on serialized JSON only: never unescape user backslash-u text.
+    return TranslationPromptData.escape(json);
   }
 
   private static String checkpointResponse(List<Caption> captions) {
@@ -1192,7 +1203,17 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     Map<String, Object> terminalResult = result;
     synchronized (stateLock) {
       if (activeRun == run) {
-        if (run.cancelled.get() && !run.cleanupFailed.get()) {
+        // Cleanup owns the highest precedence. A genuine work failure must survive
+        // a concurrent stop request; a failed stop signal must survive a clean stop.
+        if (!run.cleanupFailed.get()
+            && (terminalError == null || CANCELLED.equals(terminalError.code))) {
+          TranslationError signalError = run.cancelSignalFailure.get();
+          if (signalError != null) {
+            terminalError = signalError;
+            terminalResult = null;
+          }
+        }
+        if (terminalError == null && run.cancelled.get()) {
           terminalError = new TranslationError(CANCELLED, "Caption translation was cancelled.", null);
           terminalResult = null;
         }
@@ -1289,8 +1310,10 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     try {
       TranslationRuntime runtime = run.runtime.get();
       if (runtime != null) runtime.cancel();
-    } catch (RuntimeException error) {
-      Log.w(LOG_TAG, "Native translation cancellation signal failed: " + error.getClass().getSimpleName());
+    } catch (Throwable error) {
+      // Keep this run owned until execute exits and closes the runtime. The worker
+      // reads this under the same lifecycle lock before selecting its terminal error.
+      run.cancelSignalFailure.compareAndSet(null, classify(error, run, "cancelling"));
     } finally {
       run.nativeLifecycleLock.unlock();
     }
@@ -1577,12 +1600,12 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.DUPLICATE_ID);
         if (!expectedCaptions.get(itemCount - 1).id.equals(id))
           return diagnosticFallback(expectedCaptions, diagnostic, FailureClass.ID_ORDER);
-        String normalized = text.trim();
+        String normalized = TranslationPreservation.trimHorizontal(text);
         Caption expected = expectedById.get(id);
         FailureClass textFailure = isBlankText(normalized) ? FailureClass.BLANK_TEXT
             : textCharacterCount(normalized) > MAX_OUTPUT_TEXT_CHARACTERS ? FailureClass.TEXT_TOO_LONG
             : !TranslationText.wellFormed(normalized) ? FailureClass.INVALID_UNICODE
-            : normalized.contains("<|") ? FailureClass.CHAT_DELIMITER
+            : !TranslationPromptData.chatMarkersMatch(expected.text, normalized) ? FailureClass.CHAT_DELIMITER
             : containsDisallowedControlCharacter(normalized) ? FailureClass.CONTROL_CHARACTER
             : !TranslationOutputQuality.isPlausibleCueTranslation(expected.text, normalized)
                 ? FailureClass.IMPLAUSIBLE_LENGTH : null;
@@ -1693,10 +1716,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
   }
 
   private static TranslationError classify(Throwable error, ActiveRun run, String stage) {
-    if (run.cancelled.get()
-        || Thread.currentThread().isInterrupted()
-        || error instanceof CancellationException
-        || error instanceof InterruptedException) {
+    if (error instanceof CancellationException || error instanceof InterruptedException) {
       run.cancelled.set(true);
       return new TranslationError(CANCELLED, "Caption translation was cancelled.", null);
     }
@@ -1933,7 +1953,8 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         return new Caption(source.id, "", false, reason);
       }
       String text = joinFragments(parts, outputs, targetLanguage);
-      if (!TranslationOutputQuality.isPlausibleCueTranslation(source.text, text)) {
+      if (!TranslationOutputQuality.isPlausibleCueTranslation(source.text, text)
+          || !TranslationPreservation.preserves(source.text, text)) {
         return new Caption(source.id, "", false, FailureClass.QUALITY_REVIEW.name());
       }
       return new Caption(source.id, text, true);
@@ -2060,6 +2081,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     final AtomicBoolean cancelSignalStarted = new AtomicBoolean(false);
     final AtomicBoolean cleanupFailed = new AtomicBoolean(false);
     final AtomicBoolean terminalDelivered = new AtomicBoolean(false);
+    final AtomicReference<TranslationError> cancelSignalFailure = new AtomicReference<>();
     final AtomicReference<TranslationRuntime> runtime = new AtomicReference<>();
     final AtomicReference<Future<?>> future = new AtomicReference<>();
 

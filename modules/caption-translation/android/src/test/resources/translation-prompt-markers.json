@@ -1,0 +1,51 @@
+{
+  "added_tokens": [
+    "<|endoftext|>",
+    "<|im_start|>",
+    "<|im_end|>",
+    "<|object_ref_start|>",
+    "<|object_ref_end|>",
+    "<|box_start|>",
+    "<|box_end|>",
+    "<|quad_start|>",
+    "<|quad_end|>",
+    "<|vision_start|>",
+    "<|vision_end|>",
+    "<|vision_pad|>",
+    "<|image_pad|>",
+    "<|video_pad|>",
+    "<tool_call>",
+    "</tool_call>",
+    "<|fim_prefix|>",
+    "<|fim_middle|>",
+    "<|fim_suffix|>",
+    "<|fim_pad|>",
+    "<|repo_name|>",
+    "<|file_sep|>"
+  ],
+  "license": "CC0-1.0 synthetic test strings; tokenizer marker names and metadata are provenance, not training data",
+  "ordinary_literals": [
+    "q > 2",
+    "q < 2",
+    "n <= 7",
+    "a >= 3",
+    "r -> s",
+    "<b>x</b>",
+    "<i>x</i>",
+    "<tool_callx>",
+    "</tool_callx>",
+    "<tool_call >",
+    "< >",
+    "&& != =="
+  ],
+  "tokenizer_config_sha256": "5b5d4f65d0acd3b2d56a35b56d374a36cbc1c8fa5cf3b3febbbfabf22f359583",
+  "tokenizer_repository": "Qwen/Qwen2.5-1.5B-Instruct",
+  "tokenizer_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+  "unknown_chat_prefixes": [
+    "<|",
+    "<|unknown|>",
+    "<|unknown/unclosed",
+    "<|im_start",
+    "before <|...unknown after"
+  ]
+}

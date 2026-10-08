@@ -207,7 +207,7 @@ public final class TranslationCheckpointResumeTest {
         NaturalCaptionTranslator.checkpointBatchKey(
             new NaturalCaptionTranslator.ValidatedRequest("en", "zh-Hans", captions,
                 "discarded prefix" + bounded, bounded + "discarded suffix"), 0));
-    assertTrue(NaturalCaptionTranslator.CHECKPOINT_PROFILE.startsWith("v9;"));
+    assertTrue(NaturalCaptionTranslator.CHECKPOINT_PROFILE.startsWith("v11;"));
   }
 
   private static class Result implements NaturalCaptionTranslator.Callback {

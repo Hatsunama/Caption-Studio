@@ -6,14 +6,13 @@ import android.media.MediaFormat
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.audio.GainProcessor
 import androidx.media3.transformer.Composition
-import androidx.media3.transformer.EditedMediaItem
-import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
@@ -22,7 +21,6 @@ import expo.modules.kotlin.Promise
 import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CancellationException
-import java.util.concurrent.Future
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
@@ -121,6 +119,7 @@ internal fun selectAudibleTimelineSegments(
     val hasAudio = try {
       audioState.getOrPut(segment.sourceUri) { hasAudioTrack(segment.sourceUri) }
     } catch (error: Exception) {
+      if (error is CancellationException) throw error
       throw IllegalStateException("Timeline audio source ${segment.sourceUri} is unavailable", error)
     }
     if (!hasAudio && insertedAudio) {
@@ -135,16 +134,13 @@ internal fun finishCancelledTimelineAudioRender(
   cleanup: () -> Unit,
   reject: () -> Unit,
 ) {
+  // A failed stop leaves a live writer. Its caller must report the failure and
+  // retain ownership until natural termination or a successful retry.
+  cancelTransformer()
   try {
-    cancelTransformer()
-  } catch (_: Throwable) {
-    // Cancellation must still settle the promise even if Transformer.cancel fails.
+    cleanup()
   } finally {
-    try {
-      cleanup()
-    } finally {
-      reject()
-    }
+    reject()
   }
 }
 
@@ -152,7 +148,9 @@ internal object TimelineAudioRenderer {
   private data class ActiveRender(
     val output: File,
     val promise: Promise,
-    var preparation: Future<*>? = null,
+    @Volatile var preparationThread: Thread? = null,
+    @Volatile var cancellationRequested: Boolean = false,
+    val cancellationWaiters: MutableList<Promise> = mutableListOf(),
     var transformer: Transformer? = null,
     var outputPrepared: Boolean = false,
   )
@@ -175,22 +173,30 @@ internal object TimelineAudioRenderer {
       active = task
       try {
         preflightWorkers.purge()
-        task.preparation = preflightWorkers.submit {
-          val result = runCatching {
+        preflightWorkers.execute {
+          task.preparationThread = Thread.currentThread()
+          val result = try { runCatching {
+            checkPreflightCancellation(task)
             val appContext = context.applicationContext
             val policy = MediaInputPolicy(appContext)
             (plan.videoClips + plan.audioClips).forEach {
-              checkPreflightCancellation()
+              checkPreflightCancellation(task)
               policy.requireInput(it.sourceUri)
             }
-            buildComposition(appContext, plan)
+            buildComposition(appContext, plan, task)
+          } } finally {
+            task.preparationThread = null
           }
           handler.post {
             if (active !== task) return@post
-            result.fold(
-              onSuccess = { composition -> startRender(context.applicationContext, plan, task, composition) },
-              onFailure = { error -> failPreparation(task, error) },
-            )
+            if (task.cancellationRequested && (result.isSuccess || result.exceptionOrNull() is CancellationException)) {
+              finishCancellation(task)
+            } else {
+              result.fold(
+                onSuccess = { composition -> startRender(context.applicationContext, plan, task, composition) },
+                onFailure = { error -> failPreparation(task, error) },
+              )
+            }
           }
         }
       } catch (error: Exception) {
@@ -254,18 +260,58 @@ internal object TimelineAudioRenderer {
       error.message ?: "Caption Studio could not prepare the audible timeline",
       error,
     )
+    // A genuine preflight failure racing with cancel stays on the work result;
+    // the worker has exited, so the cancellation acknowledgement can settle.
+    task.cancellationWaiters.forEach { it.resolve(null) }
+    task.cancellationWaiters.clear()
   }
 
-  fun cancel() {
+  fun cancel(acknowledgement: Promise? = null) {
     handler.post {
-      val task = active ?: return@post
-      active = null
-      task.preparation?.cancel(true)
+      val task = active
+      if (task == null) {
+        acknowledgement?.resolve(null)
+        return@post
+      }
+      acknowledgement?.let { task.cancellationWaiters.add(it) }
+      if (task.transformer == null) {
+        // Future.cancel marks a Future done before its running body has exited,
+        // and skips queued bodies entirely. Keep the body/callback as our drain
+        // boundary, with explicit cancellation checked when a queued body starts.
+        task.cancellationRequested = true
+        task.preparationThread?.interrupt()
+      } else {
+        finishCancellation(task)
+      }
+    }
+  }
+
+  private fun finishCancellation(task: ActiveRender) {
+    try {
       finishCancelledTimelineAudioRender(
         cancelTransformer = { task.transformer?.cancel() },
-        cleanup = { if (task.outputPrepared) task.output.delete() },
-        reject = { task.promise.reject("E_TIMELINE_AUDIO_CANCELLED", "Timeline audio preparation was cancelled", null) },
+        cleanup = {
+          if (task.outputPrepared && task.output.exists() && !task.output.delete()) {
+            throw IllegalStateException("Temporary timeline audio could not be removed after cancellation")
+          }
+        },
+        reject = {
+          if (active === task) active = null
+          task.promise.reject("E_TIMELINE_AUDIO_CANCELLED", "Timeline audio preparation was cancelled", null)
+        },
       )
+      task.cancellationWaiters.forEach { it.resolve(null) }
+    } catch (error: Throwable) {
+      // Transformer failure leaves active/output intact for natural settlement
+      // or another stop attempt. The bridge must expose it to the JS aggregator.
+      if (task.cancellationWaiters.isEmpty()) {
+        Log.w("CaptionStudio", "Timeline audio could not stop cleanly", error)
+      }
+      task.cancellationWaiters.forEach {
+        it.reject("E_TIMELINE_AUDIO_STOP", "Timeline audio could not stop cleanly: ${error.message}", error)
+      }
+    } finally {
+      task.cancellationWaiters.clear()
     }
   }
 
@@ -276,9 +322,9 @@ internal object TimelineAudioRenderer {
     return task
   }
 
-  private fun buildComposition(context: Context, plan: TimelineAudioPlan): Composition {
-    val sequences = selectAudibleTimelineSegments(plan) { mediaHasAudioTrack(context, it) }.map { segment ->
-      checkPreflightCancellation()
+  private fun buildComposition(context: Context, plan: TimelineAudioPlan, task: ActiveRender): Composition {
+    val items = selectAudibleTimelineSegments(plan) { mediaHasAudioTrack(context, it, task) }.map { segment ->
+      checkPreflightCancellation(task)
       val clipping = MediaItem.ClippingConfiguration.Builder()
         .setStartPositionMs(segment.sourceStartMs)
         .setEndPositionMs(segment.sourceEndMs)
@@ -287,26 +333,25 @@ internal object TimelineAudioRenderer {
         .setUri(MediaInputPolicy(context).requireInput(segment.sourceUri))
         .setClippingConfiguration(clipping)
         .build()
-      val edited = EditedMediaItem.Builder(mediaItem)
-        .setRemoveVideo(true)
-        .setSpeed(ConstantTimelineSpeed(segment.playbackRate))
-        .setEffects(Effects(listOf(GainProcessor(TimelineAudioGainProvider(segment.volume))), emptyList()))
-        .build()
-      EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).apply {
-        if (segment.timelineStartMs > 0L) addGap(segment.timelineStartMs * 1_000L)
-        addItem(edited)
-      }.build()
+      timelineAudioLaneItem(
+        timelineAudioUs(segment.timelineStartMs),
+        timelineAudioUs(segment.timelineEndMs),
+        mediaItem,
+        ConstantTimelineSpeed(segment.playbackRate),
+        Effects(listOf(GainProcessor(TimelineAudioGainProvider(segment.volume))), emptyList()),
+      )
     }
+    val sequences = buildTimelineAudioLanes(items, timelineAudioUs(plan.durationMs), { checkPreflightCancellation(task) })
     if (sequences.isEmpty()) {
       throw IllegalArgumentException("No audible audio is available on this timeline")
     }
     return Composition.Builder(sequences).build()
   }
 
-  private fun mediaHasAudioTrack(context: Context, sourceUri: String): Boolean {
-    checkPreflightCancellation()
+  private fun mediaHasAudioTrack(context: Context, sourceUri: String, task: ActiveRender): Boolean {
+    checkPreflightCancellation(task)
     val extractor = MediaExtractor()
-    return try {
+    val hasAudio = try {
       val uri = MediaInputPolicy(context).requireInput(sourceUri)
       when (uri.scheme?.lowercase()) {
         "file" -> extractor.setDataSource(requireNotNull(uri.path))
@@ -314,15 +359,19 @@ internal object TimelineAudioRenderer {
         else -> throw IllegalArgumentException("The audio source URI is invalid")
       }
       (0 until extractor.trackCount).any { index ->
-        checkPreflightCancellation()
+        checkPreflightCancellation(task)
         extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
       }
     } finally {
       extractor.release()
     }
+    checkPreflightCancellation(task)
+    return hasAudio
   }
 
-  private fun checkPreflightCancellation() {
-    if (Thread.currentThread().isInterrupted) throw CancellationException("Timeline audio preparation was cancelled")
+  private fun checkPreflightCancellation(task: ActiveRender) {
+    if (task.cancellationRequested || Thread.currentThread().isInterrupted) {
+      throw CancellationException("Timeline audio preparation was cancelled")
+    }
   }
 }

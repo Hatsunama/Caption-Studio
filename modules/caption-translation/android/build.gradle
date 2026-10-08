@@ -7,6 +7,10 @@ group = 'app.captionstudio.translation'
 version = '1.0.0'
 
 android {
+  compileOptions {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+  }
   namespace = 'app.captionstudio.translation'
   defaultConfig {
     versionCode 1
@@ -18,4 +22,63 @@ android {
 dependencies {
   implementation 'com.google.ai.edge.litertlm:litertlm-android:0.16.1'
   testImplementation 'junit:junit:4.13.2'
+}
+
+
+// SDK 0.16.1 contains Java 21 classes. Compile against it with JDK 21 while
+// keeping this module's Java/Kotlin output at the existing Java 17 target.
+java {
+  toolchain {
+    languageVersion = JavaLanguageVersion.of(21)
+  }
+}
+
+kotlin {
+  jvmToolchain(21)
+  compilerOptions {
+    jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+  }
+}
+
+configurations {
+  translationMockitoAgent {
+    canBeConsumed = false
+    transitive = false
+  }
+}
+
+dependencies {
+  testImplementation 'org.mockito:mockito-core:5.14.2'
+  translationMockitoAgent 'net.bytebuddy:byte-buddy-agent:1.15.4'
+}
+
+tasks.withType(Test).configureEach {
+  javaLauncher = javaToolchains.launcherFor {
+    languageVersion = JavaLanguageVersion.of(21)
+  }
+  doFirst {
+    jvmArgs "-javaagent:${configurations.translationMockitoAgent.singleFile.absolutePath}"
+  }
+}
+
+tasks.register('verifyTranslationSdkToolchain') {
+  doLast {
+    ['compileReleaseJavaWithJavac', 'compileReleaseUnitTestJavaWithJavac'].each { name ->
+      def compile = tasks.named(name).get()
+      def compilerVersion = compile.javaCompiler.get().metadata.languageVersion.asInt()
+      println "${path}: ${name} compiler=${compilerVersion} source=${compile.sourceCompatibility} target=${compile.targetCompatibility}"
+      if (compilerVersion != 21 || compile.sourceCompatibility != '17' || compile.targetCompatibility != '17') {
+        throw new GradleException("Translation SDK requires a JDK 21 compiler and Java 17 output for ${name}")
+      }
+    }
+    ['compileReleaseKotlin', 'compileReleaseUnitTestKotlin'].each { name ->
+      def target = tasks.named(name).get().compilerOptions.jvmTarget.get().target
+      println "${path}: ${name} target=${target}"
+      if (target != '17') throw new GradleException("Translation Kotlin output must remain Java 17")
+    }
+    def test = tasks.named('testReleaseUnitTest').get()
+    def testVersion = test.javaLauncher.get().metadata.languageVersion.asInt()
+    println "${path}: testReleaseUnitTest JVM=${testVersion}"
+    if (testVersion != 21) throw new GradleException("Pinned SDK JVM tests require Java 21")
+  }
 }

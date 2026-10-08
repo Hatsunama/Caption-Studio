@@ -2,7 +2,6 @@ package app.captionstudio.translation
 
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Contents
-import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
@@ -85,11 +84,17 @@ internal class LiteRtLmTranslationRuntimeFactory : TranslationRuntimeFactory {
 }
 
 internal class LiteRtLmTranslationRuntime(
-  private val engine: Engine,
+  private val engine: TranslationSdkGateway,
   private val conversationConfig: ConversationConfig,
 ) : TranslationRuntime {
+  constructor(engine: Engine, conversationConfig: ConversationConfig) :
+    this(LiteRtLmSdkGateway(engine), conversationConfig)
+
+  // Held by the existing translation worker until terminal generation and cleanup.
+  private val generationLock = ReentrantLock()
   private val lifecycleLock = ReentrantLock()
-  private val currentConversation = AtomicReference<Conversation?>()
+  private val currentConversation = AtomicReference<TranslationSdkGateway.Session?>()
+  private val currentBridge = AtomicReference<TranslationMessageBridge?>()
   private val cancelled = AtomicBoolean(false)
   private val closed = AtomicBoolean(false)
   private val generationDiagnostics = TranslationGenerationDiagnosticsState()
@@ -116,7 +121,7 @@ internal class LiteRtLmTranslationRuntime(
     maxOutputTokens: Int,
     requireStructuredOutput: Boolean,
     responseSchema: String?,
-  ): String {
+  ): String = generationLock.withLock {
     generationDiagnostics.clear()
     check(!closed.get()) { "The translation runtime is closed" }
     if (cancelled.get()) throw CancellationException("Caption translation was cancelled")
@@ -128,11 +133,14 @@ internal class LiteRtLmTranslationRuntime(
     require(!requireStructuredOutput || !responseSchema.isNullOrBlank()) {
       "Structured output requires a response schema"
     }
-    val conversation = engine.createConversation(conversationConfig.copy(
+    val bridge = TranslationMessageBridge()
+    val conversation = lifecycleLock.withLock {
+      check(!closed.get()) { "The translation runtime is closed" }
+      if (cancelled.get()) throw CancellationException("Caption translation was cancelled")
+      val conversation = engine.createConversation(conversationConfig.copy(
       maxOutputToken = maxOutputTokens,
       enableResponseFormat = requireStructuredOutput,
-    ))
-    lifecycleLock.withLock {
+      ))
       if (closed.get() || cancelled.get()) {
         val cleanupFailure = closeConversation(conversation)
         if (cleanupFailure != null) {
@@ -147,16 +155,20 @@ internal class LiteRtLmTranslationRuntime(
         error("The translation runtime is closed")
       }
       currentConversation.set(conversation)
+      currentBridge.set(bridge)
+      conversation
     }
 
     var response: String? = null
     var operationFailure: Throwable? = null
     try {
-      response = if (requireStructuredOutput) {
-        conversation.sendMessage(prompt, responseFormat = ResponseFormat.json(checkNotNull(responseSchema))).toString()
-      } else {
-        conversation.sendMessage(prompt).toString()
+      var responseFormat: ResponseFormat? = null
+      if (requireStructuredOutput) {
+        responseFormat = ResponseFormat.json(checkNotNull(responseSchema))
       }
+      conversation.sendMessageAsync(prompt, bridge, maxOutputTokens, responseFormat)
+      bridge.markDispatched()
+      response = bridge.awaitTerminal { signalCancellation(false) }
     } catch (failure: Throwable) {
       operationFailure = failure
     }
@@ -177,6 +189,7 @@ internal class LiteRtLmTranslationRuntime(
         benchmark?.lastDecodeTokensPerSecond ?: 0.0,
         maxOutputTokens, operationFailure == null,
       ))
+      currentBridge.compareAndSet(bridge, null)
       currentConversation.compareAndSet(conversation, null)
       closeConversation(conversation)
     }
@@ -188,14 +201,28 @@ internal class LiteRtLmTranslationRuntime(
       )
     }
     operationFailure?.let(::rethrow)
-    return checkNotNull(response)
+    checkNotNull(response)
   }
 
   override fun cancel() {
     cancelled.set(true)
-    if (!lifecycleLock.tryLock()) return
+    signalCancellation(true)
+  }
+
+  private fun signalCancellation(propagateFailure: Boolean) {
+    if (!cancelled.get() || !lifecycleLock.tryLock()) return
     try {
-      currentConversation.get()?.cancelProcess()
+      val bridge = currentBridge.get() ?: return
+      if (!bridge.claimCancellation()) return
+      try {
+        currentConversation.get()?.cancelProcess()
+      } catch (failure: Throwable) {
+        // A failed stop signal is not native completion. Retain the conversation owner.
+        bridge.recordCancellationFailure(failure)
+        if (propagateFailure) rethrow(failure)
+      } finally {
+        bridge.finishCancellation()
+      }
     } finally {
       lifecycleLock.unlock()
     }
@@ -205,14 +232,17 @@ internal class LiteRtLmTranslationRuntime(
   override fun close() {
     if (!closed.compareAndSet(false, true)) return
     cancelled.set(true)
+    // The worker retries contention and records signal failures until actual completion.
+    signalCancellation(false)
     var failure: Throwable? = null
-    lifecycleLock.withLock {
-      currentConversation.getAndSet(null)?.let { failure = closeConversation(it) }
-      if (engine.isInitialized()) {
-        try {
-          engine.close()
-        } catch (caught: Throwable) {
-          failure?.addSuppressed(caught) ?: run { failure = caught }
+    generationLock.withLock {
+      lifecycleLock.withLock {
+        if (engine.isInitialized()) {
+          try {
+            engine.close()
+          } catch (caught: Throwable) {
+            failure = caught
+          }
         }
       }
     }
@@ -221,13 +251,42 @@ internal class LiteRtLmTranslationRuntime(
     }
   }
 
-  private fun closeConversation(conversation: Conversation): Throwable? =
+  private fun closeConversation(conversation: TranslationSdkGateway.Session): Throwable? =
     runCatching { conversation.close() }.exceptionOrNull()
 
   private companion object {
     const val GENERIC_RESPONSE_SCHEMA =
       """{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string","minLength":1}},"required":["id","text"],"additionalProperties":false}}"""
   }
+}
+
+private class LiteRtLmSdkGateway(private val engine: Engine) : TranslationSdkGateway {
+  override fun createConversation(config: ConversationConfig): TranslationSdkGateway.Session {
+    val conversation = engine.createConversation(config)
+    return object : TranslationSdkGateway.Session {
+      override fun sendMessageAsync(
+        prompt: String,
+        callback: com.google.ai.edge.litertlm.MessageCallback,
+        maxOutputTokens: Int,
+        responseFormat: ResponseFormat?,
+      ) {
+        conversation.sendMessageAsync(
+          prompt, callback, maxOutputToken = maxOutputTokens, responseFormat = responseFormat,
+        )
+      }
+
+      override fun cancelProcess() { conversation.cancelProcess() }
+
+      @OptIn(ExperimentalApi::class)
+      override fun getBenchmarkInfo(): com.google.ai.edge.litertlm.BenchmarkInfo =
+        conversation.getBenchmarkInfo()
+
+      override fun close() { conversation.close() }
+    }
+  }
+
+  override fun isInitialized(): Boolean = engine.isInitialized()
+  override fun close() { engine.close() }
 }
 
 internal class TranslationGenerationDiagnosticsState {

@@ -24,7 +24,8 @@ final class TranslationText {
   }
 
   static int escapedBytes(int cp) {
-    if (cp < 32 || cp == '<' || cp == '>') return 6;
+    if (cp == 8 || cp == 9 || cp == 10 || cp == 12 || cp == 13) return 2;
+    if (cp < 32 || cp == 0x2028 || cp == 0x2029) return 6;
     if (cp == '"' || cp == '\\') return 2;
     return cp <= 0x7f ? 1 : cp <= 0x7ff ? 2 : cp <= 0xffff ? 3 : 4;
   }
@@ -44,7 +45,7 @@ final class TranslationText {
       int safe = -1;
       while (end < text.length()) {
         int cp = text.codePointAt(end);
-        int cost = escapedBytes(cp);
+        int cost = TranslationPromptData.escapedBytesAt(text, end);
         if (bytes + cost > fragmentBytes) break;
         bytes += cost;
         end += Character.charCount(cp);
