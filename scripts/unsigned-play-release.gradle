@@ -1,6 +1,8 @@
 // Dedicated unsigned cloud packaging only. Never load real signing credentials.
 // Non-credential sentinels satisfy the generated presence guard; finalizeDsl
 // removes signing before AGP creates variants. All native checks remain enabled.
+// AGP's signReleaseBundle also finalizes unsigned bundles; task names alone
+// are not proof of signing. Reject credential validation and verify the AAB bytes.
 gradle.beforeProject { project ->
     if (project.path == ':app') {
         def names = ['CAPTION_STUDIO_RELEASE_STORE_FILE', 'CAPTION_STUDIO_RELEASE_STORE_PASSWORD',
@@ -37,7 +39,7 @@ gradle.beforeProject { project ->
 }
 gradle.taskGraph.whenReady { graph ->
     if (graph.allTasks.any { it.name.toLowerCase().contains('release') &&
-        (it.name.toLowerCase().startsWith('sign') || it.name.toLowerCase().startsWith('validatesigning')) }) {
-        throw new GradleException('Unsigned packaging refuses release signing tasks')
+        it.name.toLowerCase().startsWith('validatesigning') }) {
+        throw new GradleException('Unsigned packaging refuses release credential validation tasks')
     }
 }
