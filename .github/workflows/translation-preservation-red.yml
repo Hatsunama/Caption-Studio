@@ -35,7 +35,7 @@ jobs:
           node ./scripts/patch-react-native-gradle.js
           npm run verify:android-config
           cd android
-          ./gradlew :caption-translation:testReleaseUnitTest --no-daemon --stacktrace --warning-mode all
+          ./gradlew :caption-translation:verifyTranslationSdkToolchain :caption-translation:testReleaseUnitTest --no-daemon --stacktrace --warning-mode all
       - name: Retain Gradle module test reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
