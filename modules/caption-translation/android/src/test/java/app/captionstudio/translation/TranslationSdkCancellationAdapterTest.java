@@ -87,9 +87,13 @@ public class TranslationSdkCancellationAdapterTest {
       assertTrue(entered.await(5, TimeUnit.SECONDS));
       if (dispatchGate == null) {
         long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (dispatchThread.getState() != Thread.State.TIMED_WAITING && System.nanoTime() < until)
+        boolean waiting = false;
+        while (System.nanoTime() < until) {
+          waiting = dispatchThread.getState() == Thread.State.TIMED_WAITING;
+          if (waiting) break;
           Thread.yield();
-        assertEquals(Thread.State.TIMED_WAITING, dispatchThread.getState());
+        }
+        assertTrue("The calling worker must be waiting for the native terminal callback", waiting);
       }
     }
     void chunk(String text) { callback.onMessage(Message.Companion.model(text)); }
