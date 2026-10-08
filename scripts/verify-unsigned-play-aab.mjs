@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 export const pin = Object.freeze({
   repository: 'Hatsunama/Caption-Studio',
   tag: 'v1.4.124',
-  sourceCommit: 'f2bade5f5bb03891cd197b58c80d8d091d0692d2',
+  sourceCommit: 'bdf7e94e6dada6433658029a2c684292ede9dd2d',
+  integrationBaseCommit: 'f2bade5f5bb03891cd197b58c80d8d091d0692d2',
   testedCommit: 'bdf7e94e6dada6433658029a2c684292ede9dd2d',
   sourceTree: '4445301fdb944720e333f61ed051c81790264357',
   package: 'com.xmilo_at_your_side.caption_studio',
@@ -80,7 +81,7 @@ export function assertMapping(generated, embedded) {
 
 export function assertProvenance(value) {
   assert.equal(value.schemaVersion, 1);
-  for (const name of ['repository', 'sourceCommit', 'sourceTree', 'testedCommit', 'tag', 'package', 'version', 'versionCode']) {
+  for (const name of ['repository', 'sourceCommit', 'sourceTree', 'testedCommit', 'integrationBaseCommit', 'tag', 'package', 'version', 'versionCode']) {
     assert.equal(value[name], pin[name], 'Provenance mismatch: ' + name);
   }
   assert.equal(value.signing.status, 'unsigned');
@@ -109,6 +110,7 @@ function sourceIdentity(source) {
     .trim().split(/\r?\n/).map((line) => line.split(/\s+/));
   assert.equal((refs.find(([, ref]) => ref.endsWith('^{}')) ?? refs.find(([, ref]) => ref === 'refs/tags/' + pin.tag))?.[0], commit, 'Release tag moved or absent');
   assert.equal(api('git/commits/' + pin.testedCommit).tree.sha, pin.sourceTree, 'Tested source tree differs');
+  assert.equal(api('git/commits/' + pin.integrationBaseCommit).tree.sha, pin.sourceTree, 'Main integration tree differs');
   return { commit, tree };
 }
 
@@ -185,7 +187,7 @@ async function verify(source, bundletool, objdump) {
   const provenance = {
     schemaVersion: 1,
     repository: pin.repository, tag: pin.tag, sourceCommit: pin.sourceCommit,
-    sourceTree: pin.sourceTree, testedCommit: pin.testedCommit,
+    sourceTree: pin.sourceTree, testedCommit: pin.testedCommit, integrationBaseCommit: pin.integrationBaseCommit,
     gateCommit: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID,
     runAttempt: process.env.GITHUB_RUN_ATTEMPT,
     package: pin.package, version: pin.version, versionCode: pin.versionCode,

@@ -64,7 +64,7 @@ test('mapping must match bundle bytes and cannot be empty', () => {
 test('unsigned provenance cannot claim signed or store-ready delivery', () => {
   const value = {
     schemaVersion: 1, repository: pin.repository, sourceCommit: pin.sourceCommit,
-    sourceTree: pin.sourceTree, testedCommit: pin.testedCommit, tag: pin.tag,
+    sourceTree: pin.sourceTree, testedCommit: pin.testedCommit, integrationBaseCommit: pin.integrationBaseCommit, tag: pin.tag,
     package: pin.package, version: pin.version, versionCode: pin.versionCode,
     gateCommit: 'a'.repeat(40), runId: '1', runAttempt: '1',
     approvedApkSha256: pin.apkSha256, manifestSha256: 'b'.repeat(64),

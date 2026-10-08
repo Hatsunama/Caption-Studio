@@ -45,7 +45,7 @@ jobs:
       - name: Check out pinned release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: f2bade5f5bb03891cd197b58c80d8d091d0692d2
+          ref: bdf7e94e6dada6433658029a2c684292ede9dd2d
           path: release-source
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
