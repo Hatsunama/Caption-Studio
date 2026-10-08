@@ -333,8 +333,9 @@ export async function translateNaturalCaptionOperations(options: {
     if (committed === false) throw new Error('The translation batch was not saved to the project. Refresh to retry.');
     committedBatches.add(batchIndex);
   };
+  let acceptingBatches = true;
   const queueBatch = (event: NaturalCaptionTranslationAcceptedBatch) => {
-    if (event.requestId !== requestId || commitError) return;
+    if (!acceptingBatches || event.requestId !== requestId || commitError) return;
     commitQueue = commitQueue.then(async () => {
       if (!Number.isSafeInteger(event.batchIndex)) throw new Error('The local model returned an invalid batch index.');
       await acceptBatch(event.batchIndex, event.captions);
@@ -344,12 +345,12 @@ export async function translateNaturalCaptionOperations(options: {
       await cancelNaturalCaptionTranslation().catch(() => {});
     });
   };
-  const subscription = options.onAcceptedBatch
-    ? CaptionTranslation.addListener('onNaturalCaptionBatchAccepted', queueBatch)
-    : undefined;
-
+  let subscription: ReturnType<typeof CaptionTranslation.addListener> | undefined;
   let terminalFailure: { error: unknown } | undefined;
   try {
+    subscription = options.onAcceptedBatch
+      ? CaptionTranslation.addListener('onNaturalCaptionBatchAccepted', queueBatch)
+      : undefined;
     resourceLease = translationResourceOwner?.();
     if (resourceLease) await resourceLease.ready;
     throwIfCancelled(run);
@@ -469,18 +470,30 @@ export async function translateNaturalCaptionOperations(options: {
     terminalFailure = { error };
     throw error;
   } finally {
-    subscription?.remove();
-    await commitQueue;
+    // A failed removal can retain the callback; it must no longer own saves or stops.
+    acceptingBatches = false;
     let cleanupFailure: { error: unknown } | undefined;
     try {
-      await run.stopOperation;
-    } catch (error) {
-      cleanupFailure = { error };
-    }
-    try {
-      if (resourceLease) await resourceLease.restore();
-    } catch (error) {
-      cleanupFailure ??= { error };
+      try {
+        subscription?.remove();
+      } catch (error) {
+        cleanupFailure = { error };
+      }
+      try {
+        await commitQueue;
+      } catch (error) {
+        cleanupFailure ??= { error };
+      }
+      try {
+        await run.stopOperation;
+      } catch (error) {
+        cleanupFailure ??= { error };
+      }
+      try {
+        if (resourceLease) await resourceLease.restore();
+      } catch (error) {
+        cleanupFailure ??= { error };
+      }
     } finally {
       if (activeTranslation?.id === run.id) activeTranslation = undefined;
     }

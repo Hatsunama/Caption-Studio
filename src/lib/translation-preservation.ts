@@ -147,11 +147,39 @@ function targetOperatorEnd(text: string, start: number, operators: ReadonlySet<s
   );
   return attachedData(previousPoint(text, left)) || attachedData(text.codePointAt(right) ?? -1) ? start : end;
 }
+function chatMarkerEnd(text: string, start: number): number {
+  if (!text.startsWith('<|', start)) return start;
+  let end = start + 2;
+  while (end < text.length) {
+    const cp = text.codePointAt(end)!;
+    if (cp === 60 || cp === 96 || cp === 34 || white(cp)) break;
+    end += width(cp);
+    if (cp === 62) break;
+  }
+  return end;
+}
+function chatMarkerCounts(text: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  let at = 0;
+  while ((at = text.indexOf('<|', at)) >= 0) {
+    const end = chatMarkerEnd(text, at);
+    const marker = text.slice(at, end);
+    counts.set(marker, (counts.get(marker) ?? 0) + 1);
+    at = end;
+  }
+  return counts;
+}
+function chatMarkersMatch(source: string, translated: string): boolean {
+  const before = chatMarkerCounts(source), after = chatMarkerCounts(translated);
+  return before.size === after.size
+    && [...before].every(([marker, count]) => after.get(marker) === count);
+}
 function spans(text: string, targetOperators?: ReadonlySet<string>): Span[] {
   const result: Span[] = [];
   for (let at = 0; at < text.length;) {
     let end = codeEnd(text, at);
     if (end === at) end = urlEnd(text, at);
+    if (end === at) end = chatMarkerEnd(text, at);
     if (end === at) end = emojiEnd(text, at);
     if (end === at) end = targetOperators ? targetOperatorEnd(text, at, targetOperators) : operatorEnd(text, at);
     if (end > at) {
@@ -184,6 +212,7 @@ export function isPreservedIntegerTranslation(source: string, translated: string
   return integer !== undefined && integerDigits(translated, true) === integer;
 }
 export function preservesTranslationContent(source: string, translated: string): boolean {
+  if (!chatMarkersMatch(source, translated)) return false;
   const before = topology(source), after = topology(translated);
   if (before.length !== after.length || before.some((blank, i) => blank !== after[i])) return false;
   // Exact counts apply only to protected tokens recognized in the source.

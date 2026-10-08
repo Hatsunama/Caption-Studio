@@ -160,6 +160,7 @@ final class TranslationPreservation {
     for (int at = 0; at < text.length();) {
       int end = codeEnd(text, at);
       if (end == at) end = urlEnd(text, at);
+      if (end == at) end = TranslationPromptData.chatMarkerEnd(text, at);
       if (end == at) end = emojiEnd(text, at);
       if (end == at) end = targetOperators == null ? operatorEnd(text, at) : targetOperatorEnd(text, at, targetOperators);
       if (end > at) { result.add(new Span(at, end)); at = end; }
@@ -200,6 +201,7 @@ final class TranslationPreservation {
     return integer != null && integer.equals(integerDigits(translated, true));
   }
   static boolean preserves(String source, String translated) {
+    if (!TranslationPromptData.chatMarkersMatch(source, translated)) return false;
     String[] before = breaks(source).split("\n", -1), after = breaks(translated).split("\n", -1);
     if (before.length != after.length) return false;
     for (int i = 0; i < before.length; i++) {
@@ -280,7 +282,8 @@ final class TranslationPreservation {
   static boolean opaqueOnly(String text) {
     String value = trimHorizontal(text);
     if (value.isEmpty()) return false;
-    return codeEnd(value, 0) == value.length() || urlEnd(value, 0) == value.length();
+    return codeEnd(value, 0) == value.length() || urlEnd(value, 0) == value.length()
+        || TranslationPromptData.chatMarkerEnd(value, 0) == value.length();
   }
   /**
    * Keep the existing byte split policy, except move cuts outside protected spans.
@@ -291,7 +294,7 @@ final class TranslationPreservation {
     int size = 0;
     for (int at = 0; at < text.length();) {
       int cp = point(text, at);
-      size += TranslationText.escapedBytes(cp);
+      size += TranslationPromptData.escapedBytesAt(text, at);
       at += Character.charCount(cp);
     }
     return size;
@@ -315,7 +318,7 @@ final class TranslationPreservation {
       int end = start, cost = 0, preferred = -1, safe = -1, scan = spanIndex;
       while (end < text.length()) {
         int cp = point(text, end), next = end + Character.charCount(cp);
-        int bytes = TranslationText.escapedBytes(cp);
+        int bytes = TranslationPromptData.escapedBytesAt(text, end);
         if (cost + bytes > limit) break;
         cost += bytes;
         end = next;
