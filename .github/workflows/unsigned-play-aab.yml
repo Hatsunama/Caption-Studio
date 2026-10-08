@@ -27,3 +27,107 @@ jobs:
           assert.throws(() => parseCertificate('SHA256: ' + 'a'.repeat(64)), /production pin/);
           console.log('REPRODUCED: old Play gate accepts APK pin and rejects a different Play certificate.');
           JS
+
+      - name: Test unsigned provenance and refusal of APK key
+        run: node --test tests/unsigned-play-aab.test.mjs
+  package:
+    needs: regressions
+    if: github.repository == 'Hatsunama/Caption-Studio'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CI: true
+      CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE: com.xmilo_at_your_side.caption_studio
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Check out pinned release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f2bade5f5bb03891cd197b58c80d8d091d0692d2
+          path: release-source
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.1
+          cache: npm
+          cache-dependency-path: release-source/package-lock.json
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Run full existing source release checks
+        working-directory: release-source
+        run: |
+          npm ci
+          npm run verify:product-contract
+          npm audit --omit=dev --audit-level=high
+          npm run test:logic
+          npx tsc --noEmit
+          npm run lint
+          npx expo install --check
+          npx --yes expo-doctor@1.20.4
+      - name: Require published manifest and exact tested APK approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/verify-unsigned-play-aab.mjs --prepare release-source
+      - name: Generate clean native project and verify original release configuration
+        working-directory: release-source
+        env:
+          NODE_ENV: production
+        run: |
+          npx expo prebuild --platform android --clean --no-install
+          node scripts/patch-react-native-gradle.js
+          npm run verify:android-config
+      - name: Native release lint with unsigned configuration
+        working-directory: release-source/android
+        env:
+          NODE_ENV: production
+        run: ./gradlew :app:lintRelease --init-script ../../scripts/unsigned-play-release.gradle --init-script ../scripts/first-party-android-lint.gradle --no-daemon --stacktrace --warning-mode all
+      - name: Native release unit tests with unsigned configuration
+        working-directory: release-source/android
+        env:
+          NODE_ENV: production
+        run: ./gradlew :app:testReleaseUnitTest :caption-diagnostics:testReleaseUnitTest :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest --init-script ../../scripts/unsigned-play-release.gradle --no-daemon --stacktrace --warning-mode all
+      - name: Build unsigned release AAB
+        working-directory: release-source/android
+        env:
+          NODE_ENV: production
+        run: ./gradlew :app:bundleRelease --init-script ../../scripts/unsigned-play-release.gradle --no-daemon --stacktrace --warning-mode all
+      - name: Download checksum-pinned bundletool
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/bundletool.jar" https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          echo 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  '"$RUNNER_TEMP/bundletool.jar" | sha256sum --check --status
+      - name: Validate unsigned bundle, ABI, 16KB ELF, mapping and provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ndk_root="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          objdump="$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
+          test -x "$objdump"
+          node scripts/verify-unsigned-play-aab.mjs --verify release-source "$RUNNER_TEMP/bundletool.jar" "$objdump"
+      - name: Retain native reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: unsigned-play-native-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            release-source/android/app/build/reports/
+            release-source/android/app/build/test-results/
+            release-source/modules/caption-*/android/build/reports/tests/
+            release-source/modules/caption-*/android/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Retain unsigned delivery for LOCAL signing; not store-ready
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: caption-studio-play-UNSIGNED-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/caption-studio-play-unsigned.aab
+            dist/caption-studio-play-mapping.txt
+            dist/play-unsigned-provenance.json
+          if-no-files-found: error
+          retention-days: 14
