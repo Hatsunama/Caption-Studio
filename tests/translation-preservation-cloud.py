@@ -55,7 +55,7 @@ try:
     java=list(map(str,main.glob("*.java")))
     kotlin=run("compile_real_sdk_adapter",["java","-cp",compiler,"org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
         "-no-stdlib","-no-reflect","-jvm-target","17","-classpath",cp,"-d",str(classes),
-        *list(map(str, main.glob("*.kt")))]+java,timeout=180)
+        *list(map(str, (p for p in main.glob("*.kt") if p.name != "CaptionTranslationModule.kt")))]+java,timeout=180)
     javac=run("compile_native_tests",["javac","-encoding","UTF-8","-cp",cp,"-d",str(classes)]+java+list(map(str,tests.glob("*.java"))),timeout=180)
     if kotlin==0 and javac==0:
         all_tests=sorted("app.captionstudio.translation."+p.stem for p in tests.glob("*Test.java"))

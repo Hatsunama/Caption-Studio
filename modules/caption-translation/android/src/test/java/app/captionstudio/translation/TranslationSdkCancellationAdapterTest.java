@@ -80,7 +80,15 @@ public class TranslationSdkCancellationAdapterTest {
     Future<String> start() {
       return worker.submit(() -> runtime.translate("PROMPT", 296, true, SCHEMA));
     }
-    void entered() throws Exception { assertTrue(entered.await(5, TimeUnit.SECONDS)); }
+    void entered() throws Exception {
+      assertTrue(entered.await(5, TimeUnit.SECONDS));
+      if (dispatchGate == null) {
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (dispatchThread.getState() != Thread.State.TIMED_WAITING && System.nanoTime() < until)
+          Thread.yield();
+        assertEquals(Thread.State.TIMED_WAITING, dispatchThread.getState());
+      }
+    }
     void chunk(String text) { callback.onMessage(Message.Companion.model(text)); }
     Throwable failure(Future<?> future) throws Exception {
       try { future.get(5, TimeUnit.SECONDS); fail("Expected failure"); return null; }
@@ -118,7 +126,9 @@ public class TranslationSdkCancellationAdapterTest {
       assertEquals(false, f.runtime.lastGenerationDiagnostics().get("benchmarkAvailable"));
       MessageCallback old = f.callback;
       Future<String> second = f.worker.submit(() -> f.runtime.translate("NEXT", 512, false, null));
-      while (f.creations.get() < 2 || f.callback == old) Thread.yield();
+      long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while ((f.creations.get() < 2 || f.callback == old) && System.nanoTime() < until) Thread.yield();
+      assertEquals(2, f.creations.get()); assertNotSame(old, f.callback);
       old.onMessage(Message.Companion.model("late")); old.onError(new IllegalStateException("late"));
       f.chunk("next"); f.callback.onDone();
       assertEquals("next", second.get(5, TimeUnit.SECONDS));
