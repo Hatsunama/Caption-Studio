@@ -10,7 +10,7 @@ baseline=(root/'tests/receipt-android-api-baseline.java.txt').read_bytes()
 prior=(root/'tests/receipt-expected-green.json').read_bytes()
 work=root/'receipt-api-check';work.mkdir(exist_ok=True)
 cp=os.pathsep.join(str(p) for p in [root/'test-classes',
- root/'modules/caption-translation/android/src/test/resources',
+ root/'modules/caption-translation/android/src/test/resources',sdk,
  *sorted((root/'test-jars').glob('*.jar'))])
 report={'stage':stage,'head':os.environ.get('GITHUB_SHA'),
  'android_api':36,'android_jar_sha256':hashlib.sha256(sdk.read_bytes()).hexdigest(),
