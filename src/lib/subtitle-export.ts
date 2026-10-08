@@ -3,6 +3,7 @@ import { resolveLayerGeometry } from '@/lib/layer-geometry';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import { exportCaptionPairs } from '@/lib/export-caption-pairs';
 import { projectRenderDuration } from '@/lib/project-timeline';
+import { totalClipDuration } from '@/lib/video-timeline';
 import {
   captionLayoutText,
   captionSpokenTokenSpans,
@@ -11,7 +12,7 @@ import {
 import type { CaptionBlock, CaptionProject, CaptionStyle, WordToken } from '@/types/project';
 
 export function serializeSrt(project: CaptionProject, allowIncompleteTranslations = false) {
-  const durationMs = projectRenderDuration(project);
+  const durationMs = subtitleDuration(project);
   const translations = translationsByCaption(project, allowIncompleteTranslations);
   const events = visibleCaptions(project).flatMap((caption) => {
     const timing = srtRange(caption.startMs, caption.endMs, durationMs);
@@ -44,7 +45,7 @@ export function serializeSrt(project: CaptionProject, allowIncompleteTranslation
 }
 
 export function serializeAss(project: CaptionProject, allowIncompleteTranslations = false) {
-  const durationMs = projectRenderDuration(project);
+  const durationMs = subtitleDuration(project);
   const { width, height } = subtitleCanvasSize(project);
   const scale = width / 360;
   const header = [
@@ -235,15 +236,20 @@ function comparableText(value: string) {
   return value.normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
 }
 
+/** Retain the exact footage end until the subtitle format quantizes its bound. */
+function subtitleDuration(project: CaptionProject) {
+  return project.clips?.length ? totalClipDuration(project.clips) : projectRenderDuration(project);
+}
+
 function srtRange(startMs: number, endMs: number, durationMs: number) {
   const start = Math.max(0, Math.round(startMs));
-  const end = Math.min(durationMs, Math.max(start + 1, Math.round(endMs)));
+  const end = Math.min(Math.floor(durationMs), Math.max(start + 1, Math.round(endMs)));
   return { startMs: start, endMs: end };
 }
 
 function assRange(startMs: number, endMs: number, durationMs: number) {
   const start = Math.max(0, Math.round(startMs / 10));
-  const end = Math.min(Math.round(durationMs / 10), Math.max(start + 1, Math.round(endMs / 10)));
+  const end = Math.min(Math.floor(durationMs / 10), Math.max(start + 1, Math.round(endMs / 10)));
   return { startCs: start, endCs: end };
 }
 
