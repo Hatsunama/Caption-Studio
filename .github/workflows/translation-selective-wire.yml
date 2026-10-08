@@ -1,0 +1,45 @@
+name: Selective prompt serialization RED GREEN
+on:
+  push:
+    branches: [codex/translation-selective-wire-review]
+permissions:
+  contents: read
+concurrency:
+  group: selective-wire-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CI: true
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.1
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install locked dependencies for GREEN full checks only
+        shell: bash
+        run: |
+          if [ "$(cat tests/serialization-stage.txt)" = GREEN ]; then
+            npm ci --no-audit --no-fund
+          fi
+      - name: Execute compiled production serialization and full GREEN gates
+        run: python3 -B tests/translation-serialization-cloud.py
+      - name: Preserve exact RED or GREEN receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: selective-wire-${{ github.sha }}
+          path: |
+            serialization-repair-results.json
+            serialization-behavior.json
+          if-no-files-found: error
+          retention-days: 14
