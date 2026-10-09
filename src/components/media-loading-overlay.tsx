@@ -1,5 +1,6 @@
-import { ActivityIndicator, Text, View } from 'react-native';
+import { ActivityIndicator, Text } from 'react-native';
 
+import { AdaptiveDialog } from '@/components/editor/adaptive-dialog';
 import { OperationOverlay } from '@/components/operation-overlay';
 
 import type { MediaImportProgress } from '@/services/media-import';
@@ -8,8 +9,7 @@ import { chrome } from '@/lib/ui-theme';
 export function MediaLoadingOverlay({ progress }: { progress?: MediaImportProgress }) {
   return (
     <OperationOverlay visible={Boolean(progress)}>
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: chrome.overlay }}>
-        <View style={{ width: '100%', maxWidth: 360, alignItems: 'center', gap: 14, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
+      <AdaptiveDialog maxWidth={360} padding={24}>
           <ActivityIndicator size="large" color={chrome.accent} />
           <Text style={{ color: chrome.text, fontSize: 20, fontWeight: '700', textAlign: 'center' }}>
             Loading your video{progress && progress.total > 1 ? 's' : ''}
@@ -20,8 +20,7 @@ export function MediaLoadingOverlay({ progress }: { progress?: MediaImportProgre
           <Text style={{ color: chrome.accent, fontSize: 13, fontWeight: '600' }}>
             Keep Caption Studio open
           </Text>
-        </View>
-      </View>
+      </AdaptiveDialog>
     </OperationOverlay>
   );
 }

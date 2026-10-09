@@ -12,6 +12,8 @@ export type LayerTouch = { id: number; x: number; y: number };
 export type LayerCanvas = { width: number; height: number; pageX: number; pageY: number; located?: boolean };
 export type LayerGestureMode = 'move' | 'corner' | 'left' | 'right' | 'top' | 'bottom';
 
+const MINIMUM_MODEL_EXTENT = 0.001;
+
 export function positiveLayerScale(value: unknown = 1): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 3.4028234663852886e38) {
     throw new Error('Layer scale must be a positive finite float');
@@ -43,8 +45,8 @@ export function normalizeLayerGeometry(value: LayerGeometryInput): LayerGeometry
     throw new Error('Layer geometry must contain finite positions, rotation, and positive dimensions');
   }
   const box = {
-    width: clamp(geometry.box.width, 0.001, 10),
-    height: clamp(geometry.box.height, 0.001, 10),
+    width: clamp(geometry.box.width, MINIMUM_MODEL_EXTENT, 10),
+    height: clamp(geometry.box.height, MINIMUM_MODEL_EXTENT, 10),
   };
   const extent = layerExtent({ ...geometry, box });
   return {
@@ -61,21 +63,13 @@ export function normalizeLayerGeometry(value: LayerGeometryInput): LayerGeometry
 }
 
 export function constrainLayerGeometry(value: LayerGeometryInput, canvas: Pick<LayerCanvas, 'width' | 'height'>): LayerGeometry {
-  const geometry = normalizeLayerGeometry(value);
+  const constrained = normalizeLayerGeometry(value);
   const width = Math.max(1, canvas.width);
   const height = Math.max(1, canvas.height);
-  const minimumWidth = 24 / width;
-  const minimumHeight = 24 / height;
-  const maximumExtent = 10;
-  let extent = layerExtent(geometry);
-  const scaleX = geometry.scaleX
-    * Math.max(minimumWidth / Math.max(Number.EPSILON, extent.width), 1)
-    * Math.min(maximumExtent / Math.max(Number.EPSILON, extent.width), 1);
-  const scaleY = geometry.scaleY
-    * Math.max(minimumHeight / Math.max(Number.EPSILON, extent.height), 1)
-    * Math.min(maximumExtent / Math.max(Number.EPSILON, extent.height), 1);
-  const constrained = { ...geometry, scaleX, scaleY };
-  extent = layerExtent(constrained);
+  // Minimum hit targets belong to preview chrome, never to saved content extents.
+  // Keep positional recoverability: small content keeps its center on the canvas,
+  // while larger content retains up to 24 preview units of visible overlap.
+  const extent = layerExtent(constrained);
   const radians = constrained.rotation * Math.PI / 180;
   const cosine = Math.abs(Math.cos(radians));
   const sine = Math.abs(Math.sin(radians));
@@ -136,14 +130,18 @@ export function createLayerGesture(initial: LayerGeometryInput) {
         return current;
       }
       const extent = layerExtent(baseline);
-      const minimumRatio = Math.max(1 / (extent.width * canvas.width), 1 / (extent.height * canvas.height));
+      // Bound the requested transform in model space before computing its pivot.
+      // Reuse the normalized box minimum so repeated collapses remain positive
+      // in native floats. Cap the floor at 1 to preserve smaller persisted content.
+      const minimumRatio = Math.min(1, MINIMUM_MODEL_EXTENT / Math.min(extent.width, extent.height));
+      const maximumRatio = Math.min(10 / extent.width, 10 / extent.height);
       if (next.length === 2) {
         if (!canvas.located) return current;
         const origin = midpoint(points[0], points[1]);
         const target = midpoint(next[0], next[1]);
         const initialDistance = distance(points[0], points[1]);
         if (initialDistance < 1) { rebase(next); return current; }
-        const ratio = Math.max(minimumRatio, distance(next[0], next[1]) / initialDistance);
+        const ratio = clamp(distance(next[0], next[1]) / initialDistance, minimumRatio, maximumRatio);
         const rotation = angle(next[0], next[1]) - angle(points[0], points[1]);
         const x = canvas.pageX + baseline.position.x * canvas.width - origin.x;
         const y = canvas.pageY + baseline.position.y * canvas.height - origin.y;
@@ -160,7 +158,9 @@ export function createLayerGesture(initial: LayerGeometryInput) {
       } else if (mode === 'corner') {
         if (!canvas.located) return current;
         const center = { id: -1, x: canvas.pageX + baseline.position.x * canvas.width, y: canvas.pageY + baseline.position.y * canvas.height };
-        const ratio = Math.max(minimumRatio, distance(center, next[0]) / Math.max(1, distance(center, points[0])));
+        const initialDistance = distance(center, points[0]);
+        if (initialDistance === 0) { rebase(next); return current; }
+        const ratio = clamp(distance(center, next[0]) / initialDistance, minimumRatio, maximumRatio);
         current = { ...baseline, scale: baseline.scale * ratio };
       } else {
         const horizontal = mode === 'left' || mode === 'right';
@@ -170,10 +170,12 @@ export function createLayerGesture(initial: LayerGeometryInput) {
         const axisY = horizontal ? Math.sin(radians) : Math.cos(radians);
         const delta = (next[0].x - points[0].x) * axisX + (next[0].y - points[0].y) * axisY;
         const original = horizontal ? extent.width * canvas.width : extent.height * canvas.height;
-        const dimension = Math.max(1, original + side * delta);
+        const axisExtent = horizontal ? extent.width : extent.height;
+        const ratio = clamp(1 + side * delta / original, Math.min(1, MINIMUM_MODEL_EXTENT / axisExtent), 10 / axisExtent);
+        const dimension = original * ratio;
         const shift = side * (dimension - original) / 2;
         current = { ...baseline,
-          ...(horizontal ? { scaleX: baseline.scaleX * dimension / original } : { scaleY: baseline.scaleY * dimension / original }),
+          ...(horizontal ? { scaleX: baseline.scaleX * ratio } : { scaleY: baseline.scaleY * ratio }),
           position: { x: baseline.position.x + shift * axisX / canvas.width, y: baseline.position.y + shift * axisY / canvas.height },
         };
       }

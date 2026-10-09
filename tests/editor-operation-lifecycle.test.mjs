@@ -82,52 +82,175 @@ test('foreground interruption is published only after the stop promise settles',
 
 const nativeModal = Symbol('native modal');
 const nativeView = Symbol('view');
+const fragment = Symbol('fragment');
 const jsx = (type, props) => ({ type, props });
-const operationOverlay = Symbol('operation overlay');
+const componentSources = {
+  '@/components/editor/adaptive-dialog': readFileSync(new URL('../src/components/editor/adaptive-dialog.tsx', import.meta.url), 'utf8'),
+  '@/components/operation-overlay': readFileSync(new URL('../src/components/operation-overlay.tsx', import.meta.url), 'utf8'),
+};
+const mediaLoadingSource = readFileSync(new URL('../src/components/media-loading-overlay.tsx', import.meta.url), 'utf8');
 function renderSource(source, extra = {}) {
-  const sandbox = {
-    exports: {}, result: undefined, ...extra,
-    require(name) {
-      if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
-      if (name === 'react-native') return { Modal: nativeModal, View: nativeView, Text: 'text', Pressable: 'pressable', ActivityIndicator: 'spinner' };
-      if (name === '@/components/operation-overlay') return { OperationOverlay: operationOverlay };
-      if (name === '@/lib/ui-theme') return { chrome: { radius: { xl: 24 } } };
-      throw Error(name);
+  const modules = new Map();
+  const backHandlers = new Set();
+  const cleanups = [];
+  const chrome = { radius: { xl: 24, md: 13, pill: 999 } };
+  const native = {
+    Modal: nativeModal, View: nativeView, Text: 'text', Pressable: 'pressable', ActivityIndicator: 'spinner',
+    KeyboardAvoidingView: 'keyboard-avoiding-view', ScrollView: 'scroll-view', Platform: { OS: 'android' },
+    StyleSheet: { absoluteFill: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 } },
+    BackHandler: {
+      addEventListener(event, callback) {
+        assert.equal(event, 'hardwareBackPress');
+        backHandlers.add(callback);
+        return { remove: () => backHandlers.delete(callback) };
+      },
     },
   };
+  function require(name) {
+    if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: fragment };
+    if (name === 'react') return {
+      useEffect(callback) {
+        const cleanup = callback();
+        if (typeof cleanup === 'function') cleanups.push(cleanup);
+      },
+    };
+    if (name === 'react-native') return native;
+    if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
+    if (name === '@/lib/ui-theme') return { chrome };
+    if (Object.hasOwn(componentSources, name)) {
+      if (!modules.has(name)) {
+        const exports = {};
+        modules.set(name, exports);
+        runInNewContext(compile(componentSources[name]), { exports, require });
+      }
+      return modules.get(name);
+    }
+    throw Error(`Unexpected dependency ${name}`);
+  }
+  const sandbox = {
+    exports: {}, result: undefined, ...native, chrome,
+    AdaptiveDialog: require('@/components/editor/adaptive-dialog').AdaptiveDialog,
+    OperationOverlay: require('@/components/operation-overlay').OperationOverlay,
+    ...extra, require,
+  };
   runInNewContext(compile(source), sandbox);
+  sandbox.pressBack = () => {
+    assert.equal(backHandlers.size, 1, 'visible operation must register one Android Back handler');
+    return [...backHandlers][0]();
+  };
+  sandbox.dispose = () => { cleanups.splice(0).forEach((cleanup) => cleanup()); };
   return sandbox;
 }
 
+function renderTree(element) {
+  if (element == null || typeof element === 'boolean') return null;
+  if (Array.isArray(element)) return element.map(renderTree);
+  if (typeof element !== 'object') return element;
+  assert.ok(element.type, 'every element must have a defined component type');
+  if (typeof element.type === 'function') return renderTree(element.type(element.props ?? {}));
+  if (element.type === fragment) return renderTree(element.props?.children);
+  return { ...element, props: { ...element.props, children: renderTree(element.props?.children) } };
+}
+
+function treeNodes(tree) {
+  if (Array.isArray(tree)) return tree.flatMap(treeNodes);
+  if (!tree || typeof tree !== 'object') return [];
+  return [tree, ...treeNodes(tree.props?.children)];
+}
+
+function assertOperationTree(element) {
+  const nodes = treeNodes(renderTree(element));
+  assert.ok(nodes.length > 0, 'visible operation must render a tree');
+  for (const node of nodes) assert.notEqual(node.type, nativeModal, 'native Modal must not appear anywhere in the rendered operation tree');
+  assert.ok(nodes.some((node) => node.type === nativeView && node.props.accessibilityViewIsModal), 'actual OperationOverlay must render');
+  assert.ok(nodes.some((node) => node.props.testID === 'adaptive-dialog-frame'), 'actual AdaptiveDialog frame must render');
+  assert.ok(nodes.some((node) => node.props.testID === 'adaptive-dialog-body'), 'actual AdaptiveDialog body must render');
+  return nodes;
+}
+
+function cancelButton(nodes, label) {
+  const button = nodes.find((node) => node.type === 'pressable' && node.props.accessibilityLabel === label);
+  assert.ok(button, `${label} must remain reachable in the rendered tree`);
+  assert.notEqual(button.props.disabled, true);
+  assert.equal(typeof button.props.onPress, 'function');
+  return button;
+}
+
 test('media import progress is rendered without opening a competing Android dialog', () => {
-  const source = readFileSync(new URL('../src/components/media-loading-overlay.tsx', import.meta.url), 'utf8');
-  const module = renderSource(source);
-  const rendered = module.exports.MediaLoadingOverlay({ progress: { detail: 'Copying', total: 1 } });
-  assert.notEqual(rendered.type, nativeModal);
+  const module = renderSource(mediaLoadingSource);
+  assertOperationTree(module.exports.MediaLoadingOverlay({ progress: { detail: 'Copying', total: 1 } }));
+  module.dispose();
 });
 
 test('caption progress is rendered without opening a competing Android dialog', () => {
   const node = findNode((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'ProgressOverlay');
   const sandbox = renderSource(`${node.getText(editorAst)}; result = ProgressOverlay;`, {
-    Modal: nativeModal, OperationOverlay: operationOverlay, View: nativeView, Text: 'text', Pressable: 'pressable', ActivityIndicator: 'spinner',
-    displayTranscriptionProgress: () => 50, stageTitle: () => 'Downloading', palette: {}, chrome: { radius: {} },
+    displayTranscriptionProgress: () => 50, stageTitle: () => 'Downloading', palette: {},
   });
-  assert.notEqual(sandbox.result({ progress: { stage: 'downloading-model', progress: 0.5 }, cancelling: false, onCancel() {} }).type, nativeModal);
+  let cancelled = 0;
+  const nodes = assertOperationTree(sandbox.result({ progress: { stage: 'downloading-model', progress: 0.5 }, cancelling: false, onCancel() { cancelled++; } }));
+  cancelButton(nodes, 'Cancel caption generation').props.onPress();
+  assert.equal(cancelled, 1);
+  assert.equal(sandbox.pressBack(), true);
+  assert.equal(cancelled, 2);
+  sandbox.dispose();
+});
+
+test('caption cancellation stays disabled while the stop is settling', () => {
+  const node = findNode((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'ProgressOverlay');
+  const sandbox = renderSource(`${node.getText(editorAst)}; result = ProgressOverlay;`, {
+    displayTranscriptionProgress: () => 50, stageTitle: () => 'Downloading', palette: {},
+  });
+  let cancelled = 0;
+  const nodes = assertOperationTree(sandbox.result({ progress: { stage: 'downloading-model', progress: 0.5 }, cancelling: true, onCancel() { cancelled++; } }));
+  const button = nodes.find((node) => node.type === 'pressable' && node.props.accessibilityLabel === 'Cancel caption generation');
+  assert.ok(button);
+  assert.equal(button.props.disabled, true);
+  assert.equal(sandbox.pressBack(), true);
+  assert.equal(cancelled, 0);
+  sandbox.dispose();
 });
 
 test('audio extraction progress does not compete with its failure alert', () => {
   const node = findNode((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'ExtractAudioBusyOverlay');
-  const sandbox = renderSource(`${node.getText(editorAst)}; result = ExtractAudioBusyOverlay;`, {
-    Modal: nativeModal, OperationOverlay: operationOverlay, View: nativeView, Text: 'text', ActivityIndicator: 'spinner', chrome: { radius: {} },
-  });
-  assert.notEqual(sandbox.result({ visible: true }).type, nativeModal);
+  const sandbox = renderSource(`${node.getText(editorAst)}; result = ExtractAudioBusyOverlay;`);
+  assertOperationTree(sandbox.result({ visible: true }));
+  sandbox.dispose();
 });
 
 test('export progress does not compete with publication alerts or Android sharing', () => {
   const node = findNode((node) => ts.isConditionalExpression(node) && node.condition.getText(editorAst) === 'exporting');
-  const sandbox = renderSource(`result = (${node.getText(editorAst)});`, {
-    exporting: true, exportKind: 'subtitle', exportProgress: undefined,
-    Modal: nativeModal, OperationOverlay: operationOverlay, View: nativeView, Text: 'text', ActivityIndicator: 'spinner', palette: {},
-  });
-  assert.notEqual(sandbox.result.type, nativeModal);
+  for (const exportKind of ['subtitle', 'video']) {
+    let cancelled = 0;
+    const sandbox = renderSource(`result = (${node.getText(editorAst)});`, {
+      exporting: true, exportKind, exportProgress: undefined, palette: {},
+      cancelProjectVideoExport() { cancelled++; },
+    });
+    const nodes = assertOperationTree(sandbox.result);
+    if (exportKind === 'video') {
+      cancelButton(nodes, 'Cancel video export').props.onPress();
+      assert.equal(cancelled, 1);
+    }
+    assert.equal(sandbox.pressBack(), true);
+    assert.equal(cancelled, exportKind === 'video' ? 2 : 0);
+    sandbox.dispose();
+  }
 });
+
+test('operation tree inspection detects native Modal descendants in dialog bodies and footers', () => {
+  for (const placement of ['body', 'footer']) {
+    const sandbox = renderSource('');
+    const NestedModal = () => jsx(nativeModal, { children: 'unexpected dialog' });
+    const nested = jsx(NestedModal, {});
+    const element = jsx(sandbox.OperationOverlay, {
+      visible: true,
+      children: jsx(sandbox.AdaptiveDialog, {
+        children: placement === 'body' ? nested : 'progress',
+        footer: placement === 'footer' ? nested : undefined,
+      }),
+    });
+    assert.throws(() => assertOperationTree(element), /native Modal must not appear anywhere/);
+    sandbox.dispose();
+  }
+});
+

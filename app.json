@@ -3,7 +3,7 @@
     "name": "Caption Studio",
     "slug": "caption-studio",
     "version": "1.4.101",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "captionstudio",
     "userInterfaceStyle": "dark",
@@ -41,6 +41,7 @@
         }
       ],
       "./plugins/with-splash-screen-api-contract",
+      "./plugins/with-font-scale-configuration",
       [
         "expo-splash-screen",
         {

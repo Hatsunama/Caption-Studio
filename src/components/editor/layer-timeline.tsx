@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 
@@ -22,7 +22,7 @@ import { buildClipTimeline, remapCaptionsToTimeline } from '@/lib/video-timeline
 import { mapPreviewTranslationTracks } from '@/lib/translation-preview-timeline';
 import { audioClipEnd } from '@/lib/audio-timeline';
 import { audioWaveformWindow } from '@/lib/audio-waveform';
-import { adjustTimelineTiming, TIMELINE_ACCESSIBILITY_ACTIONS, timelineTimingLabel, createTimelineTimingGesture, timelineVisibleTrackBounds, type TimelineTimingGestureOwner } from '@/lib/timeline-gesture';
+import { adjustTimelineTiming, TIMELINE_ACCESSIBILITY_ACTIONS, timelineTimingLabel, createTimelineGestureGeometry, createTimelineTimingGesture, timelineVisibleTrackBounds, type TimelineTimingGestureOwner } from '@/lib/timeline-gesture';
 import { timelineHandleLayout, timelineHandleMarkerLayout, timelineVideoHandleLayout } from '@/lib/timeline-handle-layout';
 import { ensureClipFrameThumbnail } from '@/services/project-media';
 import type { CaptionPair } from '@/lib/caption-tracks';
@@ -39,9 +39,11 @@ const REORDER_TILE = 72;
 const REORDER_GAP = 8;
 const NEON_CAPTION_COLORS = ['#FF2FA9', '#00B8FF', '#19D98B', '#A855F7', '#FF4D6D', '#00D9C8'];
 const clipThumbCache = new Map<string, string>();
+const TimelineGestureGeometryContext = createContext<ReturnType<typeof createTimelineGestureGeometry> | undefined>(undefined);
 
 export function LayerTimeline(props: {
   projectId: string;
+  availableHeight?: number;
   durationMs: number;
   clips: VideoClip[];
   sources: ProjectVideoSource[];
@@ -109,6 +111,7 @@ export function LayerTimeline(props: {
   const duration = Math.max(1, props.durationMs, clipPositions.at(-1)?.afterGapEndMs ?? 0);
   const minimumScale = minimumTimelineScale(duration, Math.max(1, viewportWidth - LABEL_WIDTH));
   const [pixelsPerSecond, setPixelsPerSecond] = useState(() => Math.max(16, minimumScale));
+  const gestureGeometry = useMemo(() => createTimelineGestureGeometry({ viewportWidth, scale: pixelsPerSecond }), []);
   const effectiveScale = clampTimelineScale(pixelsPerSecond, minimumScale);
   const viewportContentWidth = Math.max(1, viewportWidth - LABEL_WIDTH);
   const baseTrackWidth = timelineWidth(duration, effectiveScale, viewportContentWidth);
@@ -299,6 +302,7 @@ export function LayerTimeline(props: {
 
   const updateZoom = (next: number) => {
     const clamped = clampTimelineScale(next, minimumScale);
+    gestureGeometry.update({ scale: clamped });
     setPixelsPerSecond(clamped);
     setZoomNotice(timelineZoomPercent(clamped, minimumScale));
     if (zoomTimer.current) clearTimeout(zoomTimer.current);
@@ -310,8 +314,19 @@ export function LayerTimeline(props: {
     setItemGestureLock(locked);
   };
   return (
+    <TimelineGestureGeometryContext.Provider value={gestureGeometry}>
     <View
-      onLayout={(event) => setViewportWidth(Math.max(1, event.nativeEvent.layout.width))}
+      onLayout={(event) => {
+        const width = Math.max(1, event.nativeEvent.layout.width);
+        if (gestureGeometry.update({ viewportWidth: width })) {
+          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+          scrubEndTimer.current = null;
+          scrubbingRef.current = false;
+          selectionOwnsViewportRef.current = false;
+          pinch.current.distance = 0;
+        }
+        setViewportWidth(width);
+      }}
       onStartShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
       onMoveShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
       onResponderGrant={(event) => {
@@ -323,7 +338,7 @@ export function LayerTimeline(props: {
         if (!first || !second || pinch.current.distance <= 0) return;
         updateZoom(pinch.current.scale * touchDistance(first, second) / pinch.current.distance);
       }}
-      style={{ height: Math.min(330, totalRowsHeight + RULER_HEIGHT + 38), overflow: 'hidden', borderRadius: 22, backgroundColor: '#1C1C1E' }}>
+      style={{ height: Math.min(props.availableHeight ?? 330, totalRowsHeight + RULER_HEIGHT + 38), overflow: 'hidden', borderRadius: 22, backgroundColor: '#1C1C1E' }}>
       <View style={{ height: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 44, borderBottomWidth: 1, borderBottomColor: '#1D242C' }}>
         <ZoomButton label="−" onPress={() => updateZoom(effectiveScale / 1.5)} />
         <Text style={{ minWidth: 70, color: '#D7DDE5', textAlign: 'center', fontSize: 10, fontWeight: '800' }}>{zoomPercent}%</Text>
@@ -408,6 +423,12 @@ export function LayerTimeline(props: {
                     color={index % 2 ? '#38404A' : '#46515D'}
                     onPress={() => props.onSelectClip(clip.id)}
                     onGestureLock={setItemGestureLock}
+                    onGestureCancel={() => {
+                      setItemGestureLock(false);
+                      setReorderDrag(undefined);
+                      setClipPreview(undefined);
+                      setFrontTrimPreview(undefined);
+                    }}
                     onTrimPreview={(edge, targetSourceMs) => {
                       setItemGestureLock(true);
                       const preview = previewVideoClipTrim(clip, edge, targetSourceMs);
@@ -631,6 +652,7 @@ export function LayerTimeline(props: {
       </View> : null}
       {zoomNotice == null ? null : <View pointerEvents="none" style={{ position: 'absolute', alignSelf: 'center', top: 72, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 14, backgroundColor: 'rgba(5,7,9,0.92)' }}><Text style={{ color: '#FFFFFF', fontSize: 15, fontWeight: '900' }}>{zoomNotice}%</Text></View>}
     </View>
+    </TimelineGestureGeometryContext.Provider>
   );
 }
 
@@ -663,6 +685,7 @@ function VideoClipBlock(props: {
   color: string;
   onPress: () => void;
   onGestureLock: (locked: boolean) => void;
+  onGestureCancel: () => void;
   onTrimPreview: (edge: 'start' | 'end', targetSourceMs: number) => void;
   onTrimCommit: (edge: 'start' | 'end', targetSourceMs: number) => void;
   onGapPreview: (gapBeforeMs: number) => void;
@@ -825,6 +848,7 @@ function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'st
       const current = propsRef.current;
       current.onTrimCommit(current.side, targetRef.current);
     },
+    onCancel: () => propsRef.current.onGestureCancel(),
   }, props.side, props.onGestureLock);
   return (
     <View
@@ -838,6 +862,8 @@ function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'st
 }
 
 function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft: number; bodyWidth: number }) {
+  const gestureGeometry = useContext(TimelineGestureGeometryContext);
+  const claimed = useRef(false);
   const propsRef = useRef(props);
   propsRef.current = props;
   const gapRef = useRef(props.leadingGapMs);
@@ -848,6 +874,16 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressArmedRef = useRef(false);
 
+  const cancelGesture = useCallback(() => {
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+    modeRef.current = 'none';
+    longPressArmedRef.current = false;
+    if (!claimed.current) return;
+    claimed.current = false;
+    propsRef.current.onGestureCancel();
+  }, []);
+
   const responder = useMemo(() => {
     const clearLongPress = () => {
       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
@@ -855,6 +891,8 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
     };
     const finishGesture = (kind: 'release' | 'terminate') => {
       clearLongPress();
+      if (!claimed.current) return;
+      claimed.current = false;
       const mode = modeRef.current;
       modeRef.current = 'none';
       longPressArmedRef.current = false;
@@ -875,6 +913,7 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
     onPanResponderTerminationRequest: () => false,
     onShouldBlockNativeResponder: () => true,
     onPanResponderGrant: () => {
+      claimed.current = true;
       propsRef.current.onPress();
       propsRef.current.onGestureLock(true);
       initialGapRef.current = propsRef.current.leadingGapMs;
@@ -885,6 +924,7 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
       longPressArmedRef.current = false;
       clearLongPress();
       longPressTimerRef.current = setTimeout(() => {
+        if (!claimed.current) return;
         longPressArmedRef.current = true;
         modeRef.current = 'reorder';
         reorderIndexRef.current = originIndexRef.current;
@@ -892,6 +932,7 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
       }, 350);
     },
     onPanResponderMove: (_event, gesture) => {
+      if (!claimed.current) return;
       if (modeRef.current === 'none') {
         if (!longPressArmedRef.current) {
           if (Math.abs(gesture.dx) <= 8 && Math.abs(gesture.dy) <= 8) return;
@@ -922,9 +963,9 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
   }, []);
 
   useEffect(() => () => {
-    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-    longPressTimerRef.current = null;
-  }, []);
+    cancelGesture();
+  }, [cancelGesture]);
+  useEffect(() => gestureGeometry?.subscribe(cancelGesture), [gestureGeometry, cancelGesture]);
 
   const moveWidth = props.selected && !props.reordering && !props.filmstrip
     ? Math.max(8, props.bodyWidth - 32) : props.bodyWidth;
@@ -1099,10 +1140,16 @@ function useTimelineTimingPanHandlers(
   edge: TimelineTimingEdge,
   onTouchLock?: (locked: boolean) => void,
 ) {
+  const gestureGeometry = useContext(TimelineGestureGeometryContext);
   const current = useRef({ owner, edge, onTouchLock });
   current.current = { owner, edge, onTouchLock };
   const gesture = useMemo(() => createTimelineTimingGesture(), []);
   const claimed = useRef(false);
+  const cancelGesture = useCallback(() => {
+    gesture.cancel();
+    if (claimed.current) current.current.onTouchLock?.(false);
+    claimed.current = false;
+  }, [gesture]);
   const responder = useMemo(() => {
     const finish = () => {
       gesture.finish();
@@ -1133,10 +1180,9 @@ function useTimelineTimingPanHandlers(
     });
   }, [gesture]);
   useEffect(() => () => {
-    gesture.finish();
-    if (claimed.current) current.current.onTouchLock?.(false);
-    claimed.current = false;
-  }, [gesture]);
+    cancelGesture();
+  }, [cancelGesture]);
+  useEffect(() => gestureGeometry?.subscribe(cancelGesture), [gestureGeometry, cancelGesture]);
   return responder.panHandlers;
 }
 

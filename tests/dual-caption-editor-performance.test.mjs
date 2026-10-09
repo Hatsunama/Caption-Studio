@@ -81,10 +81,12 @@ function mount(overrides = {}, options = {}) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return {
-        ...Object.fromEntries(['ActivityIndicator', 'FlatList', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View'].map((type) => [type, type])),
+        ...Object.fromEntries(['ActivityIndicator', 'FlatList', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View', 'KeyboardAvoidingView'].map((type) => [type, type])),
+        useWindowDimensions: () => options.window ?? { width: 390, height: 844 },
+        Platform: { OS: options.platform ?? 'android' },
         Alert: { alert: (...args) => calls.alerts.push(args) },
       };
-      if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 24 }) };
+      if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 0, right: 0 } };
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, md: 8, pill: 20, xl: 20 } } };
       if (name === '@/lib/dual-caption-drafts') return draftHelpers;
       if (name === './caption-save-recovery') return saveRecoveryHelpers;
@@ -127,8 +129,10 @@ function mount(overrides = {}, options = {}) {
       return renderNode(instance.output, `${id}/output`, visited, inputs);
     }
     let children = node.props.children;
-    if (node.type === 'FlatList') children = node.props.data.slice(windowStart, windowStart + node.props.initialNumToRender)
-      .map((item, index) => ({ ...node.props.renderItem({ item, index: windowStart + index }), key: node.props.keyExtractor(item) }));
+    if (node.type === 'FlatList') children = [node.props.ListHeaderComponent,
+      ...node.props.data.slice(windowStart, windowStart + node.props.initialNumToRender)
+        .map((item, index) => ({ ...node.props.renderItem({ item, index: windowStart + index }), key: node.props.keyExtractor(item) })),
+      node.props.ListFooterComponent];
     if (node.type === 'TextInput') {
       const id = `${path}:${node.key ?? ''}`;
       inputs.add(id);
@@ -152,9 +156,12 @@ function mount(overrides = {}, options = {}) {
     } while (changed);
   }
   function all(predicate, node = tree) {
-    if (Array.isArray(node)) return node.flatMap((child) => all(predicate, child));
-    if (!node || typeof node !== 'object') return [];
-    return [...(predicate(node) ? [node] : []), ...all(predicate, node.props?.children ?? null)];
+    const walk = (value) => {
+      if (Array.isArray(value)) return value.flatMap(walk);
+      if (!value || typeof value !== 'object') return [];
+      return [...(predicate(value) ? [value] : []), ...walk(value.props?.children)];
+    };
+    return walk(node);
   }
   function text(node) {
     if (Array.isArray(node)) return node.map(text).join('');
@@ -186,6 +193,88 @@ function mount(overrides = {}, options = {}) {
       await flush();
     },
   };
+}
+
+test('measured short roots keep actions scrollable, paired inputs mounted and Save in normal flow', async () => {
+  const h = mount(); await h.flush();
+  const root = h.all((node) => node.props.testID === 'dual-caption-root')[0]; assert.ok(root);
+  h.act(() => root.props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }));
+  const list = () => h.all((node) => node.type === 'FlatList')[0];
+  assert.equal(list().props.ListHeaderComponent, null);
+  const toggle = h.button('Dual subtitle actions and status');
+  assert.equal(toggle.props.accessibilityState.expanded, false);
+  assert.ok(toggle.props.style.minHeight >= 44);
+  const identity = h.input(0).identity;
+  h.edit(0, 'Keep source'); h.edit(0, 'Keep translation', 'Chinese');
+  h.press('Dual subtitle actions and status'); assert.ok(list().props.ListHeaderComponent);
+  assert.equal(h.input(0).identity, identity);
+  assert.equal(h.button('Refresh all (3)').props.disabled, true);
+  h.press('Dual subtitle actions and status');
+  const footer = h.all((node) => node.props.testID === 'dual-caption-footer')[0]; assert.ok(footer);
+  assert.notEqual(footer.props.style.position, 'absolute');
+  assert.equal(list().props.contentContainerStyle.paddingBottom, 14);
+  h.press('Save dual subtitle edits'); await h.flush();
+  assert.equal(h.calls.saves[0][0].primaryText, 'Keep source');
+  assert.equal(h.calls.saves[0][0].translatedText, 'Keep translation');
+  assert.ok(h.all((node) => node.props.accessibilityRole === 'alert').length);
+  assert.ok(h.all((node) => node.type === 'KeyboardAvoidingView').length);
+});
+
+test('wide roots and lateral safe insets select compact chrome without losing recovery controls', async () => {
+  const h = mount({}, { window: { width: 900, height: 600 }, insets: { top: 0, bottom: 12, left: 30, right: 20 } });
+  await h.flush();
+  const root = h.all((node) => node.props.testID === 'dual-caption-root')[0]; assert.ok(root);
+  assert.equal(root.props.style.paddingLeft, 30); assert.equal(root.props.style.paddingRight, 20);
+  assert.ok(h.button('Dual subtitle actions and status'));
+  h.update({ busy: true }); h.press('Cancel'); assert.equal(h.calls.cancel, 1);
+  h.update({ busy: false, errorMessage: 'Stopped', retryErrorAvailable: true });
+  h.press('Retry interrupted translation'); h.press('Close');
+  assert.equal(h.calls.retry, 1); assert.equal(h.calls.dismiss, 1);
+});
+
+for (const platform of ['android', 'ios']) {
+  test(`${platform} keyboard resize respects measured dual roots without losing drafts or portrait header`, async () => {
+    let requestBack;
+    const h = mount({ onBackRequestChange: (request) => { requestBack = request; } }, { platform });
+    await h.flush();
+    const root = () => h.all((node) => node.props.testID === 'dual-caption-root')[0];
+    const list = () => h.all((node) => node.type === 'FlatList')[0];
+    const actions = () => h.all((node) => node.props.accessibilityLabel === 'Dual subtitle actions and status');
+    const subtitle = () => h.all((node) => node.type === 'Text'
+      && /independent text and timing/.test(String(node.props.children)));
+    assert.equal(actions().length, 0); assert.equal(subtitle().length, 1);
+    const sourceIdentity = h.input(0).identity, translationIdentity = h.input(0, 'Chinese').identity;
+    h.edit(0, 'Inline source'); h.edit(0, 'Inline translation', 'Chinese');
+    h.act(() => root().props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }));
+    const avoidance = h.all((node) => node.type === 'KeyboardAvoidingView');
+    assert.equal(avoidance.length, 1);
+    assert.equal(avoidance[0].props.behavior, platform === 'ios' ? 'padding' : undefined);
+    assert.equal(subtitle().length, 0, 'measured short root overrides the tall window');
+    assert.ok(actions()[0].props.style.minHeight >= 44);
+    assert.ok(h.button('Close dual subtitle editor').props.style.minHeight >= 44);
+    assert.equal(h.input(0).props.disableFullscreenUI, true);
+    assert.equal(h.input(0, 'Chinese').props.disableFullscreenUI, true);
+    h.press('Dual subtitle actions and status'); assert.ok(list().props.ListHeaderComponent);
+    h.act(() => requestBack());
+    assert.equal(list().props.ListHeaderComponent, null, 'Back closes actions before discarding drafts');
+    assert.equal(h.calls.close, 0);
+    await h.advance(600);
+    assert.equal(h.calls.writes.at(-1)[3]['cue-0'].primaryText, 'Inline source');
+    assert.equal(h.calls.writes.at(-1)[3]['cue-0'].translatedText, 'Inline translation');
+    h.press('Save dual subtitle edits'); await h.flush();
+    assert.equal(h.calls.saves.length, 1);
+    assert.equal(h.input(0).props.value, 'Inline source');
+    assert.equal(h.input(0, 'Chinese').props.value, 'Inline translation');
+    assert.ok(list().props.ListHeaderComponent, 'failed save stays accessible in the scrolling status header');
+    h.act(() => requestBack()); h.choose('Keep editing');
+    h.act(() => root().props.onLayout({ nativeEvent: { layout: { width: 390, height: 844 } } }));
+    assert.equal(actions().length, 0); assert.equal(subtitle().length, 1);
+    assert.equal(h.input(0).identity, sourceIdentity);
+    assert.equal(h.input(0, 'Chinese').identity, translationIdentity);
+    assert.equal(h.input(0).props.value, 'Inline source');
+    assert.equal(h.input(0, 'Chinese').props.value, 'Inline translation');
+    assert.equal(h.calls.close, 0);
+  });
 }
 
 test('mounts a bounded input window for 10000 caption pairs', async () => {

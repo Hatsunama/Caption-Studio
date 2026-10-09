@@ -1,5 +1,7 @@
-import { useMemo, useRef, useState } from 'react';
-import { type GestureResponderEvent, Modal, PanResponder, Pressable, Text, View } from 'react-native';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type GestureResponderEvent, Modal, PanResponder, Pressable, Text, useWindowDimensions, View } from 'react-native';
+
+import { AdaptiveDialog } from './adaptive-dialog';
 
 import { PersistedHorizontalScroll } from '@/components/editor/persisted-horizontal-scroll';
 import { chrome } from '@/lib/ui-theme';
@@ -96,15 +98,13 @@ function RotationModal(props: {
   return (
     <Modal visible={props.visible} transparent animationType="fade" onRequestClose={props.onClose}>
       <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.66)' }}>
-        <View style={{ gap: 18, padding: 22, paddingBottom: 34, borderTopLeftRadius: chrome.radius.xl, borderTopRightRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
+        <AdaptiveDialog sheet gap={18} backgroundColor="transparent" footer={<Pressable accessibilityRole="button" onPress={props.onClose} style={{ minHeight: 48, justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: chrome.accent, fontWeight: '700' }}>Done</Text></Pressable>}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View>
               <Text style={{ color: chrome.text, fontSize: 21, fontWeight: '700' }}>Free video rotation</Text>
               <Text style={{ color: chrome.muted, marginTop: 3 }}>Slide anywhere on the wide angle bar</Text>
             </View>
-            <Pressable onPress={props.onClose} hitSlop={12}>
-              <Text style={{ color: chrome.accent, fontWeight: '700' }}>Done</Text>
-            </Pressable>
+
           </View>
 
           <AngleScrubber value={props.value} onChange={props.onChange} onEnd={props.onChangeEnd} />
@@ -131,7 +131,7 @@ function RotationModal(props: {
               />
             ))}
           </View>
-        </View>
+        </AdaptiveDialog>
       </View>
     </Modal>
   );
@@ -141,22 +141,60 @@ function AngleScrubber(props: { value: number; onChange: (value: number) => void
   const trackRef = useRef<View>(null);
   const propsRef = useRef(props);
   propsRef.current = props;
-  const layout = useRef({ pageX: 0, width: 1 });
+  const { width, height, scale, fontScale } = useWindowDimensions();
+  const windowKey = `${width}:${height}:${scale}:${fontScale}`;
+  const layout = useRef({ pageX: 0, width: 1, ready: false, revision: 0, windowKey });
+  const active = useRef(false);
+  // Invalidate before effects: the cached responder must never use the old frame.
+  if (layout.current.windowKey !== windowKey) {
+    layout.current.windowKey = windowKey;
+    layout.current.ready = false;
+    layout.current.revision++;
+  }
+  const measureLayout = () => {
+    layout.current.ready = false;
+    const revision = ++layout.current.revision;
+    const track = trackRef.current;
+    track?.measureInWindow((pageX, _pageY, measuredWidth) => {
+      if (revision !== layout.current.revision || track !== trackRef.current) return;
+      if (!Number.isFinite(pageX) || !Number.isFinite(measuredWidth) || measuredWidth <= 0) return;
+      layout.current.pageX = pageX;
+      layout.current.width = Math.max(1, measuredWidth);
+      layout.current.ready = true;
+    });
+  };
+  useLayoutEffect(() => {
+    measureLayout();
+    return () => {
+      layout.current.ready = false;
+      layout.current.revision++;
+    };
+  }, [windowKey]);
   const update = (event: GestureResponderEvent) => {
+    if (!active.current || !layout.current.ready) return;
     const touch = event.nativeEvent.touches[0] ?? event.nativeEvent.changedTouches[0];
     const pageX = touch?.pageX ?? event.nativeEvent.pageX;
+    if (!Number.isFinite(pageX)) return;
     const ratio = clamp((pageX - layout.current.pageX) / layout.current.width, 0, 1);
     propsRef.current.onChange(normalizeDegrees(-180 + ratio * 360));
+  };
+  const end = () => {
+    if (!active.current) return;
+    active.current = false;
+    propsRef.current.onEnd();
   };
   const responder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: update,
+        onPanResponderGrant: (event) => {
+          active.current = true;
+          update(event);
+        },
         onPanResponderMove: update,
-        onPanResponderRelease: () => propsRef.current.onEnd(),
-        onPanResponderTerminate: () => propsRef.current.onEnd(),
+        onPanResponderRelease: end,
+        onPanResponderTerminate: end,
       }),
     [],
   );
@@ -167,12 +205,7 @@ function AngleScrubber(props: { value: number; onChange: (value: number) => void
       ref={trackRef}
       collapsable={false}
       {...responder.panHandlers}
-      onLayout={({ nativeEvent }) => {
-        layout.current.width = Math.max(1, nativeEvent.layout.width);
-        trackRef.current?.measureInWindow((pageX, _pageY, width) => {
-          layout.current = { pageX, width: Math.max(1, width) };
-        });
-      }}
+      onLayout={measureLayout}
       style={{ height: 64, justifyContent: 'center' }}>
       <View pointerEvents="none" style={{ height: 10, borderRadius: 5, backgroundColor: chrome.fill }}>
         <View style={{ width: `${percent}%`, height: '100%', borderRadius: 5, backgroundColor: chrome.accent }} />
