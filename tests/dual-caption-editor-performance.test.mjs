@@ -156,9 +156,12 @@ function mount(overrides = {}, options = {}) {
     } while (changed);
   }
   function all(predicate, node = tree) {
-    if (Array.isArray(node)) return node.flatMap((child) => all(predicate, child));
-    if (!node || typeof node !== 'object') return [];
-    return [...(predicate(node) ? [node] : []), ...all(predicate, node.props?.children ?? null)];
+    const walk = (value) => {
+      if (Array.isArray(value)) return value.flatMap(walk);
+      if (!value || typeof value !== 'object') return [];
+      return [...(predicate(value) ? [value] : []), ...walk(value.props?.children)];
+    };
+    return walk(node);
   }
   function text(node) {
     if (Array.isArray(node)) return node.map(text).join('');
