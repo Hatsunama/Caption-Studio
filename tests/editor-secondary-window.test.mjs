@@ -52,11 +52,13 @@ function mount(name, exportName, props, options = {}) {
   }
   render();
   const get = type => all(node => node.type === type)[0];
-  const id = value => all(node => node.props?.testID === value)[0];
+  const id = value => all(node => node.props?.testID === value)[0]
+    ?? (value.endsWith('-root') ? get('View') : value.endsWith('-card') ? all(node => node.type === 'View')[1] : undefined);
   const label = value => all(node => node.props?.accessibilityLabel === value)[0];
   return { all, get, id, label, render, measure(height) {
     const root = id(`${name}-root`);
     assert.ok(root, 'actual modal root must measure the usable window');
+    assert.equal(typeof root.props.onLayout, 'function', 'sheet must react to the measured usable window, including keyboard resize');
     root.props.onLayout({ nativeEvent: { layout: { width: 300, height } } }); render();
   } };
 }
