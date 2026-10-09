@@ -12,7 +12,7 @@ const sources = Object.fromEntries(['font-browser', 'font-color-picker'].map((na
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } },
 ).outputText]));
 
-function mount(name, exportName, props) {
+function mount(name, exportName, props, options = {}) {
   const slots = [];
   let cursor = 0, tree, effects = [];
   const react = {
@@ -24,7 +24,9 @@ function mount(name, exportName, props) {
     useMemo: (fn) => fn(),
     useEffect: (fn) => { effects.push(fn); },
   };
-  const native = Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'FlatList', 'Modal', 'ScrollView'].map((key) => [key, key]));
+  const native = Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'FlatList', 'Modal', 'ScrollView', 'KeyboardAvoidingView'].map((key) => [key, key]));
+  native.useWindowDimensions = () => options.window ?? { width: 390, height: 844 };
+  native.Platform = { OS: options.platform ?? 'android' };
   native.Alert = { alert() {} };
   const exports = {};
   runInNewContext(sources[name], {
@@ -33,6 +35,7 @@ function mount(name, exportName, props) {
       if (id === 'react') return react;
       if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
       if (id === 'react-native') return native;
+      if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 0, right: 0 } };
       if (id.endsWith('ui-theme')) return { chrome: { radius: {} } };
       if (id.endsWith('font-style-choice')) return { fontChoicePatch };
       if (id.endsWith('font-catalog')) return { BUILT_IN_FONT_CHOICES: [solid, dual], TWO_COLOR_FONT_COUNT: 1 };
@@ -56,6 +59,40 @@ function mount(name, exportName, props) {
   render();
   return { render, all, get: (type) => all((node) => node.type === type)[0] };
 }
+
+test('a measured 300dp short font root leaves secondary controls in scrollable results', () => {
+  const h = mount('font-browser', 'FontBrowser', { visible: true, previewText: 'Text', onClose() {}, onSelect() {} });
+  const root = h.all((node) => node.props?.testID === 'font-browser-root')[0];
+  assert.ok(root, 'measure the modal root rather than infer device orientation');
+  root.props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }); h.render();
+  const toggle = h.all((node) => node.props?.accessibilityLabel === 'Font filters and import')[0];
+  assert.ok(toggle); assert.equal(toggle.props.accessibilityState.expanded, false);
+  assert.ok(toggle.props.style.minHeight >= 44);
+  assert.equal(h.get('FlatList').props.ListHeaderComponent, null);
+  toggle.props.onPress(); h.render();
+  assert.ok(h.get('FlatList').props.ListHeaderComponent, 'expanded controls scroll with results');
+  assert.equal(h.get('FlatList').props.keyboardShouldPersistTaps, 'handled');
+  assert.ok(h.get('KeyboardAvoidingView'));
+  h.get('TextInput').props.onChangeText('Dual'); h.render();
+  h.get('FlatList').props.renderItem({ item: dual }).props.onPress(); h.render();
+  h.get('Modal').props.onRequestClose(); h.render();
+  assert.equal(h.get('TextInput').props.value, 'Dual');
+  assert.equal(h.get('FlatList').props.data[0], dual);
+});
+
+test('picker respects keyboard and lateral safe areas while Back and Save stay outside its scrolling body', () => {
+  const h = mount('font-color-picker', 'FontColorPicker', { choice: dual, previewText: 'Text', onBack() {}, onSave() {} },
+    { window: { width: 300, height: 230 }, insets: { top: 0, bottom: 12, left: 20, right: 10 } });
+  const root = h.get('KeyboardAvoidingView'); assert.ok(root);
+  assert.equal(root.props.behavior, 'height');
+  assert.ok(root.props.style.paddingLeft >= 20); assert.ok(root.props.style.paddingRight >= 10);
+  assert.equal(h.get('ScrollView').props.style.flexShrink, 1);
+  assert.equal(h.all((node) => node.props?.accessibilityRole === 'button', h.get('ScrollView')).length, 0);
+  assert.equal(h.all((node) => node.props?.accessibilityRole === 'button').length, 2);
+  h.get('ScrollView').props.onLayout({ nativeEvent: { layout: { width: 180, height: 90 } } }); h.render();
+  assert.equal(h.all((node) => typeof node.props?.onChange === 'function')[0].props.size, 180,
+    'wheel gesture geometry follows the measured usable body width');
+});
 
 test('font taps draft only; native and route Back preserve the mounted font list and search', () => {
   const commits = [];
