@@ -70,3 +70,49 @@ test('moving a whole timeline item never snaps to the playhead', () => {
   gesture.move(105, 0);
   assert.deepEqual(changes.at(-1), { edge: 'move', startMs: 1_525, endMs: 2_525 });
 });
+
+test('cancelling an activated trim discards its draft without committing on later release', () => {
+  const changes = [];
+  let commits = 0;
+  let cancellations = 0;
+  const gesture = createTimelineTimingGesture();
+  gesture.begin(owner(changes, {
+    onEnd() { commits += 1; },
+    onCancel() { cancellations += 1; },
+  }), 'end');
+  gesture.move(60, 0);
+  gesture.cancel();
+  gesture.move(120, 0);
+  gesture.finish();
+  gesture.cancel();
+  assert.equal(changes.length, 1);
+  assert.equal(cancellations, 1);
+  assert.equal(commits, 0);
+});
+
+test('cancelling a tap does not start or end a history transaction', () => {
+  const calls = [];
+  const gesture = createTimelineTimingGesture();
+  gesture.begin(owner([], {
+    onChangeStart() { calls.push('start'); },
+    onEnd() { calls.push('end'); },
+    onCancel() { calls.push('cancel'); },
+  }), 'move');
+  gesture.cancel();
+  gesture.move(90, 0);
+  gesture.finish();
+  assert.deepEqual(calls, []);
+});
+
+test('cancelling live item timing closes its existing transaction only once', () => {
+  const calls = [];
+  const gesture = createTimelineTimingGesture();
+  gesture.begin(owner([], {
+    onChangeStart() { calls.push('start'); },
+    onEnd() { calls.push('end'); },
+  }), 'move');
+  gesture.move(90, 0);
+  gesture.cancel();
+  gesture.finish();
+  assert.deepEqual(calls, ['start', 'end']);
+});

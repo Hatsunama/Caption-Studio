@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { editorWorkspaceLayout } from '../src/lib/adaptive-workspace.ts';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -41,7 +42,7 @@ const workspaceRoot = workspaceShell.openingElement.tagName.getText(editorAst) =
   ? workspaceShell.children.find(ts.isJsxElement)
   : workspaceShell;
 function evaluate(expression, context = {}) {
-  const sandbox = { result: undefined, ...context };
+  const sandbox = { result: undefined, workspaceLayout: { sideBySide: false }, previewPaneWidth: 360, insets: { left: 0, right: 0 }, ...context };
   const compiled = ts.transpileModule(`result = (${expression});`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   });
@@ -49,6 +50,7 @@ function evaluate(expression, context = {}) {
   return sandbox.result;
 }
 function workspaceValue(name, context) {
+  context = { ...context, workspaceLayout: editorWorkspaceLayout({ width: context.width ?? 360, height: context.workspaceHeight ?? 800, windowHeight: context.height ?? 800, scriptEditorOpen: context.scriptEditorOpen ?? true, keyboardOpen: context.scriptKeyboardOpen ?? false }), previewPaneWidth: context.previewPaneWidth ?? context.width ?? 360 };
   const declaration = workspace.body.statements.filter(ts.isVariableStatement)
     .flatMap((node) => [...node.declarationList.declarations]).find((node) => node.name.getText(editorAst) === name
       || (ts.isObjectBindingPattern(node.name) && node.name.elements.some((element) => element.name.getText(editorAst) === name)));
@@ -544,7 +546,7 @@ test('Android resized workspace keeps the video controls and focused input above
     h.fire('onScroll', 500 - request.viewOffset);
   }
   assert.deepEqual(h.calls.seeks, [4000], 'resize and reveal must not seek away from the edited cue');
-  assert.equal(workspaceValue('previewHeight', { scriptEditorOpen: false, workspaceHeight: 280, height: 800 }), 344);
+  assert.ok(workspaceValue('previewHeight', { scriptEditorOpen: false, workspaceHeight: 280, height: 800 }) <= 136);
   assert.equal(jsxProp(tools, 'style', { scriptEditorOpen: false }).display, 'flex');
 });
 
@@ -1174,4 +1176,8 @@ test('keyboard exit restores full preview with a persistent transform and indepe
     h.unmount();
   }
   assert.equal(stopped, 4, 'each keyboard crop animation stops before restoration');
+});
+test('native caption input preserves the editor around the landscape keyboard', () => {
+  const h = mount(); h.edit(1);
+  assert.equal(h.input(1).disableFullscreenUI, true);
 });

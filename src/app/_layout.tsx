@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useWindowDimensions } from 'react-native';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router/stack';
 import { setVideoCacheSizeAsync } from 'expo-video';
@@ -10,6 +11,8 @@ import { loadFontLibrary } from '@/services/font-storage';
 import { cleanupObsoletePickerCache } from '@/services/storage-policy';
 
 export default function RootLayout() {
+  const window = useWindowDimensions();
+  const wideWindow = window.width >= 640 && window.width > window.height * 1.2;
   const [fontsLoaded, fontError] = useFonts(FONT_ASSETS);
   const [importedFontsLoaded, setImportedFontsLoaded] = useState(false);
 
@@ -42,6 +45,7 @@ export default function RootLayout() {
         name="editor"
         options={{
           title: 'Editor',
+          headerShown: !wideWindow,
           headerBackButtonDisplayMode: 'minimal',
         }}
       />

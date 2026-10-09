@@ -1,3 +1,5 @@
+import { AdaptiveDialog } from '@/components/editor/adaptive-dialog';
+import { editorWorkspaceLayout } from '@/lib/adaptive-workspace';
 import { projectTimelineDuration } from '@/lib/project-timeline';
 import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
@@ -241,6 +243,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
   const [workspaceHeight, setWorkspaceHeight] = useState(height);
+  const [workspaceWidth, setWorkspaceWidth] = useState(width);
   const [project, renderProject] = useState(initialProject);
   const [editorSession] = useState(() => createEditorSession(
     initialProject, renderProject, checkpointEditorProject,
@@ -666,15 +669,16 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       : []),
     [currentMs, translationTimelineTracks],
   );
-  // Script editing shares the actual resized root with the keyboard. The
-  // normal preview minimum would consume nearly all of a short Android window.
-  const previewHeight = scriptEditorOpen
-    ? scriptKeyboardOpen
-      // Reserve the 44px header and at least 100px of list (two 23px
-      // caption lines plus row insets), even in a short resized window.
-      ? Math.max(0, Math.min(180, workspaceHeight * 0.4, workspaceHeight - 145))
-      : Math.min(500, workspaceHeight * 0.4)
-    : Math.min(Math.max(280, height * 0.43), 500);
+  const workspaceLayout = editorWorkspaceLayout({
+    width: Math.max(0, workspaceWidth - insets.left - insets.right),
+    height: workspaceHeight,
+    windowHeight: height,
+    scriptEditorOpen,
+    keyboardOpen: scriptKeyboardOpen,
+    bottomInset: insets.bottom,
+  });
+  const previewHeight = workspaceLayout.previewHeight;
+  const previewPaneWidth = workspaceLayout.previewWidth;
   const scriptCropActive = scriptEditorOpen && scriptKeyboardOpen;
   const cropCaptionStyle = displayCaption ? resolveCaptionStyle(project.projectStyle, displayCaption) : undefined;
   const [lastCropPosition, setLastCropPosition] = useState(project.projectStyle.position);
@@ -686,7 +690,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   }
   const scriptCrop = captionPreviewCrop(
     project.canvas.aspectWidth / project.canvas.aspectHeight,
-    width - 80, // 24px outer inset plus a separate 48px transport and 8px gap.
+    previewPaneWidth - 80, // Canvas inset plus separate transport and gap.
     previewHeight - 8,
     cropCaptionStyle?.position ?? lastCropPosition,
   );
@@ -707,7 +711,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   }, [cropOffset, scriptCropActive, scriptCrop.x, scriptCrop.y]);
   const canvasSize = scriptCropActive ? scriptCrop.canvas : fitRect(
     project.canvas.aspectWidth / project.canvas.aspectHeight,
-    width - 24,
+    previewPaneWidth - 24,
     previewHeight - 8,
   );
   const canvasWidth = canvasSize.width;
@@ -1916,18 +1920,25 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     <PersistedHorizontalScrollScope id={project.id}>
     <View
       pointerEvents={finishingSession ? 'none' : 'auto'}
-      onLayout={(event) => setWorkspaceHeight(event.nativeEvent.layout.height)}
-      style={{ flex: 1, backgroundColor: palette.background }}>
+      onLayout={(event) => {
+        setWorkspaceHeight(event.nativeEvent.layout.height);
+        setWorkspaceWidth(event.nativeEvent.layout.width ?? width);
+      }}
+      style={{ flex: 1, minHeight: 0, flexDirection: workspaceLayout.sideBySide ? 'row' : 'column', paddingLeft: insets.left, paddingRight: insets.right, backgroundColor: palette.background }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Clear editor selection"
         onPress={(event) => {
           if (event.target === event.currentTarget) clearEditorSelection();
         }}
-        style={{ height: previewHeight, flexShrink: 0, overflow: scriptEditorOpen ? 'hidden' : 'visible', alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
+        style={{ width: previewPaneWidth, height: previewHeight, flexShrink: 0, overflow: scriptEditorOpen ? 'hidden' : 'visible', alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
+        {workspaceLayout.sideBySide ? <Pressable accessibilityRole="button" accessibilityLabel="Back to previous editor step" onPress={() => navigation.goBack()}
+          style={{ position: 'absolute', top: 8, left: 8, minWidth: 48, minHeight: 48, zIndex: 30, alignItems: 'center', justifyContent: 'center', borderRadius: 24, backgroundColor: 'rgba(7,9,12,0.76)' }}>
+          <Text style={{ color: palette.text, fontSize: 16 }}>Back</Text>
+        </Pressable> : null}
         <View
           style={{
-            width: scriptCropActive ? width - 24 : canvasWidth,
+            width: scriptCropActive ? previewPaneWidth - 24 : canvasWidth,
             height: scriptCropActive ? scriptCrop.viewport.height : canvasHeight,
             overflow: 'hidden',
             borderRadius: 20,
@@ -2093,7 +2104,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       </Pressable>
 
       {transport.sourceFailure ? (
-        <View accessibilityLiveRegion="polite" style={{ padding: 12, gap: 6, backgroundColor: palette.surfaceRaised }}>
+        <View accessibilityLiveRegion="polite" style={{ padding: 12, gap: 6, backgroundColor: palette.surfaceRaised, ...(workspaceLayout.sideBySide ? { position: 'absolute' as const, left: insets.left, bottom: insets.bottom, width: previewPaneWidth, zIndex: 31 } : {}) }}>
           <Text style={{ color: palette.text, fontWeight: '800' }}>
             Video unavailable: {transport.sourceFailure.displayName}
           </Text>
@@ -2111,7 +2122,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         </View>
       ) : null}
 
-      <View style={{ flex: 1, display: scriptEditorOpen ? 'none' : 'flex' }}>
+      <View style={{ flex: 1, minWidth: 0, minHeight: 0, display: scriptEditorOpen ? 'none' : 'flex' }}>
         <ScrollView
           ref={editorScrollRef}
           onLayout={scriptExit.onScrollLayout}
@@ -2182,6 +2193,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         /> : null}
         <View onLayout={scriptExit.onTimelineLayout}>
         <LayerTimeline
+          availableHeight={workspaceLayout.sideBySide ? Math.max(112, workspaceHeight - 104 - insets.bottom) : workspaceHeight < 480 ? 112 : undefined}
           projectId={project.id}
           durationMs={timelineDurationMs}
           clips={project.clips}
@@ -2594,8 +2606,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         <OperationOverlay visible onRequestClose={() => {
           if (exportKind === 'video') void cancelProjectVideoExport();
         }}>
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: 'rgba(0,0,0,0.78)' }}>
-            <View style={{ width: '100%', maxWidth: 380, gap: 14, padding: 22, borderRadius: 20, backgroundColor: palette.surfaceRaised }}>
+          <AdaptiveDialog backgroundColor="rgba(0,0,0,0.78)" cardStyle={{ backgroundColor: palette.surfaceRaised }}
+            footer={exportKind === 'video' ? <Pressable accessibilityRole="button" accessibilityLabel="Cancel video export"
+              onPress={() => { void cancelProjectVideoExport(); }} style={{ minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#2A3038' }}>
+              <Text style={{ color: '#FFBBC8', fontWeight: '800' }}>Cancel export</Text>
+            </Pressable> : undefined}>
               <ActivityIndicator color={palette.accent} size="large" />
               <Text style={{ color: palette.text, textAlign: 'center', fontSize: 18, fontWeight: '900' }}>
                 {exportKind === 'video' ? 'Exporting on this phone' : 'Preparing subtitle file'}
@@ -2611,17 +2626,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   {exportProgressPollError ? <Text style={{ color: '#FFBBC8', textAlign: 'center' }}>Progress unavailable: {exportProgressPollError}</Text> : null}
                 </View>
               ) : null}
-              {exportKind === 'video' ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel video export"
-                  onPress={() => { void cancelProjectVideoExport(); }}
-                  style={{ minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#2A3038' }}>
-                  <Text style={{ color: '#FFBBC8', fontWeight: '800' }}>Cancel export</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          </View>
+          </AdaptiveDialog>
         </OperationOverlay>
       ) : null}
     </View>
@@ -2657,7 +2662,7 @@ function TransitionTimingSheet(props: { visible: boolean; durationMs: number; on
   return (
     <Modal visible={props.visible} transparent animationType="slide" onRequestClose={props.onClose}>
       <Pressable onPress={props.onClose} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.58)' }}>
-        <Pressable onPress={(event) => event.stopPropagation()} style={{ gap: 12, padding: 18, paddingBottom: 34, borderTopLeftRadius: chrome.radius.xl, borderTopRightRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
+        <AdaptiveDialog sheet padding={18} gap={12} backgroundColor="transparent" footer={<Action label="Cancel" onPress={props.onClose} />}>
           <Text style={{ color: chrome.text, fontSize: 20, fontWeight: '800' }}>Transition timing</Text>
           <Text style={{ color: chrome.muted, fontSize: 12, lineHeight: 17 }}>Choose how long the selected transition plays.</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -2667,8 +2672,7 @@ function TransitionTimingSheet(props: { visible: boolean; durationMs: number; on
               </Pressable>
             ))}
           </View>
-          <Action label="Cancel" onPress={props.onClose} />
-        </Pressable>
+        </AdaptiveDialog>
       </Pressable>
     </Modal>
   );
@@ -2691,15 +2695,13 @@ function ExtractAudioBusyOverlay(props: { visible: boolean }) {
   if (!props.visible) return null;
   return (
     <OperationOverlay visible>
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: chrome.overlay }}>
-        <View style={{ width: '100%', maxWidth: 360, alignItems: 'center', gap: 14, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
+      <AdaptiveDialog maxWidth={360} padding={24} cardStyle={{ alignItems: 'stretch' }}>
           <ActivityIndicator size="large" color={chrome.accent} />
           <Text style={{ color: chrome.text, fontSize: 20, fontWeight: '700', textAlign: 'center' }}>Preparing audio locally</Text>
           <Text style={{ color: chrome.muted, fontSize: 15, lineHeight: 21, textAlign: 'center' }}>
             Extracting, validating, and building the waveform on this phone. Playback starts when the audio is ready. Keep Caption Studio open.
           </Text>
-        </View>
-      </View>
+      </AdaptiveDialog>
     </OperationOverlay>
   );
 }
@@ -2709,7 +2711,9 @@ function ToolbarItem(props: { label: string; active?: boolean; disabled?: boolea
     <Pressable
       disabled={props.disabled}
       onPress={props.onPress}
-      style={{ flex: 1, alignItems: 'center', gap: 4, opacity: props.disabled ? 0.35 : 1 }}>
+      accessibilityRole="button"
+      accessibilityState={{ selected: Boolean(props.active), disabled: Boolean(props.disabled) }}
+      style={{ flex: 1, minHeight: 48, justifyContent: 'center', alignItems: 'center', gap: 4, opacity: props.disabled ? 0.35 : 1 }}>
       <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: props.active ? palette.accent : 'transparent' }} />
       <Text adjustsFontSizeToFit minimumFontScale={0.68} numberOfLines={1} style={{ flexShrink: 1, color: props.active ? palette.accent : palette.text, fontSize: 10, fontWeight: '600' }}>{props.label}</Text>
     </Pressable>
@@ -2725,8 +2729,11 @@ function ProgressOverlay(props: {
   const percent = displayTranscriptionProgress(props.progress.progress);
   return (
     <OperationOverlay visible onRequestClose={() => { if (!props.cancelling) props.onCancel(); }}>
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 26, backgroundColor: 'rgba(0,0,0,0.82)' }}>
-        <View style={{ width: '100%', maxWidth: 380, gap: 16, padding: 24, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
+      <AdaptiveDialog padding={24} gap={16} framePadding={26} backgroundColor="rgba(0,0,0,0.82)"
+        footer={<Pressable accessibilityRole="button" accessibilityLabel="Cancel caption generation" disabled={props.cancelling}
+          onPress={props.onCancel} style={{ minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: chrome.radius.md, backgroundColor: chrome.fill, opacity: props.cancelling ? 0.55 : 1 }}>
+          <Text style={{ color: '#FFBBC8', fontWeight: '800' }}>{props.cancelling ? 'Stopping…' : 'Cancel'}</Text>
+        </Pressable>}>
           <ActivityIndicator color={palette.accent} size="large" />
           <Text style={{ color: palette.text, textAlign: 'center', fontSize: 20, fontWeight: '800' }}>
             {stageTitle(props.progress.stage)}
@@ -2748,18 +2755,7 @@ function ProgressOverlay(props: {
               Turn off battery saver and keep Caption Studio open on this screen until this finishes
             </Text>
           ) : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Cancel caption generation"
-            disabled={props.cancelling}
-            onPress={props.onCancel}
-            style={{ minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: chrome.radius.md, backgroundColor: chrome.fill, opacity: props.cancelling ? 0.55 : 1 }}>
-            <Text style={{ color: '#FFBBC8', fontWeight: '800' }}>
-              {props.cancelling ? 'Stopping…' : 'Cancel'}
-            </Text>
-          </Pressable>
-        </View>
-      </View>
+      </AdaptiveDialog>
     </OperationOverlay>
   );
 }
@@ -2790,26 +2786,25 @@ function EditTextLayerModal(props: {
   }, [onBackRequestChange, requestClose, visible]);
   return (
     <Modal visible={props.visible} transparent animationType="fade" onRequestClose={requestClose}>
-      <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.72)' }}>
-        <View style={{ gap: 14, padding: 20, borderRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
+      <AdaptiveDialog keyboard padding={20} framePadding={24} backgroundColor="rgba(0,0,0,0.72)"
+        footer={<View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end' }}>
+          <Pressable accessibilityRole="button" onPress={requestClose} style={{ minHeight: 48, justifyContent: 'center', padding: 12 }}>
+            <Text style={{ color: palette.muted }}>Cancel</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={props.onSave} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 18, paddingVertical: 12, borderRadius: chrome.radius.pill, backgroundColor: palette.accent }}>
+            <Text style={{ color: chrome.accentInk, fontWeight: '700' }}>Save</Text>
+          </Pressable>
+        </View>}>
           <Text style={{ color: palette.text, fontSize: 20, fontWeight: '800' }}>Edit text layer</Text>
           <TextInput
             autoFocus
             multiline
+            disableFullscreenUI
             value={props.value}
             onChangeText={props.onChange}
             style={{ minHeight: 110, padding: 14, borderRadius: chrome.radius.md, color: palette.text, backgroundColor: chrome.surfaceRaised, textAlignVertical: 'top' }}
           />
-          <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end' }}>
-            <Pressable onPress={requestClose} style={{ padding: 12 }}>
-              <Text style={{ color: palette.muted }}>Cancel</Text>
-            </Pressable>
-            <Pressable onPress={props.onSave} style={{ paddingHorizontal: 18, paddingVertical: 12, borderRadius: chrome.radius.pill, backgroundColor: palette.accent }}>
-              <Text style={{ color: chrome.accentInk, fontWeight: '700' }}>Save</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
+      </AdaptiveDialog>
     </Modal>
   );
 }
@@ -2856,14 +2851,14 @@ function VoiceoverControls(props: {
   onClose: () => void;
 }) {
   return <View style={{ gap: 8, padding: 10, borderRadius: 18, backgroundColor: '#15191E', borderWidth: 1, borderColor: '#FF6D83' }}>
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-      <Text style={{ color: '#F7F8FA', fontSize: 11, fontWeight: '900' }}>VOICE-OVER · LIVE TIMELINE</Text>
-      <Pressable accessibilityRole="button" accessibilityLabel="Exit voice-over recording" onPress={props.onClose} style={{ minHeight: 42, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 12, backgroundColor: '#FFE7EC', borderWidth: 1, borderColor: '#FF4D6D' }}><Text style={{ color: '#B7153A', fontSize: 12, fontWeight: '900' }}>Exit voice-over</Text></Pressable>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+      <Text style={{ flexShrink: 1, color: '#F7F8FA', fontSize: 11, fontWeight: '900' }}>VOICE-OVER · LIVE TIMELINE</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Exit voice-over recording" onPress={props.onClose} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 12, backgroundColor: '#FFE7EC', borderWidth: 1, borderColor: '#FF4D6D' }}><Text style={{ color: '#B7153A', fontSize: 12, fontWeight: '900' }}>Exit voice-over</Text></Pressable>
     </View>
     <Text style={{ color: '#B7C2CC', fontSize: 11 }}>Record on the live second track. The video timeline remains available for scrubbing and positioning.</Text>
-    <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
-      <Pressable accessibilityRole="button" onPress={props.onTogglePlayback} style={{ minWidth: 96, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, backgroundColor: '#25313B' }}><Text style={{ color: '#FFFFFF', textAlign: 'center', fontSize: 12, fontWeight: '900' }}>{props.playing ? 'Pause video' : 'Play video'}</Text></Pressable>
-      <Pressable accessibilityRole="button" disabled={props.saving} onPress={props.recording ? props.onStop : props.onStart} style={{ minWidth: 178, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: props.recording ? '#FFFFFF' : '#FF4D6D', opacity: props.saving ? 0.6 : 1 }}><Text style={{ color: props.recording ? '#D71345' : '#FFFFFF', textAlign: 'center', fontSize: 12, fontWeight: '900' }}>{props.saving ? 'Saving take…' : props.recording ? 'Stop, add take, and exit' : 'Start recording'}</Text></Pressable>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 }}>
+      <Pressable accessibilityRole="button" onPress={props.onTogglePlayback} style={{ minHeight: 48, minWidth: 96, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, backgroundColor: '#25313B' }}><Text style={{ color: '#FFFFFF', textAlign: 'center', fontSize: 12, fontWeight: '900' }}>{props.playing ? 'Pause video' : 'Play video'}</Text></Pressable>
+      <Pressable accessibilityRole="button" disabled={props.saving} onPress={props.recording ? props.onStop : props.onStart} style={{ minHeight: 48, minWidth: 178, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: props.recording ? '#FFFFFF' : '#FF4D6D', opacity: props.saving ? 0.6 : 1 }}><Text style={{ color: props.recording ? '#D71345' : '#FFFFFF', textAlign: 'center', fontSize: 12, fontWeight: '900' }}>{props.saving ? 'Saving take…' : props.recording ? 'Stop, add take, and exit' : 'Start recording'}</Text></Pressable>
     </View>
   </View>;
 }

@@ -26,6 +26,73 @@ const opposite = (value, size, mode) => {
   return [origin.x - sign * length * axis[0] / 2, origin.y - sign * length * axis[1] / 2];
 };
 
+for (const mode of ['corner', 'pinch', 'left', 'right', 'top', 'bottom']) {
+  test(`repeated ${mode} collapse retains native float geometry across windows`, () => {
+    const results = sizes.map(size => {
+      let current = base({ scaleX: .6, scaleY: .4 });
+      for (let iteration = 0; iteration < 8; iteration++) {
+        const initial = current;
+        const c = center(initial, size);
+        const uniform = mode === 'corner' || mode === 'pinch';
+        const horizontal = mode === 'left' || mode === 'right';
+        const sign = mode === 'left' || mode === 'top' ? -1 : 1;
+        const start = mode === 'pinch' ? [point(c.x - 20, c.y), point(c.x + 20, c.y, 2)] : [point(c.x + 20, c.y)];
+        const target = mode === 'pinch' ? [point(c.x, c.y), point(c.x, c.y, 2)]
+          : mode === 'corner' ? [c]
+          : [point(start[0].x - (horizontal ? sign * 1e5 : 0), start[0].y - (horizontal ? 0 : sign * 1e5))];
+        const gesture = createLayerGesture(initial);
+        assert.equal(gesture.begin(mode === 'pinch' ? 'move' : mode, start, size), true);
+        current = gesture.update(target);
+        finite(current);
+        for (const [key, value] of Object.entries({ scale: current.scale, scaleX: current.scaleX, scaleY: current.scaleY, ...layerExtent(current) })) {
+          const native = Math.fround(value);
+          assert.ok(Number.isFinite(native) && native > 0, `${mode} iteration ${iteration + 1}: native ${key}=${native}`);
+        }
+        if (uniform) {
+          near(current.scaleX, initial.scaleX);
+          near(current.scaleY, initial.scaleY);
+          near(layerExtent(current).width / layerExtent(current).height, .3 / .024);
+        } else {
+          near(current.scale, initial.scale);
+          near(current[horizontal ? 'scaleY' : 'scaleX'], initial[horizontal ? 'scaleY' : 'scaleX']);
+          opposite(current, size, mode).forEach((coordinate, index) => near(coordinate, opposite(initial, size, mode)[index]));
+        }
+        assert.equal(gesture.end(), current);
+      }
+      near(mode === 'corner' || mode === 'pinch' ? Math.min(...Object.values(layerExtent(current)))
+        : layerExtent(current)[mode === 'left' || mode === 'right' ? 'width' : 'height'], .001);
+      return current;
+    });
+    assert.deepEqual(shape(results[0]), shape(results[1]));
+    near(results[0].position.x, results[1].position.x);
+    near(results[0].position.y, results[1].position.y);
+  });
+}
+
+test('persisted subminimum geometry retains no-op and move transforms when windows shrink', () => {
+  for (const size of sizes) for (const mode of ['move', 'corner', 'pinch', 'left', 'right', 'top', 'bottom']) {
+    const initial = base({ scale: .0001, scaleX: .6, scaleY: .4 });
+    const c = center(initial, size);
+    const start = mode === 'pinch' ? [point(c.x - 20, c.y), point(c.x + 20, c.y, 2)] : [point(c.x + 20, c.y)];
+    const gesture = createLayerGesture(initial);
+    gesture.begin(mode === 'pinch' ? 'move' : mode, start, size);
+    assert.deepEqual(gesture.update(start), initial);
+    if (mode === 'move') {
+      const moved = gesture.update([point(start[0].x + .02 * size.width, start[0].y)]);
+      assert.deepEqual(shape(moved), shape(initial));
+      near(moved.position.x, initial.position.x + .02);
+    } else {
+      const horizontal = mode === 'left' || mode === 'right';
+      const sign = mode === 'left' || mode === 'top' ? -1 : 1;
+      const target = mode === 'pinch' ? [point(c.x, c.y), point(c.x, c.y, 2)]
+        : mode === 'corner' ? [c]
+        : [point(start[0].x - (horizontal ? sign * 1e5 : 0), start[0].y - (horizontal ? 0 : sign * 1e5))];
+      assert.deepEqual(gesture.update(target), initial);
+    }
+    gesture.end();
+  }
+});
+
 for (const delta of [0, .02]) {
   test(`actual move ${delta}: window size cannot resize saved content`, () => {
     const results = sizes.map(size => {
@@ -85,7 +152,7 @@ for (const mode of ['corner', 'pinch']) {
         const gesture = createLayerGesture(initial);
         gesture.begin(mode === 'pinch' ? 'move' : mode, start, size);
         const next = gesture.update(target);
-        near(next.scale, Math.min(ratio, 10 / (.5 * .6)));
+        near(next.scale, Math.min(Math.max(ratio, .001 / (.06 * .4)), 10 / (.5 * .6)));
         near(next.scaleX, initial.scaleX);
         near(next.scaleY, initial.scaleY);
         near(next.position.x, .5);

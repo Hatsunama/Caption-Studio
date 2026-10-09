@@ -232,6 +232,51 @@ test('wide roots and lateral safe insets select compact chrome without losing re
   assert.equal(h.calls.retry, 1); assert.equal(h.calls.dismiss, 1);
 });
 
+for (const platform of ['android', 'ios']) {
+  test(`${platform} keyboard resize respects measured dual roots without losing drafts or portrait header`, async () => {
+    let requestBack;
+    const h = mount({ onBackRequestChange: (request) => { requestBack = request; } }, { platform });
+    await h.flush();
+    const root = () => h.all((node) => node.props.testID === 'dual-caption-root')[0];
+    const list = () => h.all((node) => node.type === 'FlatList')[0];
+    const actions = () => h.all((node) => node.props.accessibilityLabel === 'Dual subtitle actions and status');
+    const subtitle = () => h.all((node) => node.type === 'Text'
+      && /independent text and timing/.test(String(node.props.children)));
+    assert.equal(actions().length, 0); assert.equal(subtitle().length, 1);
+    const sourceIdentity = h.input(0).identity, translationIdentity = h.input(0, 'Chinese').identity;
+    h.edit(0, 'Inline source'); h.edit(0, 'Inline translation', 'Chinese');
+    h.act(() => root().props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }));
+    const avoidance = h.all((node) => node.type === 'KeyboardAvoidingView');
+    assert.equal(avoidance.length, 1);
+    assert.equal(avoidance[0].props.behavior, platform === 'ios' ? 'padding' : undefined);
+    assert.equal(subtitle().length, 0, 'measured short root overrides the tall window');
+    assert.ok(actions()[0].props.style.minHeight >= 44);
+    assert.ok(h.button('Close dual subtitle editor').props.style.minHeight >= 44);
+    assert.equal(h.input(0).props.disableFullscreenUI, true);
+    assert.equal(h.input(0, 'Chinese').props.disableFullscreenUI, true);
+    h.press('Dual subtitle actions and status'); assert.ok(list().props.ListHeaderComponent);
+    h.act(() => requestBack());
+    assert.equal(list().props.ListHeaderComponent, null, 'Back closes actions before discarding drafts');
+    assert.equal(h.calls.close, 0);
+    await h.advance(600);
+    assert.equal(h.calls.writes.at(-1)[3]['cue-0'].primaryText, 'Inline source');
+    assert.equal(h.calls.writes.at(-1)[3]['cue-0'].translatedText, 'Inline translation');
+    h.press('Save dual subtitle edits'); await h.flush();
+    assert.equal(h.calls.saves.length, 1);
+    assert.equal(h.input(0).props.value, 'Inline source');
+    assert.equal(h.input(0, 'Chinese').props.value, 'Inline translation');
+    assert.ok(list().props.ListHeaderComponent, 'failed save stays accessible in the scrolling status header');
+    h.act(() => requestBack()); h.choose('Keep editing');
+    h.act(() => root().props.onLayout({ nativeEvent: { layout: { width: 390, height: 844 } } }));
+    assert.equal(actions().length, 0); assert.equal(subtitle().length, 1);
+    assert.equal(h.input(0).identity, sourceIdentity);
+    assert.equal(h.input(0, 'Chinese').identity, translationIdentity);
+    assert.equal(h.input(0).props.value, 'Inline source');
+    assert.equal(h.input(0, 'Chinese').props.value, 'Inline translation');
+    assert.equal(h.calls.close, 0);
+  });
+}
+
 test('mounts a bounded input window for 10000 caption pairs', async () => {
   const h = mount({ pairs: pairs(10000) }); await h.flush();
   const inputs = h.all((node) => node.type === 'TextInput');

@@ -14,12 +14,15 @@ const sources = Object.fromEntries(['font-browser', 'font-color-picker'].map((na
 
 function mount(name, exportName, props, options = {}) {
   const slots = [];
+  const childSlots = new Map();
+  let activeSlots = slots;
   let cursor = 0, tree, effects = [];
   const react = {
     useState(initial) {
       const index = cursor++;
-      if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
-      return [slots[index], (next) => { slots[index] = typeof next === 'function' ? next(slots[index]) : next; }];
+      const state = activeSlots;
+      if (!(index in state)) state[index] = typeof initial === 'function' ? initial() : initial;
+      return [state[index], (next) => { state[index] = typeof next === 'function' ? next(state[index]) : next; }];
     },
     useMemo: (fn) => fn(),
     useEffect: (fn) => { effects.push(fn); },
@@ -28,8 +31,9 @@ function mount(name, exportName, props, options = {}) {
   native.useWindowDimensions = () => options.window ?? { width: 390, height: 844 };
   native.Platform = { OS: options.platform ?? 'android' };
   native.Alert = { alert() {} };
-  const exports = {};
-  runInNewContext(sources[name], {
+  function load(moduleName) {
+    const exports = {};
+    runInNewContext(sources[moduleName], {
     exports,
     require: (id) => {
       if (id === 'react') return react;
@@ -39,16 +43,34 @@ function mount(name, exportName, props, options = {}) {
       if (id.endsWith('ui-theme')) return { chrome: { radius: {} } };
       if (id.endsWith('font-style-choice')) return { fontChoicePatch };
       if (id.endsWith('font-catalog')) return { BUILT_IN_FONT_CHOICES: [solid, dual], TWO_COLOR_FONT_COUNT: 1 };
-      if (id.endsWith('font-color-picker')) return { FontColorPicker: 'FontColorPicker' };
+      if (id.endsWith('font-color-picker')) return options.resolveChildren ? load('font-color-picker') : { FontColorPicker: 'FontColorPicker' };
       if (id.endsWith('font-storage')) return {
         loadFontLibrary: () => new Promise(() => {}), saveRecentFonts() {}, saveFontFavorites() {},
       };
       throw new Error(`Unexpected import: ${id}`);
     },
-  });
+    });
+    return exports;
+  }
+  const exports = load(name);
+  function expand(node, path = 'root') {
+    if (Array.isArray(node)) return node.map((child, index) => expand(child, `${path}/${index}`));
+    if (!node || typeof node !== 'object') return node;
+    if (typeof node.type === 'function') {
+      const id = `${path}:${node.type.name}:${node.key ?? ''}`;
+      if (!childSlots.has(id)) childSlots.set(id, []);
+      const previous = activeSlots, previousCursor = cursor;
+      activeSlots = childSlots.get(id); cursor = 0;
+      const output = node.type(node.props);
+      activeSlots = previous; cursor = previousCursor;
+      return expand(output, `${id}/output`);
+    }
+    return { ...node, props: { ...node.props, children: expand(node.props?.children, `${path}/children`) } };
+  }
   function render() {
-    cursor = 0; effects = [];
+    activeSlots = slots; cursor = 0; effects = [];
     tree = exports[exportName](props);
+    if (options.resolveChildren) tree = expand(tree);
     for (const effect of effects) effect();
   }
   function all(predicate, root = tree) {
@@ -84,7 +106,7 @@ test('picker respects keyboard and lateral safe areas while Back and Save stay o
   const h = mount('font-color-picker', 'FontColorPicker', { choice: dual, previewText: 'Text', onBack() {}, onSave() {} },
     { window: { width: 300, height: 230 }, insets: { top: 0, bottom: 12, left: 20, right: 10 } });
   const root = h.get('KeyboardAvoidingView'); assert.ok(root);
-  assert.equal(root.props.behavior, 'height');
+  assert.equal(root.props.behavior, undefined);
   assert.ok(root.props.style.paddingLeft >= 20); assert.ok(root.props.style.paddingRight >= 10);
   assert.equal(h.get('ScrollView').props.style.flexShrink, 1);
   assert.equal(h.all((node) => node.props?.accessibilityRole === 'button', h.get('ScrollView')).length, 0);
@@ -93,6 +115,68 @@ test('picker respects keyboard and lateral safe areas while Back and Save stay o
   assert.equal(h.all((node) => typeof node.props?.onChange === 'function')[0].props.size, 180,
     'wheel gesture geometry follows the measured usable body width');
 });
+
+for (const platform of ['android', 'ios']) {
+  test(`${platform} measured font roots preserve portrait chrome and avoid nested keyboard adjustment`, () => {
+    const commits = [];
+    let routeBack;
+    const h = mount('font-browser', 'FontBrowser', {
+      visible: true, previewText: 'Text', onClose() {}, onSelect: (...args) => commits.push(args),
+      onBackRequestChange: (request) => { routeBack = request; },
+    }, { platform, resolveChildren: true });
+    const root = () => h.all((node) => node.props?.testID === 'font-browser-root')[0];
+    const toggle = () => h.all((node) => node.props?.accessibilityLabel === 'Font filters and import')[0];
+    assert.equal(toggle(), undefined, 'roomy portrait keeps the original header controls');
+    assert.ok(h.all((node) => node.props?.children === 'Import unlimited .ttf or .otf fonts').length);
+    h.get('TextInput').props.onChangeText('Dual'); h.render();
+    root().props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }); h.render();
+    assert.ok(toggle().props.style.minHeight >= 44, 'short measured root wins over tall window dimensions');
+    assert.equal(h.get('KeyboardAvoidingView').props.behavior, platform === 'ios' ? 'padding' : undefined);
+    assert.equal(h.get('TextInput').props.disableFullscreenUI, true);
+    h.get('FlatList').props.renderItem({ item: dual }).props.onPress(); h.render();
+    const picker = () => h.all((node) => node.props?.testID === 'font-color-picker-root')[0];
+    assert.equal(picker().props.enabled, false, 'the actual nested picker delegates avoidance to its parent');
+    assert.equal(picker().props.behavior, platform === 'ios' ? 'padding' : undefined);
+    picker().props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }); h.render();
+    assert.equal(picker().props.children.props.padding, undefined);
+    assert.equal(picker().props.children.props.style.padding, 12);
+    assert.equal(h.get('ScrollView').props.style.flexShrink, 1);
+    const hex = h.all((node) => node.props?.accessibilityLabel === 'Hex color')[0];
+    assert.equal(hex.props.disableFullscreenUI, true);
+    hex.props.onChangeText('#123456'); h.render();
+    const buttons = h.all((node) => node.props?.accessibilityRole === 'button', picker());
+    assert.equal(buttons.length, 2);
+    for (const button of buttons) assert.ok(button.props.style.minHeight >= 44);
+    assert.equal(h.all((node) => node.props?.accessibilityRole === 'button', h.get('ScrollView')).length, 0);
+    buttons[1].props.onPress(); h.render();
+    assert.equal(commits.length, 1); assert.equal(commits[0][1].primary, '#123456');
+    assert.equal(h.get('TextInput').props.value, 'Dual');
+    h.get('FlatList').props.renderItem({ item: dual }).props.onPress(); h.render();
+    routeBack(); h.render();
+    assert.equal(picker(), undefined); assert.equal(commits.length, 1);
+    root().props.onLayout({ nativeEvent: { layout: { width: 390, height: 844 } } }); h.render();
+    assert.equal(toggle(), undefined, 'portrait header returns after the keyboard resize ends');
+    assert.equal(h.get('TextInput').props.value, 'Dual');
+  });
+
+  test(`${platform} standalone picker follows its measured root and keeps hex input inline`, () => {
+    const h = mount('font-color-picker', 'FontColorPicker', { choice: dual, previewText: 'Text', onBack() {}, onSave() {} },
+      { platform, resolveChildren: true });
+    const root = () => h.get('KeyboardAvoidingView');
+    assert.equal(root().props.enabled, true);
+    assert.equal(root().props.behavior, platform === 'ios' ? 'padding' : undefined);
+    assert.equal(root().props.children.props.style.padding, 18);
+    root().props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }); h.render();
+    assert.equal(root().props.children.props.style.padding, 12);
+    const input = () => h.get('TextInput');
+    assert.equal(input().props.disableFullscreenUI, true);
+    input().props.onChangeText('#ABCDEF'); h.render();
+    assert.equal(input().props.value, '#ABCDEF');
+    root().props.onLayout({ nativeEvent: { layout: { width: 390, height: 844 } } }); h.render();
+    assert.equal(root().props.children.props.style.padding, 18);
+    assert.equal(input().props.value, '#ABCDEF');
+  });
+}
 
 test('font taps draft only; native and route Back preserve the mounted font list and search', () => {
   const commits = [];
