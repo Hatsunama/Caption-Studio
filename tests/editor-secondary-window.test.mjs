@@ -158,12 +158,12 @@ test('language intro and long retry error scroll in a short measured window; pen
   assert.equal(choice().props.disabled, true); assert.equal(h.label('Close language picker').props.disabled, true);
   routeBack(); h.get('Modal').props.onRequestClose(); assert.equal(closes, 0);
   rejectChoice(new Error('Download consent required. '.repeat(30)));
-  await Promise.resolve(); await Promise.resolve(); h.render();
+  await new Promise(setImmediate); h.render();
   body = h.get('ScrollView');
   assert.equal(h.all(node => node.props?.accessibilityRole === 'alert', body).length, 1);
   assert.equal(choice().props.disabled, false);
   choice().props.onPress(); h.render(); assert.equal(attempts, 2);
-  rejectChoice(new Error('Retry later')); await Promise.resolve(); await Promise.resolve(); h.render();
+  rejectChoice(new Error('Retry later')); await new Promise(setImmediate); h.render();
   h.measure(844); assert.equal(h.all(node => node.props?.testID === 'dual-language-picker-intro', h.get('ScrollView')).length, 0);
   routeBack(); h.render(); assert.equal(closes, 1);
   assert.equal(h.all(node => node.props?.accessibilityRole === 'alert').length, 0);
