@@ -12,7 +12,7 @@ const videoHook = source.slice(source.indexOf('function VideoMoveGrip('), source
 const layoutCallback = source.slice(source.indexOf('onLayout={') + 'onLayout={'.length, source.indexOf('\n      onStartShouldSetResponderCapture=')).trim().slice(0, -1);
 const executable = stripTypeScriptTypes(`
 export function load(dependencies) {
-  const { useRef, useMemo, useEffect, useContext, useCallback, PanResponder, TimelineGestureGeometryContext,
+  const { useRef, useState, useMemo, useEffect, useContext, useCallback, PanResponder, TimelineGestureGeometryContext,
     createTimelineTimingGesture, clamp, REORDER_TILE, REORDER_GAP } = dependencies;
   ${timingHook}
   ${videoHook}
@@ -40,6 +40,7 @@ function harness() {
   let width = 360;
   const hooks = production.load({
     useRef: (current) => ({ current }),
+    useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
     useMemo: (factory) => factory(),
     useEffect: (effect) => { const cleanup = effect(); if (cleanup) cleanups.push(cleanup); },
     useContext: () => geometry,
@@ -154,4 +155,49 @@ test('zoom invalidates an active gesture through the same geometry lifecycle', (
   handlers.onPanResponderRelease();
   assert.equal(changes.length, 1);
   fixture.unmount();
+});
+
+test('the production viewport observer survives memo eviction without losing its cancellation listeners', () => {
+  const declaration = source.match(/const (?:gestureGeometry|\[gestureGeometry\]) = [^\n]+;/)?.[0];
+  assert.ok(declaration);
+  let stored, initialized = false;
+  const render = new Function('useMemo', 'useState', 'createTimelineGestureGeometry', 'viewportWidth', 'pixelsPerSecond',
+    declaration + '\nreturn gestureGeometry;');
+  const state = factory => {
+    if (!initialized) { stored = factory(); initialized = true; }
+    return [stored, () => {}];
+  };
+  const first = render(factory => factory(), state, timing.createTimelineGestureGeometry, 360, 16);
+  let cancelled = 0;
+  first.subscribe(() => cancelled++);
+  const next = render(factory => factory(), state, timing.createTimelineGestureGeometry, 720, 16);
+  assert.equal(next, first, 'coordinate observer is an owned resource, not a discardable memo');
+  next.update({ viewportWidth: 720 });
+  assert.equal(cancelled, 1);
+});
+
+test('the production video responder survives a discarded memo cache', () => {
+  const slots = [];
+  let cursor = 0, created = 0;
+  const slot = initial => {
+    const index = cursor++;
+    if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
+    return slots[index];
+  };
+  const hooks = production.load({
+    useRef: initial => slot(() => ({ current: initial })),
+    useState: initial => [slot(initial), () => {}],
+    useMemo: factory => factory(),
+    useEffect() {}, useContext: () => undefined, useCallback: fn => fn,
+    PanResponder: { create: panHandlers => { created++; return { panHandlers }; } },
+    TimelineGestureGeometryContext: {}, createTimelineTimingGesture: timing.createTimelineTimingGesture,
+    clamp: (v, min, max) => Math.min(max, Math.max(min, v)), REORDER_TILE: 72, REORDER_GAP: 8,
+  });
+  const props = { leadingGapMs: 0, clipIndex: 0, clipCount: 3, trackWidth: 1000, durationMs: 5000,
+    onPress() {}, onGestureLock() {}, onGestureCancel() {}, onGapPreview() {}, onGapCommit() {},
+    onReorderPreview() {}, onReorderCommit() {} };
+  cursor = 0; const first = hooks.VideoMoveGrip(props);
+  cursor = 0; const next = hooks.VideoMoveGrip(props);
+  assert.equal(next, first, 'native responder belongs to the component lifetime');
+  assert.equal(created, 1);
 });

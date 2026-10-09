@@ -111,7 +111,7 @@ export function LayerTimeline(props: {
   const duration = Math.max(1, props.durationMs, clipPositions.at(-1)?.afterGapEndMs ?? 0);
   const minimumScale = minimumTimelineScale(duration, Math.max(1, viewportWidth - LABEL_WIDTH));
   const [pixelsPerSecond, setPixelsPerSecond] = useState(() => Math.max(16, minimumScale));
-  const gestureGeometry = useMemo(() => createTimelineGestureGeometry({ viewportWidth, scale: pixelsPerSecond }), []);
+  const [gestureGeometry] = useState(() => createTimelineGestureGeometry({ viewportWidth, scale: pixelsPerSecond }));
   const effectiveScale = clampTimelineScale(pixelsPerSecond, minimumScale);
   const viewportContentWidth = Math.max(1, viewportWidth - LABEL_WIDTH);
   const baseTrackWidth = timelineWidth(duration, effectiveScale, viewportContentWidth);
@@ -884,7 +884,7 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
     propsRef.current.onGestureCancel();
   }, []);
 
-  const responder = useMemo(() => {
+  const [responder] = useState(() => {
     const clearLongPress = () => {
       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
@@ -960,7 +960,7 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
     onPanResponderRelease: () => finishGesture('release'),
     onPanResponderTerminate: () => finishGesture('terminate'),
     });
-  }, []);
+  });
 
   useEffect(() => () => {
     cancelGesture();

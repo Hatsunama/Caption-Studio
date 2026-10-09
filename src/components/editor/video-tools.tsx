@@ -164,10 +164,11 @@ function AngleScrubber(props: { value: number; onChange: (value: number) => void
     });
   };
   useLayoutEffect(() => {
+    const measuredLayout = layout.current;
     measureLayout();
     return () => {
-      layout.current.ready = false;
-      layout.current.revision++;
+      measuredLayout.ready = false;
+      measuredLayout.revision++;
     };
   }, [windowKey]);
   const update = (event: GestureResponderEvent) => {
