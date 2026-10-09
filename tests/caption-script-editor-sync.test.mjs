@@ -513,14 +513,17 @@ for (const platform of ['android', 'ios']) {
 
 test('Android resized workspace keeps the video controls and focused input above the keyboard', () => {
   const h = mount(); h.edit(4); h.keyboard('keyboardDidShow');
-  let workspaceHeight = 800;
-  const onLayout = jsxProp(workspaceRoot, 'onLayout', { setWorkspaceHeight: (value) => { workspaceHeight = value; } });
+  let workspaceHeight = 800, workspaceWidth = 360;
+  const onLayout = jsxProp(workspaceRoot, 'onLayout', {
+    setWorkspaceHeight: (value) => { workspaceHeight = value; },
+    setWorkspaceWidth: (value) => { workspaceWidth = value; },
+  });
   assert.equal(typeof onLayout, 'function', 'measure the usable root, not just the screen dimensions');
   const [preview, tools] = workspaceRoot.children.filter(ts.isJsxElement);
   const fitRect = evaluate(editorAst.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'fitRect').getText(editorAst));
   for (const availableHeight of [800, 360, 280, 240, 220, 440, 800]) {
     onLayout(layoutEvent(0, availableHeight));
-    const context = { scriptEditorOpen: true, scriptKeyboardOpen: true, workspaceHeight, height: 800 };
+    const context = { scriptEditorOpen: true, scriptKeyboardOpen: true, workspaceHeight, workspaceWidth, width: workspaceWidth, height: 800 };
     const previewHeight = workspaceValue('previewHeight', context);
     const previewStyle = jsxProp(preview, 'style', { previewHeight, scriptEditorOpen: true });
     assert.ok(previewStyle.height <= availableHeight * 0.45);
@@ -1167,8 +1170,11 @@ test('keyboard exit restores full preview with a persistent transform and indepe
       const layoutStyle = jsxProp(layout, 'style', context);
       assert.equal(layoutStyle.height, size.height);
       if (!open) {
-        assert.ok(previewHeight >= 280);
-        assert.ok(layoutStyle.height > 180, 'normal preview must not remain a keyboard strip');
+        assert.ok(previewHeight >= 48 && previewHeight <= workspaceHeight - 144, 'restored preview respects the actual resized window');
+        if (workspaceHeight >= 424) {
+          assert.ok(previewHeight >= 280);
+          assert.ok(layoutStyle.height > 180, 'a roomy restored preview must not remain a keyboard strip');
+        }
         assert.equal(x.value, 0); assert.equal(y.value, 0);
         assert.equal(h.calls.keyboards.at(-1), false, 'closing cannot depend on receiving keyboard hide');
       }
@@ -1177,7 +1183,20 @@ test('keyboard exit restores full preview with a persistent transform and indepe
   }
   assert.equal(stopped, 4, 'each keyboard crop animation stops before restoration');
 });
+
 test('native caption input preserves the editor around the landscape keyboard', () => {
   const h = mount(); h.edit(1);
   assert.equal(h.input(1).disableFullscreenUI, true);
+});
+
+
+test('the actual workspace supplies top safe space only when its native header is hidden', () => {
+  for (const [width, height, workspaceHeight, expectedTop, expectedPreview] of [[760, 360, 360, 24, 320], [360, 800, 744, 0, 344]]) {
+    const context = { width, height, workspaceWidth: width, workspaceHeight, scriptEditorOpen: false, scriptKeyboardOpen: false, insets: { top: 24, bottom: 16, left: 0, right: 0 }, editorWorkspaceLayout };
+    const workspaceLayout = workspaceValue('workspaceLayout', context);
+    assert.equal(workspaceLayout.previewHeight, expectedPreview);
+    const style = jsxProp(workspaceRoot, 'style', { ...context, workspaceLayout, palette: {} });
+    assert.equal(style.paddingTop, expectedTop);
+    assert.equal(style.flexDirection, width > height ? 'row' : 'column');
+  }
 });

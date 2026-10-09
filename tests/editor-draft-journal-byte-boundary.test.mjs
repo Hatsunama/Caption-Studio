@@ -285,10 +285,11 @@ async function mountEditor(kind, options = {}) {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return {
         ...Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'Modal', 'FlatList', 'KeyboardAvoidingView'].map((v) => [v, v])),
+        useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }),
         Keyboard: { isVisible: () => false, addListener: () => ({ remove() {} }) },
         Platform: { OS: 'android' }, Alert: { alert: (...args) => alerts.push(args) },
       };
-      if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) };
+      if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
       if (name === '@/lib/ui-theme') return { chrome: { radius: {} } };
       if (name === '@/lib/caption-script') return scriptHelpers;
       if (name === '@/lib/dual-caption-drafts') return dualHelpers;

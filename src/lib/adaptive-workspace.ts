@@ -5,11 +5,12 @@ type WorkspaceInput = {
   scriptEditorOpen: boolean;
   keyboardOpen: boolean;
   bottomInset?: number;
+  topInset?: number;
 };
 
 export function editorWorkspaceLayout(input: WorkspaceInput) {
   const width = Math.max(0, input.width);
-  const height = Math.max(0, input.height);
+  const height = Math.max(0, input.height - Math.max(0, input.topInset ?? 0));
   const sideBySide = width >= 640 && width > height * 1.2;
   const previewWidth = sideBySide ? Math.min(width * 0.46, width - 320) : width;
   const bottomInset = Math.max(0, input.bottomInset ?? 0);

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router/stack';
 import { setVideoCacheSizeAsync } from 'expo-video';
@@ -12,6 +13,7 @@ import { cleanupObsoletePickerCache } from '@/services/storage-policy';
 
 export default function RootLayout() {
   const window = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const wideWindow = window.width >= 640 && window.width > window.height * 1.2;
   const [fontsLoaded, fontError] = useFonts(FONT_ASSETS);
   const [importedFontsLoaded, setImportedFontsLoaded] = useState(false);
@@ -35,10 +37,26 @@ export default function RootLayout() {
         headerStyle: { backgroundColor: chrome.background },
         headerTintColor: chrome.text,
         headerShadowVisible: false,
-        contentStyle: { backgroundColor: chrome.background },
+        contentStyle: {
+          backgroundColor: chrome.background,
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
+        },
       }}>
       <Stack.Screen name="index" options={{ title: 'Caption Studio' }} />
-      <Stack.Screen name="thank-you" options={{ headerShown: false }} />
+      <Stack.Screen
+        name="thank-you"
+        options={{
+          headerShown: false,
+          contentStyle: {
+            backgroundColor: chrome.background,
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+          },
+        }}
+      />
       <Stack.Screen name="privacy" options={{ title: 'Privacy policy' }} />
       <Stack.Screen name="notices" options={{ title: 'Open-source notices' }} />
       <Stack.Screen
@@ -47,6 +65,7 @@ export default function RootLayout() {
           title: 'Editor',
           headerShown: !wideWindow,
           headerBackButtonDisplayMode: 'minimal',
+          contentStyle: { backgroundColor: chrome.background, paddingLeft: 0, paddingRight: 0 },
         }}
       />
     </Stack>

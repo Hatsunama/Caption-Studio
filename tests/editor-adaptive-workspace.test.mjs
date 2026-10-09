@@ -27,3 +27,9 @@ test('wide roots place useful media beside an independently usable editor', () =
 test('the typing root retains caption rows above the keyboard', () => {
   assert.ok(preview({ width: 360, height: 800, workspaceHeight: 220, scriptEditorOpen: true, scriptKeyboardOpen: true }) <= 75);
 });
+
+test('a hidden-header landscape workspace reserves the actual top system inset', () => {
+  const layout = policy.editorWorkspaceLayout({ width: 760, height: 360, windowHeight: 360, topInset: 24, bottomInset: 16, scriptEditorOpen: false, keyboardOpen: false });
+  assert.equal(layout.sideBySide, true);
+  assert.equal(layout.previewHeight, 320);
+});

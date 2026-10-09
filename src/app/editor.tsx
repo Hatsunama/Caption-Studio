@@ -672,6 +672,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const workspaceLayout = editorWorkspaceLayout({
     width: Math.max(0, workspaceWidth - insets.left - insets.right),
     height: workspaceHeight,
+    topInset: width >= 640 && width > height * 1.2 ? insets.top : 0,
     windowHeight: height,
     scriptEditorOpen,
     keyboardOpen: scriptKeyboardOpen,
@@ -1924,7 +1925,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         setWorkspaceHeight(event.nativeEvent.layout.height);
         setWorkspaceWidth(event.nativeEvent.layout.width ?? width);
       }}
-      style={{ flex: 1, minHeight: 0, flexDirection: workspaceLayout.sideBySide ? 'row' : 'column', paddingLeft: insets.left, paddingRight: insets.right, backgroundColor: palette.background }}>
+      style={{ flex: 1, minHeight: 0, flexDirection: workspaceLayout.sideBySide ? 'row' : 'column', paddingTop: width >= 640 && width > height * 1.2 ? insets.top : 0, paddingLeft: insets.left, paddingRight: insets.right, backgroundColor: palette.background }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Clear editor selection"
