@@ -5,8 +5,8 @@ import { keyboardViewportOverlap, type KeyboardFrame, type ViewportFrame } from 
 export function useKeyboardViewport(enabled = true) {
   const window = useWindowDimensions();
   const frameRef = useRef<View>(null);
-  const measuredRef = useRef<ViewportFrame>();
-  const keyboardRef = useRef<KeyboardFrame>();
+  const measuredRef = useRef<ViewportFrame | undefined>(undefined);
+  const keyboardRef = useRef<KeyboardFrame | undefined>(undefined);
   const lifetimeRef = useRef({ active: false, revision: 0 });
   const [bottomOverlap, setBottomOverlap] = useState(0);
   const measure = useCallback(() => {
