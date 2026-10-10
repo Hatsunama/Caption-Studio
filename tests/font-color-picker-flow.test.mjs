@@ -13,11 +13,14 @@ const sources = Object.fromEntries(['font-browser', 'font-color-picker'].map((na
 ).outputText]));
 
 function mount(name, exportName, props, options = {}) {
+  const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   const slots = [];
   const childSlots = new Map();
   let activeSlots = slots;
   let cursor = 0, tree, effects = [];
   const react = {
+    useRef: (value) => react.useState(() => ({ current: value }))[0],
+    useCallback: (fn) => fn,
     useState(initial) {
       const index = cursor++;
       const state = activeSlots;
@@ -39,12 +42,18 @@ function mount(name, exportName, props, options = {}) {
       if (id === 'react') return react;
       if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
       if (id === 'react-native') return native;
-      if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
+      if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => reveal };
+if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
       if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 0, right: 0 } };
       if (id.endsWith('ui-theme')) return { chrome: { radius: {} } };
       if (id.endsWith('font-style-choice')) return { fontChoicePatch };
       if (id.endsWith('font-catalog')) return { BUILT_IN_FONT_CHOICES: [solid, dual], TWO_COLOR_FONT_COUNT: 1 };
       if (id.endsWith('font-color-picker')) return options.resolveChildren ? load('font-color-picker') : { FontColorPicker: 'FontColorPicker' };
+      if (id === '@/hooks/use-font-library') return { useFontLibrary: () => ({
+        imported: [], favorites: ['bungee', 'monoton', 'rubik-glitch'], recent: [],
+        importFont: async () => true, rememberFont: id => options.remembered?.push(id),
+        toggleFavorite: id => options.favorites?.push(id),
+      }) };
       if (id.endsWith('font-storage')) return {
         loadFontLibrary: () => new Promise(() => {}), saveRecentFonts() {}, saveFontFavorites() {},
       };
@@ -251,3 +260,34 @@ for (const choice of [solid, dual]) {
     assert.equal(saved[0].secondary, choice === dual ? '#ABCDEF' : '#FFFFFF');
   });
 }
+
+test('keyboard-short wide font forms preserve the color draft and use a native measured body beside actions', () => {
+  const h = mount('font-color-picker', 'FontColorPicker', { choice: dual, previewText: 'Long caption', onBack() {}, onSave() {} }, { resolveChildren: true });
+  const root = () => h.get('KeyboardAvoidingView');
+  h.get('TextInput').props.onChangeText('#ABCDEF'); h.render();
+  root().props.onLayout({ nativeEvent: { layout: { width: 900, height: 150 } } }); h.render();
+  assert.equal(root().props.children.props.style.flexDirection, 'row');
+  assert.ok(h.all(node => node.props?.collapsable === false).length);
+  assert.equal(h.get('TextInput').props.value, '#ABCDEF');
+  assert.ok(h.get('TextInput').props.style.minHeight >= 44);
+  assert.equal(typeof h.get('TextInput').props.onFocus, 'function');
+  assert.equal(h.all(node => node.props?.accessibilityRole === 'button', h.get('ScrollView')).length, 0);
+  root().props.onLayout({ nativeEvent: { layout: { width: 390, height: 844 } } }); h.render();
+  assert.equal(root().props.children.props.style.flexDirection, 'column');
+  assert.equal(h.get('TextInput').props.value, '#ABCDEF');
+});
+
+test('short-wide font search shares a header row while library actions use the controller exactly once', () => {
+  const remembered = [], favorites = [];
+  const h = mount('font-browser', 'FontBrowser', { visible: true, previewText: 'Text', onClose() {}, onSelect() {} }, { remembered, favorites });
+  const root = h.all(node => node.props?.testID === 'font-browser-root')[0];
+  root.props.onLayout({ nativeEvent: { layout: { width: 900, height: 150 } } }); h.render();
+  const search = h.get('TextInput');
+  assert.equal(search.props.style.flex, 1);
+  assert.equal(search.props.style.height, 48);
+  const card = h.get('FlatList').props.renderItem({ item: dual });
+  h.all(node => node.type === 'Pressable', card)[1].props.onPress({ stopPropagation() {} });
+  assert.deepEqual(favorites, ['dual']);
+  card.props.onPress(); h.render(); h.get('FontColorPicker').props.onSave({ primary: '#FFFFFF', secondary: '#000000' });
+  assert.deepEqual(remembered, ['dual']);
+});
