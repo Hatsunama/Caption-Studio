@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { keyboardViewportHostProps } from './keyboard-viewport-host.mjs';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -74,7 +75,7 @@ function mount(overrides = {}, options = {}) {
       return slot.value;
     },
   };
-  const jsx = (type, props, key) => ({ type, props: props ?? {}, key });
+  const jsx = (type, props, key) => ({ type, props: keyboardViewportHostProps(type, props ?? {}, options.bottomInsetCovered), key });
   const exports = {};
   runInNewContext(`${outputText}\nexports.Store = typeof DualCaptionDraftStore === 'undefined' ? undefined : DualCaptionDraftStore;`, {
     exports,
@@ -623,4 +624,13 @@ test('keyboard-short wide dual editor moves Save out of the footer and preserves
   h.press('Save dual subtitle edits'); await h.flush();
   assert.equal(h.calls.saves[0][0].primaryText, 'Retained source');
   assert.equal(h.calls.saves[0][0].translatedText, 'Retained translation');
+});
+
+test('keyboard-short dual editor does not keep a navigation-bar spacer above an already bounded IME', async () => {
+  const h = mount({}, { bottomInsetCovered: true }); await h.flush();
+  const root = h.all(node => node.props.testID === 'dual-caption-root')[0];
+  h.act(() => root.props.onLayout({ nativeEvent: { layout: { width: 890, height: 143 } } }));
+  const footer = h.all(node => node.props.testID === 'dual-caption-footer')[0];
+  assert.equal(footer.props.style.paddingBottom, 0);
+  assert.equal(h.input(0).props.value, 'Source 0');
 });
