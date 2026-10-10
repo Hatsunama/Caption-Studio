@@ -39,6 +39,7 @@ function mount(name, exportName, props, options = {}) {
       if (id === 'react') return react;
       if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
       if (id === 'react-native') return native;
+      if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
       if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 0, right: 0 } };
       if (id.endsWith('ui-theme')) return { chrome: { radius: {} } };
       if (id.endsWith('font-style-choice')) return { fontChoicePatch };
@@ -94,7 +95,7 @@ test('a measured 300dp short font root leaves secondary controls in scrollable r
   toggle.props.onPress(); h.render();
   assert.ok(h.get('FlatList').props.ListHeaderComponent, 'expanded controls scroll with results');
   assert.equal(h.get('FlatList').props.keyboardShouldPersistTaps, 'handled');
-  assert.ok(h.get('KeyboardAvoidingView'));
+  assert.ok(h.get('KeyboardViewport'));
   h.get('TextInput').props.onChangeText('Dual'); h.render();
   h.get('FlatList').props.renderItem({ item: dual }).props.onPress(); h.render();
   h.get('Modal').props.onRequestClose(); h.render();
@@ -131,12 +132,18 @@ for (const platform of ['android', 'ios']) {
     h.get('TextInput').props.onChangeText('Dual'); h.render();
     root().props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }); h.render();
     assert.ok(toggle().props.style.minHeight >= 44, 'short measured root wins over tall window dimensions');
-    assert.equal(h.get('KeyboardAvoidingView').props.behavior, platform === 'ios' ? 'padding' : undefined);
+    const viewport = h.get('KeyboardViewport');
+    assert.ok(viewport);
+    assert.equal(viewport.props.enabled ?? true, true);
+    assert.equal(viewport.props.iosAvoidance ?? true, true);
+    assert.equal(viewport.props.children, root(), 'measurement belongs to the reduced child');
     assert.equal(h.get('TextInput').props.disableFullscreenUI, true);
     h.get('FlatList').props.renderItem({ item: dual }).props.onPress(); h.render();
     const picker = () => h.all((node) => node.props?.testID === 'font-color-picker-root')[0];
     assert.equal(picker().props.enabled, false, 'the actual nested picker delegates avoidance to its parent');
     assert.equal(picker().props.behavior, platform === 'ios' ? 'padding' : undefined);
+    assert.equal(h.all((node) => node.type === 'KeyboardViewport').length, 1);
+    assert.equal(h.all((node) => node.type === 'KeyboardAvoidingView').length, 1, 'only the disabled nested picker retains its native wrapper');
     picker().props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }); h.render();
     assert.equal(picker().props.children.props.padding, undefined);
     assert.equal(picker().props.children.props.style.padding, 12);

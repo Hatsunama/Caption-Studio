@@ -80,6 +80,7 @@ function mount(overrides = {}, options = {}) {
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
       if (name === 'react-native') return {
         ...Object.fromEntries(['ActivityIndicator', 'FlatList', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View', 'KeyboardAvoidingView'].map((type) => [type, type])),
         useWindowDimensions: () => options.window ?? { width: 390, height: 844 },
@@ -217,7 +218,7 @@ test('measured short roots keep actions scrollable, paired inputs mounted and Sa
   assert.equal(h.calls.saves[0][0].primaryText, 'Keep source');
   assert.equal(h.calls.saves[0][0].translatedText, 'Keep translation');
   assert.ok(h.all((node) => node.props.accessibilityRole === 'alert').length);
-  assert.ok(h.all((node) => node.type === 'KeyboardAvoidingView').length);
+  assert.ok(h.all((node) => node.type === 'KeyboardViewport').length);
 });
 
 test('wide roots and lateral safe insets select compact chrome without losing recovery controls', async () => {
@@ -246,9 +247,14 @@ for (const platform of ['android', 'ios']) {
     const sourceIdentity = h.input(0).identity, translationIdentity = h.input(0, 'Chinese').identity;
     h.edit(0, 'Inline source'); h.edit(0, 'Inline translation', 'Chinese');
     h.act(() => root().props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }));
-    const avoidance = h.all((node) => node.type === 'KeyboardAvoidingView');
+    const avoidance = h.all((node) => node.type === 'KeyboardViewport');
     assert.equal(avoidance.length, 1);
-    assert.equal(avoidance[0].props.behavior, platform === 'ios' ? 'padding' : undefined);
+    assert.equal(avoidance[0].props.enabled ?? true, true);
+    assert.equal(avoidance[0].props.iosAvoidance ?? true, true);
+    assert.equal(avoidance[0].props.style.flex, 1);
+    assert.equal(avoidance[0].props.children, root(), 'measurement belongs to the reduced child');
+    assert.equal(h.all((node) => node.props.testID === 'dual-caption-footer', avoidance[0]).length, 1);
+    assert.equal(h.all((node) => node.type === 'KeyboardAvoidingView').length, 0);
     assert.equal(subtitle().length, 0, 'measured short root overrides the tall window');
     assert.ok(actions()[0].props.style.minHeight >= 44);
     assert.ok(h.button('Close dual subtitle editor').props.style.minHeight >= 44);

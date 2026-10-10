@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Modal, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chrome } from '@/lib/ui-theme';
+import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
 import type { TextVisualLayer } from '@/types/project';
 
 type Props = {
@@ -25,7 +26,7 @@ export function WatermarkSheet(props: Props) {
   const close = () => { setText(''); props.onClose(); };
   return (
     <Modal animationType="slide" onRequestClose={close} transparent visible={props.visible}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, minHeight: 0 }}>
+      <KeyboardViewport style={{ flex: 1, minHeight: 0 }}>
       <View testID="watermark-sheet-root"
         onLayout={(event) => setRootHeight(event.nativeEvent.layout.height)}
         style={{ flex: 1, minHeight: 0, justifyContent: 'flex-end', backgroundColor: '#000000A6', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
@@ -47,7 +48,7 @@ export function WatermarkSheet(props: Props) {
           </ScrollView>
         </View>
       </View>
-      </KeyboardAvoidingView>
+      </KeyboardViewport>
     </Modal>
   );
 }

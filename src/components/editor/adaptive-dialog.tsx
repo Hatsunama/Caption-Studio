@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chrome } from '@/lib/ui-theme';
+import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
 
 export function AdaptiveDialog(props: {
   children: ReactNode;
@@ -21,9 +22,8 @@ export function AdaptiveDialog(props: {
   const framePadding = props.sheet ? 0 : props.framePadding ?? 28;
   const gap = props.gap ?? 14;
   return (
-    <KeyboardAvoidingView
+    <KeyboardViewport
       enabled={Boolean(props.keyboard)}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={{ flex: 1, minHeight: 0 }}>
       <View testID="adaptive-dialog-frame" style={{
         flex: 1, minHeight: 0, alignItems: 'center',
@@ -56,6 +56,6 @@ export function AdaptiveDialog(props: {
           }}>{props.footer}</View> : null}
         </Pressable>
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardViewport>
   );
 }

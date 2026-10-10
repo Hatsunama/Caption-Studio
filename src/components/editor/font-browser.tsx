@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Alert, FlatList, Modal, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chrome } from '@/lib/ui-theme';
+import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
 import { BUILT_IN_FONT_CHOICES, TWO_COLOR_FONT_COUNT, type FontChoice } from '@/lib/font-catalog';
 import { type FontColors } from '@/lib/font-style-choice';
 import { FontColorPicker } from './font-color-picker';
@@ -116,7 +117,7 @@ export function FontBrowser(props: {
 
   return (
     <Modal visible={props.visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={goBack}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardViewport style={{ flex: 1 }}>
       <View testID="font-browser-root" onLayout={({ nativeEvent: { layout } }) => setRootSize({ width: layout.width, height: layout.height })}
         style={{ flex: 1, minHeight: 0, backgroundColor: chrome.background, paddingTop: Math.max(20, insets.top), paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
         <View style={{ flex: 1 }} pointerEvents={draftChoice ? 'none' : 'auto'} accessibilityElementsHidden={Boolean(draftChoice)} importantForAccessibility={draftChoice ? 'no-hide-descendants' : 'auto'}>
@@ -198,7 +199,7 @@ export function FontBrowser(props: {
           />
         ) : null}
       </View>
-      </KeyboardAvoidingView>
+      </KeyboardViewport>
     </Modal>
   );
 }

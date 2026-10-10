@@ -1,4 +1,5 @@
 import { AdaptiveDialog } from '@/components/editor/adaptive-dialog';
+import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
 import { editorWorkspaceLayout } from '@/lib/adaptive-workspace';
 import { projectTimelineDuration } from '@/lib/project-timeline';
 import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
@@ -1919,6 +1920,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   return (
     <PersistedHorizontalScrollScope id={project.id}>
+    <KeyboardViewport iosAvoidance={false}>
     <View
       pointerEvents={finishingSession ? 'none' : 'auto'}
       onLayout={(event) => {
@@ -2631,6 +2633,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         </OperationOverlay>
       ) : null}
     </View>
+    </KeyboardViewport>
     </PersistedHorizontalScrollScope>
   );
 }

@@ -283,6 +283,7 @@ async function mountEditor(kind, options = {}) {
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
       if (name === 'react-native') return {
         ...Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'Modal', 'FlatList', 'KeyboardAvoidingView'].map((v) => [v, v])),
         useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }),

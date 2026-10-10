@@ -12,6 +12,7 @@ function mount(props, insets, platform = 'android') {
     if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
     if (id === 'react-native') return { Platform: { OS: platform }, ...Object.fromEntries(['KeyboardAvoidingView', 'Pressable', 'ScrollView', 'View'].map(key => [key, key])) };
     if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => insets };
+    if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
     if (id.endsWith('ui-theme')) return { chrome: { radius: { xl: 20 } } };
     throw Error('Unexpected dependency: ' + id);
   } });
@@ -22,6 +23,23 @@ function walk(node, predicate) {
   if (!node || typeof node !== 'object') return [];
   return [...(predicate(node) ? [node] : []), ...walk(node.props?.children, predicate)];
 }
+test('keyboard viewport contains both the dialog body and footer and honors keyboard opt-in', () => {
+  for (const platform of ['android', 'ios']) {
+    for (const keyboard of [undefined, false, true]) {
+      const footer = { type: 'Button', props: { children: 'Save' } };
+      const root = mount({ children: 'Editable content', footer, keyboard }, { top: 0, bottom: 12, left: 0, right: 0 }, platform);
+      assert.equal(root.type, 'KeyboardViewport');
+      assert.equal(root.props.enabled, Boolean(keyboard));
+      assert.equal(root.props.iosAvoidance ?? true, true);
+      assert.equal(root.props.style.flex, 1);
+      assert.equal(root.props.style.minHeight, 0);
+      assert.equal(root.props.children.props.testID, 'adaptive-dialog-frame');
+      assert.equal(walk(root, n => n.props?.testID === 'adaptive-dialog-body').length, 1);
+      assert.equal(walk(root, n => n === footer).length, 1);
+      assert.equal(walk(root, n => n.type === 'KeyboardAvoidingView').length, 0);
+    }
+  }
+});
 test('bounded cards keep long content scrollable and actions outside its scroll region', () => {
   const footer = { type: 'Button', props: { children: 'Save' } };
   const content = { type: 'Input', props: {} };

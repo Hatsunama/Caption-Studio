@@ -3,9 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -14,6 +12,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
 import { CAPTION_CLEANUP_WARNING, createCaptionJournalQueue } from './caption-save-recovery';
 
 import { chrome } from '@/lib/ui-theme';
@@ -354,7 +353,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
 
   return (
     <Modal visible={props.visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={requestClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardViewport style={{ flex: 1 }}>
       <View testID="dual-caption-root" onLayout={({ nativeEvent: { layout } }) => setRootSize({ width: layout.width, height: layout.height })}
         style={{ flex: 1, minHeight: 0, backgroundColor: chrome.background, paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }}>
         <View style={{ paddingHorizontal: 18, paddingTop: compact ? 4 : 22, paddingBottom: compact ? 4 : 14, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
@@ -452,7 +451,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           ) : null}
         </View>
       </View>
-      </KeyboardAvoidingView>
+      </KeyboardViewport>
     </Modal>
   );
 }
