@@ -95,7 +95,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const [listHeight, setListHeight] = useState<number>();
   const inputMaxHeight = shortWide ? Math.max(44, (listHeight ?? height) - 4) : undefined;
   const scrollToOffset = useCallback((offset: number) => listRef.current?.scrollToOffset({ offset, animated: false }), []);
-  const reveal = useFocusedInputReveal(scrollToOffset);
+  const [viewportRef, reveal] = useFocusedInputReveal(scrollToOffset);
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
   const [store] = useState(() => new DualCaptionDraftStore(sourceDrafts));
   const [openingRevision] = useState(() => dualCaptionDraftRevision(sourceDrafts));
@@ -397,7 +397,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           {!compact ? <View style={{ marginTop: 14 }}>{actions}</View> : null}
         </View>
 
-        <View collapsable={false} ref={reveal.viewportRef} onLayout={(event) => { setListHeight(event.nativeEvent.layout.height); reveal.onViewportLayout(); }} style={{ flex: 1, minHeight: 0 }}>
+        <View collapsable={false} ref={viewportRef} onLayout={(event) => { setListHeight(event.nativeEvent.layout.height); reveal.onViewportLayout(); }} style={{ flex: 1, minHeight: 0 }}>
         <FlatList
           ref={listRef}
           onScroll={reveal.onScroll}

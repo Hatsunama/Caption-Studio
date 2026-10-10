@@ -34,14 +34,13 @@ function mount(props, insets, platform = 'android') {
     if (id === 'react') return react;
     if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
     if (id === 'react-native') return { Platform: { OS: platform }, ...Object.fromEntries(['KeyboardAvoidingView', 'Pressable', 'ScrollView', 'View', 'TextInput'].map(key => [key, key])) };
-    if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: scrollToOffset => ({
-      viewportRef: { current: null },
+    if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: scrollToOffset => [{ current: null }, {
       focus(input) { calls.push(['focus', input]); },
       blur(input) { calls.push(['blur', input]); },
       onViewportLayout(event) { calls.push(['viewport', event]); scrollToOffset(32); },
       onScroll(event) { calls.push(['scroll', event]); },
       onScrollBeginDrag(event) { calls.push(['drag', event]); },
-    }) };
+    }] };
     if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => insets };
     if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
     if (id.endsWith('ui-theme')) return { chrome: { radius: { xl: 20 } } };

@@ -124,7 +124,7 @@ function renderSource(source, extra = {}) {
     if (name === 'react-native') return native;
     if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
     if (name === '@/lib/ui-theme') return { chrome };
-    if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => reveal };
+    if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
     if (name === '@/hooks/use-keyboard-viewport') return { useKeyboardViewport: () => ({ frameRef: { current: null }, onLayout() {}, bottomOverlap: 0 }) };
     if (Object.hasOwn(componentSources, name)) {
       if (!modules.has(name)) {

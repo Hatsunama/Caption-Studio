@@ -42,7 +42,7 @@ function mount(name, exportName, props, options = {}) {
       if (id === 'react') return react;
       if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
       if (id === 'react-native') return native;
-      if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => reveal };
+      if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
 if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
       if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 0, right: 0 } };
       if (id.endsWith('ui-theme')) return { chrome: { radius: {} } };

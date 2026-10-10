@@ -27,7 +27,7 @@ export function WatermarkSheet(props: Props) {
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
   const scrollToOffset = useCallback((y: number) => scrollRef.current?.scrollTo({ y, animated: false }), []);
-  const reveal = useFocusedInputReveal(scrollToOffset);
+  const [viewportRef, reveal] = useFocusedInputReveal(scrollToOffset);
   const compact = rootHeight < 480 || window.fontScale > 1.3;
   const atLimit = props.watermarks.length >= props.maxWatermarks;
   const close = () => { setText(''); props.onClose(); };
@@ -42,7 +42,7 @@ export function WatermarkSheet(props: Props) {
             <Text style={{ color: chrome.text, fontSize: 20, fontWeight: '900' }} numberOfLines={compact ? 1 : undefined}>Watermarks</Text>
             <Pressable accessibilityRole="button" accessibilityLabel="Close watermarks" onPress={close} style={{ padding: 8, minHeight: 44, justifyContent: 'center' }}><Text style={{ color: chrome.muted, fontSize: 14, fontWeight: '800' }}>CLOSE</Text></Pressable>
           </View>
-          <View collapsable={false} ref={reveal.viewportRef} onLayout={reveal.onViewportLayout} style={{ flex: shortWide ? 1 : undefined, flexShrink: 1, minHeight: 0, minWidth: 0 }}>
+          <View collapsable={false} ref={viewportRef} onLayout={reveal.onViewportLayout} style={{ flex: shortWide ? 1 : undefined, flexShrink: 1, minHeight: 0, minWidth: 0 }}>
           <ScrollView ref={scrollRef} onScroll={reveal.onScroll} onScrollBeginDrag={reveal.onScrollBeginDrag} scrollEventThrottle={16} style={{ flexShrink: 1, minHeight: 0 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 14, paddingBottom: 10 }}>
           <Text style={{ color: chrome.muted, fontSize: 12, lineHeight: 18 }}>Add up to five labels. Each is a regular timeline layer: drag it anywhere on the preview, then move or trim it on the timeline.</Text>
           <View style={{ flexDirection: shortWide ? 'row' : 'column', gap: 14 }}>
