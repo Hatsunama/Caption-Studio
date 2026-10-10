@@ -39,7 +39,7 @@ export function FontColorPicker(props: {
   const shortWide = width >= 600 && height < 260;
   const scrollRef = useRef<ScrollView>(null);
   const scrollToOffset = useCallback((y: number) => scrollRef.current?.scrollTo({ y, animated: false }), []);
-  const reveal = useFocusedInputReveal(scrollToOffset);
+  const [viewportRef, reveal] = useFocusedInputReveal(scrollToOffset);
   const [bodyWidth, setBodyWidth] = useState(224);
   const [colors, setColors] = useState<FontColors>(() => {
     const patch = fontChoicePatch(props.choice);
@@ -52,7 +52,7 @@ export function FontColorPicker(props: {
       accessibilityViewIsModal enabled={!props.keyboardManaged} behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={{ position: 'absolute', inset: 0, backgroundColor: '#00000099', justifyContent: 'center', paddingTop: Math.max(compact ? 8 : 16, insets.top), paddingBottom: Math.max(compact ? 8 : 16, insets.bottom), paddingLeft: Math.max(compact ? 8 : 16, insets.left), paddingRight: Math.max(compact ? 8 : 16, insets.right) }}>
       <View style={{ maxHeight: '100%', flexShrink: 1, minHeight: 0, backgroundColor: chrome.surface, borderRadius: chrome.radius.lg, padding: shortWide ? 8 : compact ? 12 : 18, gap: compact ? 8 : 14, flexDirection: shortWide ? 'row' : 'column', height: shortWide ? '100%' : undefined }}>
-        <View collapsable={false} ref={reveal.viewportRef} onLayout={reveal.onViewportLayout} style={{ flex: shortWide ? 1 : undefined, flexShrink: 1, minHeight: 0, minWidth: 0 }}>
+        <View collapsable={false} ref={viewportRef} onLayout={reveal.onViewportLayout} style={{ flex: shortWide ? 1 : undefined, flexShrink: 1, minHeight: 0, minWidth: 0 }}>
         <ScrollView ref={scrollRef} onScroll={reveal.onScroll} onScrollBeginDrag={reveal.onScrollBeginDrag} scrollEventThrottle={16} onLayout={({ nativeEvent: { layout } }) => setBodyWidth(layout.width)} style={{ flexShrink: 1, minHeight: 0 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ gap: 14, alignItems: 'center' }}>
           <Text style={{ color: chrome.text, fontSize: 22, fontWeight: '700' }}>{props.choice.name}</Text>
           <View style={{ minHeight: 46, width: '100%', justifyContent: 'center' }}>

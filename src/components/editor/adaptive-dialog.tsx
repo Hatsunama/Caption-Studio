@@ -63,7 +63,7 @@ export function AdaptiveDialog(props: {
   const scrollToOffset = useCallback((offset: number) => {
     scrollRef.current?.scrollTo({ y: offset, animated: true });
   }, []);
-  const reveal = useFocusedInputReveal(scrollToOffset);
+  const [viewportRef, reveal] = useFocusedInputReveal(scrollToOffset);
   const compact = Boolean(props.keyboard && props.footer && !props.sheet
     && frame.width >= 600 && frame.height > 0 && frame.height < 260);
   const padding = compact ? 8 : props.padding ?? 22;
@@ -96,7 +96,7 @@ export function AdaptiveDialog(props: {
           borderTopLeftRadius: chrome.radius.xl, borderTopRightRadius: chrome.radius.xl,
           backgroundColor: chrome.surface,
         }, props.cardStyle]}>
-          <View ref={reveal.viewportRef} collapsable={false}
+          <View ref={viewportRef} collapsable={false}
             style={{ flexShrink: 1, minHeight: 0, ...(compact ? { flex: 1 } : {}) }}
             onLayout={(event) => {
               setBodyHeight(event.nativeEvent.layout.height);
