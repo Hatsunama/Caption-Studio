@@ -14,9 +14,12 @@ const spanish = { tag: 'es', displayName: 'Spanish', automatic: true };
 // Execute the actual components. Host layout events and native primitives are mocked;
 // this proves render structure and handlers, not native pixel or keyboard behavior.
 function mount(name, exportName, props, options = {}) {
+  const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   const slots = [];
   let cursor = 0, tree, effects;
   const react = {
+    useRef: (value) => react.useState(() => ({ current: value }))[0],
+    useCallback: (fn) => fn,
     useState(initial) {
       const index = cursor++;
       if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
@@ -34,7 +37,8 @@ function mount(name, exportName, props, options = {}) {
     if (id === 'react') return react;
     if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
     if (id === 'react-native') return native;
-    if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
+    if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => reveal };
+if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
     if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 30, right: 18 } };
     if (id === 'expo-image') return { Image: 'Image' };
     if (id.endsWith('ui-theme')) return { chrome: { radius: { sm: 8, md: 12, lg: 16, xl: 24, pill: 999 } } };
@@ -182,4 +186,17 @@ test('large language text moves the intro into the scroll body even in a tall wi
     visible: true, sourceLanguageTag: 'en', sourceLanguageLabel: 'English', automaticModelLabel: 'Model', onClose() {}, onChoose: async () => {},
   }, { window: { width: 390, height: 844, fontScale: 2 } });
   assert.ok(h.all(node => node.props?.testID === 'dual-language-picker-intro', h.get('ScrollView')).length);
+});
+
+test('watermark entry and Add share the short-wide body without resetting the draft', () => {
+  const h = mount('watermark-sheet', 'WatermarkSheet', { visible: true, watermarks: [], maxWatermarks: 5, onAdd() {}, onSelect() {}, onRemove() {}, onClose() {} });
+  h.get('TextInput').props.onChangeText('Keep draft'); h.render();
+  h.id('watermark-sheet-root').props.onLayout({ nativeEvent: { layout: { width: 900, height: 150 } } }); h.render();
+  assert.equal(h.id('watermark-sheet-card').props.style.flexDirection, 'row');
+  assert.ok(h.all(node => node.props?.collapsable === false).length);
+  assert.equal(h.get('TextInput').props.value, 'Keep draft');
+  assert.ok(h.get('TextInput').props.style.minHeight >= 44);
+  assert.ok(h.label('Add watermark').props.style.minHeight >= 44);
+  assert.equal(h.all(node => node.props?.accessibilityLabel === 'Close watermarks', h.get('ScrollView')).length, 0);
+  h.measure(844); assert.equal(h.get('TextInput').props.value, 'Keep draft');
 });

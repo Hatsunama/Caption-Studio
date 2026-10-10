@@ -31,6 +31,7 @@ const shallow = (left, right) => left && right && same(Object.keys(left), Object
   && Object.keys(left).every((key) => Object.is(left[key], right[key]));
 
 function mount(overrides = {}, options = {}) {
+  const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   const instances = new Map(), timers = new Map(), inputIdentities = new Map();
   const calls = { alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
   let current, cursor, pending = [], changed = false, tree, now = 0, nextTimer = 0, windowStart = 0;
@@ -80,7 +81,8 @@ function mount(overrides = {}, options = {}) {
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
-      if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
+      if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => reveal };
+if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
       if (name === 'react-native') return {
         ...Object.fromEntries(['ActivityIndicator', 'FlatList', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View', 'KeyboardAvoidingView'].map((type) => [type, type])),
         useWindowDimensions: () => options.window ?? { width: 390, height: 844 },
@@ -601,4 +603,24 @@ test('dual editor save preserves stacked preview overlays with independent timin
   assert.deepEqual(after.map((line) => line.style.textColor), ['#FFAA00', '#00FFFF']);
   assert.notDeepEqual(after[0].style.position, after[1].style.position, 'preview retains the stacked line positions');
   assert.deepEqual(after.map((line) => plain(line.style)), before.map((line) => plain(line.style)));
+});
+
+test('keyboard-short wide dual editor moves Save out of the footer and preserves both input instances', async () => {
+  const h = mount(); await h.flush();
+  h.edit(0, 'Retained source'); h.edit(0, 'Retained translation', 'Chinese');
+  const first = h.input(0).identity, second = h.input(0, 'Chinese').identity;
+  const root = h.all(node => node.props.testID === 'dual-caption-root')[0];
+  h.act(() => root.props.onLayout({ nativeEvent: { layout: { width: 900, height: 150 } } }));
+  const footer = h.all(node => node.props.testID === 'dual-caption-footer')[0];
+  assert.equal(h.all(node => node.props.accessibilityLabel === 'Save dual subtitle edits', footer).length, 0);
+  assert.equal(h.input(0).identity, first); assert.equal(h.input(0, 'Chinese').identity, second);
+  assert.equal(h.input(0).props.value, 'Retained source');
+  assert.equal(h.input(0, 'Chinese').props.value, 'Retained translation');
+  assert.equal(typeof h.input(0).props.onFocus, 'function');
+  assert.ok(h.all(node => node.props.collapsable === false).length);
+  h.act(() => root.props.onLayout({ nativeEvent: { layout: { width: 390, height: 844 } } }));
+  assert.equal(h.input(0).identity, first);
+  h.press('Save dual subtitle edits'); await h.flush();
+  assert.equal(h.calls.saves[0][0].primaryText, 'Retained source');
+  assert.equal(h.calls.saves[0][0].translatedText, 'Retained translation');
 });

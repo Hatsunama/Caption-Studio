@@ -12,6 +12,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusedInputReveal, type FocusedInputReveal } from '@/hooks/use-focused-input-reveal';
 import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
 import { CAPTION_CLEANUP_WARNING, createCaptionJournalQueue } from './caption-save-recovery';
 
@@ -89,6 +90,12 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const height = (rootSize?.height ?? window.height) - insets.top - insets.bottom;
   const compact = height < 500 || width > height * 1.2;
   const paired = width >= 600;
+  const shortWide = paired && height < 260;
+  const listRef = useRef<FlatList<CaptionPair>>(null);
+  const [listHeight, setListHeight] = useState<number>();
+  const inputMaxHeight = shortWide ? Math.max(44, (listHeight ?? height) - 4) : undefined;
+  const scrollToOffset = useCallback((offset: number) => listRef.current?.scrollToOffset({ offset, animated: false }), []);
+  const reveal = useFocusedInputReveal(scrollToOffset);
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
   const [store] = useState(() => new DualCaptionDraftStore(sourceDrafts));
   const [openingRevision] = useState(() => dualCaptionDraftRevision(sourceDrafts));
@@ -324,8 +331,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     <DualCaptionRow pair={pair} index={index} store={store} disabled={disabled} dirty={dirty} paired={paired}
       selected={selectedIds.has(pair.source.id)} onToggleSelection={toggleSelection}
       automaticTranslation={automaticTranslation} sourceLanguageLabel={sourceLanguageLabel}
-      targetLanguageLabel={targetLanguageLabel} onRefresh={onRefresh} onSkip={onSkip} />
-  ), [automaticTranslation, dirty, disabled, onRefresh, onSkip, paired, selectedIds, sourceLanguageLabel, store, targetLanguageLabel, toggleSelection]);
+      targetLanguageLabel={targetLanguageLabel} onRefresh={onRefresh} onSkip={onSkip} reveal={reveal} inputMaxHeight={inputMaxHeight} />
+  ), [automaticTranslation, dirty, disabled, inputMaxHeight, onRefresh, onSkip, paired, reveal, selectedIds, sourceLanguageLabel, store, targetLanguageLabel, toggleSelection]);
 
   const recoveryStatus = (
     <View style={{ gap: 8 }}>
@@ -351,6 +358,21 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     </View>
   );
 
+  const saveControl = !props.busy ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Save dual subtitle edits"
+              disabled={(editCount === 0 && !cleanupPending) || disabled}
+              onPress={() => { void save(); }}
+              style={{ alignItems: 'center', minHeight: 44, justifyContent: 'center', paddingHorizontal: shortWide ? 12 : undefined, paddingVertical: shortWide ? 8 : 16, borderRadius: chrome.radius.lg, backgroundColor: editCount > 0 ? chrome.accent : chrome.fill }}>
+              <Text style={{ color: editCount > 0 ? chrome.accentInk : chrome.muted, fontSize: 16, fontWeight: '700' }}>
+                {cleanupPending && !store.hasRecoveryChanges() ? 'Retry recovery cleanup' : editCount > 0
+                  ? `Save ${editCount} change${editCount === 1 ? '' : 's'}`
+                  : 'No unsaved changes'}
+              </Text>
+            </Pressable>
+          ) : null;
+
   return (
     <Modal visible={props.visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={requestClose}>
       <KeyboardViewport style={{ flex: 1 }}>
@@ -364,6 +386,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
                 {props.sourceLanguageLabel} + {props.targetLanguageLabel} · independent text and timing
               </Text> : null}
             </View>
+            {shortWide ? saveControl : null}
             {compact ? <Pressable accessibilityRole="button" accessibilityLabel="Dual subtitle actions and status" accessibilityState={{ expanded: actionsOpen }} onPress={() => setActionsOpen((value) => !value)} style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 8 }}>
               <Text style={{ color: chrome.accent, fontSize: 14, fontWeight: '700' }}>Actions{hasStatus ? ' !' : ''}</Text>
             </Pressable> : null}
@@ -374,8 +397,13 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           {!compact ? <View style={{ marginTop: 14 }}>{actions}</View> : null}
         </View>
 
+        <View collapsable={false} ref={reveal.viewportRef} onLayout={(event) => { setListHeight(event.nativeEvent.layout.height); reveal.onViewportLayout(); }} style={{ flex: 1, minHeight: 0 }}>
         <FlatList
-          style={{ flex: 1 }}
+          ref={listRef}
+          onScroll={reveal.onScroll}
+          onScrollBeginDrag={reveal.onScrollBeginDrag}
+          scrollEventThrottle={16}
+          style={{ flex: 1, minHeight: 0 }}
           ListHeaderComponent={compact && (actionsOpen || hasStatus) ? <View style={{ gap: 12 }}>{actionsOpen ? actions : null}{hasStatus ? recoveryStatus : null}</View> : null}
           data={props.pairs}
           keyExtractor={captionPairKey}
@@ -388,6 +416,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           keyboardDismissMode="on-drag"
           contentContainerStyle={{ gap: 10, padding: 14, paddingBottom: 14 }}
         />
+        </View>
 
         {props.busy || props.errorMessage || props.warningMessage ? (
           <View accessibilityViewIsModal style={{ position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center', paddingTop: Math.max(8, insets.top), paddingBottom: Math.max(8, insets.bottom), paddingLeft: Math.max(12, insets.left), paddingRight: Math.max(12, insets.right), backgroundColor: 'rgba(0,0,0,0.78)' }}>
@@ -419,7 +448,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
             </ScrollView>
           </View>
         ) : null}
-        <View testID="dual-caption-footer" style={{ padding: compact ? 8 : 14, paddingBottom: Math.max(compact ? 8 : 14, insets.bottom), borderTopWidth: 1, borderTopColor: chrome.hairline, backgroundColor: chrome.background }}>
+        <View testID="dual-caption-footer" style={{ padding: shortWide ? 0 : compact ? 8 : 14, paddingBottom: shortWide ? insets.bottom : Math.max(compact ? 8 : 14, insets.bottom), borderTopWidth: shortWide ? 0 : 1, borderTopColor: chrome.hairline, backgroundColor: chrome.background }}>
           {!compact && journalRecovery?.warning ? (
             <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
               {journalRecovery.warning}
@@ -435,20 +464,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
               {saveError}
             </Text>
           ) : null}
-          {!props.busy ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Save dual subtitle edits"
-              disabled={(editCount === 0 && !cleanupPending) || disabled}
-              onPress={() => { void save(); }}
-              style={{ alignItems: 'center', paddingVertical: 16, borderRadius: chrome.radius.lg, backgroundColor: editCount > 0 ? chrome.accent : chrome.fill }}>
-              <Text style={{ color: editCount > 0 ? chrome.accentInk : chrome.muted, fontSize: 16, fontWeight: '700' }}>
-                {cleanupPending && !store.hasRecoveryChanges() ? 'Retry recovery cleanup' : editCount > 0
-                  ? `Save ${editCount} change${editCount === 1 ? '' : 's'}`
-                  : 'No unsaved changes'}
-              </Text>
-            </Pressable>
-          ) : null}
+          {!shortWide ? saveControl : null}
         </View>
       </View>
       </KeyboardViewport>
@@ -467,6 +483,8 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
   selected: boolean;
   paired: boolean;
   onToggleSelection: (captionId: string) => void;
+  reveal: FocusedInputReveal;
+  inputMaxHeight?: number;
 } & Pick<DualCaptionEditorProps, 'automaticTranslation' | 'sourceLanguageLabel' | 'targetLanguageLabel' | 'onRefresh' | 'onSkip'>) {
   const { pair, index, store } = props;
   const subscribe = useCallback((listener: () => void) => store.subscribeCue(pair.source.id, listener), [pair.source.id, store]);
@@ -516,6 +534,8 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
       ) : null}
       <View style={{ flexDirection: props.paired ? 'row' : 'column', gap: 9 }}>
       <LanguageInput
+        reveal={props.reveal}
+        inputMaxHeight={props.inputMaxHeight}
         horizontal={props.paired}
         label={props.sourceLanguageLabel}
         value={draft.primaryText}
@@ -524,6 +544,8 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
         onChangeText={(value) => props.store.setDraft(pair.source.id, 'primaryText', value)}
       />
       <LanguageInput
+        reveal={props.reveal}
+        inputMaxHeight={props.inputMaxHeight}
         horizontal={props.paired}
         label={props.targetLanguageLabel}
         value={draft.translatedText}
@@ -538,6 +560,8 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
 });
 
 function LanguageInput(props: {
+  reveal: FocusedInputReveal;
+  inputMaxHeight?: number;
   horizontal?: boolean;
   label: string;
   value: string;
@@ -546,10 +570,14 @@ function LanguageInput(props: {
   placeholder?: string;
   onChangeText: (value: string) => void;
 }) {
+  const inputRef = useRef<TextInput>(null);
   return (
     <View style={{ flex: props.horizontal ? 1 : undefined, minWidth: 0, gap: 5 }}>
       <Text style={{ color: chrome.muted, fontSize: 11, fontWeight: '700', letterSpacing: 0.4 }}>{props.label.toUpperCase()}</Text>
       <TextInput
+        ref={inputRef}
+        onFocus={() => props.reveal.focus(inputRef.current)}
+        onBlur={() => props.reveal.blur(inputRef.current)}
         disableFullscreenUI
         accessibilityLabel={`${props.label} subtitle ${props.cueNumber} text`}
         value={props.value}
@@ -559,7 +587,7 @@ function LanguageInput(props: {
         placeholder={props.placeholder}
         placeholderTextColor={chrome.muted}
         onChangeText={props.onChangeText}
-        style={{ minHeight: 54, paddingHorizontal: 14, paddingVertical: 12, borderRadius: chrome.radius.md, color: chrome.text, backgroundColor: chrome.surfaceRaised, fontSize: 16, lineHeight: 22, textAlignVertical: 'top' }}
+        style={{ minHeight: Math.min(54, props.inputMaxHeight ?? 54), maxHeight: props.inputMaxHeight, paddingHorizontal: 14, paddingVertical: props.inputMaxHeight ? 6 : 12, borderRadius: chrome.radius.md, color: chrome.text, backgroundColor: chrome.surfaceRaised, fontSize: 16, lineHeight: 22, textAlignVertical: 'top' }}
       />
     </View>
   );

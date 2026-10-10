@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fontChoicePatch, type FontChoice, type FontColors } from '@/lib/font-style-choice';
 import { chrome } from '@/lib/ui-theme';
+import { useFocusedInputReveal, type FocusedInputReveal } from '@/hooks/use-focused-input-reveal';
 
 type HSV = { h: number; s: number; v: number };
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
@@ -35,6 +36,10 @@ export function FontColorPicker(props: {
   const width = (rootSize?.width ?? window.width) - insets.left - insets.right;
   const height = (rootSize?.height ?? window.height) - insets.top - insets.bottom;
   const compact = height < 500 || width > height * 1.2;
+  const shortWide = width >= 600 && height < 260;
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollToOffset = useCallback((y: number) => scrollRef.current?.scrollTo({ y, animated: false }), []);
+  const reveal = useFocusedInputReveal(scrollToOffset);
   const [bodyWidth, setBodyWidth] = useState(224);
   const [colors, setColors] = useState<FontColors>(() => {
     const patch = fontChoicePatch(props.choice);
@@ -46,8 +51,9 @@ export function FontColorPicker(props: {
     <KeyboardAvoidingView testID="font-color-picker-root" onLayout={({ nativeEvent: { layout } }) => setRootSize({ width: layout.width, height: layout.height })}
       accessibilityViewIsModal enabled={!props.keyboardManaged} behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={{ position: 'absolute', inset: 0, backgroundColor: '#00000099', justifyContent: 'center', paddingTop: Math.max(compact ? 8 : 16, insets.top), paddingBottom: Math.max(compact ? 8 : 16, insets.bottom), paddingLeft: Math.max(compact ? 8 : 16, insets.left), paddingRight: Math.max(compact ? 8 : 16, insets.right) }}>
-      <View style={{ maxHeight: '100%', flexShrink: 1, minHeight: 0, backgroundColor: chrome.surface, borderRadius: chrome.radius.lg, padding: compact ? 12 : 18, gap: compact ? 8 : 14 }}>
-        <ScrollView onLayout={({ nativeEvent: { layout } }) => setBodyWidth(layout.width)} style={{ flexShrink: 1, minHeight: 0 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ gap: 14, alignItems: 'center' }}>
+      <View style={{ maxHeight: '100%', flexShrink: 1, minHeight: 0, backgroundColor: chrome.surface, borderRadius: chrome.radius.lg, padding: shortWide ? 8 : compact ? 12 : 18, gap: compact ? 8 : 14, flexDirection: shortWide ? 'row' : 'column', height: shortWide ? '100%' : undefined }}>
+        <View collapsable={false} ref={reveal.viewportRef} onLayout={reveal.onViewportLayout} style={{ flex: shortWide ? 1 : undefined, flexShrink: 1, minHeight: 0, minWidth: 0 }}>
+        <ScrollView ref={scrollRef} onScroll={reveal.onScroll} onScrollBeginDrag={reveal.onScrollBeginDrag} scrollEventThrottle={16} onLayout={({ nativeEvent: { layout } }) => setBodyWidth(layout.width)} style={{ flexShrink: 1, minHeight: 0 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ gap: 14, alignItems: 'center' }}>
           <Text style={{ color: chrome.text, fontSize: 22, fontWeight: '700' }}>{props.choice.name}</Text>
           <View style={{ minHeight: 46, width: '100%', justifyContent: 'center' }}>
             {dual ? <Text numberOfLines={1} style={{ position: 'absolute', left: 2, right: -2, top: 4, color: colors.secondary, fontFamily: props.choice.font.family, fontSize: 28 }}>{props.previewText}</Text> : null}
@@ -61,9 +67,10 @@ export function FontColorPicker(props: {
               </Pressable>
             ))}
           </View> : <Text style={{ color: chrome.text }}>Color</Text>}
-          <ColorWheel key={tab} size={Math.max(44, Math.min(224, bodyWidth))} color={colors[tab]} onChange={(color) => setColors((current) => ({ ...current, [tab]: color }))} />
+          <ColorWheel key={tab} size={Math.max(44, Math.min(224, bodyWidth))} color={colors[tab]} reveal={reveal} onChange={(color) => setColors((current) => ({ ...current, [tab]: color }))} />
         </ScrollView>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 12, width: shortWide ? 210 : undefined, alignSelf: shortWide ? 'flex-end' : undefined }}>
           <Pressable accessibilityRole="button" onPress={props.onBack} style={{ flex: 1, minHeight: 44, padding: 16, alignItems: 'center', borderRadius: 12, backgroundColor: chrome.surfaceRaised }}>
             <Text style={{ color: chrome.text, fontWeight: '700' }}>Back</Text>
           </Pressable>
@@ -76,7 +83,8 @@ export function FontColorPicker(props: {
   );
 }
 
-function ColorWheel(props: { color: string; size: number; onChange: (color: string) => void }) {
+function ColorWheel(props: { color: string; size: number; onChange: (color: string) => void; reveal: FocusedInputReveal }) {
+  const inputRef = useRef<TextInput>(null);
   const SIZE = props.size;
   const RADIUS = SIZE / 2;
   const [value, setValue] = useState(() => hsv(props.color));
@@ -111,10 +119,10 @@ function ColorWheel(props: { color: string; size: number; onChange: (color: stri
           <View style={{ position: 'absolute', left: value.v * (SIZE - 4), top: 0, bottom: 0, width: 4, backgroundColor: '#FFFFFF' }} />
         </View>
       </View>
-      <TextInput disableFullscreenUI accessibilityLabel="Hex color" value={input} autoCapitalize="characters" autoCorrect={false} maxLength={7} onChangeText={(text) => {
+      <TextInput ref={inputRef} onFocus={() => props.reveal.focus(inputRef.current)} disableFullscreenUI accessibilityLabel="Hex color" value={input} autoCapitalize="characters" autoCorrect={false} maxLength={7} onChangeText={(text) => {
         setInput(text);
         if (/^#[0-9a-f]{6}$/i.test(text)) { setValue(hsv(text)); props.onChange(text.toUpperCase()); }
-      }} onBlur={() => setInput(props.color)} style={{ color: chrome.text, backgroundColor: chrome.background, borderRadius: 12, padding: 12, width: SIZE, textAlign: 'center' }} />
+      }} onBlur={() => { props.reveal.blur(inputRef.current); setInput(props.color); }} style={{ minHeight: 44, color: chrome.text, backgroundColor: chrome.background, borderRadius: 12, padding: 12, width: SIZE, textAlign: 'center' }} />
     </View>
   );
 }

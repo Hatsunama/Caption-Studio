@@ -1,4 +1,4 @@
-import { AdaptiveDialog } from '@/components/editor/adaptive-dialog';
+import { AdaptiveDialog, AdaptiveDialogTextInput } from '@/components/editor/adaptive-dialog';
 import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
 import { editorWorkspaceLayout } from '@/lib/adaptive-workspace';
 import { projectTimelineDuration } from '@/lib/project-timeline';
@@ -2800,13 +2800,14 @@ function EditTextLayerModal(props: {
           </Pressable>
         </View>}>
           <Text style={{ color: palette.text, fontSize: 20, fontWeight: '800' }}>Edit text layer</Text>
-          <TextInput
+          <AdaptiveDialogTextInput
+            accessibilityLabel="Text layer words"
             autoFocus
             multiline
             disableFullscreenUI
             value={props.value}
             onChangeText={props.onChange}
-            style={{ minHeight: 110, padding: 14, borderRadius: chrome.radius.md, color: palette.text, backgroundColor: chrome.surfaceRaised, textAlignVertical: 'top' }}
+            style={{ padding: 14, borderRadius: chrome.radius.md, color: palette.text, backgroundColor: chrome.surfaceRaised, textAlignVertical: 'top' }}
           />
       </AdaptiveDialog>
     </Modal>
