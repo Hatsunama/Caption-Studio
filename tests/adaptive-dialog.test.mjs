@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { keyboardViewportHostProps } from './keyboard-viewport-host.mjs';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -6,7 +7,7 @@ import ts from 'typescript';
 
 const compiled = ts.transpileModule(readFileSync(new URL('../src/components/editor/adaptive-dialog.tsx', import.meta.url), 'utf8'),
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-function mount(props, insets, platform = 'android') {
+function mount(props, insets, platform = 'android', bottomInsetCovered = false) {
   const exports = {};
   const states = [];
   let cursor = 0;
@@ -32,7 +33,7 @@ function mount(props, insets, platform = 'android') {
   };
   runInNewContext(compiled, { exports, require(id) {
     if (id === 'react') return react;
-    if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
+    if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, bottomInsetCovered) }), jsxs: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, bottomInsetCovered) }) };
     if (id === 'react-native') return { Platform: { OS: platform }, ...Object.fromEntries(['KeyboardAvoidingView', 'Pressable', 'ScrollView', 'View', 'TextInput'].map(key => [key, key])) };
     if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: scrollToOffset => [{ current: null }, {
       focus(input) { calls.push(['focus', input]); },
@@ -195,4 +196,12 @@ test('measured body bounds multiline input and bridges native focus and scroll w
   assert.equal(callerFocus, 1);
   assert.equal(callerBlur, 1);
   assert.equal(callerLayout, 2);
+});
+
+test('keyboard dialogs use the measured host bottom inset while retaining their decorative frame padding', () => {
+  const root = mount({ children: 'Words', footer: 'Save', keyboard: true, framePadding: 8 },
+    { top: 37, bottom: 24, left: 0, right: 0 }, 'android', true);
+  const frame = walk(root, node => node.props?.testID === 'adaptive-dialog-frame')[0];
+  assert.equal(frame.props.style.paddingBottom, 8);
+  assert.equal(frame.props.style.paddingTop, 37);
 });

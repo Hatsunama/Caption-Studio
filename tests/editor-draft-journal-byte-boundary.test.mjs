@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { keyboardViewportHostProps } from './keyboard-viewport-host.mjs';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -277,7 +278,7 @@ async function mountEditor(kind, options = {}) {
     createContext: (value) => ({ value }), useContext: (context) => context.value,
   };
   const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
-  const jsx = (type, props) => ({ type, props });
+  const jsx = (type, props) => ({ type, props: keyboardViewportHostProps(type, props) });
   const exports = {};
   runInNewContext(editorSources[kind], { exports, Error,
     setTimeout: (fn) => { timers.set(++nextTimer, fn); return nextTimer; }, clearTimeout: (id) => timers.delete(id),

@@ -33,10 +33,11 @@ export function WatermarkSheet(props: Props) {
   const close = () => { setText(''); props.onClose(); };
   return (
     <Modal animationType="slide" onRequestClose={close} transparent visible={props.visible}>
-      <KeyboardViewport style={{ flex: 1, minHeight: 0 }}>
+      <KeyboardViewport safeAreaBottom={insets.bottom} style={{ flex: 1, minHeight: 0 }}>
+      {({ safeAreaBottom }) => (
       <View testID="watermark-sheet-root"
         onLayout={({ nativeEvent: { layout } }) => setRootSize({ width: layout.width, height: layout.height })}
-        style={{ flex: 1, minHeight: 0, justifyContent: 'flex-end', backgroundColor: '#000000A6', paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
+        style={{ flex: 1, minHeight: 0, justifyContent: 'flex-end', backgroundColor: '#000000A6', paddingTop: insets.top, paddingBottom: safeAreaBottom, paddingLeft: insets.left, paddingRight: insets.right }}>
         <View testID="watermark-sheet-card" style={{ maxHeight: compact ? '100%' : '76%', minHeight: 0, flexShrink: 1, gap: compact ? 8 : 14, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: '#FF8FC455', backgroundColor: chrome.surface, padding: shortWide ? 8 : compact ? 12 : 20, flexDirection: shortWide ? 'row' : 'column', height: shortWide ? '100%' : undefined }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: shortWide ? 240 : undefined, alignSelf: shortWide ? 'flex-end' : undefined }}>
             <Text style={{ color: chrome.text, fontSize: 20, fontWeight: '900' }} numberOfLines={compact ? 1 : undefined}>Watermarks</Text>
@@ -59,6 +60,7 @@ export function WatermarkSheet(props: Props) {
           </View>
         </View>
       </View>
+      )}
       </KeyboardViewport>
     </Modal>
   );

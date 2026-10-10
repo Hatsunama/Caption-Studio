@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { keyboardViewportHostProps } from './keyboard-viewport-host.mjs';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -35,7 +36,7 @@ function mount(name, exportName, props, options = {}) {
   const exports = {};
   runInNewContext(sources[name], { exports, Error, require(id) {
     if (id === 'react') return react;
-    if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
+    if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, options.bottomInsetCovered) }), jsxs: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, options.bottomInsetCovered) }) };
     if (id === 'react-native') return native;
     if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
 if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
@@ -199,4 +200,13 @@ test('watermark entry and Add share the short-wide body without resetting the dr
   assert.ok(h.label('Add watermark').props.style.minHeight >= 44);
   assert.equal(h.all(node => node.props?.accessibilityLabel === 'Close watermarks', h.get('ScrollView')).length, 0);
   h.measure(844); assert.equal(h.get('TextInput').props.value, 'Keep draft');
+});
+
+test('watermark entry consumes the measured host inset rather than reserving navigation below the keyboard twice', () => {
+  const h = mount('watermark-sheet', 'WatermarkSheet', {
+    visible: true, watermarks: [], maxWatermarks: 5, onAdd() {}, onSelect() {}, onRemove() {}, onClose() {},
+  }, { bottomInsetCovered: true });
+  assert.equal(h.id('watermark-sheet-root').props.style.paddingBottom, 0);
+  assert.equal(h.id('watermark-sheet-root').props.style.paddingLeft, 30);
+  assert.equal(h.id('watermark-sheet-root').props.style.paddingRight, 18);
 });

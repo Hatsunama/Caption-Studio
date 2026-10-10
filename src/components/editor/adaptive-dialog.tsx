@@ -70,11 +70,14 @@ export function AdaptiveDialog(props: {
   const framePadding = props.sheet ? 0 : compact ? 8 : props.framePadding ?? 28;
   const gap = compact ? 8 : props.gap ?? 14;
   const top = Math.max(framePadding, insets.top);
-  const bottom = props.sheet ? 0 : Math.max(framePadding, insets.bottom);
   return (
     <KeyboardViewport
+      safeAreaBottom={insets.bottom}
       enabled={Boolean(props.keyboard)}
       style={{ flex: 1, minHeight: 0 }}>
+      {({ safeAreaBottom }) => {
+        const bottom = props.sheet ? 0 : Math.max(framePadding, safeAreaBottom);
+        return (
       <View testID="adaptive-dialog-frame" onLayout={(event) => {
         const { width, height } = event.nativeEvent.layout;
         setFrame(current => current.width === width && current.height === height ? current : { width, height });
@@ -107,7 +110,7 @@ export function AdaptiveDialog(props: {
             onScroll={reveal.onScroll} onScrollBeginDrag={reveal.onScrollBeginDrag} scrollEventThrottle={16}
             contentContainerStyle={{
               paddingHorizontal: padding, paddingTop: padding,
-              paddingBottom: props.footer ? gap : props.sheet ? Math.max(34, insets.bottom) : padding,
+              paddingBottom: props.footer ? gap : props.sheet ? Math.max(34, safeAreaBottom) : padding,
               gap,
             }}>
             <DialogInputContext.Provider value={{ compact,
@@ -118,11 +121,13 @@ export function AdaptiveDialog(props: {
           </View>
           {props.footer ? <View testID="adaptive-dialog-footer" style={{
             paddingHorizontal: padding,
-            paddingBottom: props.sheet ? Math.max(34, insets.bottom) : padding,
+            paddingBottom: props.sheet ? Math.max(34, safeAreaBottom) : padding,
             ...(compact ? { flexShrink: 0, minHeight: 44, justifyContent: 'center', paddingTop: padding } : {}),
           }}>{props.footer}</View> : null}
         </Pressable>
       </View>
+        );
+      }}
     </KeyboardViewport>
   );
 }

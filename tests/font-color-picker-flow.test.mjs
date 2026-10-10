@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { keyboardViewportHostProps } from './keyboard-viewport-host.mjs';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -40,7 +41,7 @@ function mount(name, exportName, props, options = {}) {
     exports,
     require: (id) => {
       if (id === 'react') return react;
-      if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
+      if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, options.bottomInsetCovered) }), jsxs: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, options.bottomInsetCovered) }) };
       if (id === 'react-native') return native;
       if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
 if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
@@ -277,17 +278,45 @@ test('keyboard-short wide font forms preserve the color draft and use a native m
   assert.equal(h.get('TextInput').props.value, '#ABCDEF');
 });
 
-test('short-wide font search shares a header row while library actions use the controller exactly once', () => {
+test('short-wide font search keeps its entry size while library actions use the controller exactly once', () => {
   const remembered = [], favorites = [];
   const h = mount('font-browser', 'FontBrowser', { visible: true, previewText: 'Text', onClose() {}, onSelect() {} }, { remembered, favorites });
   const root = h.all(node => node.props?.testID === 'font-browser-root')[0];
   root.props.onLayout({ nativeEvent: { layout: { width: 900, height: 150 } } }); h.render();
   const search = h.get('TextInput');
-  assert.equal(search.props.style.flex, 1);
+  assert.equal(search.props.style.flex, undefined);
   assert.equal(search.props.style.height, 48);
   const card = h.get('FlatList').props.renderItem({ item: dual });
   h.all(node => node.type === 'Pressable', card)[1].props.onPress({ stopPropagation() {} });
   assert.deepEqual(favorites, ['dual']);
   card.props.onPress(); h.render(); h.get('FontColorPicker').props.onSave({ primary: '#FFFFFF', secondary: '#000000' });
   assert.deepEqual(remembered, ['dual']);
+});
+
+test('Seeker-sized font search reserves full result height beside controls without duplicate bottom inset', () => {
+  const h = mount('font-browser', 'FontBrowser', { visible: true, previewText: 'Visible preview', onClose() {}, onSelect() {} },
+    { window: { width: 890, height: 400, fontScale: 1 }, insets: { top: 37, bottom: 24, left: 0, right: 0 }, bottomInsetCovered: true });
+  const root = () => h.all(node => node.props?.testID === 'font-browser-root')[0];
+  root().props.onLayout({ nativeEvent: { layout: { width: 890, height: 143 } } }); h.render();
+  assert.equal(root().props.style.paddingBottom, 0, 'the measured keyboard host already excludes the navigation-bar area');
+  const panes = root().props.children[0];
+  assert.equal(panes.props.style.flexDirection, 'row', 'results must use full short-window height, not the remainder below a 48dp header');
+  const controls = panes.props.children[0];
+  assert.ok(controls.props.style.width >= 260 && controls.props.style.width <= 445);
+  assert.equal(controls.props.style.flexShrink, 0);
+  assert.equal(h.get('TextInput').props.style.height, 48);
+  const card = h.get('FlatList').props.renderItem({ item: dual });
+  assert.ok(card.props.style.minHeight >= 44);
+  h.get('TextInput').props.onChangeText('Dual'); h.render();
+  root().props.onLayout({ nativeEvent: { layout: { width: 390, height: 844 } } }); h.render();
+  assert.equal(root().props.children[0].props.style.flexDirection, 'column');
+  assert.equal(h.get('TextInput').props.value, 'Dual', 'reflow must preserve search');
+});
+test('a managed font picker inherits the host bottom inset without changing its color draft', () => {
+  const h = mount('font-color-picker', 'FontColorPicker', {
+    choice: dual, previewText: 'Text', keyboardManaged: true, safeAreaBottom: 0, onBack() {}, onSave() {},
+  }, { window: { width: 890, height: 143 }, insets: { top: 37, bottom: 24, left: 0, right: 0 }, resolveChildren: true });
+  assert.equal(h.get('KeyboardAvoidingView').props.style.paddingBottom, 8);
+  h.get('TextInput').props.onChangeText('#123456'); h.render();
+  assert.equal(h.get('TextInput').props.value, '#123456');
 });

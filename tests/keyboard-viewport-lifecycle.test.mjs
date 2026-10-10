@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
-import { keyboardViewportOverlap } from '../src/lib/keyboard-viewport.ts';
+import * as geometry from '../src/lib/keyboard-viewport.ts';
 
 const source = stripTypeScriptTypes(readFileSync(new URL('../src/hooks/use-keyboard-viewport.ts', import.meta.url), 'utf8'))
   .replace(/^import .*;$/gm, '').replace('export function', 'function');
-const load = new Function('dependencies', 'const { useCallback, useEffect, useRef, useState, Keyboard, Platform, useWindowDimensions, keyboardViewportOverlap } = dependencies;\n' + source + '\nreturn useKeyboardViewport;');
+const load = new Function('dependencies', 'const { useCallback, useEffect, useMemo, useRef, useState, Keyboard, Platform, useWindowDimensions, keyboardViewportOverlap, keyboardViewportCoversBottom } = dependencies;\n' + source + '\nreturn useKeyboardViewport;');
 function mount({ visible = false, metrics, platform = 'android' } = {}) {
   const slots = [], effects = [], callbacks = [], listeners = new Map();
   let cursor = 0, writes = 0;
@@ -16,6 +16,11 @@ function mount({ visible = false, metrics, platform = 'android' } = {}) {
     useRef: initial => slot(() => ({ current: initial }))[1],
     useState: initial => { const [i, value] = slot(initial); return [value, next => { writes++; slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; },
     useCallback: callback => { const [, value] = slot(() => callback); return value; },
+    useMemo(factory, deps) {
+      const [i, old] = slot(undefined);
+      if (!old || deps.some((v, n) => !Object.is(v, old.deps[n]))) slots[i] = { deps, value: factory() };
+      return slots[i].value;
+    },
     useEffect(callback, deps) {
       const [i, old] = slot(undefined);
       if (!old || deps.some((v, n) => !Object.is(v, old.deps[n]))) {
@@ -27,7 +32,7 @@ function mount({ visible = false, metrics, platform = 'android' } = {}) {
       isVisible: () => visible, metrics: () => metrics,
       addListener(name, callback) { listeners.set(name, callback); return { remove: () => listeners.delete(name) }; },
     },
-    keyboardViewportOverlap,
+    ...geometry,
   });
   const native = { measureInWindow: callback => callbacks.push(callback) };
   const render = (enabled = true) => { cursor = 0; const value = hook(enabled); value.attachFrame(native); return value; };
