@@ -34,6 +34,7 @@ function mount(name, exportName, props, options = {}) {
     if (id === 'react') return react;
     if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
     if (id === 'react-native') return native;
+    if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
     if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 30, right: 18 } };
     if (id === 'expo-image') return { Image: 'Image' };
     if (id.endsWith('ui-theme')) return { chrome: { radius: { sm: 8, md: 12, lg: 16, xl: 24, pill: 999 } } };
@@ -87,7 +88,14 @@ for (const platform of ['android', 'ios']) {
     h.measure(230);
     const body = assertSafeBody(h, 'watermark-sheet');
     assert.equal(h.id('watermark-sheet-card').props.style.maxHeight, '100%');
-    assert.equal(h.get('KeyboardAvoidingView').props.behavior, platform === 'ios' ? 'padding' : undefined);
+    const viewport = h.get('KeyboardViewport');
+    assert.ok(viewport);
+    assert.equal(viewport.props.enabled ?? true, true);
+    assert.equal(viewport.props.iosAvoidance ?? true, true);
+    assert.equal(viewport.props.style.flex, 1);
+    assert.equal(viewport.props.style.minHeight, 0);
+    assert.equal(viewport.props.children, h.id('watermark-sheet-root'), 'measurement belongs to the reduced child');
+    assert.equal(h.get('KeyboardAvoidingView'), undefined);
     assert.equal(h.get('TextInput').props.disableFullscreenUI, true);
     assert.equal(h.all(node => node.type === 'TextInput', body).length, 1);
     assert.equal(h.all(node => node.props?.accessibilityLabel === 'Add watermark', body).length, 1);

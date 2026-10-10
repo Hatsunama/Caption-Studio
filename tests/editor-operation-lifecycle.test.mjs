@@ -86,6 +86,7 @@ const fragment = Symbol('fragment');
 const jsx = (type, props) => ({ type, props });
 const componentSources = {
   '@/components/editor/adaptive-dialog': readFileSync(new URL('../src/components/editor/adaptive-dialog.tsx', import.meta.url), 'utf8'),
+  '@/components/editor/keyboard-viewport': readFileSync(new URL('../src/components/editor/keyboard-viewport.tsx', import.meta.url), 'utf8'),
   '@/components/operation-overlay': readFileSync(new URL('../src/components/operation-overlay.tsx', import.meta.url), 'utf8'),
 };
 const mediaLoadingSource = readFileSync(new URL('../src/components/media-loading-overlay.tsx', import.meta.url), 'utf8');
@@ -117,6 +118,7 @@ function renderSource(source, extra = {}) {
     if (name === 'react-native') return native;
     if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
     if (name === '@/lib/ui-theme') return { chrome };
+    if (name === '@/hooks/use-keyboard-viewport') return { useKeyboardViewport: () => ({ frameRef: { current: null }, onLayout() {}, bottomOverlap: 0 }) };
     if (Object.hasOwn(componentSources, name)) {
       if (!modules.has(name)) {
         const exports = {};
