@@ -38,9 +38,10 @@ const editorSource = readFileSync(process.env.CAPTION_EDITOR_SOURCE
 const editorAst = ts.createSourceFile('editor.tsx', editorSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const workspace = editorAst.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'EditorWorkspace');
 const workspaceShell = workspace.body.statements.find(ts.isReturnStatement).expression.expression;
-const workspaceRoot = workspaceShell.openingElement.tagName.getText(editorAst) === 'PersistedHorizontalScrollScope'
-  ? workspaceShell.children.find(ts.isJsxElement)
-  : workspaceShell;
+let workspaceRoot = workspaceShell;
+while (['PersistedHorizontalScrollScope', 'KeyboardViewport'].includes(workspaceRoot.openingElement.tagName.getText(editorAst))) {
+  workspaceRoot = workspaceRoot.children.find(ts.isJsxElement);
+}
 function evaluate(expression, context = {}) {
   const sandbox = { result: undefined, workspaceLayout: { sideBySide: false }, previewPaneWidth: 360, insets: { left: 0, right: 0 }, ...context };
   const compiled = ts.transpileModule(`result = (${expression});`, {
