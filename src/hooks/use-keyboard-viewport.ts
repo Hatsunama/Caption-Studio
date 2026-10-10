@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Platform, useWindowDimensions, type KeyboardEvent, type View } from 'react-native';
 import { keyboardViewportCoversBottom, keyboardViewportOverlap, type KeyboardFrame, type ViewportFrame } from '@/lib/keyboard-viewport';
 
@@ -6,30 +6,32 @@ export function useKeyboardViewport(enabled = true) {
   const window = useWindowDimensions();
   const geometryKey = `${window.width}:${window.height}:${window.fontScale}`;
   const active = enabled && Platform.OS === 'android';
+  const configuration = useMemo(() => ({ active, geometryKey }), [active, geometryKey]);
   const frameRef = useRef<View | null>(null);
   const measuredRef = useRef<ViewportFrame | undefined>(undefined);
   const keyboardRef = useRef<KeyboardFrame | undefined>(undefined);
-  const lifetimeRef = useRef({ active: false, epoch: 0, measurement: 0, coverageValid: false, geometryKey: '' });
-  const [reservation, setReservation] = useState({ overlap: 0, bottomInsetCovered: false, geometryKey: '' });
+  const lifetimeRef = useRef({ active: false, epoch: 0, measurement: 0, coverageValid: false, geometryKey: '', configuration: undefined as typeof configuration | undefined });
+  const [reservation, setReservation] = useState<{ overlap: number; bottomInsetCovered: boolean; geometryKey: string; configuration?: typeof configuration }>({ overlap: 0, bottomInsetCovered: false, geometryKey: '' });
   const invalidateCoverage = useCallback(() => {
     // Preserve the bounded last overlap while fresh geometry is unavailable.
     lifetimeRef.current.coverageValid = false;
     setReservation((previous) => previous.bottomInsetCovered
       ? { ...previous, bottomInsetCovered: false } : previous);
   }, []);
-  const reserve = useCallback((frame: ViewportFrame, keyboard: KeyboardFrame | undefined, key: string) => {
+  const reserve = useCallback((frame: ViewportFrame, keyboard: KeyboardFrame | undefined, config: typeof configuration) => {
     const overlap = keyboardViewportOverlap(frame, keyboard);
     const bottomInsetCovered = lifetimeRef.current.coverageValid && keyboardViewportCoversBottom(frame, keyboard);
     setReservation((previous) => previous.overlap === overlap
-      && previous.bottomInsetCovered === bottomInsetCovered && previous.geometryKey === key
-      ? previous : { overlap, bottomInsetCovered, geometryKey: key });
+      && previous.bottomInsetCovered === bottomInsetCovered && previous.configuration === config
+      ? previous : { overlap, bottomInsetCovered, geometryKey: config.geometryKey, configuration: config });
   }, []);
   const measure = useCallback(() => {
     const lifetime = lifetimeRef.current;
     if (!lifetime.active) return;
     const epoch = lifetime.epoch;
     const revision = ++lifetime.measurement;
-    const key = lifetime.geometryKey;
+    const config = lifetime.configuration;
+    if (!config) return;
     const view = frameRef.current;
     view?.measureInWindow((x, y, width, height) => {
       if (!lifetime.active || epoch !== lifetime.epoch || revision !== lifetime.measurement
@@ -40,7 +42,7 @@ export function useKeyboardViewport(enabled = true) {
       }
       measuredRef.current = { x, y, width, height };
       lifetime.coverageValid = true;
-      reserve(measuredRef.current, keyboardRef.current, key);
+      reserve(measuredRef.current, keyboardRef.current, config);
     });
   }, [invalidateCoverage, reserve]);
   const attachFrame = useCallback((view: View | null) => {
@@ -61,9 +63,10 @@ export function useKeyboardViewport(enabled = true) {
     const epoch = ++lifetime.epoch;
     lifetime.active = active;
     lifetime.geometryKey = geometryKey;
+    lifetime.configuration = configuration;
     lifetime.measurement++;
     measuredRef.current = undefined;
-    invalidateCoverage();
+    lifetime.coverageValid = false;
     if (!active) {
       keyboardRef.current = undefined;
       return;
@@ -74,7 +77,7 @@ export function useKeyboardViewport(enabled = true) {
       if (!current()) return;
       keyboardRef.current = event.endCoordinates;
       if (measuredRef.current) {
-        reserve(measuredRef.current, keyboardRef.current, geometryKey);
+        reserve(measuredRef.current, keyboardRef.current, configuration);
       }
       measure();
     };
@@ -82,8 +85,8 @@ export function useKeyboardViewport(enabled = true) {
       if (!current()) return;
       keyboardRef.current = undefined;
       setReservation((previous) => previous.overlap === 0 && !previous.bottomInsetCovered
-        && previous.geometryKey === geometryKey
-        ? previous : { overlap: 0, bottomInsetCovered: false, geometryKey });
+        && previous.configuration === configuration
+        ? previous : { overlap: 0, bottomInsetCovered: false, geometryKey, configuration });
       measure();
     };
     const shown = Keyboard.addListener('keyboardDidShow', change);
@@ -98,13 +101,13 @@ export function useKeyboardViewport(enabled = true) {
       shown.remove();
       hidden.remove();
     };
-  }, [active, geometryKey, invalidateCoverage, measure, reserve]);
+  }, [active, configuration, geometryKey, measure, reserve]);
 
   return {
     attachFrame,
     onLayout,
     bottomOverlap: active ? Math.min(reservation.overlap, Math.max(0, window.height)) : 0,
-    bottomInsetCovered: active && reservation.geometryKey === geometryKey && reservation.bottomInsetCovered,
-    measurementPending: active && reservation.geometryKey !== geometryKey,
+    bottomInsetCovered: active && reservation.configuration === configuration && reservation.bottomInsetCovered,
+    measurementPending: active && reservation.configuration !== configuration,
   };
 }

@@ -77,6 +77,11 @@ function render(props = {}, platform = 'android') {
       if (!sameDeps(slots[index]?.deps, deps)) slots[index] = { callback, deps };
       return slots[index].callback;
     },
+    useMemo(factory, deps) {
+      const index = cursor++;
+      if (!sameDeps(slots[index]?.deps, deps)) slots[index] = { value: factory(), deps };
+      return slots[index].value;
+    },
     useEffect(callback, deps) {
       const index = cursor++;
       if (!sameDeps(slots[index]?.deps, deps)) {

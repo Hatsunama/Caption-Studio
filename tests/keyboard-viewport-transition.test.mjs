@@ -6,12 +6,12 @@ import * as geometry from '../src/lib/keyboard-viewport.ts';
 
 const source = stripTypeScriptTypes(readFileSync(new URL('../src/hooks/use-keyboard-viewport.ts', import.meta.url), 'utf8'))
   .replace(/^import .*;$/gm, '').replace('export function', 'function');
-const loadHook = new Function('dependencies', 'const { useCallback, useEffect, useRef, useState, Keyboard, Platform, useWindowDimensions, keyboardViewportOverlap, keyboardViewportCoversBottom } = dependencies;\n'
+const loadHook = new Function('dependencies', 'const { useCallback, useEffect, useMemo, useRef, useState, Keyboard, Platform, useWindowDimensions, keyboardViewportOverlap, keyboardViewportCoversBottom } = dependencies;\n'
   + source + '\nreturn useKeyboardViewport;');
 
 function mount({ visible = true, platform = 'android', missingMetrics = false } = {}) {
   const slots = [], effects = [], measurements = [], listeners = new Map();
-  let cursor = 0, writes = 0, attached;
+  let cursor = 0, writes = 0, effectWrites = 0, inEffect = false, attached;
   let keyboard = { screenX: 0, screenY: 180, width: 800, height: 220 };
   const window = { width: 890, height: 400, fontScale: 1 };
   const slot = initial => {
@@ -25,10 +25,16 @@ function mount({ visible = true, platform = 'android', missingMetrics = false } 
       const [index, value] = slot(initial);
       return [value, next => {
         writes++;
+        if (inEffect) effectWrites++;
         slots[index] = typeof next === 'function' ? next(slots[index]) : next;
       }];
     },
     useCallback: callback => slot(() => callback)[1],
+    useMemo(factory, deps) {
+      const [i, old] = slot(undefined);
+      if (!old || deps.some((v, n) => !Object.is(v, old.deps[n]))) slots[i] = { deps, value: factory() };
+      return slots[i].value;
+    },
     useEffect(callback, dependencies) {
       const [index, old] = slot(undefined);
       if (!old || dependencies.some((value, i) => !Object.is(value, old.dependencies[i]))) {
@@ -68,7 +74,12 @@ function mount({ visible = true, platform = 'android', missingMetrics = false } 
     } else value.frameRef.current = native;
     return value;
   };
-  const flush = () => { while (effects.length) effects.shift()(); };
+  const flush = () => {
+    while (effects.length) {
+      inEffect = true;
+      try { effects.shift()(); } finally { inEffect = false; }
+    }
+  };
   const measure = (frame, index = measurements.length - 1) =>
     measurements[index](frame.x, frame.y, frame.width, frame.height);
   const emit = (name, frame = keyboard) => {
@@ -83,7 +94,7 @@ function mount({ visible = true, platform = 'android', missingMetrics = false } 
   render(); flush();
   return { render, flush, measure, measurements, listeners, window, emit, dispose,
     setPlatform(value) { platform = value; },
-    get writes() { return writes; } };
+    get writes() { return writes; }, get effectWrites() { return effectWrites; } };
 }
 const full = { x: 20, y: 30, width: 760, height: 360 };
 
@@ -256,5 +267,26 @@ test('pending reservations are bounded after a shorter window replaces the measu
   h.window.height = 120; h.render(); h.flush();
   assert.ok(h.render().bottomOverlap > 0);
   assert.ok(h.render().bottomOverlap <= 120);
+  h.dispose();
+});
+
+test('subscription setup never publishes state before native geometry arrives', () => {
+  const h = mount();
+  assert.equal(h.effectWrites, 0, 'Initial subscription must not synchronously invalidate React state');
+  h.measure(full);
+  assert.equal(h.render().bottomInsetCovered, true);
+  h.window.width = 400; h.window.height = 890;
+  h.render(); h.flush();
+  assert.equal(h.effectWrites, 0, 'Rotation subscriptions wait for native measurement');
+  assert.equal(h.render().bottomInsetCovered, false);
+  h.emit('keyboardDidShow', { screenX: 0, screenY: 600, width: 400, height: 300 });
+  h.measure({ x: 0, y: 80, width: 400, height: 810 });
+  assert.equal(h.render().bottomInsetCovered, true);
+  h.render(false); h.flush();
+  h.render(true); h.flush();
+  assert.equal(h.effectWrites, 0, 'Reactivation subscriptions cannot cause a synchronous render cascade');
+  assert.equal(h.render().bottomInsetCovered, false);
+  h.measure({ x: 0, y: 80, width: 400, height: 810 });
+  assert.equal(h.render().bottomInsetCovered, true);
   h.dispose();
 });
