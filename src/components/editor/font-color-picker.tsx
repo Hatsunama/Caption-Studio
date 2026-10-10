@@ -87,6 +87,7 @@ export function FontColorPicker(props: {
 
 function ColorWheel(props: { color: string; size: number; onChange: (color: string) => void; reveal: FocusedInputReveal }) {
   const inputRef = useRef<TextInput>(null);
+  const focused = useRef(false);
   const SIZE = props.size;
   const RADIUS = SIZE / 2;
   const [value, setValue] = useState(() => hsv(props.color));
@@ -121,10 +122,14 @@ function ColorWheel(props: { color: string; size: number; onChange: (color: stri
           <View style={{ position: 'absolute', left: value.v * (SIZE - 4), top: 0, bottom: 0, width: 4, backgroundColor: '#FFFFFF' }} />
         </View>
       </View>
-      <TextInput ref={inputRef} onFocus={() => props.reveal.focus(inputRef.current)} disableFullscreenUI accessibilityLabel="Hex color" value={input} autoCapitalize="characters" autoCorrect={false} maxLength={7} onChangeText={(text) => {
+      <TextInput ref={inputRef}
+        onFocus={() => { focused.current = true; props.reveal.focus(inputRef.current); }}
+        onLayout={() => { if (focused.current) props.reveal.focus(inputRef.current); }}
+        onContentSizeChange={() => { if (focused.current) props.reveal.focus(inputRef.current); }}
+        disableFullscreenUI accessibilityLabel="Hex color" value={input} autoCapitalize="characters" autoCorrect={false} maxLength={7} onChangeText={(text) => {
         setInput(text);
         if (/^#[0-9a-f]{6}$/i.test(text)) { setValue(hsv(text)); props.onChange(text.toUpperCase()); }
-      }} onBlur={() => { props.reveal.blur(inputRef.current); setInput(props.color); }} style={{ minHeight: 44, color: chrome.text, backgroundColor: chrome.background, borderRadius: 12, padding: 12, width: SIZE, textAlign: 'center' }} />
+      }} onBlur={() => { focused.current = false; props.reveal.blur(inputRef.current); setInput(props.color); }} style={{ minHeight: 44, color: chrome.text, backgroundColor: chrome.background, borderRadius: 12, padding: 12, width: SIZE, textAlign: 'center' }} />
     </View>
   );
 }

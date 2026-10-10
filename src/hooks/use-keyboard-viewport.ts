@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Platform, useWindowDimensions, type KeyboardEvent, type View } from 'react-native';
-import { keyboardViewportCoversBottom, keyboardViewportOverlap, type KeyboardFrame, type ViewportFrame } from '@/lib/keyboard-viewport';
+import { keyboardViewportBottomGap, keyboardViewportOverlap, type KeyboardFrame, type ViewportFrame } from '@/lib/keyboard-viewport';
 
-export function useKeyboardViewport(enabled = true) {
+export function useKeyboardViewport(enabled = true, safeAreaBottom = 0) {
   const window = useWindowDimensions();
   const geometryKey = `${window.width}:${window.height}:${window.fontScale}`;
   const active = enabled && Platform.OS === 'android';
@@ -11,19 +11,19 @@ export function useKeyboardViewport(enabled = true) {
   const measuredRef = useRef<ViewportFrame | undefined>(undefined);
   const keyboardRef = useRef<KeyboardFrame | undefined>(undefined);
   const lifetimeRef = useRef({ active: false, epoch: 0, measurement: 0, coverageValid: false, geometryKey: '', configuration: undefined as typeof configuration | undefined });
-  const [reservation, setReservation] = useState<{ overlap: number; bottomInsetCovered: boolean; geometryKey: string; configuration?: typeof configuration }>({ overlap: 0, bottomInsetCovered: false, geometryKey: '' });
+  const [reservation, setReservation] = useState<{ overlap: number; bottomInsetGap: number | undefined; geometryKey: string; configuration?: typeof configuration }>({ overlap: 0, bottomInsetGap: undefined, geometryKey: '' });
   const invalidateCoverage = useCallback(() => {
     // Preserve the bounded last overlap while fresh geometry is unavailable.
     lifetimeRef.current.coverageValid = false;
-    setReservation((previous) => previous.bottomInsetCovered
-      ? { ...previous, bottomInsetCovered: false } : previous);
+    setReservation((previous) => previous.bottomInsetGap !== undefined
+      ? { ...previous, bottomInsetGap: undefined } : previous);
   }, []);
   const reserve = useCallback((frame: ViewportFrame, keyboard: KeyboardFrame | undefined, config: typeof configuration) => {
     const overlap = keyboardViewportOverlap(frame, keyboard);
-    const bottomInsetCovered = lifetimeRef.current.coverageValid && keyboardViewportCoversBottom(frame, keyboard);
+    const bottomInsetGap = lifetimeRef.current.coverageValid ? keyboardViewportBottomGap(frame, keyboard) : undefined;
     setReservation((previous) => previous.overlap === overlap
-      && previous.bottomInsetCovered === bottomInsetCovered && previous.configuration === config
-      ? previous : { overlap, bottomInsetCovered, geometryKey: config.geometryKey, configuration: config });
+      && previous.bottomInsetGap === bottomInsetGap && previous.configuration === config
+      ? previous : { overlap, bottomInsetGap, geometryKey: config.geometryKey, configuration: config });
   }, []);
   const measure = useCallback(() => {
     const lifetime = lifetimeRef.current;
@@ -84,9 +84,9 @@ export function useKeyboardViewport(enabled = true) {
     const hide = () => {
       if (!current()) return;
       keyboardRef.current = undefined;
-      setReservation((previous) => previous.overlap === 0 && !previous.bottomInsetCovered
+      setReservation((previous) => previous.overlap === 0 && previous.bottomInsetGap === undefined
         && previous.configuration === configuration
-        ? previous : { overlap: 0, bottomInsetCovered: false, geometryKey, configuration });
+        ? previous : { overlap: 0, bottomInsetGap: undefined, geometryKey, configuration });
       measure();
     };
     const shown = Keyboard.addListener('keyboardDidShow', change);
@@ -107,7 +107,9 @@ export function useKeyboardViewport(enabled = true) {
     attachFrame,
     onLayout,
     bottomOverlap: active ? Math.min(reservation.overlap, Math.max(0, window.height)) : 0,
-    bottomInsetCovered: active && reservation.configuration === configuration && reservation.bottomInsetCovered,
+    bottomInsetCovered: active && reservation.configuration === configuration
+      && Number.isFinite(safeAreaBottom) && safeAreaBottom >= 0
+      && reservation.bottomInsetGap !== undefined && reservation.bottomInsetGap <= safeAreaBottom,
     measurementPending: active && reservation.configuration !== configuration,
   };
 }

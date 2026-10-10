@@ -26,6 +26,7 @@ export function WatermarkSheet(props: Props) {
   const shortWide = rootSize.width - insets.left - insets.right >= 600 && rootHeight - insets.top - insets.bottom < 260;
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
+  const focused = useRef(false);
   const scrollToOffset = useCallback((y: number) => scrollRef.current?.scrollTo({ y, animated: false }), []);
   const [viewportRef, reveal] = useFocusedInputReveal(scrollToOffset);
   const compact = rootHeight < 480 || window.fontScale > 1.3;
@@ -47,7 +48,12 @@ export function WatermarkSheet(props: Props) {
           <ScrollView ref={scrollRef} onScroll={reveal.onScroll} onScrollBeginDrag={reveal.onScrollBeginDrag} scrollEventThrottle={16} style={{ flexShrink: 1, minHeight: 0 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 14, paddingBottom: 10 }}>
           <Text style={{ color: chrome.muted, fontSize: 12, lineHeight: 18 }}>Add up to five labels. Each is a regular timeline layer: drag it anywhere on the preview, then move or trim it on the timeline.</Text>
           <View style={{ flexDirection: shortWide ? 'row' : 'column', gap: 14 }}>
-          <TextInput ref={inputRef} onFocus={() => reveal.focus(inputRef.current)} onBlur={() => reveal.blur(inputRef.current)} disableFullscreenUI accessibilityLabel="Watermark words" editable={!atLimit} maxLength={160} onChangeText={setText} placeholder="Words for this watermark" placeholderTextColor={chrome.muted} style={{ flex: shortWide ? 1 : undefined, minWidth: 0, minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: '#FF8FC488', color: chrome.text, fontSize: 16, paddingHorizontal: 14, paddingVertical: 12 }} value={text} />
+          <TextInput ref={inputRef}
+            onFocus={() => { focused.current = true; reveal.focus(inputRef.current); }}
+            onBlur={() => { focused.current = false; reveal.blur(inputRef.current); }}
+            onLayout={() => { if (focused.current) reveal.focus(inputRef.current); }}
+            onContentSizeChange={() => { if (focused.current) reveal.focus(inputRef.current); }}
+            disableFullscreenUI accessibilityLabel="Watermark words" editable={!atLimit} maxLength={160} onChangeText={setText} placeholder="Words for this watermark" placeholderTextColor={chrome.muted} style={{ flex: shortWide ? 1 : undefined, minWidth: 0, minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: '#FF8FC488', color: chrome.text, fontSize: 16, paddingHorizontal: 14, paddingVertical: 12 }} value={text} />
           <Pressable accessibilityLabel="Add watermark" disabled={atLimit || !text.trim()} onPress={() => { props.onAdd(text.trim()); setText(''); }} style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: shortWide ? 12 : undefined, alignItems: 'center', borderRadius: 12, backgroundColor: atLimit || !text.trim() ? '#6D526088' : '#E8579C', paddingVertical: 13 }}><Text style={{ color: '#170C13', fontSize: 14, fontWeight: '900' }}>{atLimit ? 'FIVE WATERMARKS ADDED' : 'ADD WATERMARK'}</Text></Pressable>
           </View>
           <View style={{ gap: 9 }}>

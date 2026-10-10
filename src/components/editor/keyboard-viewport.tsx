@@ -11,7 +11,7 @@ export function KeyboardViewport(props: {
   keyboardVerticalOffset?: number;
 }) {
   const enabled = props.enabled ?? true;
-  const { attachFrame, onLayout, bottomOverlap, bottomInsetCovered } = useKeyboardViewport(enabled);
+  const { attachFrame, onLayout, bottomOverlap, bottomInsetCovered } = useKeyboardViewport(enabled, props.safeAreaBottom ?? 0);
   const children = typeof props.children === 'function'
     ? props.children({ safeAreaBottom: bottomInsetCovered ? 0 : (props.safeAreaBottom ?? 0) })
     : props.children;
