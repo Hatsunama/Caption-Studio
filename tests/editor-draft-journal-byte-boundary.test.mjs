@@ -276,6 +276,7 @@ async function mountEditor(kind, options = {}) {
     useSyncExternalStore: (_subscribe, get) => get(),
     createContext: (value) => ({ value }), useContext: (context) => context.value,
   };
+  const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   const jsx = (type, props) => ({ type, props });
   const exports = {};
   runInNewContext(editorSources[kind], { exports, Error,
@@ -283,6 +284,7 @@ async function mountEditor(kind, options = {}) {
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => reveal };
       if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
       if (name === 'react-native') return {
         ...Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'Modal', 'FlatList', 'KeyboardAvoidingView'].map((v) => [v, v])),

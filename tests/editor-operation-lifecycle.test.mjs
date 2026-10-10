@@ -94,6 +94,7 @@ function renderSource(source, extra = {}) {
   const modules = new Map();
   const backHandlers = new Set();
   const cleanups = [];
+  const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   const chrome = { radius: { xl: 24, md: 13, pill: 999 } };
   const native = {
     Modal: nativeModal, View: nativeView, Text: 'text', Pressable: 'pressable', ActivityIndicator: 'spinner',
@@ -110,6 +111,11 @@ function renderSource(source, extra = {}) {
   function require(name) {
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: fragment };
     if (name === 'react') return {
+      createContext: value => ({ value, Provider: props => props.children }),
+      useContext: context => context.value,
+      useRef: value => ({ current: value }),
+      useState: value => [typeof value === 'function' ? value() : value, () => {}],
+      useCallback: callback => callback,
       useEffect(callback) {
         const cleanup = callback();
         if (typeof cleanup === 'function') cleanups.push(cleanup);
@@ -118,6 +124,7 @@ function renderSource(source, extra = {}) {
     if (name === 'react-native') return native;
     if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
     if (name === '@/lib/ui-theme') return { chrome };
+    if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => reveal };
     if (name === '@/hooks/use-keyboard-viewport') return { useKeyboardViewport: () => ({ frameRef: { current: null }, onLayout() {}, bottomOverlap: 0 }) };
     if (Object.hasOwn(componentSources, name)) {
       if (!modules.has(name)) {
