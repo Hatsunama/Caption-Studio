@@ -1,26 +1,25 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { NativeScrollEvent, NativeSyntheticEvent, View } from 'react-native';
-import { createInputRevealController } from '@/lib/input-viewport';
+import { useLayoutEffect, useMemo, useState } from 'react';
+import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import { createInputRevealConnection } from '@/lib/input-viewport';
 
 export function useFocusedInputReveal(scrollToOffset: (offset: number) => void) {
-  const viewportRef = useRef<View>(null);
-  const scrollToRef = useRef(scrollToOffset);
-  useLayoutEffect(() => { scrollToRef.current = scrollToOffset; }, [scrollToOffset]);
-  const [controller] = useState(() => createInputRevealController({
-    viewport: () => viewportRef.current,
-    scrollToOffset: (offset) => scrollToRef.current(offset),
+  const [controller] = useState(() => createInputRevealConnection({
     requestFrame: (callback) => requestAnimationFrame(callback),
     cancelFrame: (id) => cancelAnimationFrame(id),
   }));
+  useLayoutEffect(() => {
+    controller.connectScrollToOffset(scrollToOffset);
+    return () => controller.connectScrollToOffset(undefined);
+  }, [controller, scrollToOffset]);
   useLayoutEffect(() => {
     controller.attach();
     return () => controller.detach();
   }, [controller]);
   return useMemo(() => ({
-    viewportRef,
+    viewportRef: controller.connectViewport,
     focus: controller.focus,
     blur: controller.blur,
-    onViewportLayout: (_event?: unknown) => controller.reveal(),
+    onViewportLayout: controller.reveal,
     onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => controller.recordScroll(event.nativeEvent.contentOffset.y),
     onScrollBeginDrag: controller.beginDrag,
   }), [controller]);

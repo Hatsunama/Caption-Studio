@@ -100,7 +100,7 @@ export function AdaptiveDialog(props: {
             style={{ flexShrink: 1, minHeight: 0, ...(compact ? { flex: 1 } : {}) }}
             onLayout={(event) => {
               setBodyHeight(event.nativeEvent.layout.height);
-              reveal.onViewportLayout(event);
+              reveal.onViewportLayout();
             }}>
           <ScrollView ref={scrollRef} testID="adaptive-dialog-body" style={{ flexShrink: 1, minHeight: 0, ...(compact ? { flex: 1 } : {}) }}
             keyboardShouldPersistTaps="handled"
