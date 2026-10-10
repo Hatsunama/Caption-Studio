@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
-import { keyboardViewportOverlap } from '../src/lib/keyboard-viewport.ts';
+import * as geometry from '../src/lib/keyboard-viewport.ts';
 
 const source = stripTypeScriptTypes(readFileSync(new URL('../src/hooks/use-keyboard-viewport.ts', import.meta.url), 'utf8'))
   .replace(/^import .*;$/gm, '').replace('export function', 'function');
-const loadHook = new Function('dependencies', 'const { useCallback, useEffect, useRef, useState, Keyboard, Platform, useWindowDimensions, keyboardViewportOverlap } = dependencies;\n'
+const loadHook = new Function('dependencies', 'const { useCallback, useEffect, useRef, useState, Keyboard, Platform, useWindowDimensions, keyboardViewportOverlap, keyboardViewportCoversBottom } = dependencies;\n'
   + source + '\nreturn useKeyboardViewport;');
 
-function mount({ visible = true, platform = 'android' } = {}) {
+function mount({ visible = true, platform = 'android', missingMetrics = false } = {}) {
   const slots = [], effects = [], measurements = [], listeners = new Map();
   let cursor = 0, writes = 0, attached;
   let keyboard = { screenX: 0, screenY: 180, width: 800, height: 220 };
@@ -39,10 +39,10 @@ function mount({ visible = true, platform = 'android' } = {}) {
       }
     },
     useWindowDimensions: () => window,
-    Platform: { OS: platform },
+    Platform: { get OS() { return platform; } },
     Keyboard: {
       isVisible: () => visible,
-      metrics: () => visible ? keyboard : undefined,
+      metrics: () => visible && !missingMetrics ? keyboard : undefined,
       addListener(name, callback) {
         const registrations = listeners.get(name) ?? new Set();
         registrations.add(callback);
@@ -53,7 +53,7 @@ function mount({ visible = true, platform = 'android' } = {}) {
         } };
       },
     },
-    keyboardViewportOverlap,
+    ...geometry,
   });
   const native = { measureInWindow: callback => measurements.push(callback) };
   const render = (enabled = true) => {
@@ -73,7 +73,7 @@ function mount({ visible = true, platform = 'android' } = {}) {
     measurements[index](frame.x, frame.y, frame.width, frame.height);
   const emit = (name, frame = keyboard) => {
     if (name === 'keyboardDidHide') visible = false;
-    else { visible = true; keyboard = frame; }
+    else { visible = true; missingMetrics = false; keyboard = frame; }
     for (const callback of [...(listeners.get(name) ?? [])]) callback({ endCoordinates: frame });
   };
   const dispose = () => {
@@ -82,9 +82,116 @@ function mount({ visible = true, platform = 'android' } = {}) {
   };
   render(); flush();
   return { render, flush, measure, measurements, listeners, window, emit, dispose,
+    setPlatform(value) { platform = value; },
     get writes() { return writes; } };
 }
 const full = { x: 20, y: 30, width: 760, height: 360 };
+
+test('bottom inset coverage follows measured show, resized adjacency, floating frames and hide', () => {
+  const h = mount({ visible: false });
+  assert.equal(h.render().bottomInsetCovered, false);
+  h.emit('keyboardDidShow');
+  assert.equal(h.render().bottomInsetCovered, false, 'Visibility alone cannot remove the inset');
+  h.measure(full);
+  assert.equal(h.render().bottomInsetCovered, true);
+  h.render().onLayout(); h.measure({ ...full, height: 150 });
+  assert.equal(h.render().bottomOverlap, 0);
+  assert.equal(h.render().bottomInsetCovered, true, 'Adjacent resized frame still covers the inset');
+  h.emit('keyboardDidShow', { screenX: 0, screenY: 100, width: 800, height: 50 });
+  assert.equal(h.render().bottomInsetCovered, false, 'Floating keyboard ends above frame bottom');
+  h.emit('keyboardDidShow', { screenX: 0, screenY: 180, width: 800, height: 220 });
+  assert.equal(h.render().bottomInsetCovered, true);
+  const stale = h.measurements.length - 1;
+  h.emit('keyboardDidHide');
+  assert.equal(h.render().bottomInsetCovered, false);
+  h.measure(full, stale);
+  assert.equal(h.render().bottomInsetCovered, false);
+  h.measure(full);
+  assert.equal(h.render().bottomOverlap, 0);
+  h.dispose();
+});
+
+test('rotation, invalid measurement, frame detach and replacement restore safe inset until recovery', () => {
+  const h = mount(); h.measure(full);
+  assert.equal(h.render().bottomInsetCovered, true);
+  const oldShow = [...h.listeners.get('keyboardDidShow')][0];
+  h.window.width = 800;
+  assert.equal(h.render().bottomInsetCovered, false, 'Rotation is safe before passive effects');
+  h.flush();
+  oldShow({ endCoordinates: { screenX: 0, screenY: 0, width: 800, height: 400 } });
+  assert.equal(h.render().bottomInsetCovered, false);
+  h.measure(full); assert.equal(h.render().bottomInsetCovered, true);
+  h.render().onLayout();
+  assert.equal(h.render().bottomInsetCovered, false, 'Layout invalidates coverage while measuring');
+  h.measure({ ...full, width: 0 });
+  assert.equal(h.render().bottomInsetCovered, false);
+  assert.equal(h.render().bottomOverlap, 210, 'Invalid measure retains existing overlap protection');
+  h.emit('keyboardDidShow');
+  assert.equal(h.render().bottomInsetCovered, false, 'Invalid frame cannot be reused');
+  h.measure(full); assert.equal(h.render().bottomInsetCovered, true);
+  const value = h.render(); value.onLayout();
+  const stale = h.measurements.length - 1;
+  value.attachFrame(null);
+  assert.equal(h.render().bottomInsetCovered, false);
+  h.measure(full, stale); assert.equal(h.render().bottomInsetCovered, false);
+  value.attachFrame({ measureInWindow: callback => h.measurements.push(callback) });
+  assert.equal(h.render().bottomInsetCovered, false);
+  h.measure(full); assert.equal(h.render().bottomInsetCovered, true);
+  h.dispose();
+});
+
+test('disable, reenable, missing metrics and iOS preserve normal inset safety', () => {
+  const h = mount(); h.measure(full);
+  assert.equal(h.render(false).bottomInsetCovered, false);
+  h.flush();
+  assert.equal(h.render().bottomInsetCovered, false, 'Reenable waits for current measurement');
+  h.flush(); h.measure(full);
+  assert.equal(h.render().bottomInsetCovered, true);
+  h.dispose();
+  const ios = mount({ platform: 'ios' });
+  assert.equal(ios.render().bottomInsetCovered, false);
+  assert.equal(ios.listeners.size, 0); ios.dispose();
+  const missing = mount({ missingMetrics: true }); missing.measure(full);
+  assert.equal(missing.render().bottomInsetCovered, false);
+  assert.equal(missing.render().bottomOverlap, 0);
+  missing.emit('keyboardDidShow');
+  assert.equal(missing.render().bottomInsetCovered, true); missing.dispose();
+});
+
+test('pending or invalid layout still updates legacy overlap while refusing inset coverage', () => {
+  const h = mount(); h.measure(full);
+  h.render().onLayout();
+  h.emit('keyboardDidShow', { screenX: 0, screenY: 100, width: 800, height: 300 });
+  assert.equal(h.render().bottomOverlap, 290, 'Existing overlap uses the last frame during measurement');
+  assert.equal(h.render().bottomInsetCovered, false);
+  h.measure({ ...full, width: 0 });
+  h.emit('keyboardDidShow', { screenX: 0, screenY: 180, width: 800, height: 220 });
+  assert.equal(h.render().bottomOverlap, 210, 'Invalid measurement preserves the legacy frame for overlap');
+  assert.equal(h.render().bottomInsetCovered, false);
+  h.measure(full); assert.equal(h.render().bottomInsetCovered, true);
+  h.dispose();
+});
+
+test('Android to iOS transition rejects canceled native work and recovers with one reservation', () => {
+  const h = mount(); h.measure(full);
+  const oldShow = [...h.listeners.get('keyboardDidShow')][0];
+  const oldHide = [...h.listeners.get('keyboardDidHide')][0];
+  const oldMeasure = h.measurements.length - 1;
+  h.setPlatform('ios');
+  assert.equal(h.render().bottomInsetCovered, false);
+  assert.equal(h.render().bottomOverlap, 0);
+  h.flush();
+  const writes = h.writes;
+  oldShow({ endCoordinates: { screenX: 0, screenY: 100, width: 800, height: 300 } });
+  oldHide(); h.measure(full, oldMeasure);
+  assert.equal(h.writes, writes); assert.equal(h.listeners.size, 0);
+  h.setPlatform('android');
+  assert.equal(h.render().bottomInsetCovered, false);
+  h.flush(); h.measure(full);
+  assert.equal(h.render().bottomInsetCovered, true);
+  assert.equal(h.render().bottomOverlap, 210);
+  assert.equal(h.listeners.size, 2); h.dispose();
+});
 
 test('rotation retains measured keyboard protection until replacement measurement arrives', () => {
   const h = mount(); h.measure(full);

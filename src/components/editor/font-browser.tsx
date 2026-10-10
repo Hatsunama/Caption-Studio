@@ -85,14 +85,15 @@ export function FontBrowser(props: {
 
   return (
     <Modal visible={props.visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={goBack}>
-      <KeyboardViewport style={{ flex: 1 }}>
+      <KeyboardViewport safeAreaBottom={insets.bottom} style={{ flex: 1 }}>
+      {({ safeAreaBottom }) => (
       <View testID="font-browser-root" onLayout={({ nativeEvent: { layout } }) => setRootSize({ width: layout.width, height: layout.height })}
-        style={{ flex: 1, minHeight: 0, backgroundColor: chrome.background, paddingTop: Math.max(shortWide ? 8 : 20, insets.top), paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
-        <View style={{ flex: 1 }} pointerEvents={draftChoice ? 'none' : 'auto'} accessibilityElementsHidden={Boolean(draftChoice)} importantForAccessibility={draftChoice ? 'no-hide-descendants' : 'auto'}>
-        <View style={{ paddingHorizontal: shortWide ? 8 : 20, gap: shortWide ? 12 : compact ? 4 : 12, flexDirection: shortWide ? 'row' : 'column' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flex: shortWide ? 1 : undefined, minWidth: shortWide ? 260 : undefined }}>
+        style={{ flex: 1, minHeight: 0, backgroundColor: chrome.background, paddingTop: Math.max(shortWide ? 8 : 20, insets.top), paddingBottom: safeAreaBottom, paddingLeft: insets.left, paddingRight: insets.right }}>
+        <View style={{ flex: 1, minHeight: 0, flexDirection: shortWide ? 'row' : 'column' }} pointerEvents={draftChoice ? 'none' : 'auto'} accessibilityElementsHidden={Boolean(draftChoice)} importantForAccessibility={draftChoice ? 'no-hide-descendants' : 'auto'}>
+        <View style={{ paddingHorizontal: shortWide ? 8 : 20, gap: compact ? 4 : 12, width: shortWide ? Math.min(320 * window.fontScale, width * 0.5) : undefined, flexShrink: 0, flexDirection: 'column' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: chrome.text, fontSize: compact ? 22 : 26, fontWeight: '700' }}>All Fonts</Text>
+              <Text numberOfLines={shortWide ? 1 : undefined} style={{ color: chrome.text, fontSize: compact ? 22 : 26, fontWeight: '700' }}>All Fonts</Text>
               {!compact ? <Text style={{ color: chrome.muted, fontSize: 13 }}>{BUILT_IN_FONT_CHOICES.length} built-in choices. Only {TWO_COLOR_FONT_COUNT} use optional two-color styling.</Text> : null}
             </View>
             {compact ? <Pressable accessibilityRole="button" accessibilityLabel="Font filters and import" accessibilityState={{ expanded: toolsOpen }}
@@ -110,13 +111,13 @@ export function FontBrowser(props: {
             onChangeText={setSearch}
             placeholder="Search name or mood"
             placeholderTextColor={chrome.muted}
-            style={{ flex: shortWide ? 1 : undefined, minWidth: 0, height: 48, borderRadius: chrome.radius.md, paddingHorizontal: 15, color: chrome.text, backgroundColor: chrome.surface }}
+            style={{ minWidth: 0, height: 48, borderRadius: chrome.radius.md, paddingHorizontal: 15, color: chrome.text, backgroundColor: chrome.surface }}
           />
           {!compact ? tools : null}
         </View>
 
         <FlatList
-          style={{ flex: 1, minHeight: 0 }}
+          style={{ flex: 1, minHeight: 0, minWidth: 0 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           ListHeaderComponent={compact && toolsOpen ? tools : null}
@@ -156,6 +157,7 @@ export function FontBrowser(props: {
         {draftChoice ? (
           <FontColorPicker
             keyboardManaged
+            safeAreaBottom={safeAreaBottom}
             choice={draftChoice}
             previewText={props.previewText}
             onBack={() => setDraftChoice(undefined)}
@@ -163,6 +165,7 @@ export function FontBrowser(props: {
           />
         ) : null}
       </View>
+      )}
       </KeyboardViewport>
     </Modal>
   );

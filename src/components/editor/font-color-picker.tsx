@@ -29,12 +29,14 @@ export function FontColorPicker(props: {
   onBack: () => void;
   onSave: (colors: FontColors) => void;
   keyboardManaged?: boolean;
+  safeAreaBottom?: number;
 }) {
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
   const [rootSize, setRootSize] = useState<{ width: number; height: number }>();
   const width = (rootSize?.width ?? window.width) - insets.left - insets.right;
-  const height = (rootSize?.height ?? window.height) - insets.top - insets.bottom;
+  const bottomInset = props.safeAreaBottom ?? insets.bottom;
+  const height = (rootSize?.height ?? window.height) - insets.top - bottomInset;
   const compact = height < 500 || width > height * 1.2;
   const shortWide = width >= 600 && height < 260;
   const scrollRef = useRef<ScrollView>(null);
@@ -50,7 +52,7 @@ export function FontColorPicker(props: {
   return (
     <KeyboardAvoidingView testID="font-color-picker-root" onLayout={({ nativeEvent: { layout } }) => setRootSize({ width: layout.width, height: layout.height })}
       accessibilityViewIsModal enabled={!props.keyboardManaged} behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={{ position: 'absolute', inset: 0, backgroundColor: '#00000099', justifyContent: 'center', paddingTop: Math.max(compact ? 8 : 16, insets.top), paddingBottom: Math.max(compact ? 8 : 16, insets.bottom), paddingLeft: Math.max(compact ? 8 : 16, insets.left), paddingRight: Math.max(compact ? 8 : 16, insets.right) }}>
+      style={{ position: 'absolute', inset: 0, backgroundColor: '#00000099', justifyContent: 'center', paddingTop: Math.max(compact ? 8 : 16, insets.top), paddingBottom: Math.max(compact ? 8 : 16, bottomInset), paddingLeft: Math.max(compact ? 8 : 16, insets.left), paddingRight: Math.max(compact ? 8 : 16, insets.right) }}>
       <View style={{ maxHeight: '100%', flexShrink: 1, minHeight: 0, backgroundColor: chrome.surface, borderRadius: chrome.radius.lg, padding: shortWide ? 8 : compact ? 12 : 18, gap: compact ? 8 : 14, flexDirection: shortWide ? 'row' : 'column', height: shortWide ? '100%' : undefined }}>
         <View collapsable={false} ref={viewportRef} onLayout={reveal.onViewportLayout} style={{ flex: shortWide ? 1 : undefined, flexShrink: 1, minHeight: 0, minWidth: 0 }}>
         <ScrollView ref={scrollRef} onScroll={reveal.onScroll} onScrollBeginDrag={reveal.onScrollBeginDrag} scrollEventThrottle={16} onLayout={({ nativeEvent: { layout } }) => setBodyWidth(layout.width)} style={{ flexShrink: 1, minHeight: 0 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ gap: 14, alignItems: 'center' }}>

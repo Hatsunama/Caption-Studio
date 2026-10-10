@@ -375,7 +375,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
 
   return (
     <Modal visible={props.visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={requestClose}>
-      <KeyboardViewport style={{ flex: 1 }}>
+      <KeyboardViewport safeAreaBottom={insets.bottom} style={{ flex: 1 }}>
+      {({ safeAreaBottom }) => (
       <View testID="dual-caption-root" onLayout={({ nativeEvent: { layout } }) => setRootSize({ width: layout.width, height: layout.height })}
         style={{ flex: 1, minHeight: 0, backgroundColor: chrome.background, paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }}>
         <View style={{ paddingHorizontal: 18, paddingTop: compact ? 4 : 22, paddingBottom: compact ? 4 : 14, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
@@ -419,7 +420,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
         </View>
 
         {props.busy || props.errorMessage || props.warningMessage ? (
-          <View accessibilityViewIsModal style={{ position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center', paddingTop: Math.max(8, insets.top), paddingBottom: Math.max(8, insets.bottom), paddingLeft: Math.max(12, insets.left), paddingRight: Math.max(12, insets.right), backgroundColor: 'rgba(0,0,0,0.78)' }}>
+          <View accessibilityViewIsModal style={{ position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center', paddingTop: Math.max(8, insets.top), paddingBottom: Math.max(8, safeAreaBottom), paddingLeft: Math.max(12, insets.left), paddingRight: Math.max(12, insets.right), backgroundColor: 'rgba(0,0,0,0.78)' }}>
             <ScrollView keyboardShouldPersistTaps="handled" style={{ width: '100%', maxWidth: 380, maxHeight: '100%', flexShrink: 1, borderRadius: chrome.radius.xl, backgroundColor: chrome.surfaceRaised }} contentContainerStyle={{ gap: 14, padding: 22 }}>
               {props.busy ? <ActivityIndicator color={chrome.accent} size="large" /> : null}
               <Text accessibilityRole={props.errorMessage || props.warningMessage ? 'alert' : undefined} selectable style={{ color: props.warningMessage ? chrome.warning : props.errorMessage ? chrome.dangerText : chrome.text, fontSize: 17, lineHeight: 24, fontWeight: '700', textAlign: 'center' }}>
@@ -448,7 +449,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
             </ScrollView>
           </View>
         ) : null}
-        <View testID="dual-caption-footer" style={{ padding: shortWide ? 0 : compact ? 8 : 14, paddingBottom: shortWide ? insets.bottom : Math.max(compact ? 8 : 14, insets.bottom), borderTopWidth: shortWide ? 0 : 1, borderTopColor: chrome.hairline, backgroundColor: chrome.background }}>
+        <View testID="dual-caption-footer" style={{ padding: shortWide ? 0 : compact ? 8 : 14, paddingBottom: shortWide ? safeAreaBottom : Math.max(compact ? 8 : 14, safeAreaBottom), borderTopWidth: shortWide ? 0 : 1, borderTopColor: chrome.hairline, backgroundColor: chrome.background }}>
           {!compact && journalRecovery?.warning ? (
             <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
               {journalRecovery.warning}
@@ -467,6 +468,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           {!shortWide ? saveControl : null}
         </View>
       </View>
+      )}
       </KeyboardViewport>
     </Modal>
   );

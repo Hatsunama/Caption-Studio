@@ -3,14 +3,18 @@ import { KeyboardAvoidingView, Platform, View, type StyleProp, type ViewStyle } 
 import { useKeyboardViewport } from '@/hooks/use-keyboard-viewport';
 
 export function KeyboardViewport(props: {
-  children: ReactNode;
+  children: ReactNode | ((insets: { safeAreaBottom: number }) => ReactNode);
+  safeAreaBottom?: number;
   style?: StyleProp<ViewStyle>;
   enabled?: boolean;
   iosAvoidance?: boolean;
   keyboardVerticalOffset?: number;
 }) {
   const enabled = props.enabled ?? true;
-  const { attachFrame, onLayout, bottomOverlap } = useKeyboardViewport(enabled);
+  const { attachFrame, onLayout, bottomOverlap, bottomInsetCovered } = useKeyboardViewport(enabled);
+  const children = typeof props.children === 'function'
+    ? props.children({ safeAreaBottom: bottomInsetCovered ? 0 : (props.safeAreaBottom ?? 0) })
+    : props.children;
   return (
     <KeyboardAvoidingView
       enabled={enabled && (props.iosAvoidance ?? true)}
@@ -21,7 +25,7 @@ export function KeyboardViewport(props: {
         testID="keyboard-viewport-frame" style={{ flex: 1, minHeight: 0 }}>
         <View testID="keyboard-viewport-content"
           style={{ flex: 1, minHeight: 0, marginBottom: bottomOverlap }}>
-          {props.children}
+          {children}
         </View>
       </View>
     </KeyboardAvoidingView>

@@ -225,6 +225,71 @@ function assertNativeContract(h) {
   assert.equal(h.content.props.style.marginBottom, h.viewport.bottomOverlap);
 }
 
+test('render callback removes only covered safe area and preserves native child identity', t => {
+  const child = { type: 'View', key: null, props: { testID: 'callback-child' } };
+  const insets = [];
+  const h = render({ safeAreaBottom: 72, children: ({ safeAreaBottom }) => {
+    insets.push(safeAreaBottom);
+    return child;
+  } });
+  t.after(() => h.dispose());
+  assert.equal(insets.at(-1), 72);
+  const editorChild = h.content.child;
+  const mounts = h.mountCount;
+  editorChild.native.focused = true;
+  editorChild.native.selection = { start: 3, end: 7 };
+  const identity = () => {
+    assert.equal(h.content.props.children, child);
+    assert.equal(h.content.child, editorChild);
+    assert.equal(h.mountCount, mounts);
+    assert.equal(editorChild.native.focused, true);
+    assert.deepEqual(editorChild.native.selection, { start: 3, end: 7 });
+  };
+  h.keyboard('keyboardDidShow', portraitKeyboard);
+  assert.equal(insets.at(-1), 72);
+  h.measure(portraitFrame);
+  assert.equal(insets.at(-1), 0);
+  assert.equal(h.content.props.style.marginBottom, 160); identity();
+  h.resize(400, 640);
+  assert.equal(insets.at(-1), 72); identity();
+  h.measure({ ...portraitFrame, height: 640 });
+  assert.equal(insets.at(-1), 0);
+  assert.equal(h.content.props.style.marginBottom, 0); identity();
+  h.keyboard('keyboardDidShow', { ...portraitKeyboard, screenY: 400, height: 100 });
+  assert.equal(insets.at(-1), 72); identity();
+  h.keyboard('keyboardDidShow', portraitKeyboard);
+  assert.equal(insets.at(-1), 0); identity();
+  h.update({ safeAreaBottom: 24 }); assert.equal(insets.at(-1), 0); identity();
+  h.keyboard('keyboardDidHide', portraitKeyboard);
+  assert.equal(insets.at(-1), 24); identity();
+  h.keyboard('keyboardDidShow', portraitKeyboard);
+  h.measure({ ...portraitFrame, height: 640 });
+  h.update({ enabled: false }); assert.equal(insets.at(-1), 24); identity();
+  h.update({ enabled: true }); assert.equal(insets.at(-1), 24); identity();
+  h.measure({ ...portraitFrame, height: 640 });
+  assert.equal(insets.at(-1), 0); identity();
+  assert.equal(h.subscriptions.length, 6, 'Only two listeners per active geometry generation');
+});
+
+test('iOS callback keeps supplied inset and existing avoidance; omitted inset defaults to zero', t => {
+  const child = { type: 'View', key: null, props: {} };
+  const insets = [];
+  const ios = render({ safeAreaBottom: 72, children: value => {
+    insets.push(value.safeAreaBottom); return child;
+  } }, 'ios');
+  const defaults = render({ children: value => {
+    assert.equal(value.safeAreaBottom, 0); return child;
+  } });
+  t.after(() => { ios.dispose(); defaults.dispose(); });
+  ios.keyboard('keyboardDidShow', portraitKeyboard);
+  assert.equal(insets.at(-1), 72);
+  assert.equal(ios.root.props.behavior, 'padding');
+  assert.equal(ios.root.props.enabled, true);
+  assert.equal(ios.content.props.style.marginBottom, 0);
+  assert.deepEqual(ios.subscriptions, []);
+  assert.equal(defaults.content.props.children, child);
+});
+
 test('real keyboard events reserve only content space through the attached native frame', t => {
   const h = render();
   t.after(() => h.dispose());
