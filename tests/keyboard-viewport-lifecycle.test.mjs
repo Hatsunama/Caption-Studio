@@ -14,7 +14,7 @@ function mount({ visible = false, metrics, platform = 'android' } = {}) {
   const slot = initial => { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial; return [i, slots[i]]; };
   const hook = load({
     useRef: initial => slot(() => ({ current: initial }))[1],
-    useState: initial => { const [i, value] = slot(initial); return [value, next => { writes++; slots[i] = next; }]; },
+    useState: initial => { const [i, value] = slot(initial); return [value, next => { writes++; slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; },
     useCallback: callback => { const [, value] = slot(() => callback); return value; },
     useEffect(callback, deps) {
       const [i, old] = slot(undefined);
@@ -30,7 +30,7 @@ function mount({ visible = false, metrics, platform = 'android' } = {}) {
     keyboardViewportOverlap,
   });
   const native = { measureInWindow: callback => callbacks.push(callback) };
-  const render = (enabled = true) => { cursor = 0; const value = hook(enabled); value.frameRef.current = native; return value; };
+  const render = (enabled = true) => { cursor = 0; const value = hook(enabled); value.attachFrame(native); return value; };
   const flush = () => { while (effects.length) effects.shift()(); };
   const measure = (frame, index = callbacks.length - 1) => callbacks[index](frame.x, frame.y, frame.width, frame.height);
   render(); flush();
@@ -48,7 +48,7 @@ test('actual hook excludes overlap, then recovers all space on dismissal', () =>
   assert.equal(h.render().bottomOverlap, 210);
   h.measure({ ...full, height: 150 }); assert.equal(h.render().bottomOverlap, 0);
   h.hide(); assert.equal(h.render().bottomOverlap, 0);
-  assert.equal(h.listeners.size, 3); h.dispose(); assert.equal(h.listeners.size, 0);
+  assert.equal(h.listeners.size, 2); h.dispose(); assert.equal(h.listeners.size, 0);
 });
 test('a viewport opened while the keyboard is already visible measures its current frame', () => {
   const h = mount({ visible: true, metrics: keyboard }); h.measure(full);
@@ -66,7 +66,7 @@ test('rotation rejects pending measurements and keeps one listener per event', (
   h.window.width = 400; h.window.height = 890; h.render(); h.flush();
   h.measure(full, old); assert.equal(h.render().bottomOverlap, 0);
   h.measure({ x: 0, y: 80, width: 400, height: 810 });
-  assert.equal(h.render().bottomOverlap, 710); assert.equal(h.listeners.size, 3);
+  assert.equal(h.render().bottomOverlap, 710); assert.equal(h.listeners.size, 2);
 });
 test('unmount rejects native callbacks without writing state', () => {
   const h = mount(); const old = h.callbacks.length - 1; h.dispose();

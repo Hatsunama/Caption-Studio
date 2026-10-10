@@ -10,17 +10,17 @@ export function KeyboardViewport(props: {
   keyboardVerticalOffset?: number;
 }) {
   const enabled = props.enabled ?? true;
-  const viewport = useKeyboardViewport(enabled);
+  const { attachFrame, onLayout, bottomOverlap } = useKeyboardViewport(enabled);
   return (
     <KeyboardAvoidingView
       enabled={enabled && (props.iosAvoidance ?? true)}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={props.keyboardVerticalOffset}
       style={props.style ?? { flex: 1, minHeight: 0 }}>
-      <View ref={viewport.frameRef} onLayout={viewport.onLayout}
+      <View ref={attachFrame} onLayout={onLayout}
         testID="keyboard-viewport-frame" style={{ flex: 1, minHeight: 0 }}>
         <View testID="keyboard-viewport-content"
-          style={{ flex: 1, minHeight: 0, marginBottom: viewport.bottomOverlap }}>
+          style={{ flex: 1, minHeight: 0, marginBottom: bottomOverlap }}>
           {props.children}
         </View>
       </View>
