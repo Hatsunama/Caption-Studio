@@ -93,7 +93,9 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const shortWide = paired && height < 260;
   const listRef = useRef<FlatList<CaptionPair>>(null);
   const [listHeight, setListHeight] = useState<number>();
-  const inputMaxHeight = shortWide ? Math.max(44, (listHeight ?? height) - 4) : undefined;
+  // Short-wide rows have 4dp top/bottom padding and a 1dp border. Each
+  // LanguageInput subtracts its measured label and gap from the remaining pane.
+  const inputMaxHeight = shortWide ? Math.max(44, (listHeight ?? height) - 10) : undefined;
   const scrollToOffset = useCallback((offset: number) => listRef.current?.scrollToOffset({ offset, animated: false }), []);
   const [viewportRef, reveal] = useFocusedInputReveal(scrollToOffset);
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
@@ -328,11 +330,11 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   }, []);
   const { automaticTranslation, sourceLanguageLabel, targetLanguageLabel, onRefresh, onSkip } = props;
   const renderItem = useCallback(({ item: pair, index }: { item: CaptionPair; index: number }) => (
-    <DualCaptionRow pair={pair} index={index} store={store} disabled={disabled} dirty={dirty} paired={paired}
+    <DualCaptionRow pair={pair} index={index} store={store} disabled={disabled} dirty={dirty} paired={paired} shortWide={shortWide}
       selected={selectedIds.has(pair.source.id)} onToggleSelection={toggleSelection}
       automaticTranslation={automaticTranslation} sourceLanguageLabel={sourceLanguageLabel}
       targetLanguageLabel={targetLanguageLabel} onRefresh={onRefresh} onSkip={onSkip} reveal={reveal} inputMaxHeight={inputMaxHeight} />
-  ), [automaticTranslation, dirty, disabled, inputMaxHeight, onRefresh, onSkip, paired, reveal, selectedIds, sourceLanguageLabel, store, targetLanguageLabel, toggleSelection]);
+  ), [automaticTranslation, dirty, disabled, inputMaxHeight, onRefresh, onSkip, paired, reveal, selectedIds, shortWide, sourceLanguageLabel, store, targetLanguageLabel, toggleSelection]);
 
   const recoveryStatus = (
     <View style={{ gap: 8 }}>
@@ -415,7 +417,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           removeClippedSubviews={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          contentContainerStyle={{ gap: 10, padding: 14, paddingBottom: 14 }}
+          contentContainerStyle={{ gap: 10, padding: 14, paddingTop: shortWide ? 0 : 14, paddingBottom: shortWide ? 0 : 14 }}
         />
         </View>
 
@@ -484,6 +486,7 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
   dirty: boolean;
   selected: boolean;
   paired: boolean;
+  shortWide: boolean;
   onToggleSelection: (captionId: string) => void;
   reveal: FocusedInputReveal;
   inputMaxHeight?: number;
@@ -497,7 +500,10 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
   const skipped = Boolean(pair.translation.translationSkipped);
   const textChanged = draft.primaryText.trim() !== pair.source.text.trim() || draft.translatedText.trim() !== pair.translation.text.trim();
   return (
-    <View key={pair.source.id} style={{ gap: 9, padding: 14, borderRadius: chrome.radius.lg, borderWidth: 1, borderColor: refreshRequired ? chrome.warning : chrome.hairline, backgroundColor: chrome.surface }}>
+    <View key={pair.source.id} style={{ flexDirection: props.shortWide ? 'row' : 'column', gap: 9, padding: props.shortWide ? 4 : 14, borderRadius: chrome.radius.lg, borderWidth: 1, borderColor: refreshRequired ? chrome.warning : chrome.hairline, backgroundColor: chrome.surface }}>
+      <ScrollView scrollEnabled={props.shortWide} keyboardShouldPersistTaps="handled"
+        style={props.shortWide ? { width: 156, maxHeight: props.inputMaxHeight, flexGrow: 0, flexShrink: 0 } : { flexGrow: 0 }}
+        contentContainerStyle={{ gap: 9 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: props.selected, disabled: props.disabled || skipped }}
           accessibilityLabel={`Select subtitle ${index + 1} for refresh`} disabled={props.disabled || skipped}
@@ -534,7 +540,8 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
           Text was edited. Check whether the other language still matches. Refresh is optional and replaces {props.targetLanguageLabel}; keeping your text is fine.
         </Text>
       ) : null}
-      <View style={{ flexDirection: props.paired ? 'row' : 'column', gap: 9 }}>
+      </ScrollView>
+      <View style={{ flex: props.shortWide ? 1 : undefined, minWidth: 0, flexDirection: props.paired ? 'row' : 'column', gap: 9 }}>
       <LanguageInput
         reveal={props.reveal}
         inputMaxHeight={props.inputMaxHeight}
@@ -573,23 +580,29 @@ function LanguageInput(props: {
   onChangeText: (value: string) => void;
 }) {
   const inputRef = useRef<TextInput>(null);
+  const focused = useRef(false);
+  const [labelHeight, setLabelHeight] = useState(16);
+  const maxHeight = props.inputMaxHeight === undefined ? undefined : Math.max(44, props.inputMaxHeight - labelHeight - 5);
   return (
     <View style={{ flex: props.horizontal ? 1 : undefined, minWidth: 0, gap: 5 }}>
-      <Text style={{ color: chrome.muted, fontSize: 11, fontWeight: '700', letterSpacing: 0.4 }}>{props.label.toUpperCase()}</Text>
+      <Text onLayout={(event) => setLabelHeight(event.nativeEvent.layout.height)} style={{ color: chrome.muted, fontSize: 11, fontWeight: '700', letterSpacing: 0.4 }}>{props.label.toUpperCase()}</Text>
       <TextInput
         ref={inputRef}
-        onFocus={() => props.reveal.focus(inputRef.current)}
-        onBlur={() => props.reveal.blur(inputRef.current)}
+        onFocus={() => { focused.current = true; props.reveal.focus(inputRef.current); }}
+        onBlur={() => { focused.current = false; props.reveal.blur(inputRef.current); }}
+        onLayout={() => { if (focused.current) props.reveal.focus(inputRef.current); }}
+        onContentSizeChange={() => { if (focused.current) props.reveal.focus(inputRef.current); }}
         disableFullscreenUI
         accessibilityLabel={`${props.label} subtitle ${props.cueNumber} text`}
         value={props.value}
         editable={!props.disabled}
         multiline
+        scrollEnabled
         maxLength={500}
         placeholder={props.placeholder}
         placeholderTextColor={chrome.muted}
         onChangeText={props.onChangeText}
-        style={{ minHeight: Math.min(54, props.inputMaxHeight ?? 54), maxHeight: props.inputMaxHeight, paddingHorizontal: 14, paddingVertical: props.inputMaxHeight ? 6 : 12, borderRadius: chrome.radius.md, color: chrome.text, backgroundColor: chrome.surfaceRaised, fontSize: 16, lineHeight: 22, textAlignVertical: 'top' }}
+        style={{ height: maxHeight, minHeight: Math.min(54, maxHeight ?? 54), maxHeight, paddingHorizontal: 14, paddingVertical: maxHeight ? 6 : 12, borderRadius: chrome.radius.md, color: chrome.text, backgroundColor: chrome.surfaceRaised, fontSize: 16, lineHeight: 22, textAlignVertical: 'top' }}
       />
     </View>
   );

@@ -124,16 +124,16 @@ export function FontBrowser(props: {
           contentInsetAdjustmentBehavior="automatic"
           data={fonts}
           keyExtractor={(item) => item.font.id}
-          contentContainerStyle={{ padding: shortWide ? 8 : 20, gap: 10, paddingBottom: 48 }}
+          contentContainerStyle={{ padding: shortWide ? 8 : 20, gap: 10, paddingBottom: shortWide ? 8 : 48 }}
           ListEmptyComponent={<Text style={{ color: chrome.muted, textAlign: 'center', padding: 30 }}>No fonts match this view.</Text>}
           renderItem={({ item }) => (
             <Pressable
               onPress={() => setDraftChoice(item)}
-              style={{ minHeight: 94, justifyContent: 'center', gap: 7, paddingHorizontal: 16, borderRadius: chrome.radius.lg, backgroundColor: chrome.surface }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flex: 1, flexDirection: 'row', gap: 7, alignItems: 'center' }}>
-                  <Text style={{ color: chrome.text, fontSize: 12, fontWeight: '700' }}>{item.name}</Text>
-                  <Text numberOfLines={1} style={{ flexShrink: 1, color: chrome.muted, fontSize: 10 }}>{item.mood}</Text>
+              style={{ minHeight: shortWide ? 52 : 94, flexDirection: shortWide ? 'row' : 'column', alignItems: shortWide ? 'center' : undefined, justifyContent: 'center', gap: shortWide ? 12 : 7, paddingVertical: shortWide ? 4 : undefined, paddingHorizontal: shortWide ? 8 : 16, borderRadius: chrome.radius.lg, backgroundColor: chrome.surface }}>
+              <View style={{ width: shortWide ? 164 : undefined, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flex: 1, minWidth: 0, flexDirection: shortWide ? 'column' : 'row', gap: shortWide ? 2 : 7, alignItems: shortWide ? 'flex-start' : 'center' }}>
+                  <Text numberOfLines={shortWide ? 1 : undefined} style={{ color: chrome.text, fontSize: 12, fontWeight: '700' }}>{item.name}</Text>
+                  {!shortWide ? <Text numberOfLines={1} style={{ flexShrink: 1, color: chrome.muted, fontSize: 10 }}>{item.mood}</Text> : null}
                   {item.treatment !== 'solid' ? (
                     <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: chrome.radius.pill, backgroundColor: chrome.purpleFill }}>
                       <Text style={{ color: chrome.purpleText, fontSize: 8, fontWeight: '700' }}>2 COLOR</Text>
@@ -142,6 +142,7 @@ export function FontBrowser(props: {
                 </View>
                 <Pressable
                   hitSlop={12}
+                  style={shortWide ? { minHeight: 44, justifyContent: 'center' } : undefined}
                   onPress={(event) => {
                     event.stopPropagation();
                     toggleFavorite(item.font.id);
@@ -149,7 +150,7 @@ export function FontBrowser(props: {
                   <Text style={{ color: favorites.includes(item.font.id) ? chrome.accent : chrome.muted, fontSize: 20 }}>★</Text>
                 </Pressable>
               </View>
-              <FontPreview choice={item} text={props.previewText || 'Make every word count'} />
+              <FontPreview horizontal={shortWide} choice={item} text={props.previewText || 'Make every word count'} />
             </Pressable>
           )}
         />
@@ -171,11 +172,11 @@ export function FontBrowser(props: {
   );
 }
 
-function FontPreview(props: { choice: FontChoice; text: string }) {
+function FontPreview(props: { choice: FontChoice; text: string; horizontal?: boolean }) {
   const primary = props.choice.colors?.primary ?? '#F7F8FA';
   const secondary = props.choice.colors?.secondary;
   return (
-    <View style={{ minHeight: 36, justifyContent: 'center' }}>
+    <View style={{ flex: props.horizontal ? 1 : undefined, minWidth: 0, minHeight: 36, justifyContent: 'center' }}>
       {secondary ? (
         <Text
           numberOfLines={1}

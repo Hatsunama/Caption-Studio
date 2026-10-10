@@ -1,19 +1,24 @@
 export type ViewportFrame = { x: number; y: number; width: number; height: number };
 export type KeyboardFrame = { screenX: number; screenY: number; width: number; height: number };
 
-// Both rectangles use measureInWindow / keyboard event screen coordinates.
-// A resized native viewport can end exactly where a docked keyboard begins.
-export function keyboardViewportCoversBottom(frame: ViewportFrame | undefined, keyboard: KeyboardFrame | undefined): boolean {
-  if (!frame || !keyboard) return false;
+export function keyboardViewportBottomGap(frame: ViewportFrame | undefined, keyboard: KeyboardFrame | undefined): number | undefined {
+  if (!frame || !keyboard) return undefined;
   const right = frame.x + frame.width;
   const bottom = frame.y + frame.height;
   const keyboardRight = keyboard.screenX + keyboard.width;
   const keyboardBottom = keyboard.screenY + keyboard.height;
   if (![frame.x, frame.y, frame.width, frame.height, keyboard.screenX, keyboard.screenY,
-    keyboard.width, keyboard.height, right, bottom, keyboardRight, keyboardBottom].every(Number.isFinite)) return false;
-  if (frame.width <= 0 || frame.height <= 0 || keyboard.width <= 0 || keyboard.height <= 0) return false;
-  return keyboard.screenX < right && keyboardRight > frame.x
-    && keyboard.screenY <= bottom && keyboardBottom >= bottom;
+    keyboard.width, keyboard.height, right, bottom, keyboardRight, keyboardBottom].every(Number.isFinite)) return undefined;
+  if (frame.width <= 0 || frame.height <= 0 || keyboard.width <= 0 || keyboard.height <= 0) return undefined;
+  if (keyboard.screenX >= right || keyboardRight <= frame.x
+    || keyboard.screenY > bottom || keyboardBottom < frame.y) return undefined;
+  return Math.max(0, bottom - keyboardBottom);
+}
+
+export function keyboardViewportCoversBottom(frame: ViewportFrame | undefined, keyboard: KeyboardFrame | undefined, bottomInset = 0): boolean {
+  if (!Number.isFinite(bottomInset) || bottomInset < 0) return false;
+  const gap = keyboardViewportBottomGap(frame, keyboard);
+  return gap !== undefined && gap <= bottomInset;
 }
 
 export function keyboardViewportOverlap(frame: ViewportFrame | undefined, keyboard: KeyboardFrame | undefined): number {
