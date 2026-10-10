@@ -58,3 +58,26 @@ export function createInputRevealController(options: {
     detach: () => { attached = false; input = null; invalidate(); },
   };
 }
+
+export function createInputRevealConnection(
+  frames: Pick<Parameters<typeof createInputRevealController>[0], 'requestFrame' | 'cancelFrame'>,
+) {
+  let viewport: MeasuredInputView | null = null;
+  let scrollToOffset: ((offset: number) => void) | undefined;
+  const controller = createInputRevealController({
+    ...frames,
+    viewport: () => scrollToOffset ? viewport : null,
+    scrollToOffset: (offset) => scrollToOffset?.(offset),
+  });
+  return {
+    ...controller,
+    connectViewport: (view: MeasuredInputView | null) => {
+      viewport = view;
+      controller.reveal();
+    },
+    connectScrollToOffset: (command: ((offset: number) => void) | undefined) => {
+      scrollToOffset = command;
+      controller.reveal();
+    },
+  };
+}

@@ -22,7 +22,6 @@ import {
   Pressable,
   ScrollView,
   Text,
-  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
