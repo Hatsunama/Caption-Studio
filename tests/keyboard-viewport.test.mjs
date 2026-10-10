@@ -4,9 +4,9 @@ import { existsSync } from 'node:fs';
 const url = new URL('../src/lib/keyboard-viewport.ts', import.meta.url);
 const policy = existsSync(url) ? await import(url) : undefined;
 const overlap = (frame, keyboard) => policy?.keyboardViewportOverlap(frame, keyboard) ?? 0;
-const coversBottom = (frame, keyboard) => {
+const coversBottom = (frame, keyboard, bottomInset = 0) => {
   assert.equal(typeof policy?.keyboardViewportCoversBottom, 'function');
-  return policy.keyboardViewportCoversBottom(frame, keyboard);
+  return policy.keyboardViewportCoversBottom(frame, keyboard, bottomInset);
 };
 
 test('bottom coverage includes docked overlap and exactly adjacent native-resized frames', () => {
@@ -60,4 +60,22 @@ test('closed, detached and invalid keyboard frames do not alter layout', () => {
 test('nested windows use screen coordinates rather than subtracting the full keyboard height', () => {
   assert.equal(overlap({ x: 20, y: 100, width: 360, height: 500 },
     { screenX: 0, screenY: 550, width: 400, height: 300 }), 50);
+});
+
+test('docked Android IME excluding the navigation bar still covers the safe bottom', () => {
+  const frame = { x: 0, y: 0, width: 890, height: 400 };
+  const keyboard = { screenX: 26, screenY: 431 / 3, width: 864, height: 697 / 3 };
+  assert.equal(coversBottom(frame, keyboard, 24), true);
+  assert.equal(overlap(frame, keyboard), 400 - 431 / 3, 'reserve the actual occluded tail once');
+  assert.equal(coversBottom(frame, keyboard, 0), false, 'without a known inset the gap remains unknown');
+});
+test('bottom inset does not classify a floating, disjoint, or invalid keyboard as docked', () => {
+  const frame = { x: 0, y: 0, width: 890, height: 400 };
+  const keyboard = { screenX: 0, screenY: 140, width: 890, height: 200 };
+  assert.equal(coversBottom(frame, keyboard, 24), false);
+  assert.equal(coversBottom(frame, { ...keyboard, height: 236 }, 24), true);
+  assert.equal(coversBottom(frame, { ...keyboard, screenX: 900, height: 236 }, 24), false);
+  for (const invalid of [-1, NaN, Infinity]) {
+    assert.equal(coversBottom(frame, { ...keyboard, height: 260 }, invalid), false);
+  }
 });

@@ -434,3 +434,14 @@ test('the editor measured workspace lives inside the keyboard-bounded content wi
     { setWorkspaceHeight: v => writes.push(['height', v]), setWorkspaceWidth: v => writes.push(['width', v]), width: 800 });
   assert.deepEqual(writes, [['height', 170], ['width', 760]]);
 });
+
+test('Android docked IME navigation tail releases the bottom spacer only after a current measurement', t => {
+  const h = render({ safeAreaBottom: 24, children: ({ safeAreaBottom }) => ({ type: 'Editor', props: { safeAreaBottom } }) });
+  t.after(() => h.dispose());
+  h.measure({ x: 0, y: 0, width: 890, height: 400 });
+  h.keyboard('keyboardDidShow', { screenX: 26, screenY: 431 / 3, width: 864, height: 697 / 3 });
+  h.measure({ x: 0, y: 0, width: 890, height: 400 });
+  assert.equal(h.content.props.children.props.safeAreaBottom, 0);
+  h.keyboard('keyboardDidHide', { screenX: 0, screenY: 400, width: 890, height: 0 });
+  assert.equal(h.content.props.children.props.safeAreaBottom, 24);
+});
