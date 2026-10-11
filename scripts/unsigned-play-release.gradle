@@ -1,0 +1,41 @@
+// Reuses the tested 68bc63b unsigned variant mechanism. No private key is loaded.
+gradle.beforeProject { project ->
+    if (project.path == ':app') {
+        def names = ['CAPTION_STUDIO_RELEASE_STORE_FILE', 'CAPTION_STUDIO_RELEASE_STORE_PASSWORD',
+                     'CAPTION_STUDIO_RELEASE_KEY_ALIAS', 'CAPTION_STUDIO_RELEASE_KEY_PASSWORD']
+        def forbidden = /(?i)^(?:ORG_GRADLE_PROJECT_)?CAPTION_STUDIO_(?:RELEASE|FIXED|PLAY)_(?:STORE_FILE|STORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD|KEYSTORE_BASE64)$|^(?:KEYSTORE_BASE64|STORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD)$/
+        (project.properties.keySet() + System.getenv().keySet()).each { name ->
+            if (name ==~ forbidden) {
+                throw new GradleException('Unsigned packaging refuses signing credential input: ' + name)
+            }
+        }
+        def absentStore = new File(project.rootProject.projectDir, '.unsigned-play-no-keystore')
+        if (absentStore.exists()) throw new GradleException('Unsigned sentinel must not be a keystore')
+        // Presence-only sentinels satisfy the existing generated release guard.
+        project.ext.set(names[0], absentStore.absolutePath)
+        names.drop(1).each { project.ext.set(it, 'UNSIGNED-NOT-A-CREDENTIAL') }
+        project.pluginManager.withPlugin('com.android.application') {
+            project.extensions.getByName('androidComponents').finalizeDsl { android ->
+                android.buildTypes.getByName('release').signingConfig = null
+                android.productFlavors.each { flavor ->
+                    if (flavor.signingConfig != null) throw new GradleException('Unexpected flavor signing')
+                }
+            }
+        }
+        project.tasks.configureEach { task ->
+            if (task.name.toLowerCase().contains('release')) {
+                task.doFirst {
+                    if (absentStore.exists()) throw new GradleException('Unsigned sentinel became a file')
+                    if (project.extensions.getByName('android').buildTypes.getByName('release').signingConfig != null)
+                        throw new GradleException('Unsigned release has a signing configuration')
+                }
+            }
+        }
+    }
+}
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.name.toLowerCase().contains('release') &&
+        it.name.toLowerCase().startsWith('validatesigning') }) {
+        throw new GradleException('Unsigned packaging refuses release credential validation tasks')
+    }
+}
