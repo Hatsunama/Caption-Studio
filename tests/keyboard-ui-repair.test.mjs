@@ -161,3 +161,29 @@ test('watermark has the same focused-field lifecycle and retains add/close seman
   byLabel(h, 'Close watermarks').props.onPress(); h.render();
   assert.equal(closed, 1); assert.equal(byLabel(h, 'Watermark words').props.value, '');
 });
+
+test('Seeker measured 49dp keyboard pane keeps language labels and 44dp editors visible together', async () => {
+  const h = mountDual({ targetLanguageLabel: 'Chinese (Simplified)' }, { bottomInsetCovered: true }); await h.flush();
+  layout(byId(h, 'dual-caption-root'), 890, 431 / 3); h.act(() => {});
+  const viewport = h.all(n => n.props?.collapsable === false)[0];
+  h.act(() => layout(viewport, 890, 49));
+  const list = h.all(n => n.type === 'FlatList')[0];
+  const nativeRow = list.props.children[1];
+  const fieldPane = nativeRow.props.children[1];
+  for (const languageView of fieldPane.props.children) {
+    const label = languageView.props.children[0];
+    h.act(() => layout(label, 72, 30));
+  }
+  for (const [i, language] of ['English', 'Chinese (Simplified)'].entries()) {
+    const row = h.all(n => n.type === 'FlatList')[0].props.children[1];
+    const languageView = row.props.children[1].props.children[i];
+    const input = h.input(0, language);
+    assert.equal(languageView.props.style.flexDirection, 'row', 'labels must share a short pane with editors, not consume their vertical budget');
+    assert.ok(input.props.style.height >= 44, 'keep an operable input instead of shrinking it');
+    const required = verticalPadding(list.props.contentContainerStyle)
+      + verticalPadding(row.props.style) + 2 * row.props.style.borderWidth
+      + Math.max(30, input.props.style.height);
+    assert.ok(required <= 49, `${required}dp must fit the measured native pane, including labels and row chrome`);
+  }
+  assert.equal(byLabel(h, 'Save dual subtitle edits').props.disabled, true);
+});
