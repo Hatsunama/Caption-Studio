@@ -65,6 +65,9 @@ type DualCaptionEditorProps = {
 };
 
 const ignoreBackRequestChange = () => undefined;
+const MIN_LANGUAGE_INPUT_HEIGHT = 44;
+const LANGUAGE_LABEL_GAP = 5;
+const SHORT_WIDE_ROW_VERTICAL_CHROME = 2; // Two 1dp borders; no vertical padding.
 
 export function DualCaptionEditor(props: DualCaptionEditorProps) {
   // Closing or changing projects/tracks owns a new draft and recovery lifetime.
@@ -93,9 +96,9 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const shortWide = paired && height < 260;
   const listRef = useRef<FlatList<CaptionPair>>(null);
   const [listHeight, setListHeight] = useState<number>();
-  // Short-wide rows have 4dp top/bottom padding and a 1dp border. Each
-  // LanguageInput subtracts its measured label and gap from the remaining pane.
-  const inputMaxHeight = shortWide ? Math.max(44, (listHeight ?? height) - 10) : undefined;
+  // Share the measured pane budget between the metadata rail and both fields.
+  // LanguageInput uses inline labels when a stacked label would crowd out 44dp.
+  const inputMaxHeight = shortWide ? Math.max(MIN_LANGUAGE_INPUT_HEIGHT, (listHeight ?? height) - SHORT_WIDE_ROW_VERTICAL_CHROME) : undefined;
   const scrollToOffset = useCallback((offset: number) => listRef.current?.scrollToOffset({ offset, animated: false }), []);
   const [viewportRef, reveal] = useFocusedInputReveal(scrollToOffset);
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
@@ -500,7 +503,7 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
   const skipped = Boolean(pair.translation.translationSkipped);
   const textChanged = draft.primaryText.trim() !== pair.source.text.trim() || draft.translatedText.trim() !== pair.translation.text.trim();
   return (
-    <View key={pair.source.id} style={{ flexDirection: props.shortWide ? 'row' : 'column', gap: 9, padding: props.shortWide ? 4 : 14, borderRadius: chrome.radius.lg, borderWidth: 1, borderColor: refreshRequired ? chrome.warning : chrome.hairline, backgroundColor: chrome.surface }}>
+    <View key={pair.source.id} style={{ flexDirection: props.shortWide ? 'row' : 'column', gap: 9, paddingHorizontal: props.shortWide ? 4 : 14, paddingVertical: props.shortWide ? 0 : 14, borderRadius: chrome.radius.lg, borderWidth: 1, borderColor: refreshRequired ? chrome.warning : chrome.hairline, backgroundColor: chrome.surface }}>
       <ScrollView scrollEnabled={props.shortWide} keyboardShouldPersistTaps="handled"
         style={props.shortWide ? { width: 156, maxHeight: props.inputMaxHeight, flexGrow: 0, flexShrink: 0 } : { flexGrow: 0 }}
         contentContainerStyle={{ gap: 9 }}>
@@ -582,10 +585,17 @@ function LanguageInput(props: {
   const inputRef = useRef<TextInput>(null);
   const focused = useRef(false);
   const [labelHeight, setLabelHeight] = useState(16);
-  const maxHeight = props.inputMaxHeight === undefined ? undefined : Math.max(44, props.inputMaxHeight - labelHeight - 5);
+  const inlineLabel = props.inputMaxHeight !== undefined
+    && props.inputMaxHeight < labelHeight + LANGUAGE_LABEL_GAP + MIN_LANGUAGE_INPUT_HEIGHT;
+  const maxHeight = props.inputMaxHeight === undefined ? undefined
+    : Math.max(MIN_LANGUAGE_INPUT_HEIGHT, props.inputMaxHeight - (inlineLabel ? 0 : labelHeight + LANGUAGE_LABEL_GAP));
   return (
-    <View style={{ flex: props.horizontal ? 1 : undefined, minWidth: 0, gap: 5 }}>
-      <Text onLayout={(event) => setLabelHeight(event.nativeEvent.layout.height)} style={{ color: chrome.muted, fontSize: 11, fontWeight: '700', letterSpacing: 0.4 }}>{props.label.toUpperCase()}</Text>
+    <View style={{ flex: props.horizontal ? 1 : undefined, minWidth: 0, flexDirection: inlineLabel ? 'row' : 'column', alignItems: inlineLabel ? 'center' : undefined, gap: LANGUAGE_LABEL_GAP }}>
+      <Text onLayout={(event) => {
+        // Keep the stacked measurement: narrower inline wrapping must not
+        // raise the threshold and trap an adequate pane in the inline layout.
+        if (!inlineLabel) setLabelHeight(event.nativeEvent.layout.height);
+      }} style={{ width: inlineLabel ? '40%' : undefined, maxWidth: inlineLabel ? 120 : undefined, flexShrink: inlineLabel ? 0 : undefined, color: chrome.muted, fontSize: 11, lineHeight: inlineLabel ? 14 : undefined, fontWeight: '700', letterSpacing: 0.4 }}>{props.label.toUpperCase()}</Text>
       <TextInput
         ref={inputRef}
         onFocus={() => { focused.current = true; props.reveal.focus(inputRef.current); }}
@@ -602,7 +612,7 @@ function LanguageInput(props: {
         placeholder={props.placeholder}
         placeholderTextColor={chrome.muted}
         onChangeText={props.onChangeText}
-        style={{ height: maxHeight, minHeight: Math.min(54, maxHeight ?? 54), maxHeight, paddingHorizontal: 14, paddingVertical: maxHeight ? 6 : 12, borderRadius: chrome.radius.md, color: chrome.text, backgroundColor: chrome.surfaceRaised, fontSize: 16, lineHeight: 22, textAlignVertical: 'top' }}
+        style={{ flex: inlineLabel ? 1 : undefined, minWidth: inlineLabel ? 0 : undefined, height: maxHeight, minHeight: Math.min(54, maxHeight ?? 54), maxHeight, paddingHorizontal: 14, paddingVertical: maxHeight ? 6 : 12, borderRadius: chrome.radius.md, color: chrome.text, backgroundColor: chrome.surfaceRaised, fontSize: 16, lineHeight: 22, textAlignVertical: 'top' }}
       />
     </View>
   );
@@ -777,3 +787,4 @@ function decodeDualDraft(value: unknown, allowedIds: string[]): Record<string, D
   });
   return valid ? value as Record<string, DualCaptionDraft> : null;
 }
+
