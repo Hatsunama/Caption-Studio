@@ -415,7 +415,7 @@ function mount(initialProject = fixture()) {
         useAudioRecorder: () => ({ uri: null, prepareToRecordAsync: async () => undefined, record() {}, stop: async () => undefined }),
         useAudioRecorderState: () => ({ isRecording: false, durationMillis: 0, metering: -60 }),
       };
-      if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ bottom: 0 }) };
+      if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
       if (name.startsWith('@/components/')) return new Proxy({}, { get: (_object, key) => key });
       if (name.startsWith('@/hooks/')) return hooks;
       if (name.startsWith('@/services/')) return services;

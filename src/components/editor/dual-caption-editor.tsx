@@ -5,11 +5,15 @@ import {
   FlatList,
   Modal,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusedInputReveal, type FocusedInputReveal } from '@/hooks/use-focused-input-reveal';
+import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
 import { CAPTION_CLEANUP_WARNING, createCaptionJournalQueue } from './caption-save-recovery';
 
 import { chrome } from '@/lib/ui-theme';
@@ -61,6 +65,9 @@ type DualCaptionEditorProps = {
 };
 
 const ignoreBackRequestChange = () => undefined;
+const MIN_LANGUAGE_INPUT_HEIGHT = 44;
+const LANGUAGE_LABEL_GAP = 5;
+const SHORT_WIDE_ROW_VERTICAL_CHROME = 2; // Two 1dp borders; no vertical padding.
 
 export function DualCaptionEditor(props: DualCaptionEditorProps) {
   // Closing or changing projects/tracks owns a new draft and recovery lifetime.
@@ -79,6 +86,21 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     visible,
   } = props;
   const insets = useSafeAreaInsets();
+  const window = useWindowDimensions();
+  const [rootSize, setRootSize] = useState<{ width: number; height: number }>();
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const width = (rootSize?.width ?? window.width) - insets.left - insets.right;
+  const height = (rootSize?.height ?? window.height) - insets.top - insets.bottom;
+  const compact = height < 500 || width > height * 1.2;
+  const paired = width >= 600;
+  const shortWide = paired && height < 260;
+  const listRef = useRef<FlatList<CaptionPair>>(null);
+  const [listHeight, setListHeight] = useState<number>();
+  // Share the measured pane budget between the metadata rail and both fields.
+  // LanguageInput uses inline labels when a stacked label would crowd out 44dp.
+  const inputMaxHeight = shortWide ? Math.max(MIN_LANGUAGE_INPUT_HEIGHT, (listHeight ?? height) - SHORT_WIDE_ROW_VERTICAL_CHROME) : undefined;
+  const scrollToOffset = useCallback((offset: number) => listRef.current?.scrollToOffset({ offset, animated: false }), []);
+  const [viewportRef, reveal] = useFocusedInputReveal(scrollToOffset);
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
   const [store] = useState(() => new DualCaptionDraftStore(sourceDrafts));
   const [openingRevision] = useState(() => dualCaptionDraftRevision(sourceDrafts));
@@ -248,6 +270,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       onCancelBusy();
       return;
     }
+    if (compact && actionsOpen) { setActionsOpen(false); return; }
     if (selectedIds.size > 0) {
       setSelectedIds(new Set());
       return;
@@ -262,7 +285,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       { text: 'Keep editing', style: 'cancel' },
       { text: 'Discard', style: 'destructive', onPress: closeAfterClearingJournal },
     ]);
-  }, [busy, closeAfterClearingJournal, closing, errorMessage, journalError, journalProtected, journalReady, onCancelBusy, onDismissError, saving, selectedIds, store]);
+  }, [actionsOpen, compact, busy, closeAfterClearingJournal, closing, errorMessage, journalError, journalProtected, journalReady, onCancelBusy, onDismissError, saving, selectedIds, store]);
 
   useEffect(() => {
     if (!visible) {
@@ -310,53 +333,84 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   }, []);
   const { automaticTranslation, sourceLanguageLabel, targetLanguageLabel, onRefresh, onSkip } = props;
   const renderItem = useCallback(({ item: pair, index }: { item: CaptionPair; index: number }) => (
-    <DualCaptionRow pair={pair} index={index} store={store} disabled={disabled} dirty={dirty}
+    <DualCaptionRow pair={pair} index={index} store={store} disabled={disabled} dirty={dirty} paired={paired} shortWide={shortWide}
       selected={selectedIds.has(pair.source.id)} onToggleSelection={toggleSelection}
       automaticTranslation={automaticTranslation} sourceLanguageLabel={sourceLanguageLabel}
-      targetLanguageLabel={targetLanguageLabel} onRefresh={onRefresh} onSkip={onSkip} />
-  ), [automaticTranslation, dirty, disabled, onRefresh, onSkip, selectedIds, sourceLanguageLabel, store, targetLanguageLabel, toggleSelection]);
+      targetLanguageLabel={targetLanguageLabel} onRefresh={onRefresh} onSkip={onSkip} reveal={reveal} inputMaxHeight={inputMaxHeight} />
+  ), [automaticTranslation, dirty, disabled, inputMaxHeight, onRefresh, onSkip, paired, reveal, selectedIds, shortWide, sourceLanguageLabel, store, targetLanguageLabel, toggleSelection]);
+
+  const recoveryStatus = (
+    <View style={{ gap: 8 }}>
+      {[journalRecovery?.warning, journalError, saveError].filter(Boolean).map((message, index) => (
+        <Text key={index} accessibilityRole="alert" selectable style={{ color: chrome.dangerText, fontSize: 12, lineHeight: 17 }}>{message}</Text>
+      ))}
+    </View>
+  );
+  const hasStatus = Boolean(journalRecovery?.warning || journalError || saveError);
+  const actions = (
+    <View style={{ gap: 11 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        <HeaderAction label={`${props.trackVisible ? 'Hide' : 'Show'} ${props.targetLanguageLabel} line`} disabled={disabled || dirty} onPress={props.onToggleVisibility} />
+        <HeaderAction label={`Refresh unfinished (${needsRefresh.length})`} disabled={disabled || dirty || !props.automaticTranslation || needsRefresh.length === 0} onPress={() => props.onRefresh(needsRefresh.map((pair) => pair.source.id))} />
+        <HeaderAction label={`Refresh selected (${selectedPairs.length})`} disabled={disabled || dirty || !props.automaticTranslation || selectedPairs.length === 0} onPress={() => props.onRefresh(selectedPairs.map((pair) => pair.source.id))} />
+        <HeaderAction label={`Refresh all (${includedPairs.length})`} disabled={disabled || dirty || !props.automaticTranslation || includedPairs.length === 0} onPress={() => props.onRefresh(includedPairs.map((pair) => pair.source.id))} />
+        <HeaderAction label={selectedPairs.length === includedPairs.length && includedPairs.length > 0 ? 'Clear selection' : 'Select all'} disabled={disabled || includedPairs.length === 0} onPress={() => setSelectedIds(selectedPairs.length === includedPairs.length ? new Set() : new Set(includedPairs.map((pair) => pair.source.id)))} />
+        <HeaderAction label="Remove second language" danger disabled={disabled || dirty} onPress={props.onRemove} />
+      </View>
+      <Text style={{ color: chrome.muted, fontSize: 12, lineHeight: 17 }}>
+        {failedCount} failed; {missingCount} without a saved translation; {needsRefresh.length} unfinished; {skippedCount} skipped. Failed lines without saved translations show current source text as an unresolved fallback. You can export available text and source fallbacks anyway. Save typed edits before refreshing. Failed refreshes keep saved text; successful refreshes replace only the requested second-language text.
+      </Text>
+    </View>
+  );
+
+  const saveControl = !props.busy ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Save dual subtitle edits"
+              disabled={(editCount === 0 && !cleanupPending) || disabled}
+              onPress={() => { void save(); }}
+              style={{ alignItems: 'center', minHeight: 44, justifyContent: 'center', paddingHorizontal: shortWide ? 12 : undefined, paddingVertical: shortWide ? 8 : 16, borderRadius: chrome.radius.lg, backgroundColor: editCount > 0 ? chrome.accent : chrome.fill }}>
+              <Text style={{ color: editCount > 0 ? chrome.accentInk : chrome.muted, fontSize: 16, fontWeight: '700' }}>
+                {cleanupPending && !store.hasRecoveryChanges() ? 'Retry recovery cleanup' : editCount > 0
+                  ? `Save ${editCount} change${editCount === 1 ? '' : 's'}`
+                  : 'No unsaved changes'}
+              </Text>
+            </Pressable>
+          ) : null;
 
   return (
     <Modal visible={props.visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={requestClose}>
-      <View style={{ flex: 1, backgroundColor: chrome.background, paddingTop: insets.top }}>
-        <View style={{ paddingHorizontal: 18, paddingTop: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
+      <KeyboardViewport safeAreaBottom={insets.bottom} style={{ flex: 1 }}>
+      {({ safeAreaBottom }) => (
+      <View testID="dual-caption-root" onLayout={({ nativeEvent: { layout } }) => setRootSize({ width: layout.width, height: layout.height })}
+        style={{ flex: 1, minHeight: 0, backgroundColor: chrome.background, paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }}>
+        <View style={{ paddingHorizontal: 18, paddingTop: compact ? 4 : 22, paddingBottom: compact ? 4 : 14, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: chrome.text, fontSize: 28, fontWeight: '700' }}>Dual subtitles</Text>
-              <Text style={{ marginTop: 4, color: chrome.muted, fontSize: 13, lineHeight: 18 }}>
+              <Text style={{ color: chrome.text, fontSize: compact ? 22 : 28, fontWeight: '700' }}>Dual subtitles</Text>
+              {!compact ? <Text style={{ marginTop: 4, color: chrome.muted, fontSize: 13, lineHeight: 18 }}>
                 {props.sourceLanguageLabel} + {props.targetLanguageLabel} · independent text and timing
-              </Text>
+              </Text> : null}
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close dual subtitle editor" disabled={saving || closing || props.busy || (!journalReady && !journalError)} onPress={requestClose} hitSlop={10}>
+            {shortWide ? saveControl : null}
+            {compact ? <Pressable accessibilityRole="button" accessibilityLabel="Dual subtitle actions and status" accessibilityState={{ expanded: actionsOpen }} onPress={() => setActionsOpen((value) => !value)} style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 8 }}>
+              <Text style={{ color: chrome.accent, fontSize: 14, fontWeight: '700' }}>Actions{hasStatus ? ' !' : ''}</Text>
+            </Pressable> : null}
+            <Pressable accessibilityRole="button" accessibilityLabel="Close dual subtitle editor" disabled={saving || closing || props.busy || (!journalReady && !journalError)} onPress={requestClose} hitSlop={10} style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ color: chrome.text, fontSize: 28, lineHeight: 30 }}>×</Text>
             </Pressable>
           </View>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
-            <HeaderAction
-              label={`${props.trackVisible ? 'Hide' : 'Show'} ${props.targetLanguageLabel} line`}
-              disabled={disabled || dirty}
-              onPress={props.onToggleVisibility}
-            />
-            <HeaderAction
-                label={`Refresh unfinished (${needsRefresh.length})`}
-                disabled={disabled || dirty || !props.automaticTranslation || needsRefresh.length === 0}
-                onPress={() => props.onRefresh(needsRefresh.map((pair) => pair.source.id))}
-              />
-            <HeaderAction label={`Refresh selected (${selectedPairs.length})`} disabled={disabled || dirty || !props.automaticTranslation || selectedPairs.length === 0}
-              onPress={() => props.onRefresh(selectedPairs.map((pair) => pair.source.id))} />
-            <HeaderAction label={`Refresh all (${includedPairs.length})`} disabled={disabled || dirty || !props.automaticTranslation || includedPairs.length === 0}
-              onPress={() => props.onRefresh(includedPairs.map((pair) => pair.source.id))} />
-            <HeaderAction label={selectedPairs.length === includedPairs.length && includedPairs.length > 0 ? 'Clear selection' : 'Select all'} disabled={disabled || includedPairs.length === 0}
-              onPress={() => setSelectedIds(selectedPairs.length === includedPairs.length ? new Set() : new Set(includedPairs.map((pair) => pair.source.id)))} />
-            <HeaderAction label="Remove second language" danger disabled={disabled || dirty} onPress={props.onRemove} />
-          </View>
-          <Text style={{ marginTop: 11, color: chrome.muted, fontSize: 12, lineHeight: 17 }}>
-            {failedCount} failed; {missingCount} without a saved translation; {needsRefresh.length} unfinished; {skippedCount} skipped. Failed lines without saved translations show current source text as an unresolved fallback. You can export available text and source fallbacks anyway. Save typed edits before refreshing. Failed refreshes keep saved text; successful refreshes replace only the requested second-language text.
-          </Text>
+          {!compact ? <View style={{ marginTop: 14 }}>{actions}</View> : null}
         </View>
 
+        <View collapsable={false} ref={viewportRef} onLayout={(event) => { setListHeight(event.nativeEvent.layout.height); reveal.onViewportLayout(); }} style={{ flex: 1, minHeight: 0 }}>
         <FlatList
-          style={{ flex: 1 }}
+          ref={listRef}
+          onScroll={reveal.onScroll}
+          onScrollBeginDrag={reveal.onScrollBeginDrag}
+          scrollEventThrottle={16}
+          style={{ flex: 1, minHeight: 0 }}
+          ListHeaderComponent={compact && (actionsOpen || hasStatus) ? <View style={{ gap: 12 }}>{actionsOpen ? actions : null}{hasStatus ? recoveryStatus : null}</View> : null}
           data={props.pairs}
           keyExtractor={captionPairKey}
           renderItem={renderItem}
@@ -365,12 +419,14 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           windowSize={5}
           removeClippedSubviews={false}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ gap: 10, padding: 14, paddingBottom: 120 }}
+          keyboardDismissMode="on-drag"
+          contentContainerStyle={{ gap: 10, padding: 14, paddingTop: shortWide ? 0 : 14, paddingBottom: shortWide ? 0 : 14 }}
         />
+        </View>
 
         {props.busy || props.errorMessage || props.warningMessage ? (
-          <View style={{ position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.78)' }}>
-            <View style={{ width: '100%', maxWidth: 380, gap: 14, padding: 22, borderRadius: chrome.radius.xl, backgroundColor: chrome.surfaceRaised }}>
+          <View accessibilityViewIsModal style={{ position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center', paddingTop: Math.max(8, insets.top), paddingBottom: Math.max(8, safeAreaBottom), paddingLeft: Math.max(12, insets.left), paddingRight: Math.max(12, insets.right), backgroundColor: 'rgba(0,0,0,0.78)' }}>
+            <ScrollView keyboardShouldPersistTaps="handled" style={{ width: '100%', maxWidth: 380, maxHeight: '100%', flexShrink: 1, borderRadius: chrome.radius.xl, backgroundColor: chrome.surfaceRaised }} contentContainerStyle={{ gap: 14, padding: 22 }}>
               {props.busy ? <ActivityIndicator color={chrome.accent} size="large" /> : null}
               <Text accessibilityRole={props.errorMessage || props.warningMessage ? 'alert' : undefined} selectable style={{ color: props.warningMessage ? chrome.warning : props.errorMessage ? chrome.dangerText : chrome.text, fontSize: 17, lineHeight: 24, fontWeight: '700', textAlign: 'center' }}>
                 {props.warningMessage ?? props.errorMessage ?? props.progressLabel ?? 'Translating locally…'}
@@ -395,41 +451,30 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
                   Translations are happening locally with a 1.5B Qwen model. It will not be instant and I apologize for that.
                 </Text>
               ) : null}
-            </View>
+            </ScrollView>
           </View>
         ) : null}
-        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: 14, paddingBottom: Math.max(14, insets.bottom), borderTopWidth: 1, borderTopColor: chrome.hairline, backgroundColor: chrome.background }}>
-          {journalRecovery?.warning ? (
+        <View testID="dual-caption-footer" style={{ padding: shortWide ? 0 : compact ? 8 : 14, paddingBottom: shortWide ? safeAreaBottom : Math.max(compact ? 8 : 14, safeAreaBottom), borderTopWidth: shortWide ? 0 : 1, borderTopColor: chrome.hairline, backgroundColor: chrome.background }}>
+          {!compact && journalRecovery?.warning ? (
             <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
               {journalRecovery.warning}
             </Text>
           ) : null}
-          {journalError ? (
+          {!compact && journalError ? (
             <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
               {journalError}
             </Text>
           ) : null}
-          {saveError ? (
+          {!compact && saveError ? (
             <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
               {saveError}
             </Text>
           ) : null}
-          {!props.busy ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Save dual subtitle edits"
-              disabled={(editCount === 0 && !cleanupPending) || disabled}
-              onPress={() => { void save(); }}
-              style={{ alignItems: 'center', paddingVertical: 16, borderRadius: chrome.radius.lg, backgroundColor: editCount > 0 ? chrome.accent : chrome.fill }}>
-              <Text style={{ color: editCount > 0 ? chrome.accentInk : chrome.muted, fontSize: 16, fontWeight: '700' }}>
-                {cleanupPending && !store.hasRecoveryChanges() ? 'Retry recovery cleanup' : editCount > 0
-                  ? `Save ${editCount} change${editCount === 1 ? '' : 's'}`
-                  : 'No unsaved changes'}
-              </Text>
-            </Pressable>
-          ) : null}
+          {!shortWide ? saveControl : null}
         </View>
       </View>
+      )}
+      </KeyboardViewport>
     </Modal>
   );
 }
@@ -443,7 +488,11 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
   disabled: boolean;
   dirty: boolean;
   selected: boolean;
+  paired: boolean;
+  shortWide: boolean;
   onToggleSelection: (captionId: string) => void;
+  reveal: FocusedInputReveal;
+  inputMaxHeight?: number;
 } & Pick<DualCaptionEditorProps, 'automaticTranslation' | 'sourceLanguageLabel' | 'targetLanguageLabel' | 'onRefresh' | 'onSkip'>) {
   const { pair, index, store } = props;
   const subscribe = useCallback((listener: () => void) => store.subscribeCue(pair.source.id, listener), [pair.source.id, store]);
@@ -454,7 +503,10 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
   const skipped = Boolean(pair.translation.translationSkipped);
   const textChanged = draft.primaryText.trim() !== pair.source.text.trim() || draft.translatedText.trim() !== pair.translation.text.trim();
   return (
-    <View key={pair.source.id} style={{ gap: 9, padding: 14, borderRadius: chrome.radius.lg, borderWidth: 1, borderColor: refreshRequired ? chrome.warning : chrome.hairline, backgroundColor: chrome.surface }}>
+    <View key={pair.source.id} style={{ flexDirection: props.shortWide ? 'row' : 'column', gap: 9, paddingHorizontal: props.shortWide ? 4 : 14, paddingVertical: props.shortWide ? 0 : 14, borderRadius: chrome.radius.lg, borderWidth: 1, borderColor: refreshRequired ? chrome.warning : chrome.hairline, backgroundColor: chrome.surface }}>
+      <ScrollView scrollEnabled={props.shortWide} keyboardShouldPersistTaps="handled"
+        style={props.shortWide ? { width: 156, maxHeight: props.inputMaxHeight, flexGrow: 0, flexShrink: 0 } : { flexGrow: 0 }}
+        contentContainerStyle={{ gap: 9 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: props.selected, disabled: props.disabled || skipped }}
           accessibilityLabel={`Select subtitle ${index + 1} for refresh`} disabled={props.disabled || skipped}
@@ -491,7 +543,12 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
           Text was edited. Check whether the other language still matches. Refresh is optional and replaces {props.targetLanguageLabel}; keeping your text is fine.
         </Text>
       ) : null}
+      </ScrollView>
+      <View style={{ flex: props.shortWide ? 1 : undefined, minWidth: 0, flexDirection: props.paired ? 'row' : 'column', gap: 9 }}>
       <LanguageInput
+        reveal={props.reveal}
+        inputMaxHeight={props.inputMaxHeight}
+        horizontal={props.paired}
         label={props.sourceLanguageLabel}
         value={draft.primaryText}
         disabled={props.disabled}
@@ -499,6 +556,9 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
         onChangeText={(value) => props.store.setDraft(pair.source.id, 'primaryText', value)}
       />
       <LanguageInput
+        reveal={props.reveal}
+        inputMaxHeight={props.inputMaxHeight}
+        horizontal={props.paired}
         label={props.targetLanguageLabel}
         value={draft.translatedText}
         disabled={props.disabled}
@@ -506,11 +566,15 @@ const DualCaptionRow = memo(function DualCaptionRow(props: {
         placeholder={skipped ? 'Translation skipped' : pair.displayProvenance === 'source-fallback' ? draft.primaryText : 'Translation pending'}
         onChangeText={(value) => props.store.setDraft(pair.source.id, 'translatedText', value)}
       />
+      </View>
     </View>
   );
 });
 
 function LanguageInput(props: {
+  reveal: FocusedInputReveal;
+  inputMaxHeight?: number;
+  horizontal?: boolean;
   label: string;
   value: string;
   disabled: boolean;
@@ -518,19 +582,40 @@ function LanguageInput(props: {
   placeholder?: string;
   onChangeText: (value: string) => void;
 }) {
+  const inputRef = useRef<TextInput>(null);
+  const groupRef = useRef<View>(null);
+  const focused = useRef(false);
+  const [labelHeight, setLabelHeight] = useState(16);
+  const inlineLabel = props.inputMaxHeight !== undefined
+    && props.inputMaxHeight < labelHeight + LANGUAGE_LABEL_GAP + MIN_LANGUAGE_INPUT_HEIGHT;
+  const maxHeight = props.inputMaxHeight === undefined ? undefined
+    : Math.max(MIN_LANGUAGE_INPUT_HEIGHT, props.inputMaxHeight - (inlineLabel ? 0 : labelHeight + LANGUAGE_LABEL_GAP));
   return (
-    <View style={{ gap: 5 }}>
-      <Text style={{ color: chrome.muted, fontSize: 11, fontWeight: '700', letterSpacing: 0.4 }}>{props.label.toUpperCase()}</Text>
+    <View ref={groupRef} collapsable={false}
+      onLayout={() => { if (focused.current) props.reveal.focus(groupRef.current); }}
+      style={{ flex: props.horizontal ? 1 : undefined, minWidth: 0, flexDirection: inlineLabel ? 'row' : 'column', alignItems: inlineLabel ? 'center' : undefined, gap: LANGUAGE_LABEL_GAP }}>
+      <Text onLayout={(event) => {
+        // Keep the stacked measurement: narrower inline wrapping must not
+        // raise the threshold and trap an adequate pane in the inline layout.
+        if (!inlineLabel) setLabelHeight(event.nativeEvent.layout.height);
+      }} style={{ width: inlineLabel ? '40%' : undefined, maxWidth: inlineLabel ? 120 : undefined, flexShrink: inlineLabel ? 0 : undefined, color: chrome.muted, fontSize: 11, lineHeight: inlineLabel ? 14 : undefined, fontWeight: '700', letterSpacing: 0.4 }}>{props.label.toUpperCase()}</Text>
       <TextInput
+        ref={inputRef}
+        onFocus={() => { focused.current = true; props.reveal.focus(groupRef.current); }}
+        onBlur={() => { focused.current = false; props.reveal.blur(groupRef.current); }}
+        onLayout={() => { if (focused.current) props.reveal.focus(groupRef.current); }}
+        onContentSizeChange={() => { if (focused.current) props.reveal.focus(groupRef.current); }}
+        disableFullscreenUI
         accessibilityLabel={`${props.label} subtitle ${props.cueNumber} text`}
         value={props.value}
         editable={!props.disabled}
         multiline
+        scrollEnabled
         maxLength={500}
         placeholder={props.placeholder}
         placeholderTextColor={chrome.muted}
         onChangeText={props.onChangeText}
-        style={{ minHeight: 54, paddingHorizontal: 14, paddingVertical: 12, borderRadius: chrome.radius.md, color: chrome.text, backgroundColor: chrome.surfaceRaised, fontSize: 16, lineHeight: 22, textAlignVertical: 'top' }}
+        style={{ flex: inlineLabel ? 1 : undefined, minWidth: inlineLabel ? 0 : undefined, height: maxHeight, minHeight: Math.min(54, maxHeight ?? 54), maxHeight, paddingHorizontal: 14, paddingVertical: maxHeight ? 6 : 12, borderRadius: chrome.radius.md, color: chrome.text, backgroundColor: chrome.surfaceRaised, fontSize: 16, lineHeight: 22, textAlignVertical: 'top' }}
       />
     </View>
   );
@@ -542,7 +627,7 @@ function HeaderAction(props: { label: string; disabled: boolean; danger?: boolea
       accessibilityRole="button"
       disabled={props.disabled}
       onPress={props.onPress}
-      style={{ paddingHorizontal: 12, paddingVertical: 9, borderRadius: chrome.radius.pill, backgroundColor: chrome.surfaceRaised, opacity: props.disabled ? 0.45 : 1 }}>
+      style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 9, borderRadius: chrome.radius.pill, backgroundColor: chrome.surfaceRaised, opacity: props.disabled ? 0.45 : 1 }}>
       <Text style={{ color: props.danger ? chrome.dangerText : chrome.text, fontSize: 12, fontWeight: '600' }}>{props.label}</Text>
     </Pressable>
   );
@@ -705,3 +790,5 @@ function decodeDualDraft(value: unknown, allowedIds: string[]): Record<string, D
   });
   return valid ? value as Record<string, DualCaptionDraft> : null;
 }
+
+

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { keyboardViewportHostProps } from './keyboard-viewport-host.mjs';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -276,19 +277,23 @@ async function mountEditor(kind, options = {}) {
     useSyncExternalStore: (_subscribe, get) => get(),
     createContext: (value) => ({ value }), useContext: (context) => context.value,
   };
-  const jsx = (type, props) => ({ type, props });
+  const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
+  const jsx = (type, props) => ({ type, props: keyboardViewportHostProps(type, props) });
   const exports = {};
   runInNewContext(editorSources[kind], { exports, Error,
     setTimeout: (fn) => { timers.set(++nextTimer, fn); return nextTimer; }, clearTimeout: (id) => timers.delete(id),
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
+      if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
       if (name === 'react-native') return {
         ...Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'Modal', 'FlatList', 'KeyboardAvoidingView'].map((v) => [v, v])),
+        useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }),
         Keyboard: { isVisible: () => false, addListener: () => ({ remove() {} }) },
         Platform: { OS: 'android' }, Alert: { alert: (...args) => alerts.push(args) },
       };
-      if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) };
+      if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
       if (name === '@/lib/ui-theme') return { chrome: { radius: {} } };
       if (name === '@/lib/caption-script') return scriptHelpers;
       if (name === '@/lib/dual-caption-drafts') return dualHelpers;

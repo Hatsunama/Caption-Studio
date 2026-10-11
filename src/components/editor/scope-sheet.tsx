@@ -1,5 +1,7 @@
 import { Modal, Pressable, Text } from 'react-native';
 
+import { AdaptiveDialog } from './adaptive-dialog';
+
 import type { StyleScope } from '@/lib/style-resolver';
 import { chrome } from '@/lib/ui-theme';
 
@@ -15,16 +17,7 @@ export function ScopeSheet(props: {
       <Pressable
         onPress={props.onClose}
         style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: chrome.overlay }}>
-        <Pressable
-          onPress={(event) => event.stopPropagation()}
-          style={{
-            gap: 14,
-            padding: 22,
-            paddingBottom: 34,
-            borderTopLeftRadius: chrome.radius.xl,
-            borderTopRightRadius: chrome.radius.xl,
-            backgroundColor: chrome.surface,
-          }}>
+        <AdaptiveDialog sheet backgroundColor="transparent">
           <Text style={{ color: chrome.text, fontSize: 22, fontWeight: '800' }}>Apply to</Text>
           <Text style={{ color: chrome.muted, fontSize: 14 }}>{props.changeLabel}</Text>
 
@@ -39,7 +32,7 @@ export function ScopeSheet(props: {
             description="Update the project default while keeping intentional exceptions."
             onPress={() => props.onChoose('all')}
           />
-        </Pressable>
+        </AdaptiveDialog>
       </Pressable>
     </Modal>
   );

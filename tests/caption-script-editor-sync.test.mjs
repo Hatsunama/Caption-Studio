@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { editorWorkspaceLayout } from '../src/lib/adaptive-workspace.ts';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -37,11 +38,12 @@ const editorSource = readFileSync(process.env.CAPTION_EDITOR_SOURCE
 const editorAst = ts.createSourceFile('editor.tsx', editorSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const workspace = editorAst.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'EditorWorkspace');
 const workspaceShell = workspace.body.statements.find(ts.isReturnStatement).expression.expression;
-const workspaceRoot = workspaceShell.openingElement.tagName.getText(editorAst) === 'PersistedHorizontalScrollScope'
-  ? workspaceShell.children.find(ts.isJsxElement)
-  : workspaceShell;
+let workspaceRoot = workspaceShell;
+while (['PersistedHorizontalScrollScope', 'KeyboardViewport'].includes(workspaceRoot.openingElement.tagName.getText(editorAst))) {
+  workspaceRoot = workspaceRoot.children.find(ts.isJsxElement);
+}
 function evaluate(expression, context = {}) {
-  const sandbox = { result: undefined, ...context };
+  const sandbox = { result: undefined, workspaceLayout: { sideBySide: false }, previewPaneWidth: 360, insets: { left: 0, right: 0 }, ...context };
   const compiled = ts.transpileModule(`result = (${expression});`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   });
@@ -49,6 +51,7 @@ function evaluate(expression, context = {}) {
   return sandbox.result;
 }
 function workspaceValue(name, context) {
+  context = { ...context, workspaceLayout: editorWorkspaceLayout({ width: context.width ?? 360, height: context.workspaceHeight ?? 800, windowHeight: context.height ?? 800, scriptEditorOpen: context.scriptEditorOpen ?? true, keyboardOpen: context.scriptKeyboardOpen ?? false }), previewPaneWidth: context.previewPaneWidth ?? context.width ?? 360 };
   const declaration = workspace.body.statements.filter(ts.isVariableStatement)
     .flatMap((node) => [...node.declarationList.declarations]).find((node) => node.name.getText(editorAst) === name
       || (ts.isObjectBindingPattern(node.name) && node.name.elements.some((element) => element.name.getText(editorAst) === name)));
@@ -511,14 +514,17 @@ for (const platform of ['android', 'ios']) {
 
 test('Android resized workspace keeps the video controls and focused input above the keyboard', () => {
   const h = mount(); h.edit(4); h.keyboard('keyboardDidShow');
-  let workspaceHeight = 800;
-  const onLayout = jsxProp(workspaceRoot, 'onLayout', { setWorkspaceHeight: (value) => { workspaceHeight = value; } });
+  let workspaceHeight = 800, workspaceWidth = 360;
+  const onLayout = jsxProp(workspaceRoot, 'onLayout', {
+    setWorkspaceHeight: (value) => { workspaceHeight = value; },
+    setWorkspaceWidth: (value) => { workspaceWidth = value; },
+  });
   assert.equal(typeof onLayout, 'function', 'measure the usable root, not just the screen dimensions');
   const [preview, tools] = workspaceRoot.children.filter(ts.isJsxElement);
   const fitRect = evaluate(editorAst.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'fitRect').getText(editorAst));
   for (const availableHeight of [800, 360, 280, 240, 220, 440, 800]) {
     onLayout(layoutEvent(0, availableHeight));
-    const context = { scriptEditorOpen: true, scriptKeyboardOpen: true, workspaceHeight, height: 800 };
+    const context = { scriptEditorOpen: true, scriptKeyboardOpen: true, workspaceHeight, workspaceWidth, width: workspaceWidth, height: 800 };
     const previewHeight = workspaceValue('previewHeight', context);
     const previewStyle = jsxProp(preview, 'style', { previewHeight, scriptEditorOpen: true });
     assert.ok(previewStyle.height <= availableHeight * 0.45);
@@ -544,7 +550,7 @@ test('Android resized workspace keeps the video controls and focused input above
     h.fire('onScroll', 500 - request.viewOffset);
   }
   assert.deepEqual(h.calls.seeks, [4000], 'resize and reveal must not seek away from the edited cue');
-  assert.equal(workspaceValue('previewHeight', { scriptEditorOpen: false, workspaceHeight: 280, height: 800 }), 344);
+  assert.ok(workspaceValue('previewHeight', { scriptEditorOpen: false, workspaceHeight: 280, height: 800 }) <= 136);
   assert.equal(jsxProp(tools, 'style', { scriptEditorOpen: false }).display, 'flex');
 });
 
@@ -1165,8 +1171,11 @@ test('keyboard exit restores full preview with a persistent transform and indepe
       const layoutStyle = jsxProp(layout, 'style', context);
       assert.equal(layoutStyle.height, size.height);
       if (!open) {
-        assert.ok(previewHeight >= 280);
-        assert.ok(layoutStyle.height > 180, 'normal preview must not remain a keyboard strip');
+        assert.ok(previewHeight >= 48 && previewHeight <= workspaceHeight - 144, 'restored preview respects the actual resized window');
+        if (workspaceHeight >= 424) {
+          assert.ok(previewHeight >= 280);
+          assert.ok(layoutStyle.height > 180, 'a roomy restored preview must not remain a keyboard strip');
+        }
         assert.equal(x.value, 0); assert.equal(y.value, 0);
         assert.equal(h.calls.keyboards.at(-1), false, 'closing cannot depend on receiving keyboard hide');
       }
@@ -1174,4 +1183,21 @@ test('keyboard exit restores full preview with a persistent transform and indepe
     h.unmount();
   }
   assert.equal(stopped, 4, 'each keyboard crop animation stops before restoration');
+});
+
+test('native caption input preserves the editor around the landscape keyboard', () => {
+  const h = mount(); h.edit(1);
+  assert.equal(h.input(1).disableFullscreenUI, true);
+});
+
+
+test('the actual workspace supplies top safe space only when its native header is hidden', () => {
+  for (const [width, height, workspaceHeight, expectedTop, expectedPreview] of [[760, 360, 360, 24, 320], [360, 800, 744, 0, 344]]) {
+    const context = { width, height, workspaceWidth: width, workspaceHeight, scriptEditorOpen: false, scriptKeyboardOpen: false, insets: { top: 24, bottom: 16, left: 0, right: 0 }, editorWorkspaceLayout };
+    const workspaceLayout = workspaceValue('workspaceLayout', context);
+    assert.equal(workspaceLayout.previewHeight, expectedPreview);
+    const style = jsxProp(workspaceRoot, 'style', { ...context, workspaceLayout, palette: {} });
+    assert.equal(style.paddingTop, expectedTop);
+    assert.equal(style.flexDirection, width > height ? 'row' : 'column');
+  }
 });
