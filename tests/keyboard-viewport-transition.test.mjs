@@ -6,7 +6,7 @@ import * as geometry from '../src/lib/keyboard-viewport.ts';
 
 const source = stripTypeScriptTypes(readFileSync(new URL('../src/hooks/use-keyboard-viewport.ts', import.meta.url), 'utf8'))
   .replace(/^import .*;$/gm, '').replace('export function', 'function');
-const loadHook = new Function('dependencies', 'const { useCallback, useEffect, useMemo, useRef, useState, Keyboard, Platform, useWindowDimensions, keyboardViewportOverlap, keyboardViewportCoversBottom } = dependencies;\n'
+const loadHook = new Function('dependencies', 'const { useCallback, useEffect, useMemo, useRef, useState, Keyboard, Platform, useWindowDimensions, keyboardViewportOverlap, keyboardViewportBottomGap } = dependencies;\n'
   + source + '\nreturn useKeyboardViewport;');
 
 function mount({ visible = true, platform = 'android', missingMetrics = false } = {}) {
