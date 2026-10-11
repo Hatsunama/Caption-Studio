@@ -12,7 +12,8 @@ import { captionPreviewState, projectHasEditorLayer } from '@/lib/caption-previe
 import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
-import { AudioModule, RecordingPresets, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
+import { AudioModule, RecordingPresets, useAudioRecorder } from 'expo-audio';
+import { useVoiceoverRecorderState } from '@/hooks/use-voiceover-recorder-state';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
@@ -327,7 +328,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [voiceoverSaving, setVoiceoverSaving] = useState(false);
   const [voiceoverStartMs, setVoiceoverStartMs] = useState<number>();
   const voiceoverRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const voiceoverRecorderState = useAudioRecorderState(voiceoverRecorder, 100);
+  const voiceoverRecorderState = useVoiceoverRecorderState(
+    voiceoverRecorder,
+    voiceoverOpen || voiceoverSaving || voiceoverStartMs != null,
+  );
   const voiceoverBackRequestRef = useRef<(() => void) | undefined>(undefined);
   const [transitionTimingOpen, setTransitionTimingOpen] = useState(false);
   const clearEditorSelection = () => {
@@ -607,21 +611,33 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     () => project.layers.filter((layer) => layer.kind === 'captions' || layer.timelineVisible !== false),
     [project.layers],
   );
+  // Keep one unfiltered resolution per track for this immutable project revision.
+  // Timeline/preview and the dual editor intentionally admit different cues.
+  const resolvedTranslationPairsByTrack = useMemo(
+    () => new Map((project.captionTracks?.translations ?? []).map((track) => [
+      track.id, resolveCaptionPairs(project, track.id),
+    ])),
+    [project],
+  );
   const translationTimelineTracks = useMemo(
     () => (project.captionTracks?.translations ?? []).map((track) => ({
       id: track.id,
       name: track.displayName,
       visible: track.visible,
-      pairs: resolveCaptionPairs(project, track.id).filter((pair) => pair.timelineVisible),
+      pairs: (resolvedTranslationPairsByTrack.get(track.id) ?? []).filter((pair) => pair.timelineVisible),
     })),
-    [project],
+    [project, resolvedTranslationPairsByTrack],
   );
   const selectedTranslationTrack = project.captionTracks?.translations.find((track) => track.id === selectedTranslationTrackId)
     ?? project.captionTracks?.translations.find((track) => track.visible)
     ?? project.captionTracks?.translations[0];
   const selectedTranslationPairs = useMemo(
-    () => selectedTranslationTrack ? resolveCaptionPairs(project, selectedTranslationTrack.id).filter((pair) => pair.timelineVisible) : [],
-    [project, selectedTranslationTrack],
+    () => selectedTranslationTrack ? (resolvedTranslationPairsByTrack.get(selectedTranslationTrack.id) ?? []).filter((pair) => pair.timelineVisible) : [],
+    [resolvedTranslationPairsByTrack, selectedTranslationTrack],
+  );
+  const selectedTranslationEditorPairs = useMemo(
+    () => selectedTranslationTrack ? (resolvedTranslationPairsByTrack.get(selectedTranslationTrack.id) ?? []).filter((pair) => pair.timelineVisible || (pair.translation.translationSkipped && (pair.translation.timelineVisible ?? pair.source.timelineVisible !== false))) : [],
+    [resolvedTranslationPairsByTrack, selectedTranslationTrack],
   );
   const previewCaptions = useMemo(() => scriptEditorOpen
     ? reconcileCaptionScriptDraft(project, scriptDraftCaptions ?? timelineCaptions) : timelineCaptions,
@@ -2547,7 +2563,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         trackId={selectedTranslationTrack?.id ?? 'none'}
         sourceLanguageLabel={captionLanguageLabel(primaryCaptionLanguage)}
         targetLanguageLabel={selectedTranslationTrack?.displayName ?? 'Second language'}
-        pairs={selectedTranslationTrack ? resolveCaptionPairs(project, selectedTranslationTrack.id).filter((pair) => pair.timelineVisible || (pair.translation.translationSkipped && (pair.translation.timelineVisible ?? pair.source.timelineVisible !== false))) : []}
+        pairs={selectedTranslationEditorPairs}
         trackVisible={selectedTranslationTrack?.visible ?? false}
         automaticTranslation={Boolean(
           selectedTranslationTrack
