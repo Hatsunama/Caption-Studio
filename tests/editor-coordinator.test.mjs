@@ -409,11 +409,13 @@ function mount(initialProject = fixture()) {
       if (name === 'react-native') return native;
       if (name === 'expo-router') return { useNavigation: () => navigation };
       if (name === 'expo-video') return { VideoView: 'VideoView' };
+      if (name === '@/hooks/use-voiceover-recorder-state') return {
+        useVoiceoverRecorderState: () => ({ isRecording: false, durationMillis: 0, metering: -60 }),
+      };
       if (name === 'expo-audio') return {
         AudioModule: { requestRecordingPermissionsAsync: async () => ({ granted: false }), setAudioModeAsync: async () => undefined },
         RecordingPresets: { HIGH_QUALITY: {} },
         useAudioRecorder: () => ({ uri: null, prepareToRecordAsync: async () => undefined, record() {}, stop: async () => undefined }),
-        useAudioRecorderState: () => ({ isRecording: false, durationMillis: 0, metering: -60 }),
       };
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
       if (name.startsWith('@/components/')) return new Proxy({}, { get: (_object, key) => key });
