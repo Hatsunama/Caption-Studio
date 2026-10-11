@@ -583,6 +583,7 @@ function LanguageInput(props: {
   onChangeText: (value: string) => void;
 }) {
   const inputRef = useRef<TextInput>(null);
+  const groupRef = useRef<View>(null);
   const focused = useRef(false);
   const [labelHeight, setLabelHeight] = useState(16);
   const inlineLabel = props.inputMaxHeight !== undefined
@@ -590,7 +591,9 @@ function LanguageInput(props: {
   const maxHeight = props.inputMaxHeight === undefined ? undefined
     : Math.max(MIN_LANGUAGE_INPUT_HEIGHT, props.inputMaxHeight - (inlineLabel ? 0 : labelHeight + LANGUAGE_LABEL_GAP));
   return (
-    <View style={{ flex: props.horizontal ? 1 : undefined, minWidth: 0, flexDirection: inlineLabel ? 'row' : 'column', alignItems: inlineLabel ? 'center' : undefined, gap: LANGUAGE_LABEL_GAP }}>
+    <View ref={groupRef} collapsable={false}
+      onLayout={() => { if (focused.current) props.reveal.focus(groupRef.current); }}
+      style={{ flex: props.horizontal ? 1 : undefined, minWidth: 0, flexDirection: inlineLabel ? 'row' : 'column', alignItems: inlineLabel ? 'center' : undefined, gap: LANGUAGE_LABEL_GAP }}>
       <Text onLayout={(event) => {
         // Keep the stacked measurement: narrower inline wrapping must not
         // raise the threshold and trap an adequate pane in the inline layout.
@@ -598,10 +601,10 @@ function LanguageInput(props: {
       }} style={{ width: inlineLabel ? '40%' : undefined, maxWidth: inlineLabel ? 120 : undefined, flexShrink: inlineLabel ? 0 : undefined, color: chrome.muted, fontSize: 11, lineHeight: inlineLabel ? 14 : undefined, fontWeight: '700', letterSpacing: 0.4 }}>{props.label.toUpperCase()}</Text>
       <TextInput
         ref={inputRef}
-        onFocus={() => { focused.current = true; props.reveal.focus(inputRef.current); }}
-        onBlur={() => { focused.current = false; props.reveal.blur(inputRef.current); }}
-        onLayout={() => { if (focused.current) props.reveal.focus(inputRef.current); }}
-        onContentSizeChange={() => { if (focused.current) props.reveal.focus(inputRef.current); }}
+        onFocus={() => { focused.current = true; props.reveal.focus(groupRef.current); }}
+        onBlur={() => { focused.current = false; props.reveal.blur(groupRef.current); }}
+        onLayout={() => { if (focused.current) props.reveal.focus(groupRef.current); }}
+        onContentSizeChange={() => { if (focused.current) props.reveal.focus(groupRef.current); }}
         disableFullscreenUI
         accessibilityLabel={`${props.label} subtitle ${props.cueNumber} text`}
         value={props.value}
@@ -787,4 +790,5 @@ function decodeDualDraft(value: unknown, allowedIds: string[]): Record<string, D
   });
   return valid ? value as Record<string, DualCaptionDraft> : null;
 }
+
 
