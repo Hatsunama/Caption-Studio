@@ -722,6 +722,7 @@ export function ScriptEditor(props: {
                       <TextInput
                         ref={(input) => { inputRefs.current[item.id] = input; }}
                         multiline
+                        disableFullscreenUI
                         editable={!saving && !closing && journalReady}
                         scrollEnabled={false}
                         submitBehavior="newline"

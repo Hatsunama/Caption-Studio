@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { dualLanguageChoiceCopy } from '@/components/editor/dual-language-choice-copy';
 
@@ -17,6 +17,9 @@ export function DualLanguagePicker(props: {
 }) {
   const { onBackRequestChange, onClose, visible } = props;
   const insets = useSafeAreaInsets();
+  const window = useWindowDimensions();
+  const [rootHeight, setRootHeight] = useState(window.height);
+  const compact = rootHeight < 480 || window.fontScale > 1.3;
   const choices = dualCaptionLanguageChoices(props.sourceLanguageTag);
   const [pendingTag, setPendingTag] = useState<string>();
   const [selectionError, setSelectionError] = useState<string>();
@@ -45,29 +48,34 @@ export function DualLanguagePicker(props: {
     }
   };
 
+  const intro = <Text testID="dual-language-picker-intro" style={{ marginTop: 6, color: chrome.muted, fontSize: 14, lineHeight: 20 }}>
+                Spoken captions stay in {props.sourceLanguageLabel}. Choose any language below to generate it privately on this phone.
+              </Text>;
+
   return (
     <Modal visible={props.visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
-      <View style={{ flex: 1, backgroundColor: chrome.background, paddingTop: insets.top }}>
-        <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
+      <View testID="dual-language-picker-root" onLayout={(event) => setRootHeight(event.nativeEvent.layout.height)}
+        style={{ flex: 1, minHeight: 0, backgroundColor: chrome.background, paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }}>
+        <View style={{ paddingHorizontal: compact ? 12 : 20, paddingTop: compact ? 8 : 18, paddingBottom: compact ? 8 : 12, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: chrome.text, fontSize: 28, fontWeight: '700' }}>Second language</Text>
-              <Text style={{ marginTop: 6, color: chrome.muted, fontSize: 14, lineHeight: 20 }}>
-                Spoken captions stay in {props.sourceLanguageLabel}. Choose any language below to generate it privately on this phone.
-              </Text>
+              <Text numberOfLines={compact ? 1 : undefined} style={{ color: chrome.text, fontSize: compact ? 20 : 28, fontWeight: '700' }}>Second language</Text>
+              {!compact ? intro : null}
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close language picker" disabled={Boolean(pendingTag)} onPress={close} hitSlop={10} style={{ opacity: pendingTag ? 0.4 : 1 }}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close language picker" disabled={Boolean(pendingTag)} onPress={close} hitSlop={10} style={{ opacity: pendingTag ? 0.4 : 1, minHeight: 44, justifyContent: 'center' }}>
               <Text style={{ color: chrome.accent, fontSize: 17, fontWeight: '700' }}>Close</Text>
             </Pressable>
           </View>
         </View>
+
+        <ScrollView style={{ flexShrink: 1, minHeight: 0 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, paddingBottom: Math.max(48, insets.bottom + 24), gap: 10 }}>
+          {compact ? intro : null}
         {selectionError ? (
           <View accessibilityRole="alert" style={{ marginHorizontal: 16, marginTop: 14, padding: 14, borderRadius: chrome.radius.md, backgroundColor: chrome.dangerFill }}>
             <Text style={{ color: '#FFBBC8', fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{selectionError}</Text>
             <Text style={{ marginTop: 4, color: chrome.muted, fontSize: 13 }}>Your project was not changed. Choose a language to retry.</Text>
           </View>
         ) : null}
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, paddingBottom: Math.max(48, insets.bottom + 24), gap: 10 }}>
           {choices.map((choice) => (
             <Pressable
               key={choice.tag}

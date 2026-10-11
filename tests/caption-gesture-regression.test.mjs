@@ -16,6 +16,8 @@ function harness() {
   const same = (left, right) => left && right && left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
   const react = {
     Fragment: 'Fragment',
+    createContext: (value) => ({ value, Provider: 'ContextProvider' }),
+    useContext: (context) => context.value,
     useMemo(factory, deps) { const index = cursor++; if (!slots[index] || !same(slots[index].deps, deps)) slots[index] = { deps, value: factory() }; return slots[index].value; },
     useRef(value) { const index = cursor++; slots[index] ??= { current: value }; return slots[index]; },
     useEffect() { cursor++; },

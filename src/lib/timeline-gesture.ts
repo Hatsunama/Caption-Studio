@@ -8,6 +8,26 @@ export const TIMELINE_PLAYHEAD_RELEASE_PX = 3;
 
 export type TimelineTrackBounds = { left: number; right: number };
 
+/** Only external viewport/zoom changes invalidate touch coordinates. Draft
+ * duration and reorder filmstrip changes must not cancel their own gesture. */
+export function createTimelineGestureGeometry(initial: { viewportWidth: number; scale: number }) {
+  let geometry = { ...initial };
+  const listeners = new Set<() => void>();
+  return {
+    subscribe(cancel: () => void) {
+      listeners.add(cancel);
+      return () => { listeners.delete(cancel); };
+    },
+    update(next: Partial<typeof initial>) {
+      const updated = { ...geometry, ...next };
+      if (updated.viewportWidth === geometry.viewportWidth && updated.scale === geometry.scale) return false;
+      geometry = updated;
+      for (const cancel of [...listeners]) cancel();
+      return true;
+    },
+  };
+}
+
 /** Scroll content includes the label and leading playhead padding. */
 export function timelineVisibleTrackBounds(scrollX: number, viewportWidth: number, trackWidth: number, trackOrigin: number): TimelineTrackBounds {
   return {
@@ -26,6 +46,7 @@ export type TimelineTimingGestureOwner = {
   onChangeStart: () => void;
   onChange: (edge: TimelineTimingEdge, startMs: number, endMs: number) => void;
   onEnd: () => void;
+  onCancel?: () => void;
 };
 
 export const TIMELINE_ACCESSIBILITY_STEP_MS = 100;
@@ -58,6 +79,18 @@ export function createTimelineTimingGesture(options: { now?: () => number } = {}
   let detent: { originalSide: number; lastDx: number; lastMovementAt: number } | undefined;
   let releaseOriginDx: number | undefined;
   const now = options.now ?? Date.now;
+  const end = (cancelled: boolean) => {
+    const ended = owner;
+    const wasActivated = activated;
+    owner = undefined;
+    activated = false;
+    detent = undefined;
+    releaseOriginDx = undefined;
+    if (wasActivated && ended) {
+      if (cancelled && ended.onCancel) ended.onCancel();
+      else ended.onEnd();
+    }
+  };
   return {
     begin(next: TimelineTimingGestureOwner, nextEdge: TimelineTimingEdge) {
       owner = { ...next };
@@ -121,12 +154,10 @@ export function createTimelineTimingGesture(options: { now?: () => number } = {}
       owner.onChange(edge, startMs, endMs);
     },
     finish() {
-      const ended = owner;
-      owner = undefined;
-      if (activated) ended?.onEnd();
-      activated = false;
-      detent = undefined;
-      releaseOriginDx = undefined;
+      end(false);
+    },
+    cancel() {
+      end(true);
     },
   };
 }

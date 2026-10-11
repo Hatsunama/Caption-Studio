@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { keyboardViewportHostProps } from './keyboard-viewport-host.mjs';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -31,6 +32,7 @@ const shallow = (left, right) => left && right && same(Object.keys(left), Object
   && Object.keys(left).every((key) => Object.is(left[key], right[key]));
 
 function mount(overrides = {}, options = {}) {
+  const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   const instances = new Map(), timers = new Map(), inputIdentities = new Map();
   const calls = { alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
   let current, cursor, pending = [], changed = false, tree, now = 0, nextTimer = 0, windowStart = 0;
@@ -73,18 +75,22 @@ function mount(overrides = {}, options = {}) {
       return slot.value;
     },
   };
-  const jsx = (type, props, key) => ({ type, props: props ?? {}, key });
+  const jsx = (type, props, key) => ({ type, props: keyboardViewportHostProps(type, props ?? {}, options.bottomInsetCovered), key });
   const exports = {};
   runInNewContext(`${outputText}\nexports.Store = typeof DualCaptionDraftStore === 'undefined' ? undefined : DualCaptionDraftStore;`, {
     exports,
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
+if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
       if (name === 'react-native') return {
-        ...Object.fromEntries(['ActivityIndicator', 'FlatList', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View'].map((type) => [type, type])),
+        ...Object.fromEntries(['ActivityIndicator', 'FlatList', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View', 'KeyboardAvoidingView'].map((type) => [type, type])),
+        useWindowDimensions: () => options.window ?? { width: 390, height: 844 },
+        Platform: { OS: options.platform ?? 'android' },
         Alert: { alert: (...args) => calls.alerts.push(args) },
       };
-      if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 24 }) };
+      if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 0, right: 0 } };
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, md: 8, pill: 20, xl: 20 } } };
       if (name === '@/lib/dual-caption-drafts') return draftHelpers;
       if (name === './caption-save-recovery') return saveRecoveryHelpers;
@@ -127,8 +133,10 @@ function mount(overrides = {}, options = {}) {
       return renderNode(instance.output, `${id}/output`, visited, inputs);
     }
     let children = node.props.children;
-    if (node.type === 'FlatList') children = node.props.data.slice(windowStart, windowStart + node.props.initialNumToRender)
-      .map((item, index) => ({ ...node.props.renderItem({ item, index: windowStart + index }), key: node.props.keyExtractor(item) }));
+    if (node.type === 'FlatList') children = [node.props.ListHeaderComponent,
+      ...node.props.data.slice(windowStart, windowStart + node.props.initialNumToRender)
+        .map((item, index) => ({ ...node.props.renderItem({ item, index: windowStart + index }), key: node.props.keyExtractor(item) })),
+      node.props.ListFooterComponent];
     if (node.type === 'TextInput') {
       const id = `${path}:${node.key ?? ''}`;
       inputs.add(id);
@@ -152,9 +160,12 @@ function mount(overrides = {}, options = {}) {
     } while (changed);
   }
   function all(predicate, node = tree) {
-    if (Array.isArray(node)) return node.flatMap((child) => all(predicate, child));
-    if (!node || typeof node !== 'object') return [];
-    return [...(predicate(node) ? [node] : []), ...all(predicate, node.props?.children ?? null)];
+    const walk = (value) => {
+      if (Array.isArray(value)) return value.flatMap(walk);
+      if (!value || typeof value !== 'object') return [];
+      return [...(predicate(value) ? [value] : []), ...walk(value.props?.children)];
+    };
+    return walk(node);
   }
   function text(node) {
     if (Array.isArray(node)) return node.map(text).join('');
@@ -186,6 +197,93 @@ function mount(overrides = {}, options = {}) {
       await flush();
     },
   };
+}
+
+test('measured short roots keep actions scrollable, paired inputs mounted and Save in normal flow', async () => {
+  const h = mount(); await h.flush();
+  const root = h.all((node) => node.props.testID === 'dual-caption-root')[0]; assert.ok(root);
+  h.act(() => root.props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }));
+  const list = () => h.all((node) => node.type === 'FlatList')[0];
+  assert.equal(list().props.ListHeaderComponent, null);
+  const toggle = h.button('Dual subtitle actions and status');
+  assert.equal(toggle.props.accessibilityState.expanded, false);
+  assert.ok(toggle.props.style.minHeight >= 44);
+  const identity = h.input(0).identity;
+  h.edit(0, 'Keep source'); h.edit(0, 'Keep translation', 'Chinese');
+  h.press('Dual subtitle actions and status'); assert.ok(list().props.ListHeaderComponent);
+  assert.equal(h.input(0).identity, identity);
+  assert.equal(h.button('Refresh all (3)').props.disabled, true);
+  h.press('Dual subtitle actions and status');
+  const footer = h.all((node) => node.props.testID === 'dual-caption-footer')[0]; assert.ok(footer);
+  assert.notEqual(footer.props.style.position, 'absolute');
+  assert.equal(list().props.contentContainerStyle.paddingBottom, 14);
+  h.press('Save dual subtitle edits'); await h.flush();
+  assert.equal(h.calls.saves[0][0].primaryText, 'Keep source');
+  assert.equal(h.calls.saves[0][0].translatedText, 'Keep translation');
+  assert.ok(h.all((node) => node.props.accessibilityRole === 'alert').length);
+  assert.ok(h.all((node) => node.type === 'KeyboardViewport').length);
+});
+
+test('wide roots and lateral safe insets select compact chrome without losing recovery controls', async () => {
+  const h = mount({}, { window: { width: 900, height: 600 }, insets: { top: 0, bottom: 12, left: 30, right: 20 } });
+  await h.flush();
+  const root = h.all((node) => node.props.testID === 'dual-caption-root')[0]; assert.ok(root);
+  assert.equal(root.props.style.paddingLeft, 30); assert.equal(root.props.style.paddingRight, 20);
+  assert.ok(h.button('Dual subtitle actions and status'));
+  h.update({ busy: true }); h.press('Cancel'); assert.equal(h.calls.cancel, 1);
+  h.update({ busy: false, errorMessage: 'Stopped', retryErrorAvailable: true });
+  h.press('Retry interrupted translation'); h.press('Close');
+  assert.equal(h.calls.retry, 1); assert.equal(h.calls.dismiss, 1);
+});
+
+for (const platform of ['android', 'ios']) {
+  test(`${platform} keyboard resize respects measured dual roots without losing drafts or portrait header`, async () => {
+    let requestBack;
+    const h = mount({ onBackRequestChange: (request) => { requestBack = request; } }, { platform });
+    await h.flush();
+    const root = () => h.all((node) => node.props.testID === 'dual-caption-root')[0];
+    const list = () => h.all((node) => node.type === 'FlatList')[0];
+    const actions = () => h.all((node) => node.props.accessibilityLabel === 'Dual subtitle actions and status');
+    const subtitle = () => h.all((node) => node.type === 'Text'
+      && /independent text and timing/.test(String(node.props.children)));
+    assert.equal(actions().length, 0); assert.equal(subtitle().length, 1);
+    const sourceIdentity = h.input(0).identity, translationIdentity = h.input(0, 'Chinese').identity;
+    h.edit(0, 'Inline source'); h.edit(0, 'Inline translation', 'Chinese');
+    h.act(() => root().props.onLayout({ nativeEvent: { layout: { width: 300, height: 230 } } }));
+    const avoidance = h.all((node) => node.type === 'KeyboardViewport');
+    assert.equal(avoidance.length, 1);
+    assert.equal(avoidance[0].props.enabled ?? true, true);
+    assert.equal(avoidance[0].props.iosAvoidance ?? true, true);
+    assert.equal(avoidance[0].props.style.flex, 1);
+    assert.equal(avoidance[0].props.children, root(), 'measurement belongs to the reduced child');
+    assert.equal(h.all((node) => node.props.testID === 'dual-caption-footer', avoidance[0]).length, 1);
+    assert.equal(h.all((node) => node.type === 'KeyboardAvoidingView').length, 0);
+    assert.equal(subtitle().length, 0, 'measured short root overrides the tall window');
+    assert.ok(actions()[0].props.style.minHeight >= 44);
+    assert.ok(h.button('Close dual subtitle editor').props.style.minHeight >= 44);
+    assert.equal(h.input(0).props.disableFullscreenUI, true);
+    assert.equal(h.input(0, 'Chinese').props.disableFullscreenUI, true);
+    h.press('Dual subtitle actions and status'); assert.ok(list().props.ListHeaderComponent);
+    h.act(() => requestBack());
+    assert.equal(list().props.ListHeaderComponent, null, 'Back closes actions before discarding drafts');
+    assert.equal(h.calls.close, 0);
+    await h.advance(600);
+    assert.equal(h.calls.writes.at(-1)[3]['cue-0'].primaryText, 'Inline source');
+    assert.equal(h.calls.writes.at(-1)[3]['cue-0'].translatedText, 'Inline translation');
+    h.press('Save dual subtitle edits'); await h.flush();
+    assert.equal(h.calls.saves.length, 1);
+    assert.equal(h.input(0).props.value, 'Inline source');
+    assert.equal(h.input(0, 'Chinese').props.value, 'Inline translation');
+    assert.ok(list().props.ListHeaderComponent, 'failed save stays accessible in the scrolling status header');
+    h.act(() => requestBack()); h.choose('Keep editing');
+    h.act(() => root().props.onLayout({ nativeEvent: { layout: { width: 390, height: 844 } } }));
+    assert.equal(actions().length, 0); assert.equal(subtitle().length, 1);
+    assert.equal(h.input(0).identity, sourceIdentity);
+    assert.equal(h.input(0, 'Chinese').identity, translationIdentity);
+    assert.equal(h.input(0).props.value, 'Inline source');
+    assert.equal(h.input(0, 'Chinese').props.value, 'Inline translation');
+    assert.equal(h.calls.close, 0);
+  });
 }
 
 test('mounts a bounded input window for 10000 caption pairs', async () => {
@@ -506,4 +604,33 @@ test('dual editor save preserves stacked preview overlays with independent timin
   assert.deepEqual(after.map((line) => line.style.textColor), ['#FFAA00', '#00FFFF']);
   assert.notDeepEqual(after[0].style.position, after[1].style.position, 'preview retains the stacked line positions');
   assert.deepEqual(after.map((line) => plain(line.style)), before.map((line) => plain(line.style)));
+});
+
+test('keyboard-short wide dual editor moves Save out of the footer and preserves both input instances', async () => {
+  const h = mount(); await h.flush();
+  h.edit(0, 'Retained source'); h.edit(0, 'Retained translation', 'Chinese');
+  const first = h.input(0).identity, second = h.input(0, 'Chinese').identity;
+  const root = h.all(node => node.props.testID === 'dual-caption-root')[0];
+  h.act(() => root.props.onLayout({ nativeEvent: { layout: { width: 900, height: 150 } } }));
+  const footer = h.all(node => node.props.testID === 'dual-caption-footer')[0];
+  assert.equal(h.all(node => node.props.accessibilityLabel === 'Save dual subtitle edits', footer).length, 0);
+  assert.equal(h.input(0).identity, first); assert.equal(h.input(0, 'Chinese').identity, second);
+  assert.equal(h.input(0).props.value, 'Retained source');
+  assert.equal(h.input(0, 'Chinese').props.value, 'Retained translation');
+  assert.equal(typeof h.input(0).props.onFocus, 'function');
+  assert.ok(h.all(node => node.props.collapsable === false).length);
+  h.act(() => root.props.onLayout({ nativeEvent: { layout: { width: 390, height: 844 } } }));
+  assert.equal(h.input(0).identity, first);
+  h.press('Save dual subtitle edits'); await h.flush();
+  assert.equal(h.calls.saves[0][0].primaryText, 'Retained source');
+  assert.equal(h.calls.saves[0][0].translatedText, 'Retained translation');
+});
+
+test('keyboard-short dual editor does not keep a navigation-bar spacer above an already bounded IME', async () => {
+  const h = mount({}, { bottomInsetCovered: true }); await h.flush();
+  const root = h.all(node => node.props.testID === 'dual-caption-root')[0];
+  h.act(() => root.props.onLayout({ nativeEvent: { layout: { width: 890, height: 143 } } }));
+  const footer = h.all(node => node.props.testID === 'dual-caption-footer')[0];
+  assert.equal(footer.props.style.paddingBottom, 0);
+  assert.equal(h.input(0).props.value, 'Source 0');
 });

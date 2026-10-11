@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Modal, Pressable, Text, TextInput, View } from 'react-native';
+import { FlatList, Modal, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chrome } from '@/lib/ui-theme';
+import { useFontLibrary } from '@/hooks/use-font-library';
+import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
 import { BUILT_IN_FONT_CHOICES, TWO_COLOR_FONT_COUNT, type FontChoice } from '@/lib/font-catalog';
 import { type FontColors } from '@/lib/font-style-choice';
 import { FontColorPicker } from './font-color-picker';
-import {
-  importFontFromDevice,
-  loadFontLibrary,
-  saveFontFavorites,
-  saveRecentFonts,
-} from '@/services/font-storage';
+
 
 type Filter = 'all' | 'favorites' | 'recent' | 'imported';
 
@@ -21,13 +19,18 @@ export function FontBrowser(props: {
   onSelect: (choice: FontChoice, colors: FontColors) => void;
   onBackRequestChange?: (request: (() => void) | undefined) => void;
 }) {
+  const window = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const [rootSize, setRootSize] = useState<{ width: number; height: number }>();
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const width = rootSize?.width ?? window.width;
+  const height = (rootSize?.height ?? window.height) - Math.max(20, insets.top) - insets.bottom;
+  const compact = height < 500 || width > height * 1.2;
   const [draftChoice, setDraftChoice] = useState<FontChoice>();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
-  const [imported, setImported] = useState<FontChoice[]>([]);
-  const [favorites, setFavorites] = useState<string[]>(['bungee', 'monoton', 'rubik-glitch']);
-  const [recent, setRecent] = useState<string[]>([]);
-  const [libraryLoaded, setLibraryLoaded] = useState(false);
+  const { imported, favorites, recent, importFont: importLibraryFont, rememberFont, toggleFavorite } = useFontLibrary(props.visible);
+  const shortWide = width >= 600 && height < 260;
   const allFonts = useMemo(() => [...imported, ...BUILT_IN_FONT_CHOICES], [imported]);
   const fonts = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -40,27 +43,13 @@ export function FontBrowser(props: {
     });
   }, [allFonts, favorites, filter, recent, search]);
 
-  useEffect(() => {
-    if (!props.visible || libraryLoaded) return;
-    let active = true;
-    void loadFontLibrary()
-      .then((library) => {
-        if (!active) return;
-        setImported(library.imported);
-        setFavorites(library.favorites);
-        setRecent(library.recent);
-        setLibraryLoaded(true);
-      })
-      .catch((error) => Alert.alert('Could not load fonts', error instanceof Error ? error.message : 'Font storage is unavailable.'));
-    return () => { active = false; };
-  }, [libraryLoaded, props.visible]);
-
   const closeBrowser = () => {
     setDraftChoice(undefined);
     props.onClose();
   };
   const goBack = () => {
     if (draftChoice) setDraftChoice(undefined);
+    else if (compact && toolsOpen) setToolsOpen(false);
     else closeBrowser();
   };
   useEffect(() => {
@@ -68,75 +57,83 @@ export function FontBrowser(props: {
     return () => props.onBackRequestChange?.(undefined);
   });
   const saveFont = (choice: FontChoice, colors: FontColors) => {
-    setRecent((current) => {
-      const next = [choice.font.id, ...current.filter((id) => id !== choice.font.id)].slice(0, 8);
-      void saveRecentFonts(next);
-      return next;
-    });
+    rememberFont(choice.font.id);
     setDraftChoice(undefined);
     props.onSelect(choice, colors);
   };
 
   const importFont = async () => {
-    try {
-      const choice = await importFontFromDevice();
-      if (!choice) return;
-      setImported((current) => [choice, ...current]);
-      setFilter('imported');
-    } catch (error) {
-      Alert.alert('Could not import font', error instanceof Error ? error.message : 'The selected font could not be saved.');
-    }
+    if (await importLibraryFont()) setFilter('imported');
   };
+
+  const tools = (
+    <View style={{ gap: 12 }}>
+      {compact ? <Text style={{ color: chrome.muted, fontSize: 13 }}>{BUILT_IN_FONT_CHOICES.length} built-in choices. Only {TWO_COLOR_FONT_COUNT} use optional two-color styling.</Text> : null}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+        <FilterChip label="All" active={filter === 'all'} onPress={() => setFilter('all')} />
+        <FilterChip label="★ Favorites" active={filter === 'favorites'} onPress={() => setFilter('favorites')} />
+        <FilterChip label="Recent" active={filter === 'recent'} onPress={() => setFilter('recent')} />
+        <FilterChip label="My Fonts" active={filter === 'imported'} onPress={() => setFilter('imported')} />
+      </View>
+      <Pressable accessibilityRole="button" onPress={importFont}
+        style={{ minHeight: 48, padding: 16, borderRadius: chrome.radius.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: chrome.accent }}>
+        <Text style={{ flex: 1, color: chrome.accentInk, fontWeight: '700' }}>Import unlimited .ttf or .otf fonts</Text>
+        <Text style={{ color: chrome.accentInk, fontSize: 22 }}>＋</Text>
+      </Pressable>
+    </View>
+  );
 
   return (
     <Modal visible={props.visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={goBack}>
-      <View style={{ flex: 1, backgroundColor: chrome.background, paddingTop: 20 }}>
-        <View style={{ flex: 1 }} pointerEvents={draftChoice ? 'none' : 'auto'} accessibilityElementsHidden={Boolean(draftChoice)} importantForAccessibility={draftChoice ? 'no-hide-descendants' : 'auto'}>
-        <View style={{ paddingHorizontal: 20, gap: 12 }}>
+      <KeyboardViewport safeAreaBottom={insets.bottom} style={{ flex: 1 }}>
+      {({ safeAreaBottom }) => (
+      <View testID="font-browser-root" onLayout={({ nativeEvent: { layout } }) => setRootSize({ width: layout.width, height: layout.height })}
+        style={{ flex: 1, minHeight: 0, backgroundColor: chrome.background, paddingTop: Math.max(shortWide ? 8 : 20, insets.top), paddingBottom: safeAreaBottom, paddingLeft: insets.left, paddingRight: insets.right }}>
+        <View style={{ flex: 1, minHeight: 0, flexDirection: shortWide ? 'row' : 'column' }} pointerEvents={draftChoice ? 'none' : 'auto'} accessibilityElementsHidden={Boolean(draftChoice)} importantForAccessibility={draftChoice ? 'no-hide-descendants' : 'auto'}>
+        <View style={{ paddingHorizontal: shortWide ? 8 : 20, gap: compact ? 4 : 12, width: shortWide ? Math.min(320 * window.fontScale, width * 0.5) : undefined, flexShrink: 0, flexDirection: 'column' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: chrome.text, fontSize: 26, fontWeight: '700' }}>All Fonts</Text>
-              <Text style={{ color: chrome.muted, fontSize: 13 }}>{BUILT_IN_FONT_CHOICES.length} built-in choices. Only {TWO_COLOR_FONT_COUNT} use optional two-color styling.</Text>
+              <Text numberOfLines={shortWide ? 1 : undefined} style={{ color: chrome.text, fontSize: compact ? 22 : 26, fontWeight: '700' }}>All Fonts</Text>
+              {!compact ? <Text style={{ color: chrome.muted, fontSize: 13 }}>{BUILT_IN_FONT_CHOICES.length} built-in choices. Only {TWO_COLOR_FONT_COUNT} use optional two-color styling.</Text> : null}
             </View>
-            <Pressable onPress={closeBrowser} hitSlop={12}>
+            {compact ? <Pressable accessibilityRole="button" accessibilityLabel="Font filters and import" accessibilityState={{ expanded: toolsOpen }}
+              onPress={() => setToolsOpen((value) => !value)} style={{ minHeight: 44, paddingHorizontal: 10, justifyContent: 'center' }}>
+              <Text style={{ color: chrome.accent, fontSize: 14, fontWeight: '700' }}>Filters</Text>
+            </Pressable> : null}
+            <Pressable accessibilityRole="button" onPress={closeBrowser} hitSlop={12} style={{ minHeight: 44, justifyContent: 'center' }}>
               <Text style={{ color: chrome.accent, fontSize: 16, fontWeight: '700' }}>Done</Text>
             </Pressable>
           </View>
           <TextInput
+            disableFullscreenUI
+            accessibilityLabel="Search fonts by name or mood"
             value={search}
             onChangeText={setSearch}
             placeholder="Search name or mood"
             placeholderTextColor={chrome.muted}
-            style={{ height: 48, borderRadius: chrome.radius.md, paddingHorizontal: 15, color: chrome.text, backgroundColor: chrome.surface }}
+            style={{ minWidth: 0, height: 48, borderRadius: chrome.radius.md, paddingHorizontal: 15, color: chrome.text, backgroundColor: chrome.surface }}
           />
-          <View style={{ flexDirection: 'row', gap: 7 }}>
-            <FilterChip label="All" active={filter === 'all'} onPress={() => setFilter('all')} />
-            <FilterChip label="★ Favorites" active={filter === 'favorites'} onPress={() => setFilter('favorites')} />
-            <FilterChip label="Recent" active={filter === 'recent'} onPress={() => setFilter('recent')} />
-            <FilterChip label="My Fonts" active={filter === 'imported'} onPress={() => setFilter('imported')} />
-          </View>
-          <Pressable
-            onPress={importFont}
-            style={{ padding: 16, borderRadius: chrome.radius.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: chrome.accent }}>
-            <Text style={{ color: chrome.accentInk, fontWeight: '700' }}>Import unlimited .ttf or .otf fonts</Text>
-            <Text style={{ color: chrome.accentInk, fontSize: 22 }}>＋</Text>
-          </Pressable>
+          {!compact ? tools : null}
         </View>
 
         <FlatList
+          style={{ flex: 1, minHeight: 0, minWidth: 0 }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          ListHeaderComponent={compact && toolsOpen ? tools : null}
           contentInsetAdjustmentBehavior="automatic"
           data={fonts}
           keyExtractor={(item) => item.font.id}
-          contentContainerStyle={{ padding: 20, gap: 10, paddingBottom: 48 }}
+          contentContainerStyle={{ padding: shortWide ? 8 : 20, gap: 10, paddingBottom: shortWide ? 8 : 48 }}
           ListEmptyComponent={<Text style={{ color: chrome.muted, textAlign: 'center', padding: 30 }}>No fonts match this view.</Text>}
           renderItem={({ item }) => (
             <Pressable
               onPress={() => setDraftChoice(item)}
-              style={{ minHeight: 94, justifyContent: 'center', gap: 7, paddingHorizontal: 16, borderRadius: chrome.radius.lg, backgroundColor: chrome.surface }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flex: 1, flexDirection: 'row', gap: 7, alignItems: 'center' }}>
-                  <Text style={{ color: chrome.text, fontSize: 12, fontWeight: '700' }}>{item.name}</Text>
-                  <Text numberOfLines={1} style={{ flexShrink: 1, color: chrome.muted, fontSize: 10 }}>{item.mood}</Text>
+              style={{ minHeight: shortWide ? 52 : 94, flexDirection: shortWide ? 'row' : 'column', alignItems: shortWide ? 'center' : undefined, justifyContent: 'center', gap: shortWide ? 12 : 7, paddingVertical: shortWide ? 4 : undefined, paddingHorizontal: shortWide ? 8 : 16, borderRadius: chrome.radius.lg, backgroundColor: chrome.surface }}>
+              <View style={{ width: shortWide ? 164 : undefined, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flex: 1, minWidth: 0, flexDirection: shortWide ? 'column' : 'row', gap: shortWide ? 2 : 7, alignItems: shortWide ? 'flex-start' : 'center' }}>
+                  <Text numberOfLines={shortWide ? 1 : undefined} style={{ color: chrome.text, fontSize: 12, fontWeight: '700' }}>{item.name}</Text>
+                  {!shortWide ? <Text numberOfLines={1} style={{ flexShrink: 1, color: chrome.muted, fontSize: 10 }}>{item.mood}</Text> : null}
                   {item.treatment !== 'solid' ? (
                     <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: chrome.radius.pill, backgroundColor: chrome.purpleFill }}>
                       <Text style={{ color: chrome.purpleText, fontSize: 8, fontWeight: '700' }}>2 COLOR</Text>
@@ -145,24 +142,23 @@ export function FontBrowser(props: {
                 </View>
                 <Pressable
                   hitSlop={12}
+                  style={shortWide ? { minHeight: 44, justifyContent: 'center' } : undefined}
                   onPress={(event) => {
                     event.stopPropagation();
-                    setFavorites((current) => {
-                      const next = current.includes(item.font.id) ? current.filter((id) => id !== item.font.id) : [...current, item.font.id];
-                      void saveFontFavorites(next);
-                      return next;
-                    });
+                    toggleFavorite(item.font.id);
                   }}>
                   <Text style={{ color: favorites.includes(item.font.id) ? chrome.accent : chrome.muted, fontSize: 20 }}>★</Text>
                 </Pressable>
               </View>
-              <FontPreview choice={item} text={props.previewText || 'Make every word count'} />
+              <FontPreview horizontal={shortWide} choice={item} text={props.previewText || 'Make every word count'} />
             </Pressable>
           )}
         />
         </View>
         {draftChoice ? (
           <FontColorPicker
+            keyboardManaged
+            safeAreaBottom={safeAreaBottom}
             choice={draftChoice}
             previewText={props.previewText}
             onBack={() => setDraftChoice(undefined)}
@@ -170,15 +166,17 @@ export function FontBrowser(props: {
           />
         ) : null}
       </View>
+      )}
+      </KeyboardViewport>
     </Modal>
   );
 }
 
-function FontPreview(props: { choice: FontChoice; text: string }) {
+function FontPreview(props: { choice: FontChoice; text: string; horizontal?: boolean }) {
   const primary = props.choice.colors?.primary ?? '#F7F8FA';
   const secondary = props.choice.colors?.secondary;
   return (
-    <View style={{ minHeight: 36, justifyContent: 'center' }}>
+    <View style={{ flex: props.horizontal ? 1 : undefined, minWidth: 0, minHeight: 36, justifyContent: 'center' }}>
       {secondary ? (
         <Text
           numberOfLines={1}
@@ -195,7 +193,7 @@ function FontPreview(props: { choice: FontChoice; text: string }) {
 
 function FilterChip(props: { label: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={props.onPress} style={{ flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: chrome.radius.pill, backgroundColor: props.active ? '#1A3A48' : chrome.surfaceRaised }}>
+    <Pressable accessibilityRole="button" accessibilityState={{ selected: props.active }} onPress={props.onPress} style={{ flexGrow: 1, minWidth: 60, minHeight: 44, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 8, borderRadius: chrome.radius.pill, backgroundColor: props.active ? '#1A3A48' : chrome.surfaceRaised }}>
       <Text style={{ color: props.active ? chrome.accent : chrome.text, fontSize: 12, fontWeight: props.active ? '700' : '500' }}>{props.label}</Text>
     </Pressable>
   );

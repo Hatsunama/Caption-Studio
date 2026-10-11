@@ -1,5 +1,7 @@
 import { Image } from 'expo-image';
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Modal, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chrome } from '@/lib/ui-theme';
 import type { ProjectVideoSource } from '@/types/project';
@@ -12,20 +14,38 @@ export function ExtractAudioSourceSheet(props: {
   onChooseAnother: () => void;
   onClose: () => void;
 }) {
+  const window = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const [rootHeight, setRootHeight] = useState(window.height);
+  const compact = rootHeight < 480 || window.fontScale > 1.3;
+  const intro = <Text style={{ marginTop: 3, color: chrome.muted, fontSize: 12 }}>Choose by first frame, name, and duration.</Text>;
+  const actions = <View style={{ gap: 14 }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Choose another video from phone"
+            disabled={props.busy}
+            onPress={props.onChooseAnother}
+            style={{ minHeight: 50, alignItems: 'center', justifyContent: 'center', borderRadius: chrome.radius.lg, backgroundColor: chrome.accent }}>
+            <Text style={{ color: chrome.accentInk, fontSize: 14, fontWeight: '700' }}>Choose another video from phone</Text>
+          </Pressable>
+          {props.busy ? <Text style={{ color: chrome.accent, textAlign: 'center', fontWeight: '700' }}>Extracting audio on this phone…</Text> : null}
+  </View>;
   return (
     <Modal visible={props.visible} transparent animationType="fade" onRequestClose={props.busy ? () => {} : props.onClose}>
-      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: chrome.overlay }}>
-        <View style={{ maxHeight: '78%', gap: 14, padding: 18, paddingBottom: 28, borderTopLeftRadius: chrome.radius.xl, borderTopRightRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
+      <View testID="extract-audio-source-sheet-root" onLayout={(event) => setRootHeight(event.nativeEvent.layout.height)}
+        style={{ flex: 1, minHeight: 0, justifyContent: 'flex-end', backgroundColor: chrome.overlay, paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
+        <View testID="extract-audio-source-sheet-card" style={{ maxHeight: compact ? '100%' : '78%', minHeight: 0, flexShrink: 1, gap: compact ? 8 : 14, padding: compact ? 12 : 18, paddingBottom: compact ? 12 : 28, borderTopLeftRadius: chrome.radius.xl, borderTopRightRadius: chrome.radius.xl, backgroundColor: chrome.surface }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: chrome.text, fontSize: 20, fontWeight: '700' }}>Extract audio</Text>
-              <Text style={{ marginTop: 3, color: chrome.muted, fontSize: 12 }}>Choose by first frame, name, and duration.</Text>
+              <Text numberOfLines={compact ? 1 : undefined} style={{ color: chrome.text, fontSize: 20, fontWeight: '700' }}>Extract audio</Text>
+              {!compact ? intro : null}
             </View>
-            <Pressable disabled={props.busy} onPress={props.onClose} hitSlop={10}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close audio source picker" disabled={props.busy} onPress={props.onClose} hitSlop={10} style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ color: chrome.text, fontSize: 28 }}>×</Text>
             </Pressable>
           </View>
-          <ScrollView contentContainerStyle={{ gap: 10 }}>
+          <ScrollView style={{ flexShrink: 1, minHeight: 0 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 10 }}>
+            {compact ? intro : null}
             {props.sources.map((source) => (
               <Pressable
                 key={source.id}
@@ -43,15 +63,9 @@ export function ExtractAudioSourceSheet(props: {
                 </View>
               </Pressable>
             ))}
+            {compact ? actions : null}
           </ScrollView>
-          <Pressable
-            accessibilityRole="button"
-            disabled={props.busy}
-            onPress={props.onChooseAnother}
-            style={{ minHeight: 50, alignItems: 'center', justifyContent: 'center', borderRadius: chrome.radius.lg, backgroundColor: chrome.accent }}>
-            <Text style={{ color: chrome.accentInk, fontSize: 14, fontWeight: '700' }}>Choose another video from phone</Text>
-          </Pressable>
-          {props.busy ? <Text style={{ color: chrome.accent, textAlign: 'center', fontWeight: '700' }}>Extracting audio on this phone…</Text> : null}
+          {!compact ? actions : null}
         </View>
       </View>
     </Modal>

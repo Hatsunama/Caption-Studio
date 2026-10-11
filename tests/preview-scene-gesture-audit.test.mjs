@@ -284,13 +284,18 @@ test('unmount cancels pending frame writes and disabled scene declines capture',
   assert.equal(s.handlers.onMoveShouldSetResponder(), false);
 });
 
-test('extreme axis-aligned geometry retains a 24px recovery area and bounded dimensions', () => {
+test('extreme axis-aligned geometry preserves positive model dimensions and a reachable visible edge', () => {
   for (const scale of [0.000001, 1, 1000000]) {
     for (const position of [-100000, 100000]) {
       const g = constrainLayerGeometry({ ...geometry(position, position), scale }, size);
       const extent = layerExtent(g);
-      assert.ok(extent.width * size.width >= 24 - 1e-8);
-      assert.ok(extent.height * size.height >= 24 - 1e-8);
+      assert.ok(Number.isFinite(extent.width) && extent.width > 0);
+      assert.ok(Number.isFinite(extent.height) && extent.height > 0);
+      if (scale < 1) {
+        const original = layerExtent({ ...geometry(position, position), scale });
+        assert.equal(extent.width, original.width, 'viewport constraints must not inflate small authored layers');
+        assert.equal(extent.height, original.height);
+      }
       assert.ok(extent.width <= 10 + 1e-8 && extent.height <= 10 + 1e-8);
       const visibleWidth = Math.min(size.width, (g.position.x + extent.width / 2) * size.width)
         - Math.max(0, (g.position.x - extent.width / 2) * size.width);

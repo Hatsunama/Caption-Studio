@@ -110,10 +110,18 @@ test('a selected owner rejects competing responders and keeps extreme resizing r
   assert.equal(gesture.begin('right', [point(0, 0)], size), true);
   assert.equal(gesture.begin('move', [point(0, 0)], size), false);
   const tiny = gesture.update([point(-1e5, 0)]);
-  near(layerExtent(tiny).width * size.width, 24);
-  assert.ok(tiny.scaleX > 0);
+  assert.ok(Number.isFinite(tiny.scaleX) && tiny.scaleX > 0);
+  assert.ok(layerExtent(tiny).width > 0);
+  assert.ok(layerExtent(tiny).width * size.width < 1);
+  near(tiny.position.x - layerExtent(tiny).width / 2, .25);
+  near(tiny.scaleY, 1);
   const large = gesture.update([point(1e5, 0)]);
   assert.ok(layerExtent(large).width <= 10);
+  gesture.end();
+  gesture.begin('move', [point(0, 0)], size);
+  const recovered = gesture.update([point(-1e5, 0)]);
+  assert.ok(recovered.position.x + layerExtent(recovered).width / 2 > 0);
+  near(recovered.scaleX, large.scaleX);
 });
 
 function project() {
