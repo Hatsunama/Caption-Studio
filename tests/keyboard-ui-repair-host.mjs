@@ -6,6 +6,7 @@ import * as draftHelpers from '../src/lib/dual-caption-drafts.ts';
 import * as saveRecoveryHelpers from '../src/components/editor/caption-save-recovery.ts';
 import { fontChoicePatch } from '../src/lib/font-style-choice.ts';
 import { keyboardViewportHostProps } from './keyboard-viewport-host.mjs';
+import { createInputRevealController } from '../src/lib/input-viewport.ts';
 const source = readFileSync(process.env.DUAL_CAPTION_EDITOR_SOURCE
   ?? new URL('../src/components/editor/dual-caption-editor.tsx', import.meta.url), 'utf8');
 const { outputText } = ts.transpileModule(source, {
@@ -27,6 +28,24 @@ const shallow = (left, right) => left && right && same(Object.keys(left), Object
 export function mountDual(overrides = {}, options = {}) {
   const focusCalls = [], blurCalls = [];
   const reveal = { viewportRef: { current: null }, focus(input) { focusCalls.push(input); }, blur(input) { blurCalls.push(input); }, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
+  // Optional real controller: exercise production offset arithmetic without an
+  // IME, native runtime, wall-clock timers, or a second component implementation.
+  const revealFrames = new Map(), measurements = new Map(), deferredMeasurements = new Set();
+  const measurementCallbacks = new Map(), measuredIdentities = [], scrollOffsets = [];
+  let nextRevealFrame = 0;
+  const controller = options.realReveal ? createInputRevealController({
+    viewport: () => reveal.viewportRef.current,
+    scrollToOffset: offset => scrollOffsets.push(offset),
+    requestFrame(callback) { revealFrames.set(++nextRevealFrame, callback); return nextRevealFrame; },
+    cancelFrame(id) { revealFrames.delete(id); },
+  }) : undefined;
+  if (controller) {
+    reveal.focus = input => { focusCalls.push(input); controller.focus(input); };
+    reveal.blur = input => { blurCalls.push(input); controller.blur(input); };
+    reveal.onViewportLayout = () => controller.reveal();
+    reveal.onScroll = event => controller.recordScroll(event.nativeEvent.contentOffset.y);
+    reveal.onScrollBeginDrag = () => controller.beginDrag();
+  }
   const instances = new Map(), timers = new Map(), inputIdentities = new Map();
   const calls = { alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
   let current, cursor, pending = [], changed = false, tree, now = 0, nextTimer = 0, windowStart = 0;
@@ -131,12 +150,30 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
       ...node.props.data.slice(windowStart, windowStart + node.props.initialNumToRender)
         .map((item, index) => ({ ...node.props.renderItem({ item, index: windowStart + index }), key: node.props.keyExtractor(item) })),
       node.props.ListFooterComponent];
-    if (node.type === 'TextInput') {
-      const id = `${path}:${node.key ?? ''}`;
+    if (node.type === 'TextInput' || node.type === 'View') {
+      const id = `${path}:${node.type}:${node.key ?? ''}`;
       inputs.add(id);
-      if (!inputIdentities.has(id)) inputIdentities.set(id, {});
-      if (node.props.ref) node.props.ref.current = inputIdentities.get(id);
-      return { ...node, identity: inputIdentities.get(id) };
+      if (!inputIdentities.has(id)) {
+        const identity = {
+          measureInWindow(callback) {
+            measuredIdentities.push(identity);
+            if (deferredMeasurements.has(identity)) {
+              const callbacks = measurementCallbacks.get(identity) ?? [];
+              callbacks.push(callback); measurementCallbacks.set(identity, callbacks);
+              return;
+            }
+            const rect = measurements.get(identity);
+            assert.ok(rect, 'native measurement requires an explicit test rectangle');
+            callback(rect.x ?? 0, rect.y, rect.width ?? 250, rect.height);
+          },
+        };
+        inputIdentities.set(id, identity);
+      }
+      const identity = inputIdentities.get(id);
+      if (typeof node.props.ref === 'function') node.props.ref(identity);
+      else if (node.props.ref) node.props.ref.current = identity;
+      return { ...node, identity, props: { ...node.props,
+        children: renderNode(children, `${path}/children`, visited, inputs) } };
     }
     return { ...node, props: { ...node.props, children: renderNode(children, `${path}/children`, visited, inputs) } };
   }
@@ -180,6 +217,27 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
   render();
   return {
     calls, focusCalls, blurCalls, all, button, input, flush, act, Store: exports.Store,
+    reveal, revealController: controller, scrollOffsets, measuredIdentities,
+    measure(node, rect, defer = false) {
+      assert.ok(node?.identity, 'measure a mounted native node');
+      measurements.set(node.identity, { ...rect });
+      if (defer) deferredMeasurements.add(node.identity);
+      else deferredMeasurements.delete(node.identity);
+    },
+    takeMeasurement(node) {
+      const callback = measurementCallbacks.get(node.identity)?.shift();
+      assert.ok(callback, 'expected a pending native measurement'); return callback;
+    },
+    takeRevealFrame() {
+      const entry = revealFrames.entries().next().value;
+      assert.ok(entry, 'expected a pending reveal frame');
+      revealFrames.delete(entry[0]); return entry[1];
+    },
+    flushRevealFrames() {
+      const frames = [...revealFrames.values()]; revealFrames.clear();
+      for (const callback of frames) callback();
+    },
+    get pendingRevealFrames() { return revealFrames.size; },
     get props() { return props; },
     update(next) { props = { ...props, ...next }; render(); },
     scroll(index) { windowStart = index; render(); },
@@ -286,3 +344,6 @@ if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: '
   render();
   return { render, all, focusCalls, blurCalls, get: (type) => all((node) => node.type === type)[0] };
 }
+
+
+
