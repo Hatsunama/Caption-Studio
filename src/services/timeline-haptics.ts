@@ -10,7 +10,9 @@ export function timelineHaptic(kind: 'selection' | 'boundary') {
   lastPulse[kind] = now;
   try {
     const pulse = Platform.OS === 'android'
-      ? Haptics.performAndroidHapticsAsync(kind === 'selection' ? Haptics.AndroidHaptics.Context_Click : Haptics.AndroidHaptics.Segment_Tick)
+      ? Haptics.performAndroidHapticsAsync(kind === 'selection'
+        ? Haptics.AndroidHaptics.Context_Click
+        : Number(Platform.Version) >= 34 ? Haptics.AndroidHaptics.Segment_Tick : Haptics.AndroidHaptics.Clock_Tick)
       : Haptics.selectionAsync();
     void pulse.catch(() => {});
   } catch {
