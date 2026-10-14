@@ -231,3 +231,30 @@ test('watermark timeline colors retain transparency without producing invalid te
   assert.equal(artwork.props.style.backgroundColor, '#E8579C88');
   assert.match(artwork.props.style.borderColor, /^#[0-9a-f]{8}$/i);
 });
+
+test('initial editor reveal resets the inner lane viewport and fixed labels together', () => {
+  const p = project();
+  const h = harness();
+  const tree = h.render(p);
+  const scrolls = h.all(tree, (node) => node.type === 'ScrollView' && !node.props.horizontal && node.props.ref);
+  const calls = scrolls.map(() => []);
+  scrolls.forEach((node, index) => { node.props.ref.current = { scrollTo: (request) => calls[index].push(request.y) }; });
+  scrolls[0].props.onScroll({ nativeEvent: { contentOffset: { y: 400 } } });
+  for (const list of calls) list.length = 0;
+  for (const effect of h.effects) effect();
+  assert.equal(scrolls.length, 2);
+  assert.ok(calls.every((list) => list.includes(0)));
+  assert.equal(p.timelineTrackOrder, undefined);
+});
+
+test('items sharing a row retain individual selection and never seek on tap', () => {
+  const p = project();
+  p.layers.push(image('one', 0, 1000), image('two', 1000, 2000));
+  const h = harness();
+  const selected = [], seeks = [];
+  const tree = h.render(p, { onSelectLayer: (id) => selected.push(id), onSeek: (time) => seeks.push(time) });
+  const rows = h.all(tree, (node) => node.type?.name === 'TimelineRow' && node.props.label === 'IMAGES');
+  for (const block of h.all(rows[0], (node) => node.type?.name === 'TimedBlock')) block.props.onPress();
+  assert.deepEqual(selected, ['one', 'two']);
+  assert.deepEqual(seeks, []);
+});

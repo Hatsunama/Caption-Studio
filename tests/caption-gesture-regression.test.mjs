@@ -21,7 +21,7 @@ function harness() {
     useMemo(factory, deps) { const index = cursor++; if (!slots[index] || !same(slots[index].deps, deps)) slots[index] = { deps, value: factory() }; return slots[index].value; },
     useRef(value) { const index = cursor++; slots[index] ??= { current: value }; return slots[index]; },
     useEffect() { cursor++; },
-    useState(value) { const index = cursor++; slots[index] ??= { value }; return [slots[index].value, () => {}]; },
+    useState(value) { const index = cursor++; slots[index] ??= { value: typeof value === 'function' ? value() : value }; return [slots[index].value, () => {}]; },
     useCallback(fn) { cursor++; return fn; },
   };
   const jsx = (type, props) => ({ type, props: props ?? {} });
