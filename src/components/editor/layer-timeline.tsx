@@ -1269,7 +1269,7 @@ function useTimelineTimingPanHandlers(
   const gestureGeometry = useContext(TimelineGestureGeometryContext);
   const current = useRef({ owner, edge, onTouchLock });
   current.current = { owner, edge, onTouchLock };
-  const gesture = useMemo(() => createTimelineTimingGesture(), []);
+  const [gesture] = useState(() => createTimelineTimingGesture());
   const intent = useRef<TimelineTouchIntent>('pending');
   const claimed = useRef(false);
   const cancelGesture = useCallback(() => {
@@ -1277,7 +1277,7 @@ function useTimelineTimingPanHandlers(
     if (claimed.current) current.current.onTouchLock?.(false);
     claimed.current = false;
   }, [gesture]);
-  const responder = useMemo(() => {
+  const [responder] = useState(() => {
     const finish = () => {
       gesture.finish();
       if (claimed.current) current.current.onTouchLock?.(false);
@@ -1313,7 +1313,7 @@ function useTimelineTimingPanHandlers(
       onPanResponderRelease: finish,
       onPanResponderTerminate: cancelGesture,
     });
-  }, [gesture, cancelGesture]);
+  });
   useEffect(() => () => {
     cancelGesture();
   }, [cancelGesture]);
