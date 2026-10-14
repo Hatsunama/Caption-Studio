@@ -27,6 +27,7 @@ function image(id, startMs, endMs, extra = {}) {
 }
 
 function harness() {
+  const haptics = [];
   const effects = [];
   const refs = [];
   const jsx = (type, props) => ({ type, props: props ?? {} });
@@ -38,7 +39,7 @@ function harness() {
     useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
   };
   const source = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
-  const output = ts.transpileModule(source + '\nexports.useTimelineTimingPanHandlers = useTimelineTimingPanHandlers; exports.VideoMoveGrip = VideoMoveGrip; exports.TimedBlock = TimedBlock;', {
+  const output = ts.transpileModule(source + '\nexports.useTimelineTimingPanHandlers = useTimelineTimingPanHandlers; exports.VideoMoveGrip = VideoMoveGrip; exports.VideoTrimGrip = VideoTrimGrip; exports.TimedBlock = TimedBlock;', {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   const exports = {};
@@ -48,6 +49,7 @@ function harness() {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PanResponder: { create: (panHandlers) => ({ panHandlers }) } };
       if (name === 'expo-image') return { Image: 'Image' };
+      if (name === '@/services/timeline-haptics') return { timelineHaptic: (kind) => haptics.push(kind) };
       if (name.startsWith('@/services/')) return {};
       if (name.startsWith('@/lib/')) return requireLocal('../src/lib/' + name.slice(6) + '.ts');
       throw new Error(name);
@@ -72,8 +74,126 @@ function harness() {
     };
     return exports.LayerTimeline(props);
   }
-  return { exports, all, render, refs, effects };
+  return { exports, all, render, refs, effects, haptics };
 }
+
+test('the blank trailing area belongs to the existing vertical lane scroll surface', () => {
+  const h = harness();
+  const tree = h.render(project());
+  const horizontal = h.all(tree, (node) => node.type === 'ScrollView' && node.props.horizontal)[0];
+  const surface = horizontal.props.children;
+  assert.equal(surface.props.style.width + surface.props.style.marginLeft, horizontal.props.contentContainerStyle.width,
+    'the full trailing blank space must be inside the vertical scroll viewport');
+  const vertical = h.all(surface, (node) => node.type === 'ScrollView' && !node.props.horizontal)[0];
+  assert.equal(vertical.props.scrollEnabled, true);
+  assert.equal(vertical.props.nestedScrollEnabled, true);
+  assert.ok(h.all(vertical, (node) => node.type?.name === 'TimelineRow').length >= 2);
+});
+
+test('timeline taps give one selection pulse for video, audio, image, text and primary captions', () => {
+  const p = project();
+  p.layers.push(image('one', 0, 1000), { id: 'title', kind: 'text', name: 'Title', visible: true,
+    text: 'Hi', startMs: 0, endMs: 1000, style: DEFAULT_CAPTION_STYLE });
+  const h = harness();
+  const selected = [];
+  const tree = h.render(p, { captions: [{ id: 'cue', text: 'Caption', startMs: 0, endMs: 1000, words: [] }],
+    audioClips: [{ id: 'sound', sourceId: 'sound-source', startMs: 0, sourceStartMs: 0, sourceEndMs: 1000, playbackRate: 1 }],
+    onSelectLayer: (id) => selected.push(id), onSelectCaption: () => selected.push('cue'),
+    onSelectClip: () => selected.push('video'), onSelectAudioClip: () => selected.push('audio') });
+  const blocks = h.all(tree, (node) => node.type?.name === 'VideoClipBlock' || node.type?.name === 'TimedBlock');
+  assert.equal(blocks.length, 5);
+  for (const block of blocks) block.props.onPress();
+  assert.equal(selected.length, 5);
+  assert.deepEqual(h.haptics, Array(5).fill('selection'));
+});
+
+test('boundary feedback waits for applied timing, ignores scrolling and resets on cancellation', () => {
+  const h = harness();
+  let last;
+  const owner = { startMs: 1000, endMs: 2000, durationMs: 5000, trackWidth: 1000,
+    getFeedbackBoundaries: () => [2500], onPress() {}, onChangeStart() {}, onEnd() {},
+    onChange(edge, startMs, endMs) { last = { edge, startMs, endMs }; return { startMs, endMs }; } };
+  const handlers = h.exports.useTimelineTimingPanHandlers(owner, 'end');
+  handlers.onStartShouldSetPanResponderCapture();
+  handlers.onMoveShouldSetPanResponder({ nativeEvent: { touches: [{}] } }, { dx: 0, dy: 20 });
+  assert.deepEqual(h.haptics, []);
+  handlers.onPanResponderGrant();
+  handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 110, dy: 0 });
+  assert.equal(last.endMs, 2550, 'feedback must not introduce new snapping');
+  assert.deepEqual(h.haptics, ['boundary']);
+  handlers.onPanResponderTerminate();
+  handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 80, dy: 0 });
+  assert.deepEqual(h.haptics, ['boundary']);
+});
+
+test('live feedback follows accepted domain timing, not rejected pointer positions', () => {
+  const h = harness();
+  const owner = { startMs: 1000, endMs: 2000, durationMs: 5000, trackWidth: 1000,
+    getFeedbackBoundaries: () => [2500, 3000], onPress() {}, onChangeStart() {}, onEnd() {},
+    onChange(_edge, _startMs, endMs) { owner.endMs = Math.min(2500, endMs); } };
+  const handlers = h.exports.useTimelineTimingPanHandlers(owner, 'end');
+  handlers.onPanResponderGrant();
+  handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 110, dy: 0 });
+  assert.deepEqual(h.haptics, [], 'wait until accepted state renders');
+  for (const effect of h.effects) effect();
+  assert.deepEqual(h.haptics, ['boundary']);
+  handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 300, dy: 0 });
+  for (const effect of h.effects) effect();
+  assert.deepEqual(h.haptics, ['boundary'], 'a clamp must not signal unreachable boundaries');
+  handlers.onPanResponderTerminate();
+  owner.endMs = 3000;
+  for (const effect of h.effects) effect();
+  assert.deepEqual(h.haptics, ['boundary'], 'later unrelated edits must not buzz');
+});
+
+test('boundary snapshots include all artifact kinds, exclude the active object and preserve translation identity', () => {
+  const p = project();
+  p.layers.push(image('one', 4100, 4700), image('hidden', 8100, 8300, { timelineVisible: false }));
+  const source = { id: 'cue', text: 'Hello', startMs: 1100, endMs: 1600, words: [] };
+  const pair = { source, translation: { id: 'translated', status: 'translated' }, startMs: 2100, endMs: 2600,
+    timelineVisible: true, displayText: 'Hallo' };
+  const h = harness();
+  const selections = [];
+  const tree = h.render(p, { currentMs: 3500, captions: [source], translationTracks: [{ id: 'german', name: 'German', visible: true, pairs: [pair] }],
+    audioClips: [{ id: 'sound', sourceId: 'sound-source', startMs: 5100, sourceStartMs: 0, sourceEndMs: 1000, playbackRate: 1 }],
+    onSelectTranslationCaption: (id) => selections.push(id) });
+  const translated = h.all(tree, (node) => node.type?.name === 'TimedBlock' && node.props.label === 'Hallo')[0];
+  const times = Array.from(translated.props.getFeedbackBoundaries());
+  for (const time of [0, 120000, 3500, 1100, 1600, 4100, 4700, 5100, 6100]) assert.ok(times.includes(time), String(time));
+  for (const time of [2100, 2600, 8100, 8300]) assert.ok(!times.includes(time), String(time));
+  translated.props.onPress();
+  assert.deepEqual(selections, ['german']);
+  assert.deepEqual(h.haptics, ['selection']);
+});
+
+test('video gap movement observes boundaries and cancellation stops further feedback', () => {
+  const h = harness();
+  const node = h.exports.VideoMoveGrip({ startMs: 1000, endMs: 2000, leadingGapMs: 0, clipIndex: 1, clipCount: 2,
+    bodyLeft: 0, bodyWidth: 100, trackWidth: 1000, durationMs: 5000, label: 'clip', getFeedbackBoundaries: () => [2500],
+    onPress() {}, onGestureLock() {}, onGapPreview() {}, onGestureCancel() {}, onGapCommit() {} });
+  node.props.onPanResponderGrant({}, { dx: 110, dy: 0 });
+  assert.deepEqual(h.haptics, ['boundary']);
+  node.props.onPanResponderTerminate();
+  node.props.onPanResponderMove({}, { dx: 10, dy: 0 });
+  assert.deepEqual(h.haptics, ['boundary']);
+});
+
+test('video trim feedback cannot signal positions beyond the available source', () => {
+  const h = harness();
+  const previews = [];
+  const node = h.exports.VideoTrimGrip({ startMs: 1000, endMs: 2000, side: 'end', gripLeft: 100,
+    trackWidth: 1000, durationMs: 5000, label: 'clip',
+    clip: { sourceStartMs: 0, sourceEndMs: 1000, availableSourceStartMs: 0, availableSourceEndMs: 1500, playbackRate: 1 },
+    getFeedbackBoundaries: () => [2500, 3000], onPress() {}, onGestureLock() {},
+    onTrimPreview: (_edge, ms) => previews.push(ms), onTrimCommit() {}, onGestureCancel() {} });
+  node.props.onPanResponderGrant();
+  node.props.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 110, dy: 0 });
+  assert.equal(previews.at(-1), 1500);
+  assert.deepEqual(h.haptics, ['boundary']);
+  node.props.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 300, dy: 0 });
+  assert.equal(previews.at(-1), 1500);
+  assert.deepEqual(h.haptics, ['boundary']);
+});
 
 test('visual timeline packs separated overlaps into one reusable two-lane image track', () => {
   const p = project();

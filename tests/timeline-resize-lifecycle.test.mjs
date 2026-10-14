@@ -4,6 +4,8 @@ import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 
 import * as timing from '../src/lib/timeline-gesture.ts';
+import { createTimelineBoundaryFeedback } from '../src/lib/timeline-boundary-feedback.ts';
+import { timelineTouchIntent } from '../src/lib/timeline-touch-intent.ts';
 
 // Execute the production responder callbacks without installing React Native.
 const source = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
@@ -13,7 +15,7 @@ const layoutCallback = source.slice(source.indexOf('onLayout={') + 'onLayout={'.
 const executable = stripTypeScriptTypes(`
 export function load(dependencies) {
   const { useRef, useState, useMemo, useEffect, useContext, useCallback, PanResponder, TimelineGestureGeometryContext,
-    createTimelineTimingGesture, clamp, REORDER_TILE, REORDER_GAP } = dependencies;
+    createTimelineTimingGesture, createTimelineBoundaryFeedback, timelineHaptic, timelineTouchIntent, clamp, REORDER_TILE, REORDER_GAP } = dependencies;
   ${timingHook}
   ${videoHook}
   return { useTimelineTimingPanHandlers, VideoMoveGrip };
@@ -48,6 +50,7 @@ function harness() {
     PanResponder: { create: (panHandlers) => ({ panHandlers }) },
     TimelineGestureGeometryContext: {},
     createTimelineTimingGesture: timing.createTimelineTimingGesture,
+    createTimelineBoundaryFeedback, timelineTouchIntent, timelineHaptic() {},
     clamp: (value, min, max) => Math.min(max, Math.max(min, value)),
     REORDER_TILE: 72,
     REORDER_GAP: 8,
@@ -191,6 +194,7 @@ test('the production video responder survives a discarded memo cache', () => {
     useEffect() {}, useContext: () => undefined, useCallback: fn => fn,
     PanResponder: { create: panHandlers => { created++; return { panHandlers }; } },
     TimelineGestureGeometryContext: {}, createTimelineTimingGesture: timing.createTimelineTimingGesture,
+    createTimelineBoundaryFeedback, timelineTouchIntent, timelineHaptic() {},
     clamp: (v, min, max) => Math.min(max, Math.max(min, v)), REORDER_TILE: 72, REORDER_GAP: 8,
   });
   const props = { leadingGapMs: 0, clipIndex: 0, clipCount: 3, trackWidth: 1000, durationMs: 5000,
