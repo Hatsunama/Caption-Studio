@@ -315,8 +315,14 @@ export function addImageLayer(project: CaptionProject, options: {
 
 export function moveVisualLayer(project: CaptionProject, layerId: string, direction: -1 | 1) {
   const index = project.layers.findIndex((layer) => layer.id === layerId);
-  const destination = index + direction;
-  if (index < 0 || destination < 0 || destination >= project.layers.length) return project;
+  if (index < 0) return project;
+  let destination = index + direction;
+  while (destination >= 0 && destination < project.layers.length) {
+    const candidate = project.layers[destination];
+    if (candidate.kind === 'captions' || candidate.timelineVisible !== false) break;
+    destination += direction;
+  }
+  if (destination < 0 || destination >= project.layers.length) return project;
   const layers = [...project.layers];
   [layers[index], layers[destination]] = [layers[destination], layers[index]];
   return updateProject(project, { layers });

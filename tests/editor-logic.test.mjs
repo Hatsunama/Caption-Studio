@@ -364,7 +364,8 @@ test('video clip body owns Android drag arbitration instead of competing with a 
   const moveGrip = timeline.slice(timeline.indexOf('function VideoMoveGrip'), timeline.indexOf('function VideoReorderBanner'));
   assert.match(clipBlock, /<View[\s\S]*<VideoMoveGrip/);
   assert.doesNotMatch(clipBlock, /<Pressable/);
-  assert.match(moveGrip, /onStartShouldSetPanResponder: \(\) => true/);
+  assert.match(moveGrip, /onStartShouldSetPanResponder: \(\) => false/);
+  assert.match(moveGrip, /onMoveShouldSetPanResponderCapture: shouldClaim/);
   assert.match(moveGrip, /modeRef/);
   assert.match(moveGrip, /'reorder'/);
   assert.match(timeline, /function VideoReorderBanner/);
@@ -545,11 +546,11 @@ test('hold-drag clip reorder keeps the filmstrip mounted, remaps source captions
   assert.match(timeline, /AudioWaveform/);
   assert.match(timeline, /waveformPeaks/);
   assert.match(timeline, /clipPositions\.map/);
-  const layerButton = timeline.slice(timeline.indexOf('function TinyButton'), timeline.indexOf('function ZoomButton'));
-  assert.match(layerButton, /accessibilityLabel=\{accessibilityLabel\}/);
-  assert.match(layerButton, /width: 26/);
-  assert.match(layerButton, /height: 26/);
-  assert.match(layerButton, /fontSize: 18/);
+  const trackHandle = timeline.slice(timeline.indexOf('function TimelineTrackHandle'), timeline.indexOf('function TimelineRow'));
+  assert.match(trackHandle, /accessibilityRole="adjustable"/);
+  assert.match(trackHandle, /Move track down/);
+  assert.match(trackHandle, /Move track up/);
+  assert.match(trackHandle, /length: 8/);
   const editor = readFileSync(new URL('../src/app/editor.tsx', import.meta.url), 'utf8');
   assert.match(editor, /onReorderClip=\{reorderClipToIndex\}/);
   assert.match(editor, /reorderVideoClip/);
@@ -1400,7 +1401,7 @@ test('timeline selection does not move or snap the playhead', () => {
   assert.match(timeline, /onItemTimingChange: \(item: TimelineItemReference/);
   assert.doesNotMatch(timeline, /edge !== 'move'/);
   assert.match(timeline, /kind: 'audio'/);
-  assert.match(timeline, /onPress=\{\(\) => props\.onSelectLayer\(layer\.id\)\}/);
+  assert.match(timeline, /onPress=\{\(\) => selectTimelineItem\(\(\) => props\.onSelectLayer\(layer\.id\)\)\}/);
   assert.match(editor, /onSelectClip=\{\(clipId\) => selectEditorObject\(/);
   assert.match(editor, /onSelectAudioClip=\{\(clipId\) => selectEditorObject\(/);
   const row = timeline.slice(timeline.indexOf('function TimelineRow'), timeline.indexOf('function TimedBlock'));
@@ -1419,7 +1420,7 @@ test('every timed content type uses the same direct edge and body gesture surfac
   assert.doesNotMatch(block, /captionGesture|Timing controls|controlTop|visibleTrackBounds/);
   assert.doesNotMatch(timeline, /caption-timing-dock|Magnified cue timing|TimelineMoveGrip|function TimingGrip/);
   assert.match(timeline, /function useTimelineTimingPanHandlers/);
-  assert.match(timeline, /onPanResponderTerminationRequest: \(\) => false/);
+  assert.match(timeline, /onPanResponderTerminationRequest: \(\) => !claimed\.current/);
   assert.match(timeline, /gesture\.begin\(active\.owner, active\.edge\)/);
 });
 
@@ -1466,7 +1467,8 @@ test('caption and text animation stay in their respective edit menus', () => {
   assert.match(editor, /useState<StyleScope>\('caption'\)/);
   assert.match(editor, /ToolbarItem label="Stickers" active=\{activeTool === 'stickers'\}/);
   assert.match(editor, /ToolbarItem label="Captions" active=\{activeTool === 'captions'\}/);
-  assert.match(editor, /TEXT ANIMATION/);
+  assert.match(editor, /TEXT SPACING/);
+  assert.doesNotMatch(editor, /TEXT ANIMATION/);
   assert.match(editor, /CAPTION ANIMATION/);
   assert.match(editor, /PersistedHorizontalScroll/);
 });

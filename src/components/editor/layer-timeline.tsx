@@ -3,6 +3,8 @@ import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 
 import { chrome } from '@/lib/ui-theme';
+import { orderedTimelineTrackIds, visualTimelineGroups, visualTimelineTrackId, moveTimelineTrack } from '@/lib/timeline-tracks';
+import { timelineTouchIntent, type TimelineTouchIntent } from '@/lib/timeline-touch-intent';
 import { indexTimelineCues, packTimelineLanes, timelineCueChoices, timelineCuePage } from '@/lib/timeline-layout';
 import { previewVideoClipLeadingGap, previewVideoClipReorder, previewVideoClipTrim } from '@/lib/project-editor';
 import {
@@ -71,8 +73,9 @@ export function LayerTimeline(props: {
   onItemTimingChange: (item: TimelineItemReference, edge: TimelineTimingEdge, startMs: number, endMs: number) => void;
   onTimingChangeStart: () => void;
   onTimingChangeEnd: () => void;
-  onMoveLayer: (layerId: string, direction: -1 | 1) => void;
-  onDeleteLayer: (layerId: string) => void;
+  trackOrder?: readonly string[];
+  onReorderTrack?: (order: string[]) => void;
+  revealRequest?: number;
   onAddVideos: () => void;
   onSelectAudioClip: (clipId: string) => void;
   voiceoverMode?: boolean;
@@ -82,6 +85,11 @@ export function LayerTimeline(props: {
   const displayAudioClips = useMemo(() => props.voiceoverMode ? [] : props.audioClips, [props.audioClips, props.voiceoverMode]);
   const horizontalRef = useRef<ScrollView>(null);
   const verticalRef = useRef<ScrollView>(null);
+  const labelScrollRef = useRef<ScrollView>(null);
+  const verticalOffsetRef = useRef(0);
+  const [trackDrag, setTrackDrag] = useState<{ id: string; order: string[] }>();
+  const trackDragOrigin = useRef<{ id: string; order: string[]; preview: string[]; top: number; scroll: number; heights: Map<string, number>; dy: number; pageY?: number } | undefined>(undefined);
+  const trackViewport = useRef<{ top: number; height: number } | undefined>(undefined);
   const [viewportWidth, setViewportWidth] = useState(360);
   const [clipPreview, setClipPreview] = useState<VideoClip[]>();
   const [frontTrimPreview, setFrontTrimPreview] = useState<{
@@ -162,14 +170,22 @@ export function LayerTimeline(props: {
   const audioLayout = useMemo(() => packTimelineLanes(displayAudioClips.filter((clip) => !clip.hiddenByVideoTrim)
     .map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [displayAudioClips]);
   const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10;
-  const visualRowHeight = () => 46;
-  const videoRowHeight = reorderMode ? REORDER_TILE + 18 : 46;
   const sourceById = useMemo(() => new Map(props.sources.map((source) => [source.id, source])), [props.sources]);
-  const totalRowsHeight = videoRowHeight + audioRowHeight + displayLayers.reduce(
-    (sum, layer) => sum + (layer.kind === 'captions' ? captionRowHeight : visualRowHeight()),
-    0,
-  ) + (props.voiceoverMode ? 0 : props.translationTracks.reduce((sum, track) => sum + translationRowHeight(track.id), 0));
-
+  const visualGroups = useMemo(() => visualTimelineGroups(displayLayers), [displayLayers]);
+  const videoRowHeight = reorderMode ? 90 : 46;
+  const groupById = new Map(visualGroups.map((group) => [group.id, group]));
+  const availableTracks = ['video', 'audio'];
+  for (const layer of displayLayers) {
+    const id = visualTimelineTrackId(layer);
+    if (!availableTracks.includes(id)) availableTracks.push(id);
+    if (layer.kind === 'captions') for (const track of displayTranslationTracks) availableTracks.push('translation:' + track.id);
+  }
+  const orderedTracks = props.voiceoverMode ? ['video', 'audio'] : orderedTimelineTrackIds(availableTracks, props.trackOrder);
+  const shownTracks = trackDrag?.order ?? orderedTracks;
+  const rowHeight = (id: string) => id === 'video' ? videoRowHeight : id === 'audio' ? audioRowHeight
+    : id === 'captions' ? captionRowHeight : id.startsWith('translation:') ? translationRowHeight(id.slice(12))
+    : (groupById.get(id)?.layout.laneCount ?? 1) * LANE_HEIGHT + 14;
+  const totalRowsHeight = shownTracks.reduce((height, id) => height + rowHeight(id), 0);
   const trailingPadding = viewportWidth / 2;
   const scrollContentWidth = leadingPadding + LABEL_WIDTH + trackWidth + trailingPadding;
   const visibleRange = useMemo(() => {
@@ -182,25 +198,36 @@ export function LayerTimeline(props: {
   const isVisible = (startMs: number, endMs: number) =>
     reorderMode || (endMs >= visibleRange.startMs && startMs <= visibleRange.endMs);
 
-  const selectedRowTop = (() => {
-    let top = videoRowHeight + audioRowHeight;
-    for (const layer of displayLayers) {
-      if (layer.id === props.selectedLayerId) return top;
-      top += layer.kind === 'captions' ? captionRowHeight : visualRowHeight();
-      if (layer.kind === 'captions') for (const track of displayTranslationTracks) {
-        if (track.id === props.selectedLayerId) return top;
-        top += translationRowHeight(track.id);
-      }
-    }
-    return 0;
-  })();
+  const selectedTrackId = props.selectedClipId ? 'video' : props.selectedAudioClipId ? 'audio'
+    : displayTranslationTracks.some((track) => track.id === props.selectedLayerId) ? 'translation:' + props.selectedLayerId
+    : (() => { const layer = displayLayers.find((item) => item.id === props.selectedLayerId); return layer ? visualTimelineTrackId(layer) : undefined; })();
+  const selectedRowTop = shownTracks.slice(0, Math.max(0, shownTracks.indexOf(selectedTrackId ?? '')))
+    .reduce((top, id) => top + rowHeight(id), 0);
+  const syncVerticalScroll = useCallback((y: number, source: 'items' | 'labels' | 'reveal') => {
+    const next = Math.max(0, y);
+    if (source !== 'reveal' && Math.abs(next - verticalOffsetRef.current) < 0.5) return;
+    verticalOffsetRef.current = next;
+    if (source !== 'items') verticalRef.current?.scrollTo({ y: next, animated: false });
+    if (source !== 'labels') labelScrollRef.current?.scrollTo({ y: next, animated: false });
+  }, []);
+  useEffect(() => {
+    verticalOffsetRef.current = 0;
+    verticalRef.current?.scrollTo({ y: 0, animated: false });
+    labelScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [props.projectId, props.revealRequest]);
   const revealCue = useCallback((_startMs: number) => {
+    verticalOffsetRef.current = selectedRowTop;
     verticalRef.current?.scrollTo({ y: selectedRowTop, animated: false });
+    labelScrollRef.current?.scrollTo({ y: selectedRowTop, animated: false });
   }, [selectedRowTop]);
   const lastRevealRef = useRef<{ id: string; trackWidth: number; viewportWidth: number } | undefined>(undefined);
   const hasSelectedCue = selectedCue !== undefined;
   useEffect(() => {
-    if (hasSelectedCue) verticalRef.current?.scrollTo({ y: selectedRowTop, animated: false });
+    if (hasSelectedCue) {
+      verticalOffsetRef.current = selectedRowTop;
+      verticalRef.current?.scrollTo({ y: selectedRowTop, animated: false });
+      labelScrollRef.current?.scrollTo({ y: selectedRowTop, animated: false });
+    }
   }, [hasSelectedCue, selectedRowTop]);
 
   useEffect(() => () => {
@@ -313,76 +340,8 @@ export function LayerTimeline(props: {
     if (locked) selectTimelineItem(() => {});
     setItemGestureLock(locked);
   };
-  return (
-    <TimelineGestureGeometryContext.Provider value={gestureGeometry}>
-    <View
-      onLayout={(event) => {
-        const width = Math.max(1, event.nativeEvent.layout.width);
-        if (gestureGeometry.update({ viewportWidth: width })) {
-          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
-          scrubEndTimer.current = null;
-          scrubbingRef.current = false;
-          selectionOwnsViewportRef.current = false;
-          pinch.current.distance = 0;
-        }
-        setViewportWidth(width);
-      }}
-      onStartShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
-      onMoveShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
-      onResponderGrant={(event) => {
-        const [first, second] = event.nativeEvent.touches;
-        pinch.current = { distance: touchDistance(first, second), scale: effectiveScale };
-      }}
-      onResponderMove={(event) => {
-        const [first, second] = event.nativeEvent.touches;
-        if (!first || !second || pinch.current.distance <= 0) return;
-        updateZoom(pinch.current.scale * touchDistance(first, second) / pinch.current.distance);
-      }}
-      style={{ height: Math.min(props.availableHeight ?? 330, totalRowsHeight + RULER_HEIGHT + 38), overflow: 'hidden', borderRadius: 22, backgroundColor: '#1C1C1E' }}>
-      <View style={{ height: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 44, borderBottomWidth: 1, borderBottomColor: '#1D242C' }}>
-        <ZoomButton label="−" onPress={() => updateZoom(effectiveScale / 1.5)} />
-        <Text style={{ minWidth: 70, color: '#D7DDE5', textAlign: 'center', fontSize: 10, fontWeight: '800' }}>{zoomPercent}%</Text>
-        <ZoomButton label="+" onPress={() => updateZoom(effectiveScale * 1.5)} />
-      </View>
-      <ScrollView
-        ref={horizontalRef}
-        style={{ flex: 1 }}
-        horizontal
-        nestedScrollEnabled
-        scrollEnabled={!gestureLock}
-        decelerationRate="fast"
-        scrollEventThrottle={32}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ width: scrollContentWidth }}
-        onScrollBeginDrag={() => {
-          if (gestureLockRef.current) return;
-          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
-          scrubbingRef.current = true;
-          selectionOwnsViewportRef.current = false;
-          props.onScrubStart();
-        }}
-        onScroll={(event) => {
-          const x = clamp(event.nativeEvent.contentOffset.x, 0, trackWidth);
-          scrollXRef.current = x;
-          setViewportScrollX(x);
-          if (Math.abs(x - visibleCenterX) >= Math.max(120, viewportWidth / 3)) setVisibleCenterX(x);
-          if (scrubbingRef.current && !gestureLockRef.current) seekFromScroll(x);
-        }}
-        onScrollEndDrag={() => {
-          if (!scrubbingRef.current) return;
-          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
-          scrubEndTimer.current = setTimeout(finishScrub, 90);
-        }}
-        onMomentumScrollBegin={() => {
-          if (gestureLockRef.current || !scrubbingRef.current) return;
-          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
-          scrubbingRef.current = true;
-        }}
-        onMomentumScrollEnd={finishScrub}>
-        <View style={{ width: LABEL_WIDTH + trackWidth, height: '100%', marginLeft: leadingPadding }}>
-          <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
-          <ScrollView ref={verticalRef} style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}>
-            <TimelineRow label="VIDEO" labelColor={chrome.accent} selected={Boolean(props.selectedClipId)} trackWidth={trackWidth} height={videoRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: chrome.muted, fontSize: 8 }}>{props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}</Text>}>
+  const rows = new Map<string, React.ReactElement<Parameters<typeof TimelineRow>[0]>>();
+  rows.set('video', (<TimelineRow label="VIDEO" labelColor={chrome.accent} selected={Boolean(props.selectedClipId)} trackWidth={trackWidth} height={videoRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: chrome.muted, fontSize: 8 }}>{props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}</Text>}>
               {reorderDrag ? (
                 <VideoReorderBanner
                   clips={previewClips}
@@ -498,8 +457,8 @@ export function LayerTimeline(props: {
                 </Fragment>
                 );
               })}
-            </TimelineRow>
-            <TimelineRow label={props.voiceoverMode ? "VOICE OVER" : "AUDIO"} labelColor={props.voiceoverMode ? "#FF4D6D" : "#64E8FF"} selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: props.voiceoverMode ? '#FFB8C5' : '#6F7985', fontSize: 8 }}>{props.voiceoverMode ? 'LIVE TAKE' : `${props.audioClips.length} TRACK${props.audioClips.length === 1 ? '' : 'S'}`}</Text>}>
+            </TimelineRow>));
+  rows.set('audio', (<TimelineRow label={props.voiceoverMode ? "VOICE OVER" : "AUDIO"} labelColor={props.voiceoverMode ? "#FF4D6D" : "#64E8FF"} selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: props.voiceoverMode ? '#FFB8C5' : '#6F7985', fontSize: 8 }}>{props.voiceoverMode ? 'LIVE TAKE' : `${props.audioClips.length} TRACK${props.audioClips.length === 1 ? '' : 'S'}`}</Text>}>
               {displayAudioClips.filter((clip) => !clip.hiddenByVideoTrim && isVisible(clip.startMs, audioClipEnd(clip))).map((clip) => {
                 const source = props.audioSources.find((candidate) => candidate.id === clip.sourceId);
                 return (
@@ -529,37 +488,29 @@ export function LayerTimeline(props: {
                 );
               })}
               {props.voiceoverDraft ? <LiveRecordingBlock {...props.voiceoverDraft} durationMs={duration} trackWidth={trackWidth} /> : null}
-            </TimelineRow>
-            {displayLayers.map((layer, layerIndex) => {
-              const isCaptions = layer.kind === 'captions';
-              return (
-                <View key={layer.id}>
-                <TimelineRow
-                  label={layer.name.toUpperCase()}
-                  labelColor={isCaptions ? '#FF4FD8' : layer.kind === 'text' ? layer.watermark ? '#FF8FC4' : '#A985F8' : '#64E8FF'}
-                  selected={props.selectedLayerId === layer.id && !props.selectedClipId}
-                  onPressLabel={() => selectTimelineItem(() => props.onSelectLayer(layer.id))}
-                  onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }}
-                  trackWidth={trackWidth}
-                  height={isCaptions ? captionRowHeight : visualRowHeight()}
-                  controls={<View style={{ gap: 2 }}>
-                    <View style={{ flexDirection: 'row', gap: 2 }}>
-                      <TinyButton label="↑" disabled={layerIndex === 0} onPress={() => props.onMoveLayer(layer.id, -1)} />
-                      <TinyButton label="↓" disabled={layerIndex === displayLayers.length - 1} onPress={() => props.onMoveLayer(layer.id, 1)} />
-                      {!isCaptions ? <TinyButton label="×" danger onPress={() => props.onDeleteLayer(layer.id)} /> : null}
-                    </View>
-                  </View>}>
-                  {isCaptions ? captionPage.overview.map((entry) => (
-                    <TimelineCoverageStrip key={`${entry.left}:${entry.width}`} {...entry} trackWidth={trackWidth} color="#FF4FD8" onPress={() => setCueChooser({ trackId: 'captions', startMs: entry.startMs, endMs: entry.endMs, offset: 0 })} />
-                  )) : null}
-                  {isCaptions ? captionPage.bodies.map((caption) => (
-                    <TimedBlock key={caption.id} onTouchLock={timelineTouchLock} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} playheadMs={props.currentMs} lane={captionLayout.laneById.get(caption.id) ?? 0} color={NEON_CAPTION_COLORS[captionIndex.byId.get(caption.id)! % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
-                  )) : (
-                    <TimedBlock onTouchLock={timelineTouchLock} label={layer.kind === 'text' ? layer.text : 'IMAGE'} thumbnailUri={layer.kind === 'image' ? layer.uri : undefined} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} playheadMs={props.currentMs} lane={0} color={layer.kind === 'text' ? layer.watermark ? '#E8579C88' : '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
-                  )}
-                </TimelineRow>
-                {isCaptions ? displayTranslationTracks.map((track, trackIndex) => (
-                  <TimelineRow
+            </TimelineRow>));
+  if (!props.voiceoverMode) {
+    if (displayLayers.some((layer) => layer.kind === 'captions')) rows.set('captions', (
+      <TimelineRow label="CAPTIONS" labelColor="#FF4FD8" selected={props.selectedLayerId === 'captions'}
+        onPressLabel={() => selectTimelineItem(() => props.onSelectLayer('captions'))}
+        onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} trackWidth={trackWidth} height={captionRowHeight}>
+        {captionPage.overview.map((entry) => <TimelineCoverageStrip key={entry.left + ':' + entry.width} {...entry} trackWidth={trackWidth} color="#FF4FD8" onPress={() => setCueChooser({ trackId: 'captions', startMs: entry.startMs, endMs: entry.endMs, offset: 0 })} />)}
+        {captionPage.bodies.map((caption) => <TimedBlock key={caption.id} onTouchLock={timelineTouchLock} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} playheadMs={props.currentMs} lane={captionLayout.laneById.get(caption.id) ?? 0} color={NEON_CAPTION_COLORS[captionIndex.byId.get(caption.id)! % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />)}
+      </TimelineRow>
+    ));
+    for (const group of visualGroups) rows.set(group.id, (
+      <TimelineRow label={group.id.toUpperCase()} labelColor={group.id === 'images' ? '#64E8FF' : group.id === 'watermarks' ? '#FF8FC4' : '#A985F8'}
+        selected={selectedTrackId === group.id} trackWidth={trackWidth} height={rowHeight(group.id)}
+        onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }}>
+        {group.items.map((layer) => <TimedBlock key={layer.id} onTouchLock={timelineTouchLock}
+          label={layer.kind === 'text' ? layer.text : layer.name || 'IMAGE'} thumbnailUri={layer.kind === 'image' ? layer.uri : undefined}
+          startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} playheadMs={props.currentMs}
+          lane={group.layout.laneById.get(layer.id) ?? 0} color={layer.kind === 'text' ? layer.watermark ? '#E8579C88' : '#A855F7' : '#00B8FF'}
+          selected={props.selectedLayerId === layer.id} onPress={() => selectTimelineItem(() => props.onSelectLayer(layer.id))}
+          onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />)}
+      </TimelineRow>
+    ));
+    for (const [trackIndex, track] of displayTranslationTracks.entries()) rows.set('translation:' + track.id, (<TimelineRow
                     key={track.id}
                     label={`↳ ${track.name.toUpperCase()}`}
                     labelColor={track.visible ? '#64E8FF' : '#6E7884'}
@@ -596,13 +547,145 @@ export function LayerTimeline(props: {
                         onEnd={endBlockGesture}
                       />
                     ))}
-                  </TimelineRow>
-                )) : null}
-                </View>
-              );
-            })}
+                  </TimelineRow>));
+  }
+  const moveTrack = useCallback((id: string, dy: number, pageY?: number) => {
+    const origin = trackDragOrigin.current;
+    if (!origin || origin.id !== id) return;
+    origin.dy = dy;
+    if (Number.isFinite(pageY)) origin.pageY = pageY;
+    const center = origin.top + dy + verticalOffsetRef.current - origin.scroll + (origin.heights.get(id) ?? 46) / 2;
+    let top = 0;
+    let destination = 0;
+    for (const candidate of origin.order) {
+      const height = origin.heights.get(candidate) ?? 46;
+      if (candidate !== id && center > top + height / 2) destination++;
+      top += height;
+    }
+    origin.preview = moveTimelineTrack(origin.order, id, destination);
+    setTrackDrag({ id, order: origin.preview });
+  }, []);
+  useEffect(() => {
+    if (!trackDrag?.id) return;
+    const timer = setInterval(() => {
+      const origin = trackDragOrigin.current;
+      const viewport = trackViewport.current;
+      if (!origin || !viewport || origin.pageY === undefined) return;
+      const direction = origin.pageY < viewport.top + 28 ? -1 : origin.pageY > viewport.top + viewport.height - 28 ? 1 : 0;
+      if (!direction) return;
+      const extent = [...origin.heights.values()].reduce((sum, height) => sum + height, 0);
+      const next = Math.max(0, Math.min(Math.max(0, extent - viewport.height), verticalOffsetRef.current + direction * 8));
+      if (next === verticalOffsetRef.current) return;
+      syncVerticalScroll(next, 'reveal');
+      moveTrack(origin.id, origin.dy, origin.pageY);
+    }, 40);
+    return () => clearInterval(timer);
+  }, [trackDrag?.id, moveTrack, syncVerticalScroll]);
+  return (
+    <TimelineGestureGeometryContext.Provider value={gestureGeometry}>
+    <View
+      onLayout={(event) => {
+        const width = Math.max(1, event.nativeEvent.layout.width);
+        if (gestureGeometry.update({ viewportWidth: width })) {
+          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+          scrubEndTimer.current = null;
+          scrubbingRef.current = false;
+          selectionOwnsViewportRef.current = false;
+          pinch.current.distance = 0;
+        }
+        setViewportWidth(width);
+      }}
+      onStartShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
+      onMoveShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
+      onResponderGrant={(event) => {
+        const [first, second] = event.nativeEvent.touches;
+        pinch.current = { distance: touchDistance(first, second), scale: effectiveScale };
+      }}
+      onResponderMove={(event) => {
+        const [first, second] = event.nativeEvent.touches;
+        if (!first || !second || pinch.current.distance <= 0) return;
+        updateZoom(pinch.current.scale * touchDistance(first, second) / pinch.current.distance);
+      }}
+      style={{ height: Math.min(props.availableHeight ?? 330, totalRowsHeight + RULER_HEIGHT + 38), overflow: 'hidden', borderRadius: 22, backgroundColor: '#1C1C1E' }}>
+      <View style={{ height: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 44, borderBottomWidth: 1, borderBottomColor: '#1D242C' }}>
+        <ZoomButton label="−" onPress={() => updateZoom(effectiveScale / 1.5)} />
+        <Text style={{ minWidth: 70, color: '#D7DDE5', textAlign: 'center', fontSize: 10, fontWeight: '800' }}>{zoomPercent}%</Text>
+        <ZoomButton label="+" onPress={() => updateZoom(effectiveScale * 1.5)} />
+      </View>
+      <ScrollView
+        ref={horizontalRef}
+        style={{ flex: 1 }}
+        horizontal
+        nestedScrollEnabled
+        scrollEnabled={!gestureLock}
+        decelerationRate="fast"
+        scrollEventThrottle={32}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ width: scrollContentWidth }}
+        onScrollBeginDrag={() => {
+          if (gestureLockRef.current) return;
+          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+          scrubbingRef.current = true;
+          selectionOwnsViewportRef.current = false;
+          props.onScrubStart();
+        }}
+        onScroll={(event) => {
+          const x = clamp(event.nativeEvent.contentOffset.x, 0, trackWidth);
+          scrollXRef.current = x;
+          setViewportScrollX(x);
+          if (Math.abs(x - visibleCenterX) >= Math.max(120, viewportWidth / 3)) setVisibleCenterX(x);
+          if (scrubbingRef.current && !gestureLockRef.current) seekFromScroll(x);
+        }}
+        onScrollEndDrag={() => {
+          if (!scrubbingRef.current) return;
+          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+          scrubEndTimer.current = setTimeout(finishScrub, 90);
+        }}
+        onMomentumScrollBegin={() => {
+          if (gestureLockRef.current || !scrubbingRef.current) return;
+          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+          scrubbingRef.current = true;
+        }}
+        onMomentumScrollEnd={finishScrub}>
+        <View style={{ width: LABEL_WIDTH + trackWidth, height: '100%', marginLeft: leadingPadding }}>
+          <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
+          <ScrollView key={props.projectId} ref={verticalRef} style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}
+            scrollEventThrottle={16} onScroll={(event) => syncVerticalScroll(event.nativeEvent.contentOffset.y, 'items')}>
+            {shownTracks.map((id) => <Fragment key={id}>{rows.get(id)}</Fragment>)}
           </ScrollView>
         </View>
+      </ScrollView>
+      <ScrollView ref={labelScrollRef} testID="timeline-track-labels" nestedScrollEnabled scrollEnabled={!gestureLock}
+        scrollEventThrottle={16} onScroll={(event) => syncVerticalScroll(event.nativeEvent.contentOffset.y, 'labels')}
+        contentContainerStyle={{ paddingVertical: 1 }} style={{ position: 'absolute', left: 0, width: LABEL_WIDTH, top: 36 + RULER_HEIGHT, bottom: 0, backgroundColor: '#1C1C1E' }}>
+        {shownTracks.map((id) => {
+          const row = rows.get(id);
+          if (!row) return null;
+          return <View key={id} style={{ height: row.props.height, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#1D242C', backgroundColor: row.props.selected ? '#252D22' : '#1C1C1E' }}>
+            {!props.voiceoverMode ? <TimelineTrackHandle label={row.props.label} disabled={!props.onReorderTrack}
+              onStart={() => {
+                const top = orderedTracks.slice(0, orderedTracks.indexOf(id)).reduce((sum, item) => sum + rowHeight(item), 0);
+                trackDragOrigin.current = { id, order: [...orderedTracks], preview: [...orderedTracks], top, scroll: verticalOffsetRef.current, heights: new Map(orderedTracks.map((item) => [item, rowHeight(item)])), dy: 0 };
+                labelScrollRef.current?.getNativeScrollRef()?.measureInWindow((_x, y, _width, height) => { trackViewport.current = { top: y, height }; });
+                setTrackDrag({ id, order: [...orderedTracks] });
+                setItemGestureLock(true);
+              }}
+              onMove={(dy, pageY) => moveTrack(id, dy, pageY)}
+              onFinish={(cancelled) => {
+                const origin = trackDragOrigin.current;
+                trackDragOrigin.current = undefined;
+                setItemGestureLock(false);
+                if (!cancelled && origin && origin.preview.some((item, index) => item !== origin.order[index])) props.onReorderTrack?.(origin.preview);
+                setTrackDrag(undefined);
+              }}
+              onAccessibleMove={(direction) => props.onReorderTrack?.(moveTimelineTrack(orderedTracks, id, orderedTracks.indexOf(id) + direction))} /> : null}
+            <Pressable onPress={row.props.onPressLabel} disabled={!row.props.onPressLabel} accessibilityRole={row.props.onPressLabel ? 'button' : 'text'} accessibilityLabel={row.props.label}
+              style={{ flex: 1, minHeight: 44, justifyContent: 'center', paddingHorizontal: 3 }}>
+              <Text numberOfLines={1} style={{ color: row.props.labelColor, fontSize: 8, fontWeight: '900' }}>{row.props.label}</Text>
+              {row.props.controls}
+            </Pressable>
+          </View>;
+        })}
       </ScrollView>
       {frontTrimPreview ? <View testID="front-trim-feedback" pointerEvents="none" style={{ position: 'absolute', left: 8, right: 8, bottom: 8, zIndex: 12, padding: 8, borderRadius: 10, borderWidth: 1, borderColor: '#64D2FF', backgroundColor: 'rgba(8, 16, 22, 0.96)', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ flex: 1, gap: 5 }}>
@@ -862,6 +945,7 @@ function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'st
 }
 
 function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft: number; bodyWidth: number }) {
+  const intent = useRef<TimelineTouchIntent>('pending');
   const gestureGeometry = useContext(TimelineGestureGeometryContext);
   const claimed = useRef(false);
   const propsRef = useRef(props);
@@ -907,12 +991,20 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
       }
       propsRef.current.onGestureLock(false);
     };
+    const shouldClaim = (_event: unknown, movement: { dx: number; dy: number }) => {
+      if (longPressArmedRef.current) return true;
+      if (intent.current === 'pending') intent.current = timelineTouchIntent(movement.dx, movement.dy);
+      return intent.current === 'horizontal';
+    };
     return PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderTerminationRequest: () => false,
-    onShouldBlockNativeResponder: () => true,
-    onPanResponderGrant: () => {
+    onStartShouldSetPanResponderCapture: () => { intent.current = 'pending'; longPressArmedRef.current = false; return false; },
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: shouldClaim,
+    onMoveShouldSetPanResponderCapture: shouldClaim,
+    onPanResponderTerminationRequest: () => !claimed.current,
+    onShouldBlockNativeResponder: () => claimed.current,
+    onPanResponderGrant: (_event, movement) => {
+      const wasArmed = longPressArmedRef.current;
       claimed.current = true;
       propsRef.current.onPress();
       propsRef.current.onGestureLock(true);
@@ -920,10 +1012,15 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
       gapRef.current = initialGapRef.current;
       originIndexRef.current = propsRef.current.clipIndex;
       reorderIndexRef.current = propsRef.current.clipIndex;
-      modeRef.current = 'none';
-      longPressArmedRef.current = false;
+      modeRef.current = wasArmed ? 'reorder' : movement ? 'gap' : 'none';
+      longPressArmedRef.current = wasArmed;
       clearLongPress();
-      longPressTimerRef.current = setTimeout(() => {
+      if (wasArmed) propsRef.current.onReorderPreview(originIndexRef.current);
+      else if (movement) {
+        gapRef.current = clamp(initialGapRef.current + movement.dx / Math.max(1, propsRef.current.trackWidth) * propsRef.current.durationMs, 0, 60 * 60_000);
+        propsRef.current.onGapPreview(gapRef.current);
+      }
+      if (modeRef.current === 'none') longPressTimerRef.current = setTimeout(() => {
         if (!claimed.current) return;
         longPressArmedRef.current = true;
         modeRef.current = 'reorder';
@@ -958,7 +1055,7 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
       propsRef.current.onGapPreview(gap);
     },
     onPanResponderRelease: () => finishGesture('release'),
-    onPanResponderTerminate: () => finishGesture('terminate'),
+    onPanResponderTerminate: cancelGesture,
     });
   });
 
@@ -976,8 +1073,10 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
       accessible
       accessibilityRole="adjustable"
       accessibilityLabel={`${props.label}. Tap to select. Hold then drag to reorder. Drag horizontally to add or remove empty space before this clip.`}
-      style={{ position: 'absolute', left: moveLeft, width: moveWidth, top: 0, bottom: 0 }}
-    />
+      style={{ position: 'absolute', left: moveLeft, width: moveWidth, top: 0, bottom: 0 }}>
+      <Pressable accessible={false} onPress={props.onPress} onPressIn={() => { longPressArmedRef.current = false; }}
+        onLongPress={() => { if (intent.current === 'pending') longPressArmedRef.current = true; }} delayLongPress={350} style={{ position: 'absolute', inset: 0 }} />
+    </View>
   );
 }
 
@@ -1033,14 +1132,41 @@ function VideoGapBlock(props: { startMs: number; endMs: number; durationMs: numb
   );
 }
 
-function TimelineRow(props: { label: string; labelColor: string; selected?: boolean; controls: React.ReactNode; children: React.ReactNode; onPressLabel?: () => void; onPressTrack?: (x: number) => void; trackWidth: number; height: number }) {
+function TimelineTrackHandle(props: { label: string; disabled: boolean; onStart: () => void; onMove: (dy: number, pageY?: number) => void; onFinish: (cancelled: boolean) => void; onAccessibleMove: (direction: -1 | 1) => void }) {
+  const current = useRef(props);
+  current.current = props;
+  const active = useRef(false);
+  const geometry = useContext(TimelineGestureGeometryContext);
+  const finish = useCallback((cancelled: boolean) => {
+    if (!active.current) return;
+    active.current = false;
+    current.current.onFinish(cancelled);
+  }, []);
+  const [responder] = useState(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_event, movement) => !current.current.disabled && timelineTouchIntent(movement.dx, movement.dy) === 'vertical',
+    onPanResponderGrant: (_event, movement) => { active.current = true; current.current.onStart(); if (movement) current.current.onMove(movement.dy, movement.moveY); },
+    onPanResponderMove: (event, movement) => { if (event.nativeEvent.touches.length > 1) finish(true); else if (active.current) current.current.onMove(movement.dy, movement.moveY); },
+    onPanResponderTerminationRequest: () => !active.current,
+    onPanResponderRelease: () => finish(false),
+    onPanResponderTerminate: () => finish(true),
+  }));
+  useEffect(() => () => finish(true), [finish]);
+  useEffect(() => geometry?.subscribe(() => finish(true)), [geometry, finish]);
+  return <View {...responder.panHandlers} hitSlop={10} accessible accessibilityRole="adjustable" accessibilityLabel={'Reorder ' + props.label + ' track'}
+    accessibilityState={{ disabled: props.disabled }} accessibilityActions={[{ name: 'increment', label: 'Move track down' }, { name: 'decrement', label: 'Move track up' }]}
+    onAccessibilityAction={(event) => { if (!props.disabled && (event.nativeEvent.actionName === 'increment' || event.nativeEvent.actionName === 'decrement')) props.onAccessibleMove(event.nativeEvent.actionName === 'increment' ? 1 : -1); }}
+    style={{ width: 24, minHeight: 44, alignItems: 'center', justifyContent: 'center', opacity: props.disabled ? 0.4 : 1 }}>
+    <View pointerEvents="none" style={{ width: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 2 }}>
+      {Array.from({ length: 8 }, (_, index) => <View key={index} style={{ width: 3, height: 3, borderRadius: 2, backgroundColor: '#9BA6B3' }} />)}
+    </View>
+  </View>;
+}
+
+function TimelineRow(props: { label: string; labelColor: string; selected?: boolean; controls?: React.ReactNode; children: React.ReactNode; onPressLabel?: () => void; onPressTrack?: (x: number) => void; trackWidth: number; height: number }) {
   return (
     <View style={{ width: LABEL_WIDTH + props.trackWidth, height: props.height, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#1D242C' }}>
-      <Pressable onPress={props.onPressLabel} accessibilityRole="button" accessibilityLabel={props.label}
-        style={{ width: LABEL_WIDTH, height: '100%', paddingHorizontal: 6, justifyContent: 'center', gap: 2, backgroundColor: props.selected ? '#252D22' : 'transparent' }}>
-        <Text numberOfLines={1} style={{ color: props.labelColor, fontSize: 8, fontWeight: '900' }}>{props.label}</Text>
-        {props.controls}
-      </Pressable>
+      <View pointerEvents="none" style={{ width: LABEL_WIDTH, height: '100%' }} />
       <View style={{ width: props.trackWidth, height: props.height - 8, borderRadius: 7, backgroundColor: '#171D23', overflow: 'visible' }}>
         <Pressable accessibilityRole="button" accessibilityLabel="Clear selection and seek timeline" onPress={(event) => props.onPressTrack?.(event.nativeEvent.locationX)} style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }} />
         <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}>
@@ -1099,7 +1225,7 @@ function TimedBlock(props: {
   const showLabel = labelWidth >= 16;
   return (
     <View style={{ position: 'absolute', left: interactionLeft, width: interactionWidth, top: props.lane * LANE_HEIGHT, height: LANE_HEIGHT, zIndex: props.selected ? 6 : 1, justifyContent: 'center' }}>
-      <View pointerEvents="none" style={{ position: 'absolute', left: visualLeft, width, top: 0, bottom: 0, overflow: 'hidden', borderRadius: 6, borderWidth: props.selected ? 2 : 1, borderColor: props.selected ? '#FFFFFF' : `${props.color}CC`, backgroundColor: `${props.color}B8` }}>
+      <View pointerEvents="none" style={{ position: 'absolute', left: visualLeft, width, top: 0, bottom: 0, overflow: 'hidden', borderRadius: 6, borderWidth: props.selected ? 2 : 1, borderColor: props.selected ? '#FFFFFF' : `${props.color.slice(0, 7)}CC`, backgroundColor: props.color.length === 9 ? props.color : `${props.color}B8` }}>
         {props.waveformPeaks && props.waveformPeaks.length >= 8 ? (
           <AudioWaveform
             peaks={props.waveformPeaks}
@@ -1144,6 +1270,7 @@ function useTimelineTimingPanHandlers(
   const current = useRef({ owner, edge, onTouchLock });
   current.current = { owner, edge, onTouchLock };
   const gesture = useMemo(() => createTimelineTimingGesture(), []);
+  const intent = useRef<TimelineTouchIntent>('pending');
   const claimed = useRef(false);
   const cancelGesture = useCallback(() => {
     gesture.cancel();
@@ -1156,29 +1283,37 @@ function useTimelineTimingPanHandlers(
       if (claimed.current) current.current.onTouchLock?.(false);
       claimed.current = false;
     };
+    const shouldClaim = (event: { nativeEvent: { touches: readonly unknown[] } }, movement: { dx: number; dy: number }) => {
+      if (event.nativeEvent.touches.length !== 1) return false;
+      if (intent.current === 'pending') intent.current = timelineTouchIntent(movement.dx, movement.dy);
+      return intent.current === 'horizontal';
+    };
     return PanResponder.create({
-      onStartShouldSetPanResponder: (event) => event.nativeEvent.touches.length === 1,
-      onMoveShouldSetPanResponder: () => false,
-      onPanResponderTerminationRequest: () => false,
-      onShouldBlockNativeResponder: () => true,
-      onPanResponderGrant: () => {
+      onStartShouldSetPanResponderCapture: () => { intent.current = 'pending'; return false; },
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: shouldClaim,
+      onMoveShouldSetPanResponderCapture: shouldClaim,
+      onPanResponderTerminationRequest: () => !claimed.current,
+      onShouldBlockNativeResponder: () => claimed.current,
+      onPanResponderGrant: (_event, movement) => {
         claimed.current = true;
         const active = current.current;
         gesture.begin(active.owner, active.edge);
         active.onTouchLock?.(true);
+        if (movement) gesture.move(movement.dx, movement.dy);
       },
       onPanResponderMove: (event, movement) => {
         if (event.nativeEvent.touches.length > 1) {
-          finish();
+          cancelGesture();
           return;
         }
         if (!Number.isFinite(movement.dx) || !Number.isFinite(movement.dy)) return;
         gesture.move(movement.dx, movement.dy);
       },
       onPanResponderRelease: finish,
-      onPanResponderTerminate: finish,
+      onPanResponderTerminate: cancelGesture,
     });
-  }, [gesture]);
+  }, [gesture, cancelGesture]);
   useEffect(() => () => {
     cancelGesture();
   }, [cancelGesture]);
@@ -1225,7 +1360,9 @@ function TimelineTimingGrip(props: TimelineTimingOwner & {
     accessibilityActions={TIMELINE_ACCESSIBILITY_ACTIONS}
     onAccessibilityAction={(event) => adjustTimelineTiming(props, props.edge, event.nativeEvent.actionName)}
     style={{ position: 'absolute', left: props.left, top: 0, width: props.width, height: props.height,
-      alignItems: 'center', justifyContent: 'center', borderRadius: 6 }} />;
+      alignItems: 'center', justifyContent: 'center', borderRadius: 6 }}>
+    <Pressable accessible={false} onPress={props.onPress} style={{ position: 'absolute', inset: 0 }} />
+  </View>;
 }
 
 function AudioWaveform(props: {
@@ -1276,32 +1413,6 @@ function AudioWaveform(props: {
   );
 }
 
-function TinyButton(props: { label: string; danger?: boolean; disabled?: boolean; onPress: () => void }) {
-  const accessibilityLabel = props.label === '↑'
-    ? 'Move layer up'
-    : props.label === '↓'
-      ? 'Move layer down'
-      : 'Remove layer';
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      disabled={props.disabled}
-      onPress={props.onPress}
-      hitSlop={4}
-      style={{
-        width: 26,
-        height: 26,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 7,
-        backgroundColor: props.danger ? '#3A2028' : '#252C34',
-        opacity: props.disabled ? 0.25 : 1,
-      }}>
-      <Text style={{ color: props.danger ? '#FF7C8D' : '#D7E0E8', fontSize: 18, lineHeight: 21, fontWeight: '900' }}>{props.label}</Text>
-    </Pressable>
-  );
-}
 function ZoomButton(props: { label: string; onPress: () => void }) { return <Pressable accessibilityRole="button" accessibilityLabel={props.label === '+' ? 'Zoom timeline in' : 'Zoom timeline out'} onPress={props.onPress} style={{ width: 42, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: '#2C2C2E' }}><Text style={{ color: '#64D2FF', fontSize: 20, fontWeight: '600' }}>{props.label}</Text></Pressable>; }
 function formatRulerTime(ms: number, intervalMs: number) { const minutes = Math.floor(ms / 60_000); const seconds = (ms % 60_000) / 1000; return intervalMs < 1000 ? `${minutes}:${seconds.toFixed(intervalMs < 500 ? 2 : 1).padStart(4, '0')}` : `${minutes}:${Math.floor(seconds).toString().padStart(2, '0')}`; }
 function formatGap(ms: number) { return `${(Math.max(0, ms) / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`; }

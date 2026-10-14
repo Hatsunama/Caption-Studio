@@ -141,8 +141,8 @@ test('vertical micro-jitter cannot kill a later horizontal timeline drag', () =>
   gripHarness.render(gripHarness.ui.TimelineTimingGrip, props);
   const handlers = gripHarness.result.props;
   handlers.onPanResponderGrant();
-  handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 2, dy: 12 });
-  handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 20, dy: 12 });
+  handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 2, dy: 6 });
+  handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 20, dy: 6 });
   handlers.onPanResponderRelease();
   assert.equal(calls.filter((call) => call === 'begin').length, 1);
   assert.ok(calls.some((call) => Array.isArray(call) && call[0] === 'end'));

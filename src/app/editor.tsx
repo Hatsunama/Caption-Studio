@@ -28,6 +28,7 @@ import {
 } from 'react-native';
 
 import { AnimationBrowser } from '@/components/editor/animation-browser';
+import { setTimelineTrackOrder } from '@/lib/timeline-tracks';
 import { projectMediaRecoveryPrompts } from '@/components/editor/project-media-recovery-prompts';
 import { exportProgressPresentation } from '@/lib/export-progress-presentation';
 import { ensureProjectVideoAccess } from '@/services/project-media-access';
@@ -97,7 +98,6 @@ import {
   deleteVideoClip,
   deleteVisualLayer,
   duplicateVisualLayer,
-  moveVisualLayer,
   MAX_PROJECT_WATERMARKS,
   setCanvasPreset as applyCanvasPreset,
   replaceVisibleCaptionScript,
@@ -292,12 +292,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const registerLanguagePickerBackRequest = useCallback((request: (() => void) | undefined) => {
     languagePickerBackRequestRef.current = request;
   }, []);
+  const [timelineRevealRequest, setTimelineRevealRequest] = useState(0);
   const scriptExit = useScriptEditorExit(scriptEditorOpen, editorScrollRef, () => {
     setScriptKeyboardOpen(false);
     setScriptEditingCaptionId(undefined);
     setScriptDraftCaptions(null);
     setScriptEditorOpen(false);
-  });
+  }, () => setTimelineRevealRequest((request) => request + 1));
   const [dualCaptionEditorOpen, setDualCaptionEditorOpen] = useState(false);
   const [localTranslationSupported, setLocalTranslationSupported] = useState<boolean>();
   const [dualLanguagePickerOpen, setDualLanguagePickerOpen] = useState(false);
@@ -984,16 +985,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const chooseAnimation = (id: CaptionAnimationId) => {
     const preset = findAnimationPreset(id);
-    if (selectedTextLayer) {
-      updateTextLayerStyle(selectedTextLayer.id, {
-        animation: { id, intensity: preset.intensity, durationMs: preset.durationMs },
-      }, true);
-      return;
-    }
+    if (selectedTextLayer) return;
     if (!selectedCaptionId && animationScope !== 'all') {
       Alert.alert(
         'Choose Text From The Timeline First',
-        'Tap a caption or text layer in the timeline, or switch scope to All captions.',
+        'Tap a caption in the timeline, or switch scope to All captions.',
       );
       return;
     }
@@ -1402,13 +1398,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
   };
 
-  const moveLayer = (layerId: string, direction: -1 | 1) => {
+  const reorderTimelineTracks = (order: string[]) => {
+    const before = editorSession.current();
+    const next = setTimelineTrackOrder(before, order);
+    if (next === before) return;
     pushUndo();
-    setProject((current) => {
-      const next = moveVisualLayer(current, layerId, direction);
-      persistProjectInBackground();
-      return next;
-    });
+    setProject(next);
+    persistProjectInBackground();
   };
 
   const deleteLayer = (layerId: string) => {
@@ -2240,8 +2236,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onItemTimingChange={updateTimelineItemTiming}
           onTimingChangeStart={beginHistoryInteraction}
           onTimingChangeEnd={finishHistoryInteraction}
-          onMoveLayer={moveLayer}
-          onDeleteLayer={deleteLayer}
+          trackOrder={project.timelineTrackOrder}
+          onReorderTrack={reorderTimelineTracks}
+          revealRequest={timelineRevealRequest}
           onAddVideos={() => { void addVideosToTimeline(); }}
           onSelectAudioClip={(clipId) => selectEditorObject({ kind: 'audio', id: clipId })}
           voiceoverMode={voiceoverOpen}
@@ -2383,7 +2380,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             )}
             {selectedTextLayer ? (
               <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: chrome.hairline, paddingTop: 12 }}>
-                <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>TEXT ANIMATION</Text>
+                <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>TEXT SPACING</Text>
                 <AnimationBrowser selected={selectedAnimationId} textLayerSelected scope={animationScope} hasSelectedCaption={false} lineHeight={selectedLineHeight} onScopeChange={setAnimationScope} onSelect={chooseAnimation} onLineHeightStart={beginLineHeightChange} onLineHeightChange={changeLineHeight} onLineHeightEnd={finishLineHeightChange} />
               </View>
             ) : null}
@@ -2446,7 +2443,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               </PersistedHorizontalScroll>
             )}
             {!selectedImageLayer ? <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: chrome.hairline, paddingTop: 12 }}>
-              <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>{selectedTextLayer ? 'TEXT ANIMATION' : 'CAPTION ANIMATION'}</Text>
+              <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>{selectedTextLayer ? 'TEXT SPACING' : 'CAPTION ANIMATION'}</Text>
               <AnimationBrowser
                 selected={selectedAnimationId}
                 scope={animationScope}

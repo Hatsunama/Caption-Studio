@@ -408,6 +408,7 @@ export type CaptionProject = {
   captionGeometryMode?: 'legacy-cue' | 'track';
   projectStyle: CaptionStyle;
   layers: VisualLayer[];
+  timelineTrackOrder?: string[];
   clips: VideoClip[];
   audioSources: ProjectAudioSource[];
   audioClips: AudioClip[];

@@ -1,4 +1,5 @@
 import { ANIMATION_PRESETS } from '@/lib/animation-presets';
+import { decodeTimelineTrackOrder } from '@/lib/timeline-tracks';
 import { normalizeCaptionLineHeight } from '@/lib/caption-line-spacing';
 import { positiveLayerScale } from '@/lib/layer-geometry';
 import { isAndroidContentUri } from '@/lib/project-file-uri-boundary';
@@ -152,6 +153,7 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
     }),
     projectStyle,
     layers,
+    ...(candidate.timelineTrackOrder === undefined ? {} : { timelineTrackOrder: decodeTimelineTrackOrder(candidate.timelineTrackOrder) }),
     clips,
     audioSources,
     audioClips,

@@ -30,6 +30,8 @@ export function AnimationBrowser(props: {
     [filter],
   );
 
+  if (props.textLayerSelected) return <LineSpacingControl value={props.lineHeight} onStart={props.onLineHeightStart} onChange={props.onLineHeightChange} onEnd={props.onLineHeightEnd} />;
+
   return (
     <View style={{ gap: 9 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
