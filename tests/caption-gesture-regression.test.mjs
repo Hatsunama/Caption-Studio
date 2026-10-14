@@ -38,6 +38,10 @@ function harness() {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PanResponder: { create: (handlers) => ({ panHandlers: handlers }) } };
       if (name === 'expo-image') return { Image: 'Image' };
+      if (name === './timeline-native-gesture') return {
+        createTimelineNativeScrollGestures: () => [], TimelineNativeGestureContext: { Provider: 'Provider' },
+        TimelineNativeGestureView: 'View', TimelineNativeScrollView: 'ScrollView',
+      };
       if (name.startsWith('@/services/')) return {};
       if (name.startsWith('@/lib/')) return requireLocal('../src/lib/' + name.slice(6) + '.ts');
       throw new Error('Unexpected module: ' + name);
@@ -120,7 +124,7 @@ test('a tap selects without mutating timing, while a body drag moves the same it
   const props = item({ edge: 'move', left: 32, width: 32, height: 32,
     onPress() { calls.push('select'); }, onChangeStart() { calls.push('begin'); }, onChange(...change) { calls.push(change); }, onEnd() { calls.push('end'); } });
   gripHarness.render(gripHarness.ui.TimelineTimingGrip, props);
-  let handlers = gripHarness.result.props;
+  let handlers = gripHarness.result.props.panHandlers;
   handlers.onPanResponderGrant();
   handlers.onPanResponderRelease();
   assert.deepEqual(calls, ['select']);
@@ -139,7 +143,7 @@ test('vertical micro-jitter cannot kill a later horizontal timeline drag', () =>
   const props = item({ edge: 'end', left: 32, width: 32, height: 32,
     onPress() { calls.push('select'); }, onChangeStart() { calls.push('begin'); }, onChange(...change) { calls.push(change); }, onEnd() { calls.push('end'); } });
   gripHarness.render(gripHarness.ui.TimelineTimingGrip, props);
-  const handlers = gripHarness.result.props;
+  const handlers = gripHarness.result.props.panHandlers;
   handlers.onPanResponderGrant();
   handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 2, dy: 6 });
   handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 20, dy: 6 });

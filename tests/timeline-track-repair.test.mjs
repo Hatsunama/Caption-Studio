@@ -49,6 +49,10 @@ function harness() {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PanResponder: { create: (panHandlers) => ({ panHandlers }) } };
       if (name === 'expo-image') return { Image: 'Image' };
+      if (name === './timeline-native-gesture') return {
+        createTimelineNativeScrollGestures: () => [], TimelineNativeGestureContext: { Provider: 'Provider' },
+        TimelineNativeGestureView: 'View', TimelineNativeScrollView: 'ScrollView',
+      };
       if (name === '@/services/timeline-haptics') return { timelineHaptic: (kind) => haptics.push(kind) };
       if (name.startsWith('@/services/')) return {};
       if (name.startsWith('@/lib/')) return requireLocal('../src/lib/' + name.slice(6) + '.ts');
@@ -171,11 +175,47 @@ test('video gap movement observes boundaries and cancellation stops further feed
   const node = h.exports.VideoMoveGrip({ startMs: 1000, endMs: 2000, leadingGapMs: 0, clipIndex: 1, clipCount: 2,
     bodyLeft: 0, bodyWidth: 100, trackWidth: 1000, durationMs: 5000, label: 'clip', getFeedbackBoundaries: () => [2500],
     onPress() {}, onGestureLock() {}, onGapPreview() {}, onGestureCancel() {}, onGapCommit() {} });
-  node.props.onPanResponderGrant({}, { dx: 110, dy: 0 });
+  node.props.panHandlers.onPanResponderGrant({}, { dx: 110, dy: 0 });
   assert.deepEqual(h.haptics, ['boundary']);
-  node.props.onPanResponderTerminate();
-  node.props.onPanResponderMove({}, { dx: 10, dy: 0 });
+  node.props.panHandlers.onPanResponderTerminate();
+  node.props.panHandlers.onPanResponderMove({}, { dx: 10, dy: 0 });
   assert.deepEqual(h.haptics, ['boundary']);
+});
+
+test('native timing callbacks use the same domain edit and cancellation boundary', () => {
+  const h = harness();
+  const calls = [];
+  const native = h.exports.useTimelineTimingPanHandlers({
+    startMs: 1000, endMs: 2000, durationMs: 5000, trackWidth: 1000,
+    onPress: () => calls.push('select'), onChangeStart: () => calls.push('begin'),
+    onChange: (edge, startMs, endMs) => calls.push([edge, startMs, endMs]),
+    onEnd: () => calls.push('commit'), onCancel: () => calls.push('cancel'),
+  }, 'end').nativeCallbacks;
+  native.begin(20, 0);
+  native.move(40, 0, 1);
+  native.move(60, 0, 2);
+  native.move(80, 0, 1);
+  native.finish();
+  assert.deepEqual(calls, ['select', 'begin', ['end', 1000, 2100], ['end', 1000, 2200], 'cancel']);
+});
+
+test('native video hold still selects reorder rather than inserting a gap', () => {
+  const h = harness();
+  const calls = [];
+  const node = h.exports.VideoMoveGrip({ startMs: 0, endMs: 1000, leadingGapMs: 0,
+    clipIndex: 0, clipCount: 2, bodyLeft: 0, bodyWidth: 100, trackWidth: 1000, durationMs: 5000,
+    onPress() {}, onGestureLock() {}, onGestureCancel() {},
+    onGapPreview: () => calls.push('gap'), onReorderPreview: (index) => calls.push(['preview', index]),
+    onReorderCommit: (index) => calls.push(['commit', index]),
+  });
+  const native = node.props.nativeCallbacks;
+  native.prepare();
+  node.props.children.props.onLongPress();
+  assert.equal(native.shouldActivate(), true);
+  native.begin(0, 1);
+  native.move(100, 1, 1);
+  native.finish();
+  assert.deepEqual(calls, [['preview', 0], ['preview', 1], ['commit', 1]]);
 });
 
 test('video trim feedback cannot signal positions beyond the available source', () => {
@@ -186,11 +226,11 @@ test('video trim feedback cannot signal positions beyond the available source', 
     clip: { sourceStartMs: 0, sourceEndMs: 1000, availableSourceStartMs: 0, availableSourceEndMs: 1500, playbackRate: 1 },
     getFeedbackBoundaries: () => [2500, 3000], onPress() {}, onGestureLock() {},
     onTrimPreview: (_edge, ms) => previews.push(ms), onTrimCommit() {}, onGestureCancel() {} });
-  node.props.onPanResponderGrant();
-  node.props.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 110, dy: 0 });
+    node.props.panHandlers.onPanResponderGrant();
+    node.props.panHandlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 110, dy: 0 });
   assert.equal(previews.at(-1), 1500);
   assert.deepEqual(h.haptics, ['boundary']);
-  node.props.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 300, dy: 0 });
+    node.props.panHandlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 300, dy: 0 });
   assert.equal(previews.at(-1), 1500);
   assert.deepEqual(h.haptics, ['boundary']);
 });
@@ -254,9 +294,9 @@ test('native touch termination discards staged video gap', () => {
     onPress() {}, onGestureLock() {}, onGapPreview() {}, onGapCommit() { calls.push('commit'); },
     onGestureCancel() { calls.push('cancel'); }, onReorderCancel() { calls.push('cancel'); },
   });
-  node.props.onPanResponderGrant();
-  node.props.onPanResponderMove({}, { dx: 30, dy: 0 });
-  node.props.onPanResponderTerminate();
+  node.props.panHandlers.onPanResponderGrant();
+  node.props.panHandlers.onPanResponderMove({}, { dx: 30, dy: 0 });
+  node.props.panHandlers.onPanResponderTerminate();
   assert.deepEqual(calls, ['cancel']);
 });
 
