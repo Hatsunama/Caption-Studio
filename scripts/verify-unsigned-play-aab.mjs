@@ -10,12 +10,13 @@ import { assertAndroidAbiCoverage } from './verify-android-abi.mjs';
 
 export const pin = Object.freeze({
   repository: 'Hatsunama/Caption-Studio',
-  sourceCommit: 'eea3fe3afdc1382be2ae1e8de2b7b53c2003f23b',
-  sourceTree: '16d28ccf0b881f745617ed25a07383370de5af92',
+  sourceCommit: '67c0917d8b0922aac22b3f6a7a0c633677915b36',
+  sourceTree: '90160ababb9d8df10bc07edab19886c27858f034',
   package: 'com.xmilo_at_your_side.caption_studio',
-  version: '1.4.129', versionCode: 141,
-  approvalBasis: 'explicit-source-build-only',
-  referenceApkRunId: '38149747095',
+  version: '1.4.132', versionCode: 144,
+  approvalBasis: 'device-verified-apk-source',
+  referenceApkRunId: '38754384418',
+  referenceApkSha256: 'e12f2caa6b95cae973ccaef06b435a432617add693baef7fb009c0f915586ffd',
 });
 const playCertificate = '50d77dfe5b3239d2fa86856613cb193898662a6a9dad2103812ea099ba102ddb';
 const apkCertificate = 'd02d23b28cbc615e3686d181aedefbbe5de993a0b6ba3f8e4ea2b6160211b35f';

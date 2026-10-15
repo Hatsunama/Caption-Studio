@@ -1,7 +1,7 @@
-name: Unsigned Play AAB build-only 1.4.129
+name: Unsigned Play AAB build-only 1.4.132
 on:
   push:
-    branches: [codex/build-only-play-129-141]
+    branches: [codex/build-only-play-132-144]
   pull_request:
     paths:
       - .github/workflows/unsigned-play-aab.yml
@@ -12,7 +12,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: unsigned-play-129-141-${{ github.ref }}
+  group: unsigned-play-132-144-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   regressions:
@@ -36,7 +36,7 @@ jobs:
     if: >-
       github.repository == 'Hatsunama/Caption-Studio' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      (github.ref == 'refs/heads/codex/build-only-play-129-141' || github.ref == 'refs/heads/main')
+      (github.ref == 'refs/heads/codex/build-only-play-132-144' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -49,7 +49,7 @@ jobs:
       - name: Check out exact approved product source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: eea3fe3afdc1382be2ae1e8de2b7b53c2003f23b
+          ref: 67c0917d8b0922aac22b3f6a7a0c633677915b36
           path: release-source
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -74,7 +74,7 @@ jobs:
           npm run lint
           npx expo install --check
           npx --yes expo-doctor@1.20.4
-      - name: Stamp same configuration as approved 129/141 APK build
+      - name: Stamp same configuration as device-verified 132/144 APK build
         run: node scripts/verify-unsigned-play-aab.mjs --prepare release-source
       - name: Generate clean native project and verify original release configuration
         working-directory: release-source
