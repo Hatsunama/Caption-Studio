@@ -685,7 +685,7 @@ export function LayerTimeline(props: {
           </TimelineNativeScrollView>
         </View>
       </TimelineNativeScrollView>
-      <ScrollView ref={labelScrollRef} testID="timeline-track-labels" nestedScrollEnabled scrollEnabled={!gestureLock}
+      <TimelineNativeScrollView nativeGesture={nativeScrollGestures[2]} ref={labelScrollRef} testID="timeline-track-labels" nestedScrollEnabled scrollEnabled={!gestureLock}
         scrollEventThrottle={16} onScroll={(event) => syncVerticalScroll(event.nativeEvent.contentOffset.y, 'labels')}
         contentContainerStyle={{ paddingVertical: 1 }} style={{ position: 'absolute', left: 0, width: LABEL_WIDTH, top: 36 + RULER_HEIGHT, bottom: 0, backgroundColor: '#1C1C1E' }}>
         {shownTracks.map((id) => {
@@ -717,7 +717,7 @@ export function LayerTimeline(props: {
             </Pressable>
           </View>;
         })}
-      </ScrollView>
+      </TimelineNativeScrollView>
       {frontTrimPreview ? <View testID="front-trim-feedback" pointerEvents="none" style={{ position: 'absolute', left: 8, right: 8, bottom: 8, zIndex: 12, padding: 8, borderRadius: 10, borderWidth: 1, borderColor: '#64D2FF', backgroundColor: 'rgba(8, 16, 22, 0.96)', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ flex: 1, gap: 5 }}>
           <Text style={{ color: '#64D2FF', fontSize: 9, fontWeight: '900' }}>NEW START · {formatRulerTime(frontTrimPreview.sourceStartMs, 100)}</Text>
@@ -1218,14 +1218,29 @@ function TimelineTrackHandle(props: { label: string; disabled: boolean; onStart:
   }));
   useEffect(() => () => finish(true), [finish]);
   useEffect(() => geometry?.subscribe(() => finish(true)), [geometry, finish]);
-  return <View {...responder.panHandlers} hitSlop={10} accessible accessibilityRole="adjustable" accessibilityLabel={'Reorder ' + props.label + ' track'}
+  const [nativeCallbacks] = useState(() => ({
+    axis: 'vertical' as const,
+    begin: (_dx: number, dy: number, _reorder?: boolean, pageY?: number) => {
+      if (current.current.disabled) return;
+      active.current = true;
+      current.current.onStart();
+      current.current.onMove(dy, pageY);
+    },
+    move: (_dx: number, dy: number, touches: number, pageY?: number) => {
+      if (touches !== 1) finish(true);
+      else if (active.current) current.current.onMove(dy, pageY);
+    },
+    finish: () => finish(false),
+    cancel: () => finish(true),
+  }));
+  return <TimelineNativeGestureView panHandlers={responder.panHandlers} nativeCallbacks={nativeCallbacks} nativeDisabled={props.disabled} hitSlop={10} accessible accessibilityRole="adjustable" accessibilityLabel={'Reorder ' + props.label + ' track'}
     accessibilityState={{ disabled: props.disabled }} accessibilityActions={[{ name: 'increment', label: 'Move track down' }, { name: 'decrement', label: 'Move track up' }]}
     onAccessibilityAction={(event) => { if (!props.disabled && (event.nativeEvent.actionName === 'increment' || event.nativeEvent.actionName === 'decrement')) props.onAccessibleMove(event.nativeEvent.actionName === 'increment' ? 1 : -1); }}
     style={{ width: 24, minHeight: 44, alignItems: 'center', justifyContent: 'center', opacity: props.disabled ? 0.4 : 1 }}>
     <View pointerEvents="none" style={{ width: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 2 }}>
       {Array.from({ length: 8 }, (_, index) => <View key={index} style={{ width: 3, height: 3, borderRadius: 2, backgroundColor: '#9BA6B3' }} />)}
     </View>
-  </View>;
+  </TimelineNativeGestureView>;
 }
 
 function TimelineRow(props: { label: string; labelColor: string; selected?: boolean; controls?: React.ReactNode; children: React.ReactNode; onPressLabel?: () => void; onPressTrack?: (x: number) => void; trackWidth: number; height: number }) {

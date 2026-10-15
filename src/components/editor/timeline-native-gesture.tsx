@@ -20,7 +20,7 @@ function invalidateNativePan(state: SharedValue<TimelineNativePanState>, epoch: 
 }
 
 export function createTimelineNativeScrollGestures(): NativeScrolls {
-  return Platform.OS === 'android' ? [Gesture.Native(), Gesture.Native()] : [];
+  return Platform.OS === 'android' ? [Gesture.Native(), Gesture.Native(), Gesture.Native()] : [];
 }
 
 export function TimelineNativeScrollView({ nativeGesture, ...props }: ComponentPropsWithRef<typeof ScrollView> & {
@@ -30,9 +30,10 @@ export function TimelineNativeScrollView({ nativeGesture, ...props }: ComponentP
   return nativeGesture ? <GestureDetector gesture={nativeGesture}>{view}</GestureDetector> : view;
 }
 
-export function TimelineNativeGestureView({ panHandlers, nativeCallbacks, ...props }: ViewProps & {
+export function TimelineNativeGestureView({ panHandlers, nativeCallbacks, nativeDisabled, ...props }: ViewProps & {
   panHandlers: PanResponderInstance['panHandlers'];
   nativeCallbacks: TimelineNativePanCallbacks;
+  nativeDisabled?: boolean;
 }) {
   const scrolls = useContext(TimelineNativeGestureContext);
   const geometry = useContext(TimelineNativeGeometryContext);
@@ -42,6 +43,7 @@ export function TimelineNativeGestureView({ panHandlers, nativeCallbacks, ...pro
     ? createTimelineNativePan(Gesture.Pan(), nativeCallbacks, scrolls, {
       state, deliver: delivery.dispatch, schedule: scheduleOnRN,
     }) : undefined);
+  if (nativePan && nativeDisabled !== undefined) nativePan.enabled(!nativeDisabled);
   useEffect(() => {
     delivery.mount();
     return () => {
