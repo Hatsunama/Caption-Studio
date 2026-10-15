@@ -1,4 +1,5 @@
 import { relinkProjectVideo } from '@/lib/project-media-relink';
+import { requiredProjectVideoSources } from '@/lib/project-source-frame';
 import type { ProbedVideoInfo } from '@/lib/media-validation';
 import type { CaptionProject, ProjectVideoSource } from '@/types/project';
 import type { ProjectVideoAccessStatus, ProjectVideoDocument } from '@/types/project-media-recovery';
@@ -19,7 +20,7 @@ export async function recoverProjectVideoAccess(project: CaptionProject, ports: 
   const checked = new Set<string>();
   let persisted = false;
   try {
-  for (const original of project.sources) {
+  for (const original of requiredProjectVideoSources(project)) {
     const source = recovered.sources.find((candidate) => candidate.id === original.id)!;
     if (checked.has(source.uri)) continue;
     const { status } = await ports.check(source.uri);

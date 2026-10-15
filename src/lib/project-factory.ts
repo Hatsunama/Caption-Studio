@@ -1,5 +1,6 @@
 import { cloneVideoTransform } from '@/lib/video-transform';
 import { validatedSourceFrameRate } from '@/lib/video-source-metadata';
+import { orientedVideoSize } from '@/lib/project-source-frame';
 import {
   DEFAULT_CAPTION_STYLE,
   DEFAULT_VIDEO_TRANSFORM,
@@ -21,7 +22,7 @@ export function createCaptionProject(options: {
     frameRate: validatedSourceFrameRate(source.frameRate, source.displayName),
   }));
   const primary = sources[0];
-  const displaySize = orientedSize(primary.width, primary.height, primary.rotation);
+  const displaySize = orientedVideoSize(primary);
   return {
     schemaVersion: 2,
     id: options.id,
@@ -92,10 +93,3 @@ export function createVideoClip(
   };
 }
 
-function orientedSize(width: number, height: number, rotation: number) {
-  const safeWidth = Math.max(1, width);
-  const safeHeight = Math.max(1, height);
-  return Math.abs(rotation) % 180 === 90
-    ? { width: safeHeight, height: safeWidth }
-    : { width: safeWidth, height: safeHeight };
-}

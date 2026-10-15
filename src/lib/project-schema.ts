@@ -1,4 +1,5 @@
 import { ANIMATION_PRESETS } from '@/lib/animation-presets';
+import { activeSourceFrame, orientedVideoSize, resolveSourceCanvas } from '@/lib/project-source-frame';
 import { decodeTimelineTrackOrder } from '@/lib/timeline-tracks';
 import { normalizeCaptionLineHeight } from '@/lib/caption-line-spacing';
 import { positiveLayerScale } from '@/lib/layer-geometry';
@@ -157,7 +158,8 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
     clips,
     audioSources,
     audioClips,
-    canvas: decodeCanvas(candidate.canvas, sources[0]),
+    canvas: resolveSourceCanvas({ sources, clips,
+      canvas: decodeCanvas(candidate.canvas, activeSourceFrame({ sources, clips }) ?? sources[0]) }),
     videoTransform: legacyVideoTransform,
     backgroundReplacement: decodeBackgroundReplacement(candidate.backgroundReplacement),
     export: decodeExport(candidate.export),
@@ -816,7 +818,8 @@ function decodeAnimationPatch(value: unknown, label: string) {
 
 function decodeCanvas(value: unknown, primary: ProjectVideoSource): CaptionProject['canvas'] {
   if (value === undefined) {
-    return { preset: 'source', aspectWidth: primary.width, aspectHeight: primary.height, backgroundColor: '#000000' };
+    const { width, height } = orientedVideoSize(primary);
+    return { preset: 'source', aspectWidth: width, aspectHeight: height, backgroundColor: '#000000' };
   }
   const canvas = record(value, 'project canvas');
   return {

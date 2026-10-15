@@ -153,6 +153,7 @@ test('a compatible file with unknown provider size still requires explicit ident
 test('a failed later source does not partially rewrite a multi-source project', async () => {
   const project = fixture();
   project.sources.push({ ...project.sources[0], id: 'source2', uri: 'content://provider/lost' });
+  project.clips.push({ ...project.clips[0], id: 'clip2', sourceId: 'source2' });
   const original = structuredClone(project);
   await assert.rejects(recoverProjectVideoAccess(project, ports({
     check: async (uri) => ({ status: uri === newUri ? 'ready' : 'permission-required' }),

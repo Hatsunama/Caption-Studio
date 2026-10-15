@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { projectTimelineDuration } from '@/lib/project-timeline';
+import { requiredProjectVideoSources, resolveSourceCanvas } from '@/lib/project-source-frame';
 import { createCaptionProject, createVideoClip } from '@/lib/project-factory';
 import { addAudioSourceToProject } from '@/lib/audio-timeline';
 import { buildClipTimeline } from '@/lib/video-timeline';
@@ -102,7 +103,12 @@ export async function loadProjectForEditing(projectId: string, prompts: ProjectM
       reconcileProjectOwnedFiles(loadedProject.id, collectProjectOwnedUris(loadedProject)),
     ]);
     const sources = [];
+    const requiredIds = new Set(requiredProjectVideoSources(loadedProject).map((source) => source.id));
     for (const source of loadedProject.sources) {
+      if (!requiredIds.has(source.id)) {
+        sources.push(source);
+        continue;
+      }
       const thumbnailUri = await ensureProjectThumbnail({
         projectId: loadedProject.id,
         sourceId: source.id,
@@ -144,6 +150,7 @@ export async function appendVideosToProject(
       )),
     ],
   };
+  next.canvas = resolveSourceCanvas(next);
   onProgress?.({ stage: 'saving', completed: sources.length, total: sources.length, detail: 'Adding videos to the timeline' });
   try {
     await saveProject(next);

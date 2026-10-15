@@ -3,7 +3,7 @@ import type { CaptionProject } from '@/types/project';
 import type { ProjectLibraryProject } from '@/types/project-library';
 
 export function projectLibraryProject(project: CaptionProject): ProjectLibraryProject {
-  const source = project.sources[0];
+  const source = project.sources.find((candidate) => candidate.id === project.clips[0]?.sourceId);
   return {
     id: project.id,
     name: project.name,
@@ -26,7 +26,7 @@ export function applyProjectSourceThumbnail(
   thumbnailUri: string,
 ): CaptionProject | null {
   const source = project.sources.find((candidate) => candidate.id === sourceId);
-  if (!source || source.uri !== sourceUri) return null;
+  if (!source || source.uri !== sourceUri || project.clips[0]?.sourceId !== sourceId) return null;
   return {
     ...project,
     sources: project.sources.map((candidate) => candidate.id === sourceId
