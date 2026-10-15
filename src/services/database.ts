@@ -48,7 +48,6 @@ async function initializeDatabase() {
       );
     `);
     await ensureProjectLibrarySchema(database);
-    await backfillProjectLibraryMetadata(database);
     return database;
   } catch (error) {
     await database.closeAsync().catch(() => undefined);
@@ -67,7 +66,7 @@ export async function saveProject(project: CaptionProject) {
       `INSERT INTO projects (
          id, name, source_uri, updated_at, project_json, created_at, source_id,
          thumbnail_uri, duration_ms, lifecycle_status, clip_count, caption_count, metadata_version
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name,
          source_uri = excluded.source_uri,
@@ -80,7 +79,7 @@ export async function saveProject(project: CaptionProject) {
          lifecycle_status = excluded.lifecycle_status,
          clip_count = excluded.clip_count,
          caption_count = excluded.caption_count,
-         metadata_version = 2`,
+         metadata_version = 3`,
       project.id,
       project.name,
       summary.sourceUri ?? '',
@@ -127,7 +126,7 @@ export async function updateProjectSourceThumbnail(options: {
       await transaction.runAsync(
         `UPDATE projects SET
            project_json = ?, source_uri = ?, source_id = ?, thumbnail_uri = ?,
-           duration_ms = ?, lifecycle_status = ?, clip_count = ?, caption_count = ?, metadata_version = 2
+           duration_ms = ?, lifecycle_status = ?, clip_count = ?, caption_count = ?, metadata_version = 3
          WHERE id = ?`,
         serializeProjectSnapshot(prepared),
         summary.sourceUri ?? '',
@@ -168,12 +167,13 @@ export async function deleteProjectRecord(projectId: string): Promise<CaptionPro
 
 export async function listProjectRecords(): Promise<ProjectRecordSummary[]> {
   const database = await getDatabase();
+  await backfillProjectLibraryMetadata(database);
   const rows = await database.getAllAsync<ProjectLibraryRow>(
     `SELECT id, name, source_uri, updated_at, created_at, source_id, thumbnail_uri,
             duration_ms, lifecycle_status, clip_count, caption_count, metadata_version
        FROM projects ORDER BY updated_at DESC`,
   );
-  return rows.map((row) => row.metadata_version === 2
+  return rows.map((row) => row.metadata_version === 3
     ? {
         kind: 'project' as const,
         project: {
@@ -279,32 +279,54 @@ async function ensureProjectLibrarySchema(database: SQLite.SQLiteDatabase) {
 }
 
 async function backfillProjectLibraryMetadata(database: SQLite.SQLiteDatabase) {
-  const rows = await database.getAllAsync<{ id: string; project_json: string; metadata_version: number }>(
-    'SELECT id, project_json, metadata_version FROM projects WHERE metadata_version <> 2',
-  );
-  for (const row of rows) {
-    try {
-      const project = decodeProjectRow(row);
-      const summary = projectLibraryProject(project);
-      await database.runAsync(
-        `UPDATE projects SET name = ?, source_uri = ?, updated_at = ?, created_at = ?, source_id = ?,
-           thumbnail_uri = ?, duration_ms = ?, lifecycle_status = ?, clip_count = ?, caption_count = ?, metadata_version = 2
-         WHERE id = ?`,
-        project.name,
-        summary.sourceUri ?? '',
-        project.updatedAt,
-        project.createdAt,
-        summary.sourceId ?? null,
-        summary.thumbnailUri ?? null,
-        summary.durationMs,
-        summary.lifecycleStatus,
-        summary.clipCount,
-        summary.captionCount,
-        project.id,
-      );
-    } catch {
-      await database.runAsync('UPDATE projects SET metadata_version = -1 WHERE id = ?', row.id);
+  // Run after initialization: a queued save can itself be awaiting getDatabase().
+  // Page identifiers only, then decode one current snapshot under its write owner.
+  let afterId: string | null = null;
+  while (true) {
+    const rows: { id: string }[] = await database.getAllAsync<{ id: string }>(
+      `SELECT id FROM projects WHERE metadata_version <> 3
+         AND (? IS NULL OR id > ?) ORDER BY id LIMIT 20`,
+      afterId,
+      afterId,
+    );
+    if (rows.length === 0) return;
+    for (const { id } of rows) {
+      await enqueueProjectWrite(id, async () => {
+        if (deletedProjectIds.has(id)) return;
+        await database.withExclusiveTransactionAsync(async (transaction) => {
+          const row = await transaction.getFirstAsync<{ project_json: string; metadata_version: number }>(
+            'SELECT project_json, metadata_version FROM projects WHERE id = ?',
+            id,
+          );
+          if (!row || row.metadata_version === 3) return;
+          let project: CaptionProject;
+          try {
+            project = decodeProjectRow(row);
+          } catch {
+            await transaction.runAsync('UPDATE projects SET metadata_version = -1 WHERE id = ?', id);
+            return;
+          }
+          const summary = projectLibraryProject(project);
+          await transaction.runAsync(
+            `UPDATE projects SET name = ?, source_uri = ?, updated_at = ?, created_at = ?, source_id = ?,
+               thumbnail_uri = ?, duration_ms = ?, lifecycle_status = ?, clip_count = ?, caption_count = ?, metadata_version = 3
+             WHERE id = ?`,
+            project.name,
+            summary.sourceUri ?? '',
+            project.updatedAt,
+            project.createdAt,
+            summary.sourceId ?? null,
+            summary.thumbnailUri ?? null,
+            summary.durationMs,
+            summary.lifecycleStatus,
+            summary.clipCount,
+            summary.captionCount,
+            id,
+          );
+        });
+      });
     }
+    afterId = rows[rows.length - 1].id;
   }
 }
 

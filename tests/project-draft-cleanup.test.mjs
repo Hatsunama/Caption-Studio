@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { createKeyedOperationQueue } from '../src/lib/keyed-operation-queue.ts';
 import * as mediaLifecycle from '../src/lib/media-lifecycle.ts';
 import * as projectFactory from '../src/lib/project-factory.ts';
+import * as sourceFrame from '../src/lib/project-source-frame.ts';
 import * as generationSession from '../src/services/caption-generation-session.ts';
 
 const compiled = Object.fromEntries(['editor-draft-journal', 'project-workflows'].map((name) => [name,
@@ -83,6 +84,7 @@ function harness(options = {}) {
     '@/lib/keyed-operation-queue': { createKeyedOperationQueue },
     'expo-file-system/legacy': fs,
     '@/lib/project-factory': projectFactory,
+    '@/lib/project-source-frame': sourceFrame,
     '@/lib/media-lifecycle': mediaLifecycle,
     '@/lib/audio-timeline': {},
     '@/lib/audio-waveform': {},

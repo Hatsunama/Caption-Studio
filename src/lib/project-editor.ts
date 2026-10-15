@@ -1,4 +1,5 @@
 import { projectTimelineDuration } from '@/lib/project-timeline';
+import { activeSourceFrame, orientedVideoSize, resolveSourceCanvas } from '@/lib/project-source-frame';
 import { mergeStyle } from '@/lib/style-resolver';
 import { decodeCaptionDraft, reconcileCaptionScriptDraft, sameCaptionContent } from '@/lib/caption-script';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
@@ -469,11 +470,12 @@ export function deleteVideoClip(project: CaptionProject, clipId: string) {
   const anchoredCaptions = anchorCaptionsToClips(project.captions, project.clips, project.transcription.words)
     .filter((caption) => caption.sourceAnchor?.clipId !== clipId);
   const clips = project.clips.filter((clip) => clip.id !== clipId);
-  const next = rebuildAfterLayoutEdit(project, clips, anchoredCaptions, {
+  const rebuilt = rebuildAfterLayoutEdit(project, clips, anchoredCaptions, {
     atMs: entry.gapStartMs,
     removeMs: entry.afterGapEndMs - entry.gapStartMs,
     insertMs: 0,
   }, project.layers, 'splice', 'ripple');
+  const next = { ...rebuilt, canvas: resolveSourceCanvas(rebuilt) };
   const duration = projectTimelineDuration(next);
   return { project: next, seekMs: Math.min(entry.gapStartMs, Math.max(0, duration - 1)) };
 }
@@ -657,10 +659,9 @@ function canvasPresetSize(preset: CaptionProject['canvas']['preset'], project: C
   if (preset === '16:9') return { width: 16, height: 9 };
   if (preset === '1:1') return { width: 1, height: 1 };
   if (preset === '4:5') return { width: 4, height: 5 };
-  const source = project.sources[0];
-  const width = Math.max(1, source?.width ?? 9);
-  const height = Math.max(1, source?.height ?? 16);
-  return Math.abs(source?.rotation ?? 0) % 180 === 90 ? { width: height, height: width } : { width, height };
+  const source = activeSourceFrame(project);
+  return source ? orientedVideoSize(source)
+    : { width: project.canvas.aspectWidth, height: project.canvas.aspectHeight };
 }
 
 function updateProject<T extends Partial<CaptionProject>>(project: CaptionProject, update: T) {
