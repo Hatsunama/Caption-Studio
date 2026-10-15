@@ -18,8 +18,8 @@ test('timeline trim grips are selected-only and remain visible at every positive
     const compact = timelineHandleLayout(true, width);
     assert.equal(compact.showTrimGrips, true);
     assert.equal(compact.gripWidth, 24);
-    assert.equal(compact.moveLeft, 0);
-    assert.equal(compact.moveWidth, width);
+    assert.equal(compact.moveLeft, width < 8 ? -(8 - width) / 2 : 0);
+    assert.equal(compact.moveWidth, Math.max(8, width));
   }
 
   const wide = timelineHandleLayout(true, 240);
@@ -40,23 +40,23 @@ test('timeline trim markers remain outside the item at every zoom width', () => 
 test('selected video grips sit outside the artwork inside a touchable interaction shell', () => {
   for (const width of [2, 8, 24, 240]) {
     const layout = timelineVideoHandleLayout(100, width, 400, true);
-    assert.equal(layout.left, 76);
-    assert.equal(layout.width, width + 48);
-    assert.equal(layout.visualLeft, 24);
+    const clearance = Math.max(0, 8 - width) / 2;
+    assert.equal(layout.left, 76 - clearance);
+    assert.equal(layout.width, Math.max(8, width) + 48);
+    assert.equal(layout.visualLeft, 24 + clearance);
     assert.equal(layout.startGripLeft, 0);
-    assert.equal(layout.endGripLeft, width + 24);
+    assert.equal(layout.endGripLeft, Math.max(8, width) + 24);
   }
   assert.deepEqual(timelineVideoHandleLayout(100, 80, 400, false), {
     left: 100, width: 80, visualLeft: 0, visualWidth: 80, startGripLeft: 0, endGripLeft: 56,
   });
   assert.equal(timelineVideoHandleLayout(0, 80, 400, true).startGripLeft, 0);
-  assert.equal(timelineVideoHandleLayout(320, 80, 400, true).endGripLeft, 80);
+  assert.equal(timelineVideoHandleLayout(320, 80, 400, true).endGripLeft, 104);
 
   const source = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   const videoBlock = source.slice(source.indexOf('function VideoClipBlock('), source.indexOf('function ClipFrameThumb('));
   assert.match(videoBlock, /overflow: 'visible'/);
   assert.match(videoBlock, /pointerEvents="none"[\s\S]*overflow: 'hidden'/);
-  assert.match(videoBlock, /VideoMoveGrip \{\.\.\.props\} bodyLeft=\{handleLayout\.visualLeft\}/);
   assert.match(videoBlock, /showTrimGrips \? \(/);
 });
 

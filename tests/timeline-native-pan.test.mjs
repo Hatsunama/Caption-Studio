@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
-import { createTimelineNativePan } from '../src/components/editor/timeline-native-pan.ts';
+import { createTimelineNativePan, createTimelineNativePanDelivery, initialTimelineNativePanState } from '../src/components/editor/timeline-native-pan.ts';
 
 function fixture() {
   const handlers = {}, config = {}, calls = [];
@@ -11,29 +11,33 @@ function fixture() {
   for (const name of ['manualActivation', 'runOnJS', 'maxPointers', 'blocksExternalGesture']) {
     pan[name] = (...args) => { config[name] = args; return pan; };
   }
-  for (const name of ['onTouchesDown', 'onTouchesMove', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) {
+  for (const name of ['onTouchesDown', 'onTouchesMove', 'onTouchesCancelled', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) {
     pan[name] = (callback) => { handlers[name] = callback; return pan; };
   }
-  let armed = false;
+  const state = { value: initialTimelineNativePanState() };
   const scrolls = [{ id: 'horizontal' }, { id: 'vertical' }];
-  createTimelineNativePan(pan, {
-    prepare: () => calls.push(['prepare']), shouldActivate: () => armed,
-    begin: (...args) => calls.push(['begin', ...args]), move: (...args) => calls.push(['move', ...args]),
+  const callbacks = {
+    prepare: () => calls.push(['prepare']), holdMilliseconds: 350,
+    begin: (dx, dy) => calls.push(['begin', dx, dy]), move: (...args) => calls.push(['move', ...args]),
     finish: () => calls.push(['finish']), cancel: () => calls.push(['cancel']),
-  }, scrolls);
+  };
+  createTimelineNativePan(pan, callbacks, scrolls, { state,
+    deliver: createTimelineNativePanDelivery(callbacks).dispatch, schedule: (fn, ...args) => fn(...args) });
   const manager = { activate: () => calls.push(['activate']), fail: () => calls.push(['fail']) };
   const touch = (dx = 0, dy = 0, numberOfTouches = 1) => ({
-    numberOfTouches, allTouches: [{ absoluteX: 100 + dx, absoluteY: 200 + dy }],
+    handlerTag: 42, numberOfTouches, allTouches: [{ absoluteX: 100 + dx, absoluteY: 200 + dy }],
   });
   handlers.onTouchesDown(touch(), manager);
-  return { handlers, config, calls, scrolls, manager, touch, arm() { armed = true; } };
+  const event = (dx, dy = 0, numberOfPointers = 1) => ({ absoluteX: 100 + dx, absoluteY: 200 + dy, translationX: 0, translationY: 0, numberOfPointers });
+  return { handlers, config, calls, scrolls, manager, touch, event,
+    arm() { state.value = { ...state.value, startedAt: Date.now() - 400 }; } };
 }
 
 test('both native scroll recognizers wait for the shared directional decision', () => {
   const f = fixture();
   assert.deepEqual(f.config.blocksExternalGesture, f.scrolls);
   assert.deepEqual(f.config.manualActivation, [true]);
-  assert.deepEqual(f.config.runOnJS, [true]);
+  assert.deepEqual(f.config.runOnJS, [false]);
   f.handlers.onTouchesMove(f.touch(8, 0), f.manager);
   f.handlers.onTouchesMove(f.touch(12, 11), f.manager);
   assert.deepEqual(f.calls, [['prepare']], 'jitter and diagonal movement must not edit or scroll early');
@@ -46,25 +50,25 @@ test('vertical intent fails without selecting, locking or starting history', () 
   f.handlers.onTouchesMove(f.touch(0, 20), f.manager);
   f.handlers.onTouchesMove(f.touch(100, 20), f.manager);
   f.handlers.onFinalize();
-  assert.deepEqual(f.calls, [['prepare'], ['fail'], ['fail']]);
+  assert.deepEqual(f.calls, [['prepare'], ['fail']]);
 });
 
 test('native displacement reaches the existing timing lifecycle exactly once', () => {
   const f = fixture();
   f.handlers.onTouchesMove(f.touch(20, 0), f.manager);
-  f.handlers.onStart({ translationX: 20, translationY: 0 });
-  f.handlers.onUpdate({ translationX: 35, translationY: 1, numberOfPointers: 1 });
-  f.handlers.onEnd({}, true); f.handlers.onFinalize();
+  f.handlers.onStart(f.event(20));
+  f.handlers.onUpdate(f.event(35, 1));
+  f.handlers.onEnd(f.event(35, 1), true); f.handlers.onFinalize();
   assert.deepEqual(f.calls, [['prepare'], ['activate'], ['begin', 20, 0], ['move', 35, 1, 1], ['finish']]);
 });
 
 for (const stage of ['pending', 'active']) {
   test(`a second finger cancels ${stage} work without committing`, () => {
     const f = fixture();
-    if (stage === 'active') f.handlers.onStart({ translationX: 20, translationY: 0 });
+    if (stage === 'active') { f.handlers.onTouchesMove(f.touch(20), f.manager); f.handlers.onStart(f.event(20)); }
     f.handlers.onTouchesMove(f.touch(30, 0, 2), f.manager);
-    f.handlers.onUpdate({ translationX: 40, translationY: 0, numberOfPointers: 2 });
-    f.handlers.onEnd({}, true); f.handlers.onFinalize();
+    f.handlers.onUpdate(f.event(40, 0, 2));
+    f.handlers.onEnd(f.event(40), true); f.handlers.onFinalize();
     assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, stage === 'active' ? 1 : 0);
     assert.ok(!f.calls.some(([kind]) => kind === 'finish' || kind === 'move'));
   });
@@ -72,12 +76,12 @@ for (const stage of ['pending', 'active']) {
 
 test('native termination cancels once, then the same recognizer accepts a fresh touch', () => {
   const f = fixture();
-  f.handlers.onStart({ translationX: 20, translationY: 0 });
-  f.handlers.onEnd({}, false); f.handlers.onFinalize();
+  f.handlers.onTouchesMove(f.touch(20), f.manager); f.handlers.onStart(f.event(20));
+  f.handlers.onEnd(f.event(20), false); f.handlers.onFinalize();
   f.handlers.onTouchesDown(f.touch(), f.manager);
   f.handlers.onTouchesMove(f.touch(-20, 0), f.manager);
-  f.handlers.onStart({ translationX: -20, translationY: 0 });
-  f.handlers.onEnd({}, true); f.handlers.onFinalize();
+  f.handlers.onStart(f.event(-20));
+  f.handlers.onEnd(f.event(-20), true); f.handlers.onFinalize();
   assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 1);
   assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
 });
@@ -103,11 +107,13 @@ for (const platform of ['android', 'ios', 'web']) {
     const jsx = (type, props) => ({ type, props });
     runInNewContext(output, { exports, require(name) {
       if (name === 'react') return { createContext: (value) => ({ value }), useContext: (context) => context.value,
-        useState: (initialize) => [initialize()] };
+        useState: (initialize) => [initialize()], useEffect() {} };
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return { Platform: { OS: platform }, View: 'View', ScrollView: 'ScrollView' };
       if (name === 'react-native-gesture-handler') return { Gesture: { Native: () => ({ native: true }) }, GestureDetector: 'GestureDetector' };
-      if (name === './timeline-native-pan') return { createTimelineNativePan };
+      if (name === 'react-native-reanimated') return { useSharedValue: (value) => ({ value }), setGestureState() {} };
+      if (name === 'react-native-worklets') return { scheduleOnRN: (fn, ...args) => fn(...args), scheduleOnUI: (fn, ...args) => fn(...args) };
+      if (name === './timeline-native-pan') return { createTimelineNativePan, createTimelineNativePanDelivery, initialTimelineNativePanState };
       throw new Error(name);
     } });
     const scrolls = exports.createTimelineNativeScrollGestures();

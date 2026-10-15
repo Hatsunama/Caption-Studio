@@ -51,6 +51,7 @@ function harness() {
       if (name === 'expo-image') return { Image: 'Image' };
       if (name === './timeline-native-gesture') return {
         createTimelineNativeScrollGestures: () => [], TimelineNativeGestureContext: { Provider: 'Provider' },
+        TimelineNativeGeometryContext: react.createContext(undefined),
         TimelineNativeGestureView: 'View', TimelineNativeScrollView: 'ScrollView',
       };
       if (name === '@/services/timeline-haptics') return { timelineHaptic: (kind) => haptics.push(kind) };
@@ -210,9 +211,8 @@ test('native video hold still selects reorder rather than inserting a gap', () =
   });
   const native = node.props.nativeCallbacks;
   native.prepare();
-  node.props.children.props.onLongPress();
-  assert.equal(native.shouldActivate(), true);
-  native.begin(0, 1);
+  assert.equal(native.holdMilliseconds, 350);
+  native.begin(0, 1, true);
   native.move(100, 1, 1);
   native.finish();
   assert.deepEqual(calls, [['preview', 0], ['preview', 1], ['commit', 1]]);
@@ -282,7 +282,7 @@ test('native touch termination cancels staged trim instead of committing it', ()
   handlers.onPanResponderGrant();
   handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 30, dy: 0 });
   handlers.onPanResponderTerminate();
-  handlers.onPanResponderRelease();
+  handlers.onPanResponderRelease({ nativeEvent: { touches: [] } }, { dx: 30, dy: 0 });
   assert.deepEqual(calls, ['cancel']);
 });
 

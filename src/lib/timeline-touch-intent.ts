@@ -13,6 +13,7 @@ export type TimelineTouchIntent = 'pending' | 'horizontal' | 'vertical';
  * to scroll, and retain horizontal ownership until release or cancellation.
  * This function neither selects an item nor acquires a native responder. */
 export function timelineTouchIntent(dx: number, dy: number): TimelineTouchIntent {
+  'worklet';
   if (!Number.isFinite(dx) || !Number.isFinite(dy)) return 'pending';
   const horizontal = Math.abs(dx);
   const vertical = Math.abs(dy);

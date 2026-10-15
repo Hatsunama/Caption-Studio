@@ -213,11 +213,11 @@ test('provider URIs stay in persistence and never cross the navigation URL', () 
 
 test('selected timeline items expose direct edges without an attached control rail', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
-  assert.match(timeline, /timelineHandleLayout\(props\.selected, props\.blockWidth\)/);
+  assert.match(timeline, /timelineHandleHitLayout\(props\.selected, props\.blockWidth\)/);
   assert.match(timeline, /<TimelineTimingGrip \{\.\.\.props\} edge="start"/);
   assert.match(timeline, /<TimelineTimingGrip \{\.\.\.props\} edge="end"/);
-  assert.match(timeline, /bodyLeft - handleLayout\.interactionInset/);
-  assert.match(timeline, /bodyLeft \+ width \+ handleLayout\.interactionInset/);
+  assert.match(timeline, /bodyLeft \+ handleLayout\.envelope\.left/);
+  assert.match(timeline, /interactionWidth = handleLayout\.envelope\.width/);
   assert.doesNotMatch(timeline, /timelineBlockControls|timelineControlRail|Magnified cue timing/);
 });
 

@@ -40,6 +40,7 @@ function harness() {
       if (name === 'expo-image') return { Image: 'Image' };
       if (name === './timeline-native-gesture') return {
         createTimelineNativeScrollGestures: () => [], TimelineNativeGestureContext: { Provider: 'Provider' },
+        TimelineNativeGeometryContext: react.createContext(undefined),
         TimelineNativeGestureView: 'View', TimelineNativeScrollView: 'ScrollView',
       };
       if (name.startsWith('@/services/')) return {};
@@ -78,7 +79,7 @@ for (const kind of ['caption', 'translation', 'text', 'image', 'audio']) {
   test(`${kind} has only direct timeline box interactions`, () => {
     const { block, surface, grips } = surfaceFor(item({ label: kind, endMs: 2000 }));
     assert.equal(surface.props.blockWidth, 200, 'selected blocks retain their actual timeline width');
-    assert.equal(surface.props.width, 236, 'selected blocks expose edge hit space without changing their timing width');
+    assert.equal(surface.props.width, 248, 'selected blocks expose complete 24px edge hit space without changing their timing width');
     assert.equal(grips.length, 3);
     assert.deepEqual(grips.map((grip) => grip.props.edge).sort(), ['end', 'move', 'start']);
     assert.equal(block.all((node) => node.props?.accessibilityLabel?.startsWith('Timing controls')).length, 0);
@@ -91,7 +92,7 @@ test('direct box edges partition the selected item without overlap', () => {
   const ordered = grips.map((grip) => grip.props).sort((left, right) => left.left - right.left);
   assert.equal(ordered[0].left, 0);
   assert.equal(ordered.at(-1).left + ordered.at(-1).width, surface.props.width);
-  assert.ok(ordered.filter((grip) => grip.edge !== 'move').every((grip) => grip.width >= 18));
+  assert.ok(ordered.filter((grip) => grip.edge !== 'move').every((grip) => grip.width === 24));
   assert.ok(ordered.find((grip) => grip.edge === 'move').width >= 8);
   assert.equal(ordered[0].left + ordered[0].width, ordered[1].left);
   assert.equal(ordered[1].left + ordered[1].width, ordered[2].left);
@@ -126,15 +127,18 @@ test('a tap selects without mutating timing, while a body drag moves the same it
   gripHarness.render(gripHarness.ui.TimelineTimingGrip, props);
   let handlers = gripHarness.result.props.panHandlers;
   handlers.onPanResponderGrant();
-  handlers.onPanResponderRelease();
+  handlers.onPanResponderRelease({ nativeEvent: { touches: [] } }, { dx: 0, dy: 0 });
   assert.deepEqual(calls, ['select']);
   handlers.onPanResponderGrant();
   handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 16, dy: 0 });
-  handlers.onPanResponderRelease();
+  handlers.onPanResponderRelease({ nativeEvent: { touches: [] } }, { dx: 16, dy: 0 });
   assert.equal(calls[1], 'select');
   assert.equal(calls[2], 'begin');
   assert.equal(calls[3][0], 'move');
-  assert.equal(calls[4], 'end');
+  assert.equal(calls.at(-1), 'end');
+  assert.equal(calls.filter((call) => call === 'begin').length, 1);
+  assert.equal(calls.filter((call) => call === 'end').length, 1);
+  assert.deepEqual(calls.filter(Array.isArray).at(-1), ['move', 1080, 1160]);
 });
 
 test('vertical micro-jitter cannot kill a later horizontal timeline drag', () => {
@@ -147,7 +151,7 @@ test('vertical micro-jitter cannot kill a later horizontal timeline drag', () =>
   handlers.onPanResponderGrant();
   handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 2, dy: 6 });
   handlers.onPanResponderMove({ nativeEvent: { touches: [{}] } }, { dx: 20, dy: 6 });
-  handlers.onPanResponderRelease();
+  handlers.onPanResponderRelease({ nativeEvent: { touches: [] } }, { dx: 20, dy: 6 });
   assert.equal(calls.filter((call) => call === 'begin').length, 1);
   assert.ok(calls.some((call) => Array.isArray(call) && call[0] === 'end'));
   assert.equal(calls.at(-1), 'end');
@@ -182,5 +186,5 @@ test('the timeline source contains no attached timing buttons, rails, or alterna
     assert.equal(source.includes(forbidden), false, forbidden + ' must not return');
   }
   assert.match(source, /<DirectTimelineGestureSurface/);
-  assert.match(source, /timelineHandleLayout\(props\.selected, props\.blockWidth\)/);
+  assert.match(source, /timelineHandleHitLayout\(props\.selected, props\.blockWidth\)/);
 });
