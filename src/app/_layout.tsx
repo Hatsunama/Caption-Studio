@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router/stack';
 import { setVideoCacheSizeAsync } from 'expo-video';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { FONT_ASSETS } from '@/lib/font-catalog';
 import { chrome } from '@/lib/ui-theme';
@@ -32,6 +33,7 @@ export default function RootLayout() {
   if ((!fontsLoaded && !fontError) || !importedFontsLoaded) return null;
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <Stack
       screenOptions={{
         headerStyle: { backgroundColor: chrome.background },
@@ -69,5 +71,6 @@ export default function RootLayout() {
         }}
       />
     </Stack>
+    </GestureHandlerRootView>
   );
 }

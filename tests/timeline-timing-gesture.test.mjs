@@ -18,6 +18,91 @@ function owner(changes, overrides = {}) {
   };
 }
 
+test('a jittering tap selects immediately without opening a timing transaction', () => {
+  const calls = [];
+  const changes = [];
+  const gesture = createTimelineTimingGesture();
+  gesture.begin(owner(changes, {
+    onPress() { calls.push('select'); },
+    onChangeStart() { calls.push('start'); },
+    onEnd() { calls.push('end'); },
+    onCancel() { calls.push('cancel'); },
+  }), 'move');
+  assert.deepEqual(calls, ['select']);
+  gesture.move(8, 0);
+  gesture.move(-8, 8);
+  gesture.finish();
+  assert.deepEqual(calls, ['select']);
+  assert.deepEqual(changes, []);
+});
+
+test('a near diagonal cannot edit until horizontal intent becomes clear', () => {
+  for (const edge of ['move', 'start', 'end']) {
+    const changes = [];
+    let starts = 0;
+    const gesture = createTimelineTimingGesture();
+    gesture.begin(owner(changes, { onChangeStart() { starts += 1; } }), edge);
+    gesture.move(12, 11);
+    assert.equal(starts, 0, edge);
+    assert.deepEqual(changes, [], edge);
+    gesture.move(15, 10);
+    assert.equal(starts, 1, edge);
+    assert.equal(changes.length, 1, edge);
+    gesture.finish();
+  }
+});
+
+test('vertical scrolling cannot turn into an item edit later in the same touch', () => {
+  const changes = [];
+  const calls = [];
+  const gesture = createTimelineTimingGesture();
+  const activeOwner = owner(changes, {
+    onPress() { calls.push('select'); },
+    onChangeStart() { calls.push('start'); },
+    onEnd() { calls.push('end'); },
+    onCancel() { calls.push('cancel'); },
+  });
+  gesture.begin(activeOwner, 'move');
+  gesture.move(8, 12);
+  gesture.move(100, 12);
+  gesture.finish();
+  assert.deepEqual(changes, []);
+  assert.deepEqual(calls, ['select']);
+  gesture.begin(activeOwner, 'move');
+  gesture.move(20, 0);
+  gesture.finish();
+  assert.deepEqual(changes, [{ edge: 'move', startMs: 1_100, endMs: 2_100 }]);
+  assert.deepEqual(calls, ['select', 'select', 'start', 'end']);
+});
+
+test('claimed horizontal timing stays active through later vertical displacement', () => {
+  const changes = [];
+  let commits = 0;
+  const gesture = createTimelineTimingGesture();
+  gesture.begin(owner(changes, { onEnd() { commits += 1; } }), 'move');
+  gesture.move(-20, 0);
+  gesture.move(-30, 100);
+  gesture.finish();
+  assert.deepEqual(changes.at(-1), { edge: 'move', startMs: 850, endMs: 1_850 });
+  assert.equal(commits, 1);
+});
+
+test('release commits once even when the owner offers cancellation rollback', () => {
+  const changes = [];
+  const calls = [];
+  const gesture = createTimelineTimingGesture();
+  gesture.begin(owner(changes, {
+    onChangeStart() { calls.push('start'); },
+    onEnd() { calls.push('commit'); },
+    onCancel() { calls.push('rollback'); },
+  }), 'end');
+  gesture.move(20, 0);
+  gesture.finish();
+  gesture.finish();
+  gesture.cancel();
+  assert.deepEqual(calls, ['start', 'commit']);
+});
+
 test('edge extension requires a real stationary dwell and resumes from the playhead without jumping', () => {
   let now = 0;
   const changes = [];

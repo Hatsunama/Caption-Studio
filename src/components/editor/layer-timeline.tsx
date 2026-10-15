@@ -1,8 +1,13 @@
-import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 import { Image } from 'expo-image';
+import { createTimelineNativeScrollGestures, TimelineNativeGestureContext, TimelineNativeGeometryContext, TimelineNativeGestureView, TimelineNativeScrollView } from './timeline-native-gesture';
 
 import { chrome } from '@/lib/ui-theme';
+import { orderedTimelineTrackIds, visualTimelineGroups, visualTimelineTrackId, moveTimelineTrack } from '@/lib/timeline-tracks';
+import { timelineTouchIntent, type TimelineTouchIntent } from '@/lib/timeline-touch-intent';
+import { createTimelineBoundaryFeedback } from '@/lib/timeline-boundary-feedback';
+import { timelineHaptic } from '@/services/timeline-haptics';
 import { indexTimelineCues, packTimelineLanes, timelineCueChoices, timelineCuePage } from '@/lib/timeline-layout';
 import { previewVideoClipLeadingGap, previewVideoClipReorder, previewVideoClipTrim } from '@/lib/project-editor';
 import {
@@ -23,7 +28,7 @@ import { mapPreviewTranslationTracks } from '@/lib/translation-preview-timeline'
 import { audioClipEnd } from '@/lib/audio-timeline';
 import { audioWaveformWindow } from '@/lib/audio-waveform';
 import { adjustTimelineTiming, TIMELINE_ACCESSIBILITY_ACTIONS, timelineTimingLabel, createTimelineGestureGeometry, createTimelineTimingGesture, timelineVisibleTrackBounds, type TimelineTimingGestureOwner } from '@/lib/timeline-gesture';
-import { timelineHandleLayout, timelineHandleMarkerLayout, timelineVideoHandleLayout } from '@/lib/timeline-handle-layout';
+import { timelineHandleHitLayout, timelineVideoHandleLayout } from '@/lib/timeline-handle-layout';
 import { ensureClipFrameThumbnail } from '@/services/project-media';
 import type { CaptionPair } from '@/lib/caption-tracks';
 import type { TimelineItemReference, TimelineTimingEdge } from '@/lib/timeline-item-editor';
@@ -39,7 +44,11 @@ const REORDER_TILE = 72;
 const REORDER_GAP = 8;
 const NEON_CAPTION_COLORS = ['#FF2FA9', '#00B8FF', '#19D98B', '#A855F7', '#FF4D6D', '#00D9C8'];
 const clipThumbCache = new Map<string, string>();
-const TimelineGestureGeometryContext = createContext<ReturnType<typeof createTimelineGestureGeometry> | undefined>(undefined);
+const TimelineGestureGeometryContext = TimelineNativeGeometryContext;
+type FeedbackTimingOwner = Omit<TimelineTimingGestureOwner, 'onChange'> & {
+  getFeedbackBoundaries?: () => readonly number[];
+  onChange: (edge: TimelineTimingEdge, startMs: number, endMs: number) => void | { startMs: number; endMs: number };
+};
 
 export function LayerTimeline(props: {
   projectId: string;
@@ -71,8 +80,9 @@ export function LayerTimeline(props: {
   onItemTimingChange: (item: TimelineItemReference, edge: TimelineTimingEdge, startMs: number, endMs: number) => void;
   onTimingChangeStart: () => void;
   onTimingChangeEnd: () => void;
-  onMoveLayer: (layerId: string, direction: -1 | 1) => void;
-  onDeleteLayer: (layerId: string) => void;
+  trackOrder?: readonly string[];
+  onReorderTrack?: (order: string[]) => void;
+  revealRequest?: number;
   onAddVideos: () => void;
   onSelectAudioClip: (clipId: string) => void;
   voiceoverMode?: boolean;
@@ -82,6 +92,11 @@ export function LayerTimeline(props: {
   const displayAudioClips = useMemo(() => props.voiceoverMode ? [] : props.audioClips, [props.audioClips, props.voiceoverMode]);
   const horizontalRef = useRef<ScrollView>(null);
   const verticalRef = useRef<ScrollView>(null);
+  const labelScrollRef = useRef<ScrollView>(null);
+  const verticalOffsetRef = useRef(0);
+  const [trackDrag, setTrackDrag] = useState<{ id: string; order: string[] }>();
+  const trackDragOrigin = useRef<{ id: string; order: string[]; preview: string[]; top: number; scroll: number; heights: Map<string, number>; dy: number; pageY?: number } | undefined>(undefined);
+  const trackViewport = useRef<{ top: number; height: number } | undefined>(undefined);
   const [viewportWidth, setViewportWidth] = useState(360);
   const [clipPreview, setClipPreview] = useState<VideoClip[]>();
   const [frontTrimPreview, setFrontTrimPreview] = useState<{
@@ -112,6 +127,7 @@ export function LayerTimeline(props: {
   const minimumScale = minimumTimelineScale(duration, Math.max(1, viewportWidth - LABEL_WIDTH));
   const [pixelsPerSecond, setPixelsPerSecond] = useState(() => Math.max(16, minimumScale));
   const [gestureGeometry] = useState(() => createTimelineGestureGeometry({ viewportWidth, scale: pixelsPerSecond }));
+  const [nativeScrollGestures] = useState(createTimelineNativeScrollGestures);
   const effectiveScale = clampTimelineScale(pixelsPerSecond, minimumScale);
   const viewportContentWidth = Math.max(1, viewportWidth - LABEL_WIDTH);
   const baseTrackWidth = timelineWidth(duration, effectiveScale, viewportContentWidth);
@@ -162,14 +178,35 @@ export function LayerTimeline(props: {
   const audioLayout = useMemo(() => packTimelineLanes(displayAudioClips.filter((clip) => !clip.hiddenByVideoTrim)
     .map((clip) => ({ id: clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) }))), [displayAudioClips]);
   const audioRowHeight = Math.max(1, audioLayout.laneCount) * LANE_HEIGHT + 10;
-  const visualRowHeight = () => 46;
-  const videoRowHeight = reorderMode ? REORDER_TILE + 18 : 46;
   const sourceById = useMemo(() => new Map(props.sources.map((source) => [source.id, source])), [props.sources]);
-  const totalRowsHeight = videoRowHeight + audioRowHeight + displayLayers.reduce(
-    (sum, layer) => sum + (layer.kind === 'captions' ? captionRowHeight : visualRowHeight()),
-    0,
-  ) + (props.voiceoverMode ? 0 : props.translationTracks.reduce((sum, track) => sum + translationRowHeight(track.id), 0));
-
+  const visualGroups = useMemo(() => visualTimelineGroups(displayLayers), [displayLayers]);
+  // Snapshot once at gesture start, not per pointer frame. IDs are namespaced:
+  // translated cues can share a source ID without excluding the primary cue.
+  const feedbackEntries = useMemo(() => [
+    ...buildClipTimeline(props.clips).map(({ clip, startMs, endMs }) => ({ id: 'video:' + clip.id, startMs, endMs })),
+    ...displayAudioClips.filter((clip) => !clip.hiddenByVideoTrim).map((clip) => ({ id: 'audio:' + clip.id, startMs: clip.startMs, endMs: audioClipEnd(clip) })),
+    ...displayLayers.flatMap((layer) => layer.kind !== 'captions' && layer.timelineVisible !== false
+      ? [{ id: 'visual:' + layer.id, startMs: layer.startMs, endMs: layer.endMs }] : []),
+    ...props.captions.filter((cue) => cue.timelineVisible !== false).map((cue) => ({ id: 'caption:' + cue.id, startMs: cue.startMs, endMs: cue.endMs })),
+    ...props.translationTracks.flatMap((track) => track.pairs.filter((pair) => pair.timelineVisible)
+      .map((pair) => ({ id: 'translation:' + track.id + ':' + pair.source.id, startMs: pair.startMs, endMs: pair.endMs }))),
+  ], [props.clips, displayAudioClips, displayLayers, props.captions, props.translationTracks]);
+  const feedbackBoundaries = (excludedId: string) => () => [0, duration, props.currentMs,
+    ...feedbackEntries.filter((entry) => entry.id !== excludedId).flatMap((entry) => [entry.startMs, entry.endMs])];
+  const videoRowHeight = reorderMode ? 90 : 46;
+  const groupById = new Map(visualGroups.map((group) => [group.id, group]));
+  const availableTracks = ['video', 'audio'];
+  for (const layer of displayLayers) {
+    const id = visualTimelineTrackId(layer);
+    if (!availableTracks.includes(id)) availableTracks.push(id);
+    if (layer.kind === 'captions') for (const track of displayTranslationTracks) availableTracks.push('translation:' + track.id);
+  }
+  const orderedTracks = props.voiceoverMode ? ['video', 'audio'] : orderedTimelineTrackIds(availableTracks, props.trackOrder);
+  const shownTracks = trackDrag?.order ?? orderedTracks;
+  const rowHeight = (id: string) => id === 'video' ? videoRowHeight : id === 'audio' ? audioRowHeight
+    : id === 'captions' ? captionRowHeight : id.startsWith('translation:') ? translationRowHeight(id.slice(12))
+    : (groupById.get(id)?.layout.laneCount ?? 1) * LANE_HEIGHT + 14;
+  const totalRowsHeight = shownTracks.reduce((height, id) => height + rowHeight(id), 0);
   const trailingPadding = viewportWidth / 2;
   const scrollContentWidth = leadingPadding + LABEL_WIDTH + trackWidth + trailingPadding;
   const visibleRange = useMemo(() => {
@@ -182,25 +219,36 @@ export function LayerTimeline(props: {
   const isVisible = (startMs: number, endMs: number) =>
     reorderMode || (endMs >= visibleRange.startMs && startMs <= visibleRange.endMs);
 
-  const selectedRowTop = (() => {
-    let top = videoRowHeight + audioRowHeight;
-    for (const layer of displayLayers) {
-      if (layer.id === props.selectedLayerId) return top;
-      top += layer.kind === 'captions' ? captionRowHeight : visualRowHeight();
-      if (layer.kind === 'captions') for (const track of displayTranslationTracks) {
-        if (track.id === props.selectedLayerId) return top;
-        top += translationRowHeight(track.id);
-      }
-    }
-    return 0;
-  })();
+  const selectedTrackId = props.selectedClipId ? 'video' : props.selectedAudioClipId ? 'audio'
+    : displayTranslationTracks.some((track) => track.id === props.selectedLayerId) ? 'translation:' + props.selectedLayerId
+    : (() => { const layer = displayLayers.find((item) => item.id === props.selectedLayerId); return layer ? visualTimelineTrackId(layer) : undefined; })();
+  const selectedRowTop = shownTracks.slice(0, Math.max(0, shownTracks.indexOf(selectedTrackId ?? '')))
+    .reduce((top, id) => top + rowHeight(id), 0);
+  const syncVerticalScroll = useCallback((y: number, source: 'items' | 'labels' | 'reveal') => {
+    const next = Math.max(0, y);
+    if (source !== 'reveal' && Math.abs(next - verticalOffsetRef.current) < 0.5) return;
+    verticalOffsetRef.current = next;
+    if (source !== 'items') verticalRef.current?.scrollTo({ y: next, animated: false });
+    if (source !== 'labels') labelScrollRef.current?.scrollTo({ y: next, animated: false });
+  }, []);
+  useEffect(() => {
+    verticalOffsetRef.current = 0;
+    verticalRef.current?.scrollTo({ y: 0, animated: false });
+    labelScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [props.projectId, props.revealRequest]);
   const revealCue = useCallback((_startMs: number) => {
+    verticalOffsetRef.current = selectedRowTop;
     verticalRef.current?.scrollTo({ y: selectedRowTop, animated: false });
+    labelScrollRef.current?.scrollTo({ y: selectedRowTop, animated: false });
   }, [selectedRowTop]);
   const lastRevealRef = useRef<{ id: string; trackWidth: number; viewportWidth: number } | undefined>(undefined);
   const hasSelectedCue = selectedCue !== undefined;
   useEffect(() => {
-    if (hasSelectedCue) verticalRef.current?.scrollTo({ y: selectedRowTop, animated: false });
+    if (hasSelectedCue) {
+      verticalOffsetRef.current = selectedRowTop;
+      verticalRef.current?.scrollTo({ y: selectedRowTop, animated: false });
+      labelScrollRef.current?.scrollTo({ y: selectedRowTop, animated: false });
+    }
   }, [hasSelectedCue, selectedRowTop]);
 
   useEffect(() => () => {
@@ -277,11 +325,12 @@ export function LayerTimeline(props: {
     setGestureLock(locked);
   };
 
-  const selectTimelineItem = (select: () => void) => {
+  const selectTimelineItem = (select: () => void, feedback = true) => {
     if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
     scrubEndTimer.current = null;
     scrubbingRef.current = false;
     selectionOwnsViewportRef.current = false;
+    if (feedback) timelineHaptic('selection');
     select();
   };
 
@@ -310,79 +359,11 @@ export function LayerTimeline(props: {
   };
 
   const timelineTouchLock = (locked: boolean) => {
-    if (locked) selectTimelineItem(() => {});
+    if (locked) selectTimelineItem(() => {}, false);
     setItemGestureLock(locked);
   };
-  return (
-    <TimelineGestureGeometryContext.Provider value={gestureGeometry}>
-    <View
-      onLayout={(event) => {
-        const width = Math.max(1, event.nativeEvent.layout.width);
-        if (gestureGeometry.update({ viewportWidth: width })) {
-          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
-          scrubEndTimer.current = null;
-          scrubbingRef.current = false;
-          selectionOwnsViewportRef.current = false;
-          pinch.current.distance = 0;
-        }
-        setViewportWidth(width);
-      }}
-      onStartShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
-      onMoveShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
-      onResponderGrant={(event) => {
-        const [first, second] = event.nativeEvent.touches;
-        pinch.current = { distance: touchDistance(first, second), scale: effectiveScale };
-      }}
-      onResponderMove={(event) => {
-        const [first, second] = event.nativeEvent.touches;
-        if (!first || !second || pinch.current.distance <= 0) return;
-        updateZoom(pinch.current.scale * touchDistance(first, second) / pinch.current.distance);
-      }}
-      style={{ height: Math.min(props.availableHeight ?? 330, totalRowsHeight + RULER_HEIGHT + 38), overflow: 'hidden', borderRadius: 22, backgroundColor: '#1C1C1E' }}>
-      <View style={{ height: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 44, borderBottomWidth: 1, borderBottomColor: '#1D242C' }}>
-        <ZoomButton label="−" onPress={() => updateZoom(effectiveScale / 1.5)} />
-        <Text style={{ minWidth: 70, color: '#D7DDE5', textAlign: 'center', fontSize: 10, fontWeight: '800' }}>{zoomPercent}%</Text>
-        <ZoomButton label="+" onPress={() => updateZoom(effectiveScale * 1.5)} />
-      </View>
-      <ScrollView
-        ref={horizontalRef}
-        style={{ flex: 1 }}
-        horizontal
-        nestedScrollEnabled
-        scrollEnabled={!gestureLock}
-        decelerationRate="fast"
-        scrollEventThrottle={32}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ width: scrollContentWidth }}
-        onScrollBeginDrag={() => {
-          if (gestureLockRef.current) return;
-          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
-          scrubbingRef.current = true;
-          selectionOwnsViewportRef.current = false;
-          props.onScrubStart();
-        }}
-        onScroll={(event) => {
-          const x = clamp(event.nativeEvent.contentOffset.x, 0, trackWidth);
-          scrollXRef.current = x;
-          setViewportScrollX(x);
-          if (Math.abs(x - visibleCenterX) >= Math.max(120, viewportWidth / 3)) setVisibleCenterX(x);
-          if (scrubbingRef.current && !gestureLockRef.current) seekFromScroll(x);
-        }}
-        onScrollEndDrag={() => {
-          if (!scrubbingRef.current) return;
-          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
-          scrubEndTimer.current = setTimeout(finishScrub, 90);
-        }}
-        onMomentumScrollBegin={() => {
-          if (gestureLockRef.current || !scrubbingRef.current) return;
-          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
-          scrubbingRef.current = true;
-        }}
-        onMomentumScrollEnd={finishScrub}>
-        <View style={{ width: LABEL_WIDTH + trackWidth, height: '100%', marginLeft: leadingPadding }}>
-          <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
-          <ScrollView ref={verticalRef} style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}>
-            <TimelineRow label="VIDEO" labelColor={chrome.accent} selected={Boolean(props.selectedClipId)} trackWidth={trackWidth} height={videoRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: chrome.muted, fontSize: 8 }}>{props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}</Text>}>
+  const rows = new Map<string, React.ReactElement<Parameters<typeof TimelineRow>[0]>>();
+  rows.set('video', (<TimelineRow label="VIDEO" labelColor={chrome.accent} selected={Boolean(props.selectedClipId)} trackWidth={trackWidth} height={videoRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: chrome.muted, fontSize: 8 }}>{props.clips.length} CLIP{props.clips.length === 1 ? '' : 'S'}</Text>}>
               {reorderDrag ? (
                 <VideoReorderBanner
                   clips={previewClips}
@@ -415,13 +396,14 @@ export function LayerTimeline(props: {
                     durationMs={duration}
                     trackWidth={trackWidth}
                     playheadMs={props.currentMs}
+                    getFeedbackBoundaries={feedbackBoundaries('video:' + clip.id)}
                     filmstrip={reorderMode}
                     tileSize={REORDER_TILE}
                     tileGap={REORDER_GAP}
                     selected={props.selectedClipId === clip.id || reordering}
                     reordering={reordering}
                     color={index % 2 ? '#38404A' : '#46515D'}
-                    onPress={() => props.onSelectClip(clip.id)}
+                    onPress={() => selectTimelineItem(() => props.onSelectClip(clip.id))}
                     onGestureLock={setItemGestureLock}
                     onGestureCancel={() => {
                       setItemGestureLock(false);
@@ -498,8 +480,8 @@ export function LayerTimeline(props: {
                 </Fragment>
                 );
               })}
-            </TimelineRow>
-            <TimelineRow label={props.voiceoverMode ? "VOICE OVER" : "AUDIO"} labelColor={props.voiceoverMode ? "#FF4D6D" : "#64E8FF"} selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: props.voiceoverMode ? '#FFB8C5' : '#6F7985', fontSize: 8 }}>{props.voiceoverMode ? 'LIVE TAKE' : `${props.audioClips.length} TRACK${props.audioClips.length === 1 ? '' : 'S'}`}</Text>}>
+            </TimelineRow>));
+  rows.set('audio', (<TimelineRow label={props.voiceoverMode ? "VOICE OVER" : "AUDIO"} labelColor={props.voiceoverMode ? "#FF4D6D" : "#64E8FF"} selected={Boolean(props.selectedAudioClipId)} trackWidth={trackWidth} height={audioRowHeight} onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} controls={<Text style={{ color: props.voiceoverMode ? '#FFB8C5' : '#6F7985', fontSize: 8 }}>{props.voiceoverMode ? 'LIVE TAKE' : `${props.audioClips.length} TRACK${props.audioClips.length === 1 ? '' : 'S'}`}</Text>}>
               {displayAudioClips.filter((clip) => !clip.hiddenByVideoTrim && isVisible(clip.startMs, audioClipEnd(clip))).map((clip) => {
                 const source = props.audioSources.find((candidate) => candidate.id === clip.sourceId);
                 return (
@@ -519,7 +501,8 @@ export function LayerTimeline(props: {
                     sourceStartMs={clip.sourceStartMs}
                     sourceEndMs={clip.sourceEndMs}
                     sourceDurationMs={source?.durationMs}
-                    onPress={() => props.onSelectAudioClip(clip.id)}
+                    getFeedbackBoundaries={feedbackBoundaries('audio:' + clip.id)}
+                    onPress={() => selectTimelineItem(() => props.onSelectAudioClip(clip.id))}
                     onTouchLock={timelineTouchLock}
                     onChangeStart={beginBlockGesture}
                     playheadMs={props.currentMs}
@@ -529,37 +512,30 @@ export function LayerTimeline(props: {
                 );
               })}
               {props.voiceoverDraft ? <LiveRecordingBlock {...props.voiceoverDraft} durationMs={duration} trackWidth={trackWidth} /> : null}
-            </TimelineRow>
-            {displayLayers.map((layer, layerIndex) => {
-              const isCaptions = layer.kind === 'captions';
-              return (
-                <View key={layer.id}>
-                <TimelineRow
-                  label={layer.name.toUpperCase()}
-                  labelColor={isCaptions ? '#FF4FD8' : layer.kind === 'text' ? layer.watermark ? '#FF8FC4' : '#A985F8' : '#64E8FF'}
-                  selected={props.selectedLayerId === layer.id && !props.selectedClipId}
-                  onPressLabel={() => selectTimelineItem(() => props.onSelectLayer(layer.id))}
-                  onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }}
-                  trackWidth={trackWidth}
-                  height={isCaptions ? captionRowHeight : visualRowHeight()}
-                  controls={<View style={{ gap: 2 }}>
-                    <View style={{ flexDirection: 'row', gap: 2 }}>
-                      <TinyButton label="↑" disabled={layerIndex === 0} onPress={() => props.onMoveLayer(layer.id, -1)} />
-                      <TinyButton label="↓" disabled={layerIndex === displayLayers.length - 1} onPress={() => props.onMoveLayer(layer.id, 1)} />
-                      {!isCaptions ? <TinyButton label="×" danger onPress={() => props.onDeleteLayer(layer.id)} /> : null}
-                    </View>
-                  </View>}>
-                  {isCaptions ? captionPage.overview.map((entry) => (
-                    <TimelineCoverageStrip key={`${entry.left}:${entry.width}`} {...entry} trackWidth={trackWidth} color="#FF4FD8" onPress={() => setCueChooser({ trackId: 'captions', startMs: entry.startMs, endMs: entry.endMs, offset: 0 })} />
-                  )) : null}
-                  {isCaptions ? captionPage.bodies.map((caption) => (
-                    <TimedBlock key={caption.id} onTouchLock={timelineTouchLock} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} playheadMs={props.currentMs} lane={captionLayout.laneById.get(caption.id) ?? 0} color={NEON_CAPTION_COLORS[captionIndex.byId.get(caption.id)! % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
-                  )) : (
-                    <TimedBlock onTouchLock={timelineTouchLock} label={layer.kind === 'text' ? layer.text : 'IMAGE'} thumbnailUri={layer.kind === 'image' ? layer.uri : undefined} startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} playheadMs={props.currentMs} lane={0} color={layer.kind === 'text' ? layer.watermark ? '#E8579C88' : '#A855F7' : '#00B8FF'} selected={props.selectedLayerId === layer.id} onPress={() => props.onSelectLayer(layer.id)} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />
-                  )}
-                </TimelineRow>
-                {isCaptions ? displayTranslationTracks.map((track, trackIndex) => (
-                  <TimelineRow
+            </TimelineRow>));
+  if (!props.voiceoverMode) {
+    if (displayLayers.some((layer) => layer.kind === 'captions')) rows.set('captions', (
+      <TimelineRow label="CAPTIONS" labelColor="#FF4FD8" selected={props.selectedLayerId === 'captions'}
+        onPressLabel={() => selectTimelineItem(() => props.onSelectLayer('captions'))}
+        onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }} trackWidth={trackWidth} height={captionRowHeight}>
+        {captionPage.overview.map((entry) => <TimelineCoverageStrip key={entry.left + ':' + entry.width} {...entry} trackWidth={trackWidth} color="#FF4FD8" onPress={() => setCueChooser({ trackId: 'captions', startMs: entry.startMs, endMs: entry.endMs, offset: 0 })} />)}
+        {captionPage.bodies.map((caption) => <TimedBlock key={caption.id} onTouchLock={timelineTouchLock} getFeedbackBoundaries={feedbackBoundaries('caption:' + caption.id)} label={caption.text} startMs={caption.startMs} endMs={caption.endMs} durationMs={duration} trackWidth={trackWidth} playheadMs={props.currentMs} lane={captionLayout.laneById.get(caption.id) ?? 0} color={NEON_CAPTION_COLORS[captionIndex.byId.get(caption.id)! % NEON_CAPTION_COLORS.length]} selected={props.selectedLayerId === 'captions' && props.selectedCaptionId === caption.id} onPress={() => selectTimelineItem(() => props.onSelectCaption(caption))} onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'caption', captionId: caption.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />)}
+      </TimelineRow>
+    ));
+    for (const group of visualGroups) rows.set(group.id, (
+      <TimelineRow label={group.id.toUpperCase()} labelColor={group.id === 'images' ? '#64E8FF' : group.id === 'watermarks' ? '#FF8FC4' : '#A985F8'}
+        selected={selectedTrackId === group.id} trackWidth={trackWidth} height={rowHeight(group.id)}
+        onPressTrack={(x) => { props.onClearSelection(); props.onSeek(x / trackWidth * duration); }}>
+        {group.items.map((layer) => <TimedBlock key={layer.id} onTouchLock={timelineTouchLock}
+          getFeedbackBoundaries={feedbackBoundaries('visual:' + layer.id)}
+          label={layer.kind === 'text' ? layer.text : layer.name || 'IMAGE'} thumbnailUri={layer.kind === 'image' ? layer.uri : undefined}
+          startMs={layer.startMs} endMs={layer.endMs} durationMs={duration} trackWidth={trackWidth} playheadMs={props.currentMs}
+          lane={group.layout.laneById.get(layer.id) ?? 0} color={layer.kind === 'text' ? layer.watermark ? '#E8579C88' : '#A855F7' : '#00B8FF'}
+          selected={props.selectedLayerId === layer.id} onPress={() => selectTimelineItem(() => props.onSelectLayer(layer.id))}
+          onChangeStart={beginBlockGesture} onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'visual', layerId: layer.id }, edge, startMs, endMs)} onEnd={endBlockGesture} />)}
+      </TimelineRow>
+    ));
+    for (const [trackIndex, track] of displayTranslationTracks.entries()) rows.set('translation:' + track.id, (<TimelineRow
                     key={track.id}
                     label={`↳ ${track.name.toUpperCase()}`}
                     labelColor={track.visible ? '#64E8FF' : '#6E7884'}
@@ -592,17 +568,155 @@ export function LayerTimeline(props: {
                         onPress={() => selectTimelineItem(() => props.onSelectTranslationCaption(track.id, pair))}
                         onChangeStart={beginBlockGesture}
                         playheadMs={props.currentMs}
+                        getFeedbackBoundaries={feedbackBoundaries('translation:' + track.id + ':' + pair.source.id)}
                         onChange={(edge, startMs, endMs) => props.onItemTimingChange({ kind: 'translation', trackId: track.id, sourceCaptionId: pair.source.id }, edge, startMs, endMs)}
                         onEnd={endBlockGesture}
                       />
                     ))}
-                  </TimelineRow>
-                )) : null}
-                </View>
-              );
-            })}
-          </ScrollView>
+                  </TimelineRow>));
+  }
+  const moveTrack = useCallback((id: string, dy: number, pageY?: number) => {
+    const origin = trackDragOrigin.current;
+    if (!origin || origin.id !== id) return;
+    origin.dy = dy;
+    if (Number.isFinite(pageY)) origin.pageY = pageY;
+    const center = origin.top + dy + verticalOffsetRef.current - origin.scroll + (origin.heights.get(id) ?? 46) / 2;
+    let top = 0;
+    let destination = 0;
+    for (const candidate of origin.order) {
+      const height = origin.heights.get(candidate) ?? 46;
+      if (candidate !== id && center > top + height / 2) destination++;
+      top += height;
+    }
+    const next = moveTimelineTrack(origin.order, id, destination);
+    if (next.some((item, index) => item !== origin.preview[index])) timelineHaptic('boundary');
+    origin.preview = next;
+    setTrackDrag({ id, order: origin.preview });
+  }, []);
+  useEffect(() => {
+    if (!trackDrag?.id) return;
+    const timer = setInterval(() => {
+      const origin = trackDragOrigin.current;
+      const viewport = trackViewport.current;
+      if (!origin || !viewport || origin.pageY === undefined) return;
+      const direction = origin.pageY < viewport.top + 28 ? -1 : origin.pageY > viewport.top + viewport.height - 28 ? 1 : 0;
+      if (!direction) return;
+      const extent = [...origin.heights.values()].reduce((sum, height) => sum + height, 0);
+      const next = Math.max(0, Math.min(Math.max(0, extent - viewport.height), verticalOffsetRef.current + direction * 8));
+      if (next === verticalOffsetRef.current) return;
+      syncVerticalScroll(next, 'reveal');
+      moveTrack(origin.id, origin.dy, origin.pageY);
+    }, 40);
+    return () => clearInterval(timer);
+  }, [trackDrag?.id, moveTrack, syncVerticalScroll]);
+  return (
+    <TimelineNativeGestureContext.Provider value={nativeScrollGestures}>
+    <TimelineGestureGeometryContext.Provider value={gestureGeometry}>
+    <View
+      onLayout={(event) => {
+        const width = Math.max(1, event.nativeEvent.layout.width);
+        if (gestureGeometry.update({ viewportWidth: width })) {
+          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+          scrubEndTimer.current = null;
+          scrubbingRef.current = false;
+          selectionOwnsViewportRef.current = false;
+          pinch.current.distance = 0;
+        }
+        setViewportWidth(width);
+      }}
+      onStartShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
+      onMoveShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
+      onResponderGrant={(event) => {
+        const [first, second] = event.nativeEvent.touches;
+        pinch.current = { distance: touchDistance(first, second), scale: effectiveScale };
+      }}
+      onResponderMove={(event) => {
+        const [first, second] = event.nativeEvent.touches;
+        if (!first || !second || pinch.current.distance <= 0) return;
+        updateZoom(pinch.current.scale * touchDistance(first, second) / pinch.current.distance);
+      }}
+      style={{ height: Math.min(props.availableHeight ?? 330, totalRowsHeight + RULER_HEIGHT + 38), overflow: 'hidden', borderRadius: 22, backgroundColor: '#1C1C1E' }}>
+      <View style={{ height: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 44, borderBottomWidth: 1, borderBottomColor: '#1D242C' }}>
+        <ZoomButton label="−" onPress={() => updateZoom(effectiveScale / 1.5)} />
+        <Text style={{ minWidth: 70, color: '#D7DDE5', textAlign: 'center', fontSize: 10, fontWeight: '800' }}>{zoomPercent}%</Text>
+        <ZoomButton label="+" onPress={() => updateZoom(effectiveScale * 1.5)} />
+      </View>
+      <TimelineNativeScrollView
+        nativeGesture={nativeScrollGestures[0]}
+        ref={horizontalRef}
+        style={{ flex: 1 }}
+        horizontal
+        nestedScrollEnabled
+        scrollEnabled={!gestureLock}
+        decelerationRate="fast"
+        scrollEventThrottle={32}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ width: scrollContentWidth }}
+        onScrollBeginDrag={() => {
+          if (gestureLockRef.current) return;
+          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+          scrubbingRef.current = true;
+          selectionOwnsViewportRef.current = false;
+          props.onScrubStart();
+        }}
+        onScroll={(event) => {
+          const x = clamp(event.nativeEvent.contentOffset.x, 0, trackWidth);
+          scrollXRef.current = x;
+          setViewportScrollX(x);
+          if (Math.abs(x - visibleCenterX) >= Math.max(120, viewportWidth / 3)) setVisibleCenterX(x);
+          if (scrubbingRef.current && !gestureLockRef.current) seekFromScroll(x);
+        }}
+        onScrollEndDrag={() => {
+          if (!scrubbingRef.current) return;
+          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+          scrubEndTimer.current = setTimeout(finishScrub, 90);
+        }}
+        onMomentumScrollBegin={() => {
+          if (gestureLockRef.current || !scrubbingRef.current) return;
+          if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+          scrubbingRef.current = true;
+        }}
+        onMomentumScrollEnd={finishScrub}>
+        <View style={{ width: LABEL_WIDTH + trackWidth + trailingPadding, height: '100%', marginLeft: leadingPadding }}>
+          <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
+          <TimelineNativeScrollView nativeGesture={nativeScrollGestures[1]} key={props.projectId} ref={verticalRef} style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}
+            scrollEventThrottle={16} onScroll={(event) => syncVerticalScroll(event.nativeEvent.contentOffset.y, 'items')}>
+            {shownTracks.map((id) => <Fragment key={id}>{rows.get(id)}</Fragment>)}
+          </TimelineNativeScrollView>
         </View>
+      </TimelineNativeScrollView>
+      <ScrollView ref={labelScrollRef} testID="timeline-track-labels" nestedScrollEnabled scrollEnabled={!gestureLock}
+        scrollEventThrottle={16} onScroll={(event) => syncVerticalScroll(event.nativeEvent.contentOffset.y, 'labels')}
+        contentContainerStyle={{ paddingVertical: 1 }} style={{ position: 'absolute', left: 0, width: LABEL_WIDTH, top: 36 + RULER_HEIGHT, bottom: 0, backgroundColor: '#1C1C1E' }}>
+        {shownTracks.map((id) => {
+          const row = rows.get(id);
+          if (!row) return null;
+          return <View key={id} style={{ height: row.props.height, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#1D242C', backgroundColor: row.props.selected ? '#252D22' : '#1C1C1E' }}>
+            {!props.voiceoverMode ? <TimelineTrackHandle label={row.props.label} disabled={!props.onReorderTrack}
+              onStart={() => {
+                timelineHaptic('selection');
+                const top = orderedTracks.slice(0, orderedTracks.indexOf(id)).reduce((sum, item) => sum + rowHeight(item), 0);
+                trackDragOrigin.current = { id, order: [...orderedTracks], preview: [...orderedTracks], top, scroll: verticalOffsetRef.current, heights: new Map(orderedTracks.map((item) => [item, rowHeight(item)])), dy: 0 };
+                labelScrollRef.current?.getNativeScrollRef()?.measureInWindow((_x, y, _width, height) => { trackViewport.current = { top: y, height }; });
+                setTrackDrag({ id, order: [...orderedTracks] });
+                setItemGestureLock(true);
+              }}
+              onMove={(dy, pageY) => moveTrack(id, dy, pageY)}
+              onFinish={(cancelled) => {
+                const origin = trackDragOrigin.current;
+                trackDragOrigin.current = undefined;
+                setItemGestureLock(false);
+                if (!cancelled && origin && origin.preview.some((item, index) => item !== origin.order[index])) props.onReorderTrack?.(origin.preview);
+                setTrackDrag(undefined);
+              }}
+              onAccessibleMove={(direction) => props.onReorderTrack?.(moveTimelineTrack(orderedTracks, id, orderedTracks.indexOf(id) + direction))} /> : null}
+            <Pressable onPress={row.props.onPressLabel} disabled={!row.props.onPressLabel} accessibilityRole={row.props.onPressLabel ? 'button' : 'text'} accessibilityLabel={row.props.label}
+              style={{ flex: 1, minHeight: 44, justifyContent: 'center', paddingHorizontal: 3 }}>
+              <Text numberOfLines={1} style={{ color: row.props.labelColor, fontSize: 8, fontWeight: '900' }}>{row.props.label}</Text>
+              {row.props.controls}
+            </Pressable>
+          </View>;
+        })}
       </ScrollView>
       {frontTrimPreview ? <View testID="front-trim-feedback" pointerEvents="none" style={{ position: 'absolute', left: 8, right: 8, bottom: 8, zIndex: 12, padding: 8, borderRadius: 10, borderWidth: 1, borderColor: '#64D2FF', backgroundColor: 'rgba(8, 16, 22, 0.96)', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ flex: 1, gap: 5 }}>
@@ -653,6 +767,7 @@ export function LayerTimeline(props: {
       {zoomNotice == null ? null : <View pointerEvents="none" style={{ position: 'absolute', alignSelf: 'center', top: 72, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 14, backgroundColor: 'rgba(5,7,9,0.92)' }}><Text style={{ color: '#FFFFFF', fontSize: 15, fontWeight: '900' }}>{zoomNotice}%</Text></View>}
     </View>
     </TimelineGestureGeometryContext.Provider>
+    </TimelineNativeGestureContext.Provider>
   );
 }
 
@@ -677,6 +792,7 @@ function VideoClipBlock(props: {
   durationMs: number;
   trackWidth: number;
   playheadMs: number;
+  getFeedbackBoundaries?: () => readonly number[];
   filmstrip?: boolean;
   tileSize?: number;
   tileGap?: number;
@@ -711,8 +827,8 @@ function VideoClipBlock(props: {
         position: 'absolute',
         left: handleLayout.left,
         width: handleLayout.width,
-        top: props.filmstrip || props.reordering ? 4 : 3,
-        bottom: props.filmstrip || props.reordering ? 4 : 3,
+        top: props.filmstrip || props.reordering ? 4 : showTrimGrips ? 0 : 3,
+        bottom: props.filmstrip || props.reordering ? 4 : showTrimGrips ? 0 : 3,
         zIndex: props.reordering ? 8 : props.selected ? 5 : 1,
         overflow: 'visible',
         transform: props.reordering ? [{ scale: 1.04 }] : undefined,
@@ -723,8 +839,8 @@ function VideoClipBlock(props: {
           position: 'absolute',
           left: handleLayout.visualLeft,
           width: handleLayout.visualWidth,
-          top: 0,
-          bottom: 0,
+          top: showTrimGrips ? 3 : 0,
+          bottom: showTrimGrips ? 3 : 0,
           justifyContent: props.filmstrip ? 'flex-end' : 'center',
           paddingHorizontal: props.filmstrip ? 4 : 10,
           paddingBottom: props.filmstrip ? 4 : 0,
@@ -761,7 +877,9 @@ function VideoClipBlock(props: {
           ) : null}
         </View>
       </View>
-      <VideoMoveGrip {...props} bodyLeft={handleLayout.visualLeft} bodyWidth={handleLayout.visualWidth} />
+      <VideoMoveGrip {...props} bodyLeft={handleLayout.visualLeft} bodyWidth={handleLayout.visualWidth}
+        moveLeft={'moveLeft' in handleLayout ? handleLayout.moveLeft : undefined}
+        moveWidth={'moveWidth' in handleLayout ? handleLayout.moveWidth : undefined} />
       {showTrimGrips ? (
         <>
           <VideoTrimGrip {...props} side="start" gripLeft={handleLayout.startGripLeft} />
@@ -809,12 +927,13 @@ function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'st
   const targetRef = useRef(props.side === 'start' ? props.clip.sourceStartMs : props.clip.sourceEndMs);
   const initialClipRef = useRef(props.clip);
   const initialBoundaryRef = useRef(props.side === 'start' ? props.startMs : props.endMs);
-  const panHandlers = useTimelineTimingPanHandlers({
+  const { nativeCallbacks, ...panHandlers } = useTimelineTimingPanHandlers({
     startMs: props.startMs,
     endMs: props.endMs,
     durationMs: props.durationMs,
     trackWidth: props.trackWidth,
     playheadMs: props.playheadMs,
+    getFeedbackBoundaries: props.getFeedbackBoundaries,
     onPress: props.onPress,
     onChangeStart: () => {
       const current = propsRef.current;
@@ -843,6 +962,13 @@ function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'st
           );
       targetRef.current = target;
       current.onTrimPreview(trimEdge, target);
+      // Report the clamped grabbed edge, not an impossible pointer position
+      // beyond available source frames. Start trims still use ripple preview.
+      const appliedBoundary = initialBoundaryRef.current + (target -
+        (trimEdge === 'start' ? initialClip.sourceStartMs : initialClip.sourceEndMs)) / initialClip.playbackRate;
+      return trimEdge === 'start'
+        ? { startMs: appliedBoundary, endMs: initialBoundaryRef.current + (initialClip.sourceEndMs - initialClip.sourceStartMs) / initialClip.playbackRate }
+        : { startMs: initialBoundaryRef.current - (initialClip.sourceEndMs - initialClip.sourceStartMs) / initialClip.playbackRate, endMs: appliedBoundary };
     },
     onEnd: () => {
       const current = propsRef.current;
@@ -851,23 +977,28 @@ function VideoTrimGrip(props: Parameters<typeof VideoClipBlock>[0] & { side: 'st
     onCancel: () => propsRef.current.onGestureCancel(),
   }, props.side, props.onGestureLock);
   return (
-    <View
-      {...panHandlers}
+    <TimelineNativeGestureView
+      panHandlers={panHandlers}
+      nativeCallbacks={nativeCallbacks}
       accessibilityRole="adjustable"
       accessibilityLabel={`${props.side === 'start' ? 'Start' : 'End'} trim handle`}
-      style={{ position: 'absolute', left: props.gripLeft, top: -3, bottom: -3, width: TIMELINE_EDGE_HANDLE_WIDTH, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: TIMELINE_EDGE_HANDLE_COLOR }}>
+      style={{ position: 'absolute', left: props.gripLeft, top: 0, bottom: 0, width: TIMELINE_EDGE_HANDLE_WIDTH, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: TIMELINE_EDGE_HANDLE_COLOR }}>
       <View pointerEvents="none" style={{ width: 3, height: 18, borderRadius: 2, backgroundColor: TIMELINE_EDGE_HANDLE_BAR_COLOR }} />
-    </View>
+    </TimelineNativeGestureView>
   );
 }
 
-function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft: number; bodyWidth: number }) {
+function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft: number; bodyWidth: number; moveLeft?: number; moveWidth?: number }) {
+  const [feedback] = useState(() => createTimelineBoundaryFeedback(() => timelineHaptic('boundary')));
+  const feedbackOrigin = useRef({ startMs: props.startMs, endMs: props.endMs });
+  const intent = useRef<TimelineTouchIntent>('pending');
   const gestureGeometry = useContext(TimelineGestureGeometryContext);
   const claimed = useRef(false);
   const propsRef = useRef(props);
   propsRef.current = props;
   const gapRef = useRef(props.leadingGapMs);
   const initialGapRef = useRef(props.leadingGapMs);
+  const millisecondsPerPixel = useRef(props.durationMs / Math.max(1, props.trackWidth));
   const reorderIndexRef = useRef(props.clipIndex);
   const originIndexRef = useRef(props.clipIndex);
   const modeRef = useRef<'none' | 'gap' | 'reorder'>('none');
@@ -875,6 +1006,7 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
   const longPressArmedRef = useRef(false);
 
   const cancelGesture = useCallback(() => {
+    feedback.reset();
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = null;
     modeRef.current = 'none';
@@ -882,15 +1014,21 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
     if (!claimed.current) return;
     claimed.current = false;
     propsRef.current.onGestureCancel();
-  }, []);
+  }, [feedback]);
 
   const [responder] = useState(() => {
+    const previewGap = (gap: number) => {
+      propsRef.current.onGapPreview(gap);
+      const delta = gap - initialGapRef.current;
+      feedback.update(feedbackOrigin.current.startMs + delta, feedbackOrigin.current.endMs + delta);
+    };
     const clearLongPress = () => {
       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     };
     const finishGesture = (kind: 'release' | 'terminate') => {
       clearLongPress();
+      feedback.reset();
       if (!claimed.current) return;
       claimed.current = false;
       const mode = modeRef.current;
@@ -907,31 +1045,42 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
       }
       propsRef.current.onGestureLock(false);
     };
-    return PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderTerminationRequest: () => false,
-    onShouldBlockNativeResponder: () => true,
-    onPanResponderGrant: () => {
+    const shouldClaim = (_event: unknown, movement: { dx: number; dy: number }) => {
+      if (longPressArmedRef.current) return true;
+      if (intent.current === 'pending') intent.current = timelineTouchIntent(movement.dx, movement.dy);
+      return intent.current === 'horizontal';
+    };
+    const begin = (movement?: { dx: number; dy: number }, reorder = false) => {
+      const wasArmed = reorder || longPressArmedRef.current;
       claimed.current = true;
       propsRef.current.onPress();
       propsRef.current.onGestureLock(true);
       initialGapRef.current = propsRef.current.leadingGapMs;
+      millisecondsPerPixel.current = propsRef.current.durationMs / Math.max(1, propsRef.current.trackWidth);
       gapRef.current = initialGapRef.current;
       originIndexRef.current = propsRef.current.clipIndex;
       reorderIndexRef.current = propsRef.current.clipIndex;
-      modeRef.current = 'none';
-      longPressArmedRef.current = false;
+      feedbackOrigin.current = { startMs: propsRef.current.startMs, endMs: propsRef.current.endMs };
+      feedback.begin(propsRef.current.startMs, propsRef.current.endMs,
+        propsRef.current.getFeedbackBoundaries?.() ?? [propsRef.current.playheadMs],
+        2 * propsRef.current.durationMs / Math.max(1, propsRef.current.trackWidth));
+      modeRef.current = wasArmed ? 'reorder' : movement ? 'gap' : 'none';
+      longPressArmedRef.current = wasArmed;
       clearLongPress();
-      longPressTimerRef.current = setTimeout(() => {
+      if (wasArmed) propsRef.current.onReorderPreview(originIndexRef.current);
+      else if (movement) {
+        gapRef.current = clamp(initialGapRef.current + movement.dx * millisecondsPerPixel.current, 0, 60 * 60_000);
+        previewGap(gapRef.current);
+      }
+      if (modeRef.current === 'none') longPressTimerRef.current = setTimeout(() => {
         if (!claimed.current) return;
         longPressArmedRef.current = true;
         modeRef.current = 'reorder';
         reorderIndexRef.current = originIndexRef.current;
         propsRef.current.onReorderPreview(originIndexRef.current);
       }, 350);
-    },
-    onPanResponderMove: (_event, gesture) => {
+    };
+    const move = (gesture: { dx: number; dy: number }) => {
       if (!claimed.current) return;
       if (modeRef.current === 'none') {
         if (!longPressArmedRef.current) {
@@ -939,27 +1088,40 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
           clearLongPress();
           if (Math.abs(gesture.dx) <= Math.abs(gesture.dy)) return;
           modeRef.current = 'gap';
-        } else {
-          modeRef.current = 'reorder';
-        }
+        } else modeRef.current = 'reorder';
       }
       if (modeRef.current === 'reorder') {
         if (propsRef.current.clipCount <= 1) return;
         const slotWidth = Math.max(24, (propsRef.current.tileSize ?? REORDER_TILE) + (propsRef.current.tileGap ?? REORDER_GAP));
-        const deltaIndex = Math.round(gesture.dx / slotWidth);
-        const toIndex = clamp(originIndexRef.current + deltaIndex, 0, propsRef.current.clipCount - 1);
+        const toIndex = clamp(originIndexRef.current + Math.round(gesture.dx / slotWidth), 0, propsRef.current.clipCount - 1);
+        if (toIndex !== reorderIndexRef.current) timelineHaptic('boundary');
         reorderIndexRef.current = toIndex;
         propsRef.current.onReorderPreview(toIndex);
         return;
       }
-      const delta = gesture.dx / Math.max(1, propsRef.current.trackWidth) * propsRef.current.durationMs;
-      const gap = clamp(initialGapRef.current + delta, 0, 60 * 60_000);
-      gapRef.current = gap;
-      propsRef.current.onGapPreview(gap);
-    },
-    onPanResponderRelease: () => finishGesture('release'),
-    onPanResponderTerminate: () => finishGesture('terminate'),
+      const delta = gesture.dx * millisecondsPerPixel.current;
+      gapRef.current = clamp(initialGapRef.current + delta, 0, 60 * 60_000);
+      previewGap(gapRef.current);
+    };
+    const panResponder = PanResponder.create({
+    onStartShouldSetPanResponderCapture: () => { intent.current = 'pending'; longPressArmedRef.current = false; return false; },
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: shouldClaim,
+    onMoveShouldSetPanResponderCapture: shouldClaim,
+    onPanResponderTerminationRequest: () => !claimed.current,
+    onShouldBlockNativeResponder: () => claimed.current,
+    onPanResponderGrant: (_event, movement) => begin(movement),
+    onPanResponderMove: (_event, gesture) => move(gesture),
+    onPanResponderRelease: (_event, movement) => { move(movement); finishGesture('release'); },
+    onPanResponderTerminate: cancelGesture,
     });
+    return { ...panResponder, nativeCallbacks: {
+      prepare: () => { intent.current = 'pending'; longPressArmedRef.current = false; },
+      holdMilliseconds: 350,
+      begin: (dx: number, dy: number, reorder?: boolean) => begin({ dx, dy }, reorder),
+      move: (dx: number, dy: number, touches: number) => { if (touches > 1) cancelGesture(); else move({ dx, dy }); },
+      finish: () => finishGesture('release'), cancel: cancelGesture,
+    } };
   });
 
   useEffect(() => () => {
@@ -967,17 +1129,19 @@ function VideoMoveGrip(props: Parameters<typeof VideoClipBlock>[0] & { bodyLeft:
   }, [cancelGesture]);
   useEffect(() => gestureGeometry?.subscribe(cancelGesture), [gestureGeometry, cancelGesture]);
 
-  const moveWidth = props.selected && !props.reordering && !props.filmstrip
-    ? Math.max(8, props.bodyWidth - 32) : props.bodyWidth;
-  const moveLeft = props.bodyLeft + (props.bodyWidth - moveWidth) / 2;
+  const moveWidth = props.moveWidth ?? props.bodyWidth;
+  const moveLeft = props.moveLeft ?? props.bodyLeft;
   return (
-    <View
-      {...responder.panHandlers}
+    <TimelineNativeGestureView
+      panHandlers={responder.panHandlers}
+      nativeCallbacks={responder.nativeCallbacks}
       accessible
       accessibilityRole="adjustable"
       accessibilityLabel={`${props.label}. Tap to select. Hold then drag to reorder. Drag horizontally to add or remove empty space before this clip.`}
-      style={{ position: 'absolute', left: moveLeft, width: moveWidth, top: 0, bottom: 0 }}
-    />
+      style={{ position: 'absolute', left: moveLeft, width: moveWidth, top: 0, bottom: 0 }}>
+      <Pressable accessible={false} onPress={props.onPress} onPressIn={() => { longPressArmedRef.current = false; }}
+        onLongPress={() => { if (intent.current === 'pending') longPressArmedRef.current = true; }} delayLongPress={350} style={{ position: 'absolute', inset: 0 }} />
+    </TimelineNativeGestureView>
   );
 }
 
@@ -1033,14 +1197,41 @@ function VideoGapBlock(props: { startMs: number; endMs: number; durationMs: numb
   );
 }
 
-function TimelineRow(props: { label: string; labelColor: string; selected?: boolean; controls: React.ReactNode; children: React.ReactNode; onPressLabel?: () => void; onPressTrack?: (x: number) => void; trackWidth: number; height: number }) {
+function TimelineTrackHandle(props: { label: string; disabled: boolean; onStart: () => void; onMove: (dy: number, pageY?: number) => void; onFinish: (cancelled: boolean) => void; onAccessibleMove: (direction: -1 | 1) => void }) {
+  const current = useRef(props);
+  current.current = props;
+  const active = useRef(false);
+  const geometry = useContext(TimelineGestureGeometryContext);
+  const finish = useCallback((cancelled: boolean) => {
+    if (!active.current) return;
+    active.current = false;
+    current.current.onFinish(cancelled);
+  }, []);
+  const [responder] = useState(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_event, movement) => !current.current.disabled && timelineTouchIntent(movement.dx, movement.dy) === 'vertical',
+    onPanResponderGrant: (_event, movement) => { active.current = true; current.current.onStart(); if (movement) current.current.onMove(movement.dy, movement.moveY); },
+    onPanResponderMove: (event, movement) => { if (event.nativeEvent.touches.length > 1) finish(true); else if (active.current) current.current.onMove(movement.dy, movement.moveY); },
+    onPanResponderTerminationRequest: () => !active.current,
+    onPanResponderRelease: () => finish(false),
+    onPanResponderTerminate: () => finish(true),
+  }));
+  useEffect(() => () => finish(true), [finish]);
+  useEffect(() => geometry?.subscribe(() => finish(true)), [geometry, finish]);
+  return <View {...responder.panHandlers} hitSlop={10} accessible accessibilityRole="adjustable" accessibilityLabel={'Reorder ' + props.label + ' track'}
+    accessibilityState={{ disabled: props.disabled }} accessibilityActions={[{ name: 'increment', label: 'Move track down' }, { name: 'decrement', label: 'Move track up' }]}
+    onAccessibilityAction={(event) => { if (!props.disabled && (event.nativeEvent.actionName === 'increment' || event.nativeEvent.actionName === 'decrement')) props.onAccessibleMove(event.nativeEvent.actionName === 'increment' ? 1 : -1); }}
+    style={{ width: 24, minHeight: 44, alignItems: 'center', justifyContent: 'center', opacity: props.disabled ? 0.4 : 1 }}>
+    <View pointerEvents="none" style={{ width: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 2 }}>
+      {Array.from({ length: 8 }, (_, index) => <View key={index} style={{ width: 3, height: 3, borderRadius: 2, backgroundColor: '#9BA6B3' }} />)}
+    </View>
+  </View>;
+}
+
+function TimelineRow(props: { label: string; labelColor: string; selected?: boolean; controls?: React.ReactNode; children: React.ReactNode; onPressLabel?: () => void; onPressTrack?: (x: number) => void; trackWidth: number; height: number }) {
   return (
     <View style={{ width: LABEL_WIDTH + props.trackWidth, height: props.height, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#1D242C' }}>
-      <Pressable onPress={props.onPressLabel} accessibilityRole="button" accessibilityLabel={props.label}
-        style={{ width: LABEL_WIDTH, height: '100%', paddingHorizontal: 6, justifyContent: 'center', gap: 2, backgroundColor: props.selected ? '#252D22' : 'transparent' }}>
-        <Text numberOfLines={1} style={{ color: props.labelColor, fontSize: 8, fontWeight: '900' }}>{props.label}</Text>
-        {props.controls}
-      </Pressable>
+      <View pointerEvents="none" style={{ width: LABEL_WIDTH, height: '100%' }} />
       <View style={{ width: props.trackWidth, height: props.height - 8, borderRadius: 7, backgroundColor: '#171D23', overflow: 'visible' }}>
         <Pressable accessibilityRole="button" accessibilityLabel="Clear selection and seek timeline" onPress={(event) => props.onPressTrack?.(event.nativeEvent.locationX)} style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }} />
         <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}>
@@ -1062,6 +1253,7 @@ function TimelineCoverageStrip(props: { left: number; width: number; startMs: nu
 }
 
 function TimedBlock(props: {
+  getFeedbackBoundaries?: () => readonly number[];
   onTouchLock?: (locked: boolean) => void;
   label: string;
   startMs: number;
@@ -1081,16 +1273,17 @@ function TimedBlock(props: {
   sourceDurationMs?: number;
   onPress: () => void;
   onChangeStart: () => void;
-  onChange: (edge: TimelineTimingEdge, startMs: number, endMs: number) => void;
+  onChange: FeedbackTimingOwner['onChange'];
   onEnd: () => void;
 }) {
   const width = Math.max(0, (props.endMs - props.startMs) * (props.trackWidth / props.durationMs));
   const bodyLeft = props.startMs / props.durationMs * props.trackWidth;
-  const handleLayout = timelineHandleLayout(props.selected, width);
-  const interactionLeft = Math.max(0, bodyLeft - handleLayout.interactionInset);
-  const interactionRight = Math.min(props.trackWidth, bodyLeft + width + handleLayout.interactionInset);
-  const interactionWidth = Math.max(0, interactionRight - interactionLeft);
+  const handleLayout = timelineHandleHitLayout(props.selected, width);
+  const interactionLeft = bodyLeft + handleLayout.envelope.left;
+  const interactionWidth = handleLayout.envelope.width;
   const visualLeft = bodyLeft - interactionLeft;
+  const verticalInset = handleLayout.showTrimGrips ? 3 : 0;
+  const interactionHeight = LANE_HEIGHT + verticalInset * 2;
   const showThumbnail = Boolean(props.thumbnailUri && width >= 56);
   const labelInset = Math.min(8, Math.max(2, (width - 16) / 4));
   const labelLeft = showThumbnail ? Math.min(32, Math.max(2, width - labelInset - 16)) : labelInset;
@@ -1098,8 +1291,8 @@ function TimedBlock(props: {
   const labelWidth = Math.max(0, width - labelLeft - labelRight);
   const showLabel = labelWidth >= 16;
   return (
-    <View style={{ position: 'absolute', left: interactionLeft, width: interactionWidth, top: props.lane * LANE_HEIGHT, height: LANE_HEIGHT, zIndex: props.selected ? 6 : 1, justifyContent: 'center' }}>
-      <View pointerEvents="none" style={{ position: 'absolute', left: visualLeft, width, top: 0, bottom: 0, overflow: 'hidden', borderRadius: 6, borderWidth: props.selected ? 2 : 1, borderColor: props.selected ? '#FFFFFF' : `${props.color}CC`, backgroundColor: `${props.color}B8` }}>
+    <View style={{ position: 'absolute', left: interactionLeft, width: interactionWidth, top: props.lane * LANE_HEIGHT - verticalInset, height: interactionHeight, zIndex: props.selected ? 6 : 1, justifyContent: 'center' }}>
+      <View pointerEvents="none" style={{ position: 'absolute', left: visualLeft, width, top: verticalInset, bottom: verticalInset, overflow: 'hidden', borderRadius: 6, borderWidth: props.selected ? 2 : 1, borderColor: props.selected ? '#FFFFFF' : `${props.color.slice(0, 7)}CC`, backgroundColor: props.color.length === 9 ? props.color : `${props.color}B8` }}>
         {props.waveformPeaks && props.waveformPeaks.length >= 8 ? (
           <AudioWaveform
             peaks={props.waveformPeaks}
@@ -1115,8 +1308,8 @@ function TimedBlock(props: {
           />
         ) : null}
       </View>
-      {showThumbnail ? <View pointerEvents="none" style={{ position: 'absolute', left: visualLeft + 3, top: 3, width: 24, height: 24, borderRadius: 3, overflow: 'hidden', zIndex: 2, backgroundColor: '#172027' }}><Image source={{ uri: props.thumbnailUri }} contentFit="cover" style={{ width: '100%', height: '100%' }} /></View> : null}
-      {showLabel ? <Text pointerEvents="none" numberOfLines={1} style={{ position: 'absolute', left: visualLeft + labelLeft, width: labelWidth, top: 1, color: '#FFFFFF', fontSize: 7, fontWeight: '900', zIndex: 2, textShadowColor: '#00161A', textShadowRadius: 2 }}>{props.label}</Text> : null}
+      {showThumbnail ? <View pointerEvents="none" style={{ position: 'absolute', left: visualLeft + 3, top: 3 + verticalInset, width: 24, height: 24, borderRadius: 3, overflow: 'hidden', zIndex: 2, backgroundColor: '#172027' }}><Image source={{ uri: props.thumbnailUri }} contentFit="cover" style={{ width: '100%', height: '100%' }} /></View> : null}
+      {showLabel ? <Text pointerEvents="none" numberOfLines={1} style={{ position: 'absolute', left: visualLeft + labelLeft, width: labelWidth, top: 1 + verticalInset, color: '#FFFFFF', fontSize: 7, fontWeight: '900', zIndex: 2, textShadowColor: '#00161A', textShadowRadius: 2 }}>{props.label}</Text> : null}
       <DirectTimelineGestureSurface {...props} width={interactionWidth} blockLeft={visualLeft} blockWidth={width} />
     </View>
   );
@@ -1136,80 +1329,104 @@ function LiveRecordingBlock(props: { startMs: number; endMs: number; meterLevel:
 type TimelineTimingOwner = Parameters<typeof TimedBlock>[0];
 
 function useTimelineTimingPanHandlers(
-  owner: TimelineTimingGestureOwner,
+  owner: FeedbackTimingOwner,
   edge: TimelineTimingEdge,
   onTouchLock?: (locked: boolean) => void,
 ) {
   const gestureGeometry = useContext(TimelineGestureGeometryContext);
   const current = useRef({ owner, edge, onTouchLock });
   current.current = { owner, edge, onTouchLock };
-  const gesture = useMemo(() => createTimelineTimingGesture(), []);
+  const [gesture] = useState(() => createTimelineTimingGesture());
+  const [feedback] = useState(() => createTimelineBoundaryFeedback(() => timelineHaptic('boundary')));
+  const explicitFeedback = useRef(false);
+  const intent = useRef<TimelineTouchIntent>('pending');
   const claimed = useRef(false);
   const cancelGesture = useCallback(() => {
     gesture.cancel();
+    feedback.reset();
     if (claimed.current) current.current.onTouchLock?.(false);
     claimed.current = false;
-  }, [gesture]);
-  const responder = useMemo(() => {
+  }, [gesture, feedback]);
+  useEffect(() => {
+    // Live edits are reported only after their authoritative domain constraints
+    // have been applied. Do not buzz at rejected or out-of-range pointer values.
+    if (claimed.current && !explicitFeedback.current) feedback.update(owner.startMs, owner.endMs);
+  }, [feedback, owner.startMs, owner.endMs]);
+  const [responder] = useState(() => {
     const finish = () => {
       gesture.finish();
+      feedback.reset();
       if (claimed.current) current.current.onTouchLock?.(false);
       claimed.current = false;
     };
-    return PanResponder.create({
-      onStartShouldSetPanResponder: (event) => event.nativeEvent.touches.length === 1,
-      onMoveShouldSetPanResponder: () => false,
-      onPanResponderTerminationRequest: () => false,
-      onShouldBlockNativeResponder: () => true,
-      onPanResponderGrant: () => {
-        claimed.current = true;
-        const active = current.current;
-        gesture.begin(active.owner, active.edge);
-        active.onTouchLock?.(true);
-      },
-      onPanResponderMove: (event, movement) => {
-        if (event.nativeEvent.touches.length > 1) {
-          finish();
-          return;
+    const shouldClaim = (event: { nativeEvent: { touches: readonly unknown[] } }, movement: { dx: number; dy: number }) => {
+      if (event.nativeEvent.touches.length !== 1) return false;
+      if (intent.current === 'pending') intent.current = timelineTouchIntent(movement.dx, movement.dy);
+      return intent.current === 'horizontal';
+    };
+    const begin = (movement?: { dx: number; dy: number }) => {
+      claimed.current = true;
+      const active = current.current;
+      explicitFeedback.current = false;
+      feedback.begin(active.owner.startMs, active.owner.endMs,
+        active.owner.getFeedbackBoundaries?.() ?? [active.owner.playheadMs ?? NaN],
+        2 * active.owner.durationMs / Math.max(1, active.owner.trackWidth));
+      gesture.begin({ ...active.owner, onChange: (nextEdge, startMs, endMs) => {
+        const applied = current.current.owner.onChange(nextEdge, startMs, endMs);
+        if (applied) {
+          explicitFeedback.current = true;
+          feedback.update(applied.startMs, applied.endMs);
         }
-        if (!Number.isFinite(movement.dx) || !Number.isFinite(movement.dy)) return;
-        gesture.move(movement.dx, movement.dy);
-      },
-      onPanResponderRelease: finish,
-      onPanResponderTerminate: finish,
+      } }, active.edge);
+      active.onTouchLock?.(true);
+      if (movement) gesture.move(movement.dx, movement.dy);
+    };
+    const move = (dx: number, dy: number, touches: number) => {
+      if (touches > 1) { cancelGesture(); return; }
+      if (Number.isFinite(dx) && Number.isFinite(dy)) gesture.move(dx, dy);
+    };
+    const panResponder = PanResponder.create({
+      onStartShouldSetPanResponderCapture: () => { intent.current = 'pending'; return false; },
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: shouldClaim,
+      onMoveShouldSetPanResponderCapture: shouldClaim,
+      onPanResponderTerminationRequest: () => !claimed.current,
+      onShouldBlockNativeResponder: () => claimed.current,
+      onPanResponderGrant: (_event, movement) => begin(movement),
+      onPanResponderMove: (event, movement) => move(movement.dx, movement.dy, event.nativeEvent.touches.length),
+      onPanResponderRelease: (event, movement) => { move(movement.dx, movement.dy, event.nativeEvent.touches.length); finish(); },
+      onPanResponderTerminate: cancelGesture,
     });
-  }, [gesture]);
+    return { ...panResponder, nativeCallbacks: {
+      begin: (dx: number, dy: number) => begin({ dx, dy }), move,
+      finish, cancel: cancelGesture,
+    } };
+  });
   useEffect(() => () => {
     cancelGesture();
   }, [cancelGesture]);
   useEffect(() => gestureGeometry?.subscribe(cancelGesture), [gestureGeometry, cancelGesture]);
-  return responder.panHandlers;
+  return { ...responder.panHandlers, nativeCallbacks: responder.nativeCallbacks };
 }
 
 function DirectTimelineGestureSurface(props: TimelineTimingOwner & { width: number; blockLeft: number; blockWidth: number }) {
-  const layout = timelineHandleLayout(props.selected, props.blockWidth);
-  const markers = timelineHandleMarkerLayout(props.blockLeft, props.blockWidth, layout.gripWidth);
-  const blockCenter = props.blockLeft + props.blockWidth / 2;
-  const innerEdgeWidth = Math.min(layout.interactionInset, Math.max(0, (props.blockWidth - layout.minimumMoveWidth) / 2));
-  let moveLeft = props.selected ? props.blockLeft + innerEdgeWidth : 0;
-  let moveRight = props.selected ? props.blockLeft + props.blockWidth - innerEdgeWidth : props.width;
-  if (props.selected && moveRight - moveLeft < layout.minimumMoveWidth) {
-    moveLeft = Math.max(0, blockCenter - layout.minimumMoveWidth / 2);
-    moveRight = Math.min(props.width, blockCenter + layout.minimumMoveWidth / 2);
-  }
-  return <View testID="timeline-direct-surface" style={{ position: 'absolute', left: 0, top: 0, width: props.width, height: LANE_HEIGHT, borderRadius: 6 }}>
-    {layout.showTrimGrips ? <TimelineTimingGrip {...props} edge="start" left={0} width={moveLeft} height={LANE_HEIGHT} /> : null}
-    <TimelineTimingGrip {...props} edge="move" left={moveLeft} width={Math.max(0, moveRight - moveLeft)} height={LANE_HEIGHT} />
-    {layout.showTrimGrips ? <TimelineTimingGrip {...props} edge="end" left={moveRight} width={Math.max(0, props.width - moveRight)} height={LANE_HEIGHT} /> : null}
+  const layout = timelineHandleHitLayout(props.selected, props.blockWidth);
+  const moveLeft = layout.showTrimGrips ? TIMELINE_EDGE_HANDLE_WIDTH : 0;
+  const moveRight = moveLeft + layout.moveHit.width;
+  const height = layout.showTrimGrips ? LANE_HEIGHT + 6 : LANE_HEIGHT;
+  return <View testID="timeline-direct-surface" style={{ position: 'absolute', left: 0, top: 0, width: props.width, height, borderRadius: 6 }}>
+    {layout.showTrimGrips ? <TimelineTimingGrip {...props} edge="start" left={0} width={moveLeft} height={height} /> : null}
+    <TimelineTimingGrip {...props} edge="move" left={moveLeft} width={Math.max(0, moveRight - moveLeft)} height={height} />
+    {layout.showTrimGrips ? <TimelineTimingGrip {...props} edge="end" left={moveRight} width={Math.max(0, props.width - moveRight)} height={height} /> : null}
     {layout.showTrimGrips ? <>
-      <TimelineEdgeHandleMarker left={markers.startLeft} width={layout.gripWidth} />
-      <TimelineEdgeHandleMarker left={markers.endLeft} width={layout.gripWidth} />
+      <TimelineEdgeHandleMarker left={0} width={TIMELINE_EDGE_HANDLE_WIDTH} />
+      <TimelineEdgeHandleMarker left={moveRight} width={TIMELINE_EDGE_HANDLE_WIDTH} />
     </> : null}
   </View>;
 }
 
 function TimelineEdgeHandleMarker(props: { left: number; width: number }) {
-  return <View pointerEvents="none" style={{ position: 'absolute', left: props.left, top: -3, bottom: -3,
+  return <View pointerEvents="none" style={{ position: 'absolute', left: props.left, top: 0, bottom: 0,
     width: props.width, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: TIMELINE_EDGE_HANDLE_COLOR }}>
     <View pointerEvents="none" style={{ width: 3, height: 18, borderRadius: 2, backgroundColor: TIMELINE_EDGE_HANDLE_BAR_COLOR }} />
   </View>;
@@ -1218,14 +1435,16 @@ function TimelineEdgeHandleMarker(props: { left: number; width: number }) {
 function TimelineTimingGrip(props: TimelineTimingOwner & {
   edge: TimelineTimingEdge; left: number; width: number; height: number;
 }) {
-  const panHandlers = useTimelineTimingPanHandlers(props, props.edge, props.onTouchLock);
-  return <View {...panHandlers} accessible accessibilityRole="adjustable"
+  const { nativeCallbacks, ...panHandlers } = useTimelineTimingPanHandlers(props, props.edge, props.onTouchLock);
+  return <TimelineNativeGestureView panHandlers={panHandlers} nativeCallbacks={nativeCallbacks} accessible accessibilityRole="adjustable"
     accessibilityState={{ selected: props.selected }}
     accessibilityLabel={timelineTimingLabel(props.label, props.startMs, props.endMs, props.selected, props.edge)}
     accessibilityActions={TIMELINE_ACCESSIBILITY_ACTIONS}
     onAccessibilityAction={(event) => adjustTimelineTiming(props, props.edge, event.nativeEvent.actionName)}
     style={{ position: 'absolute', left: props.left, top: 0, width: props.width, height: props.height,
-      alignItems: 'center', justifyContent: 'center', borderRadius: 6 }} />;
+      alignItems: 'center', justifyContent: 'center', borderRadius: 6 }}>
+    <Pressable accessible={false} onPress={props.onPress} style={{ position: 'absolute', inset: 0 }} />
+  </TimelineNativeGestureView>;
 }
 
 function AudioWaveform(props: {
@@ -1276,32 +1495,6 @@ function AudioWaveform(props: {
   );
 }
 
-function TinyButton(props: { label: string; danger?: boolean; disabled?: boolean; onPress: () => void }) {
-  const accessibilityLabel = props.label === '↑'
-    ? 'Move layer up'
-    : props.label === '↓'
-      ? 'Move layer down'
-      : 'Remove layer';
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      disabled={props.disabled}
-      onPress={props.onPress}
-      hitSlop={4}
-      style={{
-        width: 26,
-        height: 26,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 7,
-        backgroundColor: props.danger ? '#3A2028' : '#252C34',
-        opacity: props.disabled ? 0.25 : 1,
-      }}>
-      <Text style={{ color: props.danger ? '#FF7C8D' : '#D7E0E8', fontSize: 18, lineHeight: 21, fontWeight: '900' }}>{props.label}</Text>
-    </Pressable>
-  );
-}
 function ZoomButton(props: { label: string; onPress: () => void }) { return <Pressable accessibilityRole="button" accessibilityLabel={props.label === '+' ? 'Zoom timeline in' : 'Zoom timeline out'} onPress={props.onPress} style={{ width: 42, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: '#2C2C2E' }}><Text style={{ color: '#64D2FF', fontSize: 20, fontWeight: '600' }}>{props.label}</Text></Pressable>; }
 function formatRulerTime(ms: number, intervalMs: number) { const minutes = Math.floor(ms / 60_000); const seconds = (ms % 60_000) / 1000; return intervalMs < 1000 ? `${minutes}:${seconds.toFixed(intervalMs < 500 ? 2 : 1).padStart(4, '0')}` : `${minutes}:${Math.floor(seconds).toString().padStart(2, '0')}`; }
 function formatGap(ms: number) { return `${(Math.max(0, ms) / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`; }

@@ -15,7 +15,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 function mount({ window = { width: 844, height: 390 }, insets = { top: 0, bottom: 21, left: 47, right: 13 }, fontsLoaded = true, fontError = null } = {}) {
   const environment = { window, insets, fontsLoaded, fontError };
   const slots = [], calls = { cache: [], cleanup: 0, diagnostics: 0, fonts: 0 };
-  let cursor = 0, effects = [], tree, resolveImports;
+  let cursor = 0, effects = [], tree, root, resolveImports;
   const importedFonts = new Promise(resolve => { resolveImports = resolve; });
   const react = {
     useState(initial) {
@@ -37,6 +37,7 @@ function mount({ window = { width: 844, height: 390 }, insets = { top: 0, bottom
     if (id === 'react') return react;
     if (id === 'react/jsx-runtime') return { jsx, jsxs: jsx };
     if (id === 'react-native') return { useWindowDimensions: () => environment.window };
+    if (id === 'react-native-gesture-handler') return { GestureHandlerRootView: 'GestureHandlerRootView' };
     if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => environment.insets };
     if (id === 'expo-font') return { useFonts: () => [environment.fontsLoaded, environment.fontError] };
     if (id === 'expo-router/stack') return { Stack };
@@ -50,7 +51,12 @@ function mount({ window = { width: 844, height: 390 }, insets = { top: 0, bottom
   } });
   function render(next = {}) {
     Object.assign(environment, next);
-    cursor = 0; effects = []; tree = exports.default();
+    cursor = 0; effects = []; root = exports.default();
+    if (root) {
+      assert.equal(root.type, 'GestureHandlerRootView', 'the native gesture root must wrap navigation');
+      assert.deepEqual(plain(root.props.style), { flex: 1 }, 'the wrapper must not add padding or constrain navigation');
+      tree = root.props.children;
+    } else tree = null;
     effects.forEach(effect => effect());
     return tree;
   }
@@ -58,6 +64,7 @@ function mount({ window = { width: 844, height: 390 }, insets = { top: 0, bottom
   return {
     calls, render,
     get tree() { return tree; },
+    get root() { return root; },
     async finishImports() {
       resolveImports([]);
       await new Promise(resolve => setImmediate(resolve));
@@ -71,6 +78,18 @@ function mount({ window = { width: 844, height: 390 }, insets = { top: 0, bottom
     },
   };
 }
+
+test('native gesture root retains the navigation tree across window reflow', async () => {
+  const h = mount();
+  await h.finishImports();
+  const rootType = h.root.type;
+  const stackType = h.tree.type;
+  h.render({ window: { width: 390, height: 844 } });
+  assert.equal(h.root.type, rootType);
+  assert.equal(h.tree.type, stackType);
+  assert.equal(h.root.props.children, h.tree);
+  assert.equal(h.root.key, undefined);
+});
 
 function assertLateral(h, left, right, top = 0, bottom = 21) {
   for (const name of ['index', 'privacy', 'notices', 'thank-you']) {

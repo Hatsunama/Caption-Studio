@@ -2,18 +2,26 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
+import ts from 'typescript';
 
 import * as timing from '../src/lib/timeline-gesture.ts';
+import { createTimelineBoundaryFeedback } from '../src/lib/timeline-boundary-feedback.ts';
+import { timelineTouchIntent } from '../src/lib/timeline-touch-intent.ts';
 
 // Execute the production responder callbacks without installing React Native.
 const source = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
 const timingHook = source.slice(source.indexOf('function useTimelineTimingPanHandlers('), source.indexOf('function DirectTimelineGestureSurface('));
-const videoHook = source.slice(source.indexOf('function VideoMoveGrip('), source.indexOf('  const moveWidth = props.selected')) + '\n  return responder.panHandlers;\n}\n';
+const ast = ts.createSourceFile('layer-timeline.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const videoFunction = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'VideoMoveGrip');
+assert.ok(videoFunction?.body);
+const videoReturn = videoFunction.body.statements.filter(ts.isReturnStatement).at(-1);
+assert.ok(videoReturn);
+const videoHook = source.slice(videoFunction.getStart(ast), videoReturn.getStart(ast)) + '\n  return responder.panHandlers;\n}\n';
 const layoutCallback = source.slice(source.indexOf('onLayout={') + 'onLayout={'.length, source.indexOf('\n      onStartShouldSetResponderCapture=')).trim().slice(0, -1);
 const executable = stripTypeScriptTypes(`
 export function load(dependencies) {
   const { useRef, useState, useMemo, useEffect, useContext, useCallback, PanResponder, TimelineGestureGeometryContext,
-    createTimelineTimingGesture, clamp, REORDER_TILE, REORDER_GAP } = dependencies;
+    createTimelineTimingGesture, createTimelineBoundaryFeedback, timelineHaptic, timelineTouchIntent, clamp, REORDER_TILE, REORDER_GAP } = dependencies;
   ${timingHook}
   ${videoHook}
   return { useTimelineTimingPanHandlers, VideoMoveGrip };
@@ -48,6 +56,7 @@ function harness() {
     PanResponder: { create: (panHandlers) => ({ panHandlers }) },
     TimelineGestureGeometryContext: {},
     createTimelineTimingGesture: timing.createTimelineTimingGesture,
+    createTimelineBoundaryFeedback, timelineTouchIntent, timelineHaptic() {},
     clamp: (value, min, max) => Math.min(max, Math.max(min, value)),
     REORDER_TILE: 72,
     REORDER_GAP: 8,
@@ -81,7 +90,7 @@ for (const edge of ['start', 'end', 'move']) {
     handlers.onPanResponderMove(touch, { dx: 60, dy: 0 });
     fixture.resize(layout(720));
     handlers.onPanResponderMove(touch, { dx: 120, dy: 0 });
-    handlers.onPanResponderRelease();
+    handlers.onPanResponderRelease(touch, { dx: 120, dy: 0 });
     assert.equal(fixture.width, 720);
     assert.equal(changes.length, 1, 'resized coordinates must not reach the editor');
     assert.equal(starts, 1);
@@ -105,8 +114,9 @@ test('duplicate layout leaves a normal trim active and able to commit', () => {
   handlers.onPanResponderMove(touch, { dx: 60, dy: 0 });
   fixture.resize(layout(360));
   handlers.onPanResponderMove(touch, { dx: 80, dy: 0 });
-  handlers.onPanResponderRelease();
-  assert.equal(changes.length, 2);
+  handlers.onPanResponderRelease(touch, { dx: 90, dy: 0 });
+  assert.equal(changes.length, 3);
+  assert.equal(changes.at(-1)[2], 2450, 'the final release coordinate is applied before commit');
   assert.equal(commits, 1);
   fixture.unmount();
 });
@@ -133,7 +143,7 @@ for (const mode of ['pending hold', 'gap', 'reorder']) {
     fixture.resize(layout(720));
     await new Promise((resolve) => setTimeout(resolve, 380));
     handlers.onPanResponderMove(touch, { dx: 160, dy: 0 });
-    handlers.onPanResponderRelease();
+    handlers.onPanResponderRelease(touch, { dx: 160, dy: 0 });
     assert.equal(previews.length, beforeResize, 'cancelled touch must not create another draft');
     assert.deepEqual(commits, []);
     assert.equal(cancels, 1);
@@ -152,7 +162,7 @@ test('zoom invalidates an active gesture through the same geometry lifecycle', (
   handlers.onPanResponderMove(touch, { dx: 60, dy: 0 });
   fixture.geometry.update({ scale: 24 });
   handlers.onPanResponderMove(touch, { dx: 120, dy: 0 });
-  handlers.onPanResponderRelease();
+  handlers.onPanResponderRelease(touch, { dx: 120, dy: 0 });
   assert.equal(changes.length, 1);
   fixture.unmount();
 });
@@ -191,6 +201,7 @@ test('the production video responder survives a discarded memo cache', () => {
     useEffect() {}, useContext: () => undefined, useCallback: fn => fn,
     PanResponder: { create: panHandlers => { created++; return { panHandlers }; } },
     TimelineGestureGeometryContext: {}, createTimelineTimingGesture: timing.createTimelineTimingGesture,
+    createTimelineBoundaryFeedback, timelineTouchIntent, timelineHaptic() {},
     clamp: (v, min, max) => Math.min(max, Math.max(min, v)), REORDER_TILE: 72, REORDER_GAP: 8,
   });
   const props = { leadingGapMs: 0, clipIndex: 0, clipCount: 3, trackWidth: 1000, durationMs: 5000,

@@ -230,10 +230,12 @@ test('all-caption animation applies without a cue after leaving a selected text 
   assert.equal(w.calls.persisted.length, 1);
 });
 
-test('text animation still targets text in the Stickers menu', () => {
+test('text selection cannot mutate text or captions through the caption-animation action', () => {
   const w = workspace({ activeTool: 'stickers', selectedTextLayer: { id: 'title' } });
+  const before = w.state.project;
   w.callback('chooseAnimation')('fade');
-  assert.equal(w.calls.textStyles[0][0], 'title');
+  assert.equal(w.calls.textStyles.length, 0);
+  assert.equal(w.state.project, before);
   assert.equal(w.calls.persisted.length, 0);
 });
 

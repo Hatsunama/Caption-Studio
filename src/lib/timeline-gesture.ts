@@ -1,6 +1,7 @@
 import type { TimelineTimingEdge } from '@/lib/timeline-item-editor';
+import { timelineTouchIntent } from './timeline-touch-intent';
 
-export const TIMELINE_DRAG_ACTIVATION_PX = 8;
+export { TIMELINE_DRAG_ACTIVATION_PX } from './timeline-touch-intent';
 export const TIMELINE_GRIP_WIDTH = 40;
 export const TIMELINE_CONTROL_HEIGHT = 36;
 export const TIMELINE_PLAYHEAD_DWELL_MS = 250;
@@ -46,6 +47,8 @@ export type TimelineTimingGestureOwner = {
   onChangeStart: () => void;
   onChange: (edge: TimelineTimingEdge, startMs: number, endMs: number) => void;
   onEnd: () => void;
+  /** Optional draft rollback on cancellation. Without it, cancellation closes
+   * the existing live transaction through onEnd; it does not undo live edits. */
   onCancel?: () => void;
 };
 
@@ -70,11 +73,14 @@ export function timelineTimingLabel(label: string, startMs: number, endMs: numbe
   return `${label}. ${selected ? 'Selected' : 'Not selected'}. Start ${(startMs / 1000).toFixed(3)} seconds, end ${(endMs / 1000).toFixed(3)} seconds. ${operation}`;
 }
 
-/** A touch owns selection immediately, and timing only after deliberate drag. */
+/** A touch owns selection immediately, and timing only after clear horizontal
+ * intent. Vertical intent yields the rest of this touch to scrolling. Native
+ * release should call finish; termination/interruption should call cancel. */
 export function createTimelineTimingGesture(options: { now?: () => number } = {}) {
   let owner: TimelineTimingGestureOwner | undefined;
   let edge: TimelineTimingEdge = 'move';
   let activated = false;
+  let yieldedToScroll = false;
   let previousBoundary = 0;
   let detent: { originalSide: number; lastDx: number; lastMovementAt: number } | undefined;
   let releaseOriginDx: number | undefined;
@@ -84,6 +90,7 @@ export function createTimelineTimingGesture(options: { now?: () => number } = {}
     const wasActivated = activated;
     owner = undefined;
     activated = false;
+    yieldedToScroll = false;
     detent = undefined;
     releaseOriginDx = undefined;
     if (wasActivated && ended) {
@@ -96,15 +103,18 @@ export function createTimelineTimingGesture(options: { now?: () => number } = {}
       owner = { ...next };
       edge = nextEdge;
       activated = false;
+      yieldedToScroll = false;
       previousBoundary = nextEdge === 'start' ? owner.startMs : owner.endMs;
       detent = undefined;
       releaseOriginDx = undefined;
       owner.onPress();
     },
     move(dx: number, dy: number) {
-      if (!owner || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+      if (!owner || yieldedToScroll || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
       if (!activated) {
-        if (Math.abs(dx) <= TIMELINE_DRAG_ACTIVATION_PX || Math.abs(dx) <= Math.abs(dy)) return;
+        const intent = timelineTouchIntent(dx, dy);
+        if (intent === 'vertical') yieldedToScroll = true;
+        if (intent !== 'horizontal') return;
         activated = true;
         owner.onChangeStart();
       }

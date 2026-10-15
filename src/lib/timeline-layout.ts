@@ -114,7 +114,8 @@ export function timelineCuePage<T extends TimelineInterval>(
 export function packTimelineLanes(intervals: TimelineInterval[]) {
   const laneEnds: number[] = [];
   const laneById = new Map<string, number>();
-  const sorted = [...intervals].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+  // Stable ties preserve project order when a selected item's duration changes.
+  const sorted = [...intervals].sort((a, b) => a.startMs - b.startMs);
 
   for (const interval of sorted) {
     let lane = laneEnds.findIndex((endMs) => interval.startMs >= endMs);

@@ -9,7 +9,7 @@ import {
 
 // The workspace owns this vertical reveal. It never seeks the timeline or
 // changes selection, project contents, or the active tool.
-export function useScriptEditorExit(open: boolean, scrollRef: RefObject<ScrollView | null>, onClose: () => void) {
+export function useScriptEditorExit(open: boolean, scrollRef: RefObject<ScrollView | null>, onClose: () => void, onReveal?: () => void) {
   const pendingRef = useRef(false);
   const timelineTopRef = useRef<number | undefined>(undefined);
   const scrollReadyRef = useRef(false);
@@ -56,6 +56,7 @@ export function useScriptEditorExit(open: boolean, scrollRef: RefObject<ScrollVi
   }, [open, scheduleTimelineReveal]);
 
   const close = () => {
+    onReveal?.();
     pendingRef.current = true;
     Keyboard.dismiss();
     onClose();
@@ -91,6 +92,7 @@ export function useScriptEditorExit(open: boolean, scrollRef: RefObject<ScrollVi
   };
 
   const revealTimeline = () => {
+    onReveal?.();
     pendingRef.current = true;
     scheduleTimelineReveal();
   };
