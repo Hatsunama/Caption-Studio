@@ -1,5 +1,5 @@
 import type { Gesture } from 'react-native-gesture-handler';
-import { timelineTouchIntent, type TimelineTouchIntent } from './timeline-touch-intent';
+import { timelineTouchIntent, type TimelineTouchIntent } from '@/lib/timeline-touch-intent';
 
 export type TimelineNativePanCallbacks = {
   begin: (dx: number, dy: number) => void;

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
-import { createTimelineNativePan } from '../src/lib/timeline-native-pan.ts';
+import { createTimelineNativePan } from '../src/components/editor/timeline-native-pan.ts';
 
 function fixture() {
   const handlers = {}, config = {}, calls = [];
@@ -107,7 +107,7 @@ for (const platform of ['android', 'ios', 'web']) {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return { Platform: { OS: platform }, View: 'View', ScrollView: 'ScrollView' };
       if (name === 'react-native-gesture-handler') return { Gesture: { Native: () => ({ native: true }) }, GestureDetector: 'GestureDetector' };
-      if (name === '@/lib/timeline-native-pan') return { createTimelineNativePan };
+      if (name === './timeline-native-pan') return { createTimelineNativePan };
       throw new Error(name);
     } });
     const scrolls = exports.createTimelineNativeScrollGestures();

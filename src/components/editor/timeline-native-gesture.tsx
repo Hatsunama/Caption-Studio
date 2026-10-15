@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, type ComponentPropsWithRef } from 'react';
 import { Platform, ScrollView, View, type PanResponderInstance, type ViewProps } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { createTimelineNativePan, type TimelineNativePanCallbacks } from '@/lib/timeline-native-pan';
+import { createTimelineNativePan, type TimelineNativePanCallbacks } from './timeline-native-pan';
 
 type NativeScrolls = ReturnType<typeof Gesture.Native>[];
 export const TimelineNativeGestureContext = createContext<NativeScrolls>([]);
