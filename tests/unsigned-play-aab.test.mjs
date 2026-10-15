@@ -4,12 +4,13 @@ import test from 'node:test';
 const gate = await import(process.env.CAPTION_UNSIGNED_TEST_MODULE || '../scripts/verify-unsigned-play-aab.mjs');
 const approval = {
   repository: 'Hatsunama/Caption-Studio',
-  sourceCommit: 'eea3fe3afdc1382be2ae1e8de2b7b53c2003f23b',
-  sourceTree: '16d28ccf0b881f745617ed25a07383370de5af92',
+  sourceCommit: '3ae54ddb3cf3253037a1c53aaf86177d09c7770a',
+  sourceTree: '5d35cc33d91c1fce6b69abdc9b989ef226e5c616',
   package: 'com.xmilo_at_your_side.caption_studio',
-  version: '1.4.129', versionCode: 141,
-  approvalBasis: 'explicit-source-build-only',
-  referenceApkRunId: '38149747095',
+  version: '1.4.133', versionCode: 145,
+  approvalBasis: 'device-verified-apk-source',
+  referenceApkRunId: '38778096566',
+  referenceApkSha256: '9d33d15f317b0d44eedadb71f9fc45c726b61c1d6d6ec248f63659753489731d',
 };
 const provenance = {
   schemaVersion: 1, ...approval,
@@ -23,8 +24,43 @@ const provenance = {
   aab: { name: 'caption-studio-play-unsigned.aab', sha256: 'b'.repeat(64) },
   mapping: { name: 'caption-studio-play-mapping.txt', sha256: 'c'.repeat(64) },
 };
-test('approved unpublished 129/141 source is accepted as unsigned build-only provenance', () => {
+test('device-verified 133/145 source approval is accepted', () => {
+  assert.doesNotThrow(() => gate.assertSourceApproval(approval, approval.sourceCommit, approval.sourceTree));
+});
+
+test('device-verified 133/145 provenance is accepted as unsigned with distinct Play and APK certificates', () => {
   assert.doesNotThrow(() => gate.assertProvenance(provenance));
+});
+
+test('old 129/141 source and reference APK provenance are rejected', () => {
+  const legacy = {
+    ...provenance,
+    sourceCommit: 'eea3fe3afdc1382be2ae1e8de2b7b53c2003f23b',
+    sourceTree: '16d28ccf0b881f745617ed25a07383370de5af92',
+    version: '1.4.129', versionCode: 141,
+    approvalBasis: 'explicit-source-build-only',
+    referenceApkRunId: '38149747095',
+  };
+  delete legacy.referenceApkSha256;
+  assert.throws(() => gate.assertProvenance(legacy), /Source approval mismatch/);
+});
+
+test('old reference APK run is rejected independently of other source pins', () => {
+  assert.throws(() => gate.assertProvenance({
+    ...provenance, ...gate.pin, referenceApkRunId: '38149747095',
+  }), /Source approval mismatch: referenceApkRunId/);
+});
+
+test('mismatched reference APK digest is rejected independently of other source pins', () => {
+  assert.throws(() => gate.assertProvenance({
+    ...provenance, ...gate.pin, referenceApkSha256: '0'.repeat(64),
+  }), /Source approval mismatch: referenceApkSha256/);
+});
+
+test('missing reference APK digest is rejected independently of other source pins', () => {
+  const missingDigest = { ...provenance, ...gate.pin };
+  delete missingDigest.referenceApkSha256;
+  assert.throws(() => gate.assertProvenance(missingDigest), /Source approval mismatch: referenceApkSha256/);
 });
 
 test('previous product source and cancelled reference run are rejected', () => {
