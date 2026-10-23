@@ -1,8 +1,11 @@
 import type { CaptionBlock, CaptionProject, TranslationCaptionCue } from '@/types/project';
 import { captionCjkCharacterCount, captionLayoutText, captionSpokenTokenSpans, captionTextLength } from '@/lib/caption-text-breaks';
 import { groupingOptionsForLanguage } from '@/lib/caption-grouping';
+import { synchronizeCaptionTracks } from '@/lib/caption-tracks';
+import { MAX_PROJECT_CAPTIONS } from '@/lib/project-capacity';
+import { serializeProjectSnapshot } from '@/lib/project-schema';
 
-export const MAX_CAPTION_MERGE_FRAGMENTS = 32;
+export const MAX_CAPTION_MERGE_FRAGMENTS = MAX_PROJECT_CAPTIONS;
 type Fragment = NonNullable<CaptionBlock['mergeProvenance']>['fragments'][number];
 
 function equivalent(a: unknown, b: unknown): boolean {
@@ -25,10 +28,10 @@ export function joinedCaptionProvenance(left: CaptionBlock, right: CaptionBlock)
   const aliasesRetired = left.mergeProvenance?.aliasesRetired || right.mergeProvenance?.aliasesRetired;
   if (fragments.length > MAX_CAPTION_MERGE_FRAGMENTS
     || (!aliasesRetired && new Set(fragments.map(fragment => fragment.captionId)).size !== fragments.length)) {
-    throw new Error('Caption merge history exceeds its 32-fragment bound or repeats an identity. Originals were preserved.');
+    throw new Error('Caption merge history exceeds the supported project limit or repeats an identity. Originals were preserved.');
   }
   const previousJoins = [...(left.mergeProvenance?.previousJoins ?? []), ...(right.mergeProvenance?.previousJoins ?? [])];
-  if (previousJoins.length > 30) throw new Error('Caption merge history bound reached. Originals were preserved.');
+  if (previousJoins.length > MAX_PROJECT_CAPTIONS) throw new Error('Caption merge history exceeds the supported project limit. Originals were preserved.');
   return { fragments, ...(aliasesRetired ? { aliasesRetired: true } : {}), ...(previousJoins.length ? { previousJoins } : {}) };
 }
 
@@ -79,8 +82,8 @@ function fragmentsWithTracks(project: CaptionProject, caption: CaptionBlock): Fr
   return fragments;
 }
 
-/** Explicit joins combine metadata; automatic joins must be losslessly compatible. */
-export function mergeProjectCaptionPair(project: CaptionProject, leftId: string, rightId: string, automatic = false): CaptionProject | null {
+/** Stage a local pair; each public operation validates its completed snapshot. */
+function mergeProjectCaptionPairLocally(project: CaptionProject, leftId: string, rightId: string, automatic: boolean): CaptionProject | null {
   const ordered = [...project.captions].filter(caption => caption.timelineVisible !== false)
     .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
   const index = ordered.findIndex(caption => caption.id === leftId);
@@ -91,7 +94,7 @@ export function mergeProjectCaptionPair(project: CaptionProject, leftId: string,
     const fragments = [...captionMergeFragments(left), ...captionMergeFragments(right)];
     if (fragments.length > MAX_CAPTION_MERGE_FRAGMENTS
       || new Set(fragments.map(fragment => fragment.captionId)).size !== fragments.length
-      || (left.mergeProvenance?.previousJoins?.length ?? 0) + (right.mergeProvenance?.previousJoins?.length ?? 0) > 30) return null;
+      || (left.mergeProvenance?.previousJoins?.length ?? 0) + (right.mergeProvenance?.previousJoins?.length ?? 0) > MAX_PROJECT_CAPTIONS) return null;
   }
   const provenance = joinedCaptionProvenance(left, right);
   provenance.fragments = [...fragmentsWithTracks(project, left), ...fragmentsWithTracks(project, right)];
@@ -111,9 +114,9 @@ export function mergeProjectCaptionPair(project: CaptionProject, leftId: string,
     };
     (provenance.previousJoins ??= []).push(original);
   }
-  if ((provenance.previousJoins?.length ?? 0) > 30) {
+  if ((provenance.previousJoins?.length ?? 0) > MAX_PROJECT_CAPTIONS) {
     if (automatic) return null;
-    throw new Error('Caption merge history bound reached. Originals were preserved.');
+    throw new Error('Caption merge history exceeds the supported project limit. Originals were preserved.');
   }
   const wordIds = [...new Set([...left.wordIds, ...right.wordIds])];
   const sourceAnchor = left.sourceAnchor && right.sourceAnchor
@@ -157,8 +160,22 @@ export function mergeProjectCaptionPair(project: CaptionProject, leftId: string,
     return { ...track, cues: [...track.cues.filter(item => item.sourceCaptionId !== left.id && item.sourceCaptionId !== right.id), cue]
       .sort((a, b) => (a.startMs ?? 0) - (b.startMs ?? 0)) };
   }), ...(tracks.independentTimingOrigins || Object.keys(origins).length ? { independentTimingOrigins: origins } : {}) };
-  return { ...project, captions: project.captions.filter(caption => caption.id !== right.id)
+  const result = { ...project, captions: project.captions.filter(caption => caption.id !== right.id)
     .map(caption => caption.id === left.id ? merged : caption), ...(captionTracks ? { captionTracks } : {}) };
+  return result;
+}
+
+/** Explicit joins combine metadata; automatic joins must be losslessly compatible. */
+export function mergeProjectCaptionPair(project: CaptionProject, leftId: string, rightId: string, automatic = false): CaptionProject | null {
+  const result = mergeProjectCaptionPairLocally(project, leftId, rightId, automatic);
+  if (!result) return null;
+  try {
+    serializeProjectSnapshot(result);
+  } catch (error) {
+    if (automatic) return null;
+    throw error;
+  }
+  return result;
 }
 
 /** Only explicit fragment identities supplied by the script join authorize a merge. */
@@ -176,13 +193,20 @@ export function applyCaptionMergeDraft(project: CaptionProject, draft: CaptionBl
       const member = staged.captions.find(item => item.id === fragments[consumed].captionId);
       if (!member || retained.has(member.id)) throw new Error('Caption join identities conflict with the draft. Originals were preserved.');
       const count = captionMergeFragments(member).length;
-      const next = mergeProjectCaptionPair(staged, caption.id, member.id);
+      const next = mergeProjectCaptionPairLocally(staged, caption.id, member.id, false);
       if (!next) throw new Error('Caption join must combine adjacent visible captions. Originals were preserved.');
       staged = next;
       consumed += count;
     }
     return { ...caption, mergeProvenance: staged.captions.find(item => item.id === caption.id)!.mergeProvenance };
   });
+  if (staged !== project) {
+    // Match script-save retention and use its existing track synchronization
+    // rules, including draft edits made after joining and hidden captions.
+    const candidate = { ...staged, captions: [...captions, ...project.captions.filter(caption => caption.timelineVisible === false)]
+      .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs) };
+    serializeProjectSnapshot({ ...candidate, captionTracks: synchronizeCaptionTracks(candidate, candidate.captions) });
+  }
   return { captions, captionTracks: staged.captionTracks };
 }
 
@@ -213,13 +237,20 @@ export function absorbShortCaptionCues(project: CaptionProject): CaptionProject 
       .sort((a, b) => a.pause - b.pause || a.duration - b.duration || a.left.startMs - b.left.startMs);
     for (const candidate of candidates) {
       if (captionMergeFragments(candidate.left).length + captionMergeFragments(candidate.right).length > MAX_CAPTION_MERGE_FRAGMENTS) continue;
-      const merged = mergeProjectCaptionPair(next, candidate.left.id, candidate.right.id, true);
+      const merged = mergeProjectCaptionPairLocally(next, candidate.left.id, candidate.right.id, true);
       if (!merged) continue;
       next = merged;
       ordered = [...next.captions].filter(caption => caption.timelineVisible !== false && caption.endMs > caption.startMs)
         .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
       index = Math.max(-1, index - 2);
       break;
+    }
+  }
+  if (next !== project) {
+    try {
+      serializeProjectSnapshot(next);
+    } catch {
+      return project;
     }
   }
   return next;

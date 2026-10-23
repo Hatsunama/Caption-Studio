@@ -12,11 +12,12 @@ import { hasCaptionTransform, withoutCaptionTransform } from '@/lib/caption-tran
 import { decodeCaption } from '@/lib/project-schema';
 import type { CaptionBlock, CaptionProject, WordToken } from '@/types/project';
 import { joinedCaptionProvenance } from '@/lib/caption-merge';
+import { assertProjectSnapshotSize, MAX_PROJECT_CAPTIONS } from '@/lib/project-capacity';
 
 /** Recovery accepts exactly the persisted cue contract, including zero-length
  * legacy cues and temporarily empty text. Save applies editing rules separately. */
 export function decodeCaptionDraft(value: unknown): CaptionBlock[] | null {
-  if (!Array.isArray(value) || value.length > 100_000) return null;
+  if (!Array.isArray(value) || value.length > MAX_PROJECT_CAPTIONS) return null;
   try {
     const ids = new Set<string>();
     const captions = value.map((entry, index) => {
@@ -295,6 +296,9 @@ export function mergeCaptionScriptBlock(
   };
   const next = [...ordered];
   next.splice(leftIndex, 2, merged);
+  // Use the persisted cue contract before publishing a draft or focusing it.
+  decodeCaption(merged, leftIndex);
+  assertProjectSnapshotSize(JSON.stringify(next));
   return { captions: next, focusedId: merged.id };
 }
 

@@ -245,11 +245,12 @@ test('core worker: unknown or conflicting journal IDs are retained as explicit r
 
 test('core worker: bounded merge provenance never evicts existing fragment identities', () => {
   const project = fixture();
-  project.captions[0].mergeProvenance = { fragments: Array.from({ length: 32 }, (_, i) => ({
+  project.captions[0].text = 'x'.repeat(100_000);
+  project.captions[0].mergeProvenance = { fragments: Array.from({ length: 2 }, (_, i) => ({
     captionId: i === 0 ? 'left' : `old-${i}`, primaryText: 'part', translations: {},
   })) };
   const before = structuredClone(project);
-  assert.throws(() => joinedDraft(project), /limit|bound|32|history/i);
+  assert.throws(() => joinedDraft(project), /text.*supported project limit/i);
   assert.deepEqual(project, before);
 });
 
@@ -271,7 +272,8 @@ test('core worker: automatic compatible joins preserve every translation track a
 
 test('core worker: automatic overflow preserves the isolated short cue and all recovery history', () => {
   const project = fixture();
-  project.captions[0].mergeProvenance = { fragments: Array.from({ length: 32 }, (_, index) => ({
+  project.captionTracks.translations[0].cues[0].text = 'x'.repeat(100_000);
+  project.captions[0].mergeProvenance = { fragments: Array.from({ length: 2 }, (_, index) => ({
     captionId: index === 0 ? 'left' : `retired-${index}`, primaryText: 'part', translations: {},
   })) };
   const before = structuredClone(project.captions[0].mergeProvenance);

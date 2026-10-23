@@ -441,20 +441,28 @@ export function ScriptEditor(props: {
   };
 
   const mergeWithPrevious = (caption: CaptionBlock) => {
-    const result = mergeCaptionScriptBlock(draftCaptions, caption.id);
-    if (!result) return;
-    setBoundaryMessage(undefined);
-    focusCaption(result.focusedId, result.captions);
+    try {
+      const result = mergeCaptionScriptBlock(draftCaptions, caption.id);
+      if (!result) return;
+      setBoundaryMessage(undefined);
+      focusCaption(result.focusedId, result.captions);
+    } catch (error) {
+      setBoundaryMessage(error instanceof Error ? error.message : 'The subtitles could not be joined. Originals were preserved.');
+    }
   };
 
   const mergeWithNext = (caption: CaptionBlock) => {
-    const result = mergeCaptionScriptBlock(draftCaptions, caption.id, 'next');
-    if (!result) {
-      setBoundaryMessage('There is no subtitle below this one to join.');
-      return;
+    try {
+      const result = mergeCaptionScriptBlock(draftCaptions, caption.id, 'next');
+      if (!result) {
+        setBoundaryMessage('There is no subtitle below this one to join.');
+        return;
+      }
+      setBoundaryMessage(undefined);
+      focusCaption(result.focusedId, result.captions);
+    } catch (error) {
+      setBoundaryMessage(error instanceof Error ? error.message : 'The subtitles could not be joined. Originals were preserved.');
     }
-    setBoundaryMessage(undefined);
-    focusCaption(result.focusedId, result.captions);
   };
 
   const splitAtCursor = (caption: CaptionBlock) => {

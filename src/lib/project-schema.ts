@@ -11,6 +11,7 @@ import { sameCaptionLanguageFamily } from '@/lib/caption-languages';
 import { hydrateVideoTransition } from '@/lib/video-transitions';
 import { DEFAULT_VIDEO_FRAME_RATE } from '@/lib/video-source-metadata';
 import { MINIMUM_CLIP_TIMELINE_MS } from '@/lib/video-timeline';
+import { assertProjectSnapshotSize, MAX_PROJECT_CAPTIONS } from '@/lib/project-capacity';
 import {
   DEFAULT_CAPTION_STYLE,
   DEFAULT_VIDEO_TRANSFORM,
@@ -41,7 +42,7 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
 /** Validate the exact snapshot before any database write is queued. */
 export function serializeProjectSnapshot(project: CaptionProject): string {
   const snapshot = JSON.stringify(project);
-  if (snapshot.length > 64 * 1024 * 1024) throw new Error('Project data exceeds the supported size limit');
+  assertProjectSnapshotSize(snapshot);
   decodeVersionTwoProject(JSON.parse(snapshot));
   return snapshot;
 }
@@ -120,7 +121,7 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
   const projectStyle = decodeCaptionStyle(candidate.projectStyle, DEFAULT_CAPTION_STYLE, 'project caption style');
   const layers = decodeLayers(candidate.layers, projectStyle);
   const transcription = decodeTranscription(candidate.transcription, updatedAt);
-  const captions = decodeArray(candidate.captions, 'project captions', 100_000, decodeCaption);
+  const captions = decodeArray(candidate.captions, 'project captions', MAX_PROJECT_CAPTIONS, decodeCaption);
   uniqueIds(captions, 'project captions');
   const captionTracks = decodeCaptionTracks(candidate.captionTracks, captions, transcription.language, projectStyle);
   const clipIds = new Set(clips.map((clip) => clip.id));
@@ -402,7 +403,7 @@ function decodeCaptionSourceAnchor(value: unknown, index: number) {
 function decodeCaptionMergeProvenance(value: unknown): NonNullable<CaptionBlock['mergeProvenance']> {
   const provenance = record(value, 'caption merge provenance');
   const aliasesRetired = provenance.aliasesRetired === undefined ? undefined : booleanValue(provenance.aliasesRetired, 'caption retired aliases');
-  const fragments = decodeArray(provenance.fragments, 'caption merge fragments', 32, (raw, index) => {
+  const fragments = decodeArray(provenance.fragments, 'caption merge fragments', MAX_PROJECT_CAPTIONS, (raw, index) => {
     const fragment = record(raw, 'caption merge fragment');
     const captionId = identifierValue(fragment.captionId, 'caption merge fragment identity');
     const translations = record(fragment.translations, 'caption merge fragment translations');
@@ -437,15 +438,16 @@ function decodeCaptionMergeProvenance(value: unknown): NonNullable<CaptionBlock[
       ...(fragment.translationOrigins === undefined ? {} : { translationOrigins: decodeIndependentTimingOrigins(fragment.translationOrigins) }),
     };
   });
-  if (fragments.length < 2 || (!aliasesRetired && new Set(fragments.map(fragment => fragment.captionId)).size !== fragments.length)) {
+  const fragmentIds = new Set(fragments.map(fragment => fragment.captionId));
+  if (fragments.length < 2 || (!aliasesRetired && fragmentIds.size !== fragments.length)) {
     throw new Error('Caption merge fragments require distinct original identities');
   }
   const previousJoins = provenance.previousJoins === undefined ? undefined
-    : decodeArray(provenance.previousJoins, 'caption previous joins', 30, raw => {
+    : decodeArray(provenance.previousJoins, 'caption previous joins', MAX_PROJECT_CAPTIONS, raw => {
       const join = record(raw, 'caption previous join');
-      const captionIds = decodeStringArray(join.captionIds, 'caption previous join identities', 32);
+      const captionIds = decodeStringArray(join.captionIds, 'caption previous join identities', MAX_PROJECT_CAPTIONS);
       if (captionIds.length < 2 || (!aliasesRetired && new Set(captionIds).size !== captionIds.length)
-        || captionIds.some(id => !fragments.some(fragment => fragment.captionId === id))) {
+        || captionIds.some(id => !fragmentIds.has(id))) {
         throw new Error('Caption previous join identities are invalid');
       }
       const original = record(join.primary, 'caption previous join primary');
