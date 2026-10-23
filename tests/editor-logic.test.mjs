@@ -404,8 +404,8 @@ test('both clip handles can restore trimmed media without losing edited captions
 
   const headTrimmed = trimVideoClip(project, 'main', 'start', 1_000);
   assert.ok(headTrimmed);
-  assert.equal(headTrimmed.project.clips[0].gapBeforeMs, 1_000);
-  assert.equal(totalClipDuration(headTrimmed.project.clips), 4_000);
+  assert.equal(headTrimmed.project.clips[0].gapBeforeMs, 0);
+  assert.equal(totalClipDuration(headTrimmed.project.clips), 3_000);
   assert.equal(visibleTimelineCaptions(headTrimmed.project.captions).length, 0);
   const headRestored = trimVideoClip(headTrimmed.project, 'main', 'start', 0);
   assert.ok(headRestored);
@@ -420,14 +420,9 @@ test('both clip handles can restore trimmed media without losing edited captions
   const tailTrimmed = trimVideoClip(headRestored.project, 'main', 'end', 2_500);
   assert.ok(tailTrimmed);
   assert.equal(tailTrimmed.project.clips[0].sourceEndMs, 2_500);
-  assert.equal(tailTrimmed.project.clips[0].gapAfterMs, 1_500);
-  assert.equal(totalClipDuration(tailTrimmed.project.clips), 4_000);
-  assert.deepEqual(timelineSegmentAt(buildClipTimeline(tailTrimmed.project.clips), 3_000), {
-    kind: 'gap',
-    startMs: 2_500,
-    endMs: 4_000,
-    next: undefined,
-  });
+  assert.equal(tailTrimmed.project.clips[0].gapAfterMs, 0);
+  assert.equal(totalClipDuration(tailTrimmed.project.clips), 2_500);
+  assert.equal(timelineSegmentAt(buildClipTimeline(tailTrimmed.project.clips), 3_000), undefined);
   const tailRestored = trimVideoClip(tailTrimmed.project, 'main', 'end', 4_000);
   assert.ok(tailRestored);
   assert.equal(tailRestored.project.clips[0].sourceEndMs, 4_000);
@@ -1213,10 +1208,11 @@ test('sliding a video gap keeps edited captions locked to that clip', () => {
   assert.deepEqual([byId['on-second'].startMs, byId['on-second'].endMs], [3_450, 4_250]);
   const openedLead = setVideoClipGap(project, 'one', 500);
   assert.ok(openedLead);
-  assert.equal(openedLead.project.clips[0].gapBeforeMs, 500);
+  assert.equal(openedLead.project.clips[0].gapBeforeMs, 0);
   const leadById = Object.fromEntries(openedLead.project.captions.map((caption) => [caption.id, caption]));
-  assert.deepEqual([leadById['on-first'].startMs, leadById['on-first'].endMs], [1_000, 2_000]);
-  assert.deepEqual([leadById['on-second'].startMs, leadById['on-second'].endMs], [4_700, 5_500]);
+  assert.deepEqual([leadById['on-first'].startMs, leadById['on-first'].endMs], [500, 1_500]);
+  assert.deepEqual([leadById['on-second'].startMs, leadById['on-second'].endMs], [4_200, 5_000]);
+  assert.deepEqual(project.captions.map(caption => [caption.startMs, caption.endMs]), [[500, 1_500], [4_200, 5_000]]);
 });
 
 test('sliding a clip closes a gap owned by the previous trimmed clip', () => {

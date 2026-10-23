@@ -244,6 +244,16 @@ test('explicit clear removes fallback before primary so it cannot resurrect on r
 // Rendering remains synthetic; no native runtime or device is needed.
 async function mountEditor(kind, options = {}) {
   const slots = [], effects = [], alerts = [], timers = new Map();
+  const appStateListeners = new Map();
+  const appState = {
+    currentState: 'active',
+    addEventListener(event, listener) {
+      const listeners = appStateListeners.get(event) ?? new Set();
+      appStateListeners.set(event, listeners);
+      listeners.add(listener);
+      return { remove: () => listeners.delete(listener) };
+    },
+  };
   let nextTimer = 0;
   let cursor = 0, changed = true, closeRequest;
   const calls = { writes: 0, clears: 0, closes: 0, saves: 0 };
@@ -287,10 +297,14 @@ async function mountEditor(kind, options = {}) {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
       if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
+      if (name === '@/components/refract-background') return {
+        RefractBackground: ({ active, ...props }) => jsx('View', { ...props, pointerEvents: 'none' }),
+      };
       if (name === 'react-native') return {
         ...Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'Modal', 'FlatList', 'KeyboardAvoidingView'].map((v) => [v, v])),
         useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }),
         Keyboard: { isVisible: () => false, addListener: () => ({ remove() {} }) },
+        AppState: appState,
         Platform: { OS: 'android' }, Alert: { alert: (...args) => alerts.push(args) },
       };
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
@@ -335,6 +349,11 @@ async function mountEditor(kind, options = {}) {
   const row = () => list().renderItem({ item: list().data[0], index: 0 });
   await settle();
   return { calls, alerts, timers, get tree() { return tree; },
+    async setAppState(state) {
+      appState.currentState = state;
+      for (const listener of appStateListeners.get('change') ?? []) listener(state);
+      await settle();
+    },
     draft: () => kind === 'script' ? list().data : row().props.store.snapshot(),
     async edit(value) {
       if (kind === 'script') find((node) => node.type === 'TextInput', row()).props.onChangeText(value);

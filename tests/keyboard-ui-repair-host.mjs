@@ -27,6 +27,16 @@ const shallow = (left, right) => left && right && same(Object.keys(left), Object
 
 export function mountDual(overrides = {}, options = {}) {
   const focusCalls = [], blurCalls = [];
+  const appStateListeners = new Map();
+  const appState = {
+    currentState: 'active',
+    addEventListener(event, listener) {
+      const listeners = appStateListeners.get(event) ?? new Set();
+      appStateListeners.set(event, listeners);
+      listeners.add(listener);
+      return { remove: () => listeners.delete(listener) };
+    },
+  };
   const reveal = { viewportRef: { current: null }, focus(input) { focusCalls.push(input); }, blur(input) { blurCalls.push(input); }, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   // Optional real controller: exercise production offset arithmetic without an
   // IME, native runtime, wall-clock timers, or a second component implementation.
@@ -97,10 +107,14 @@ export function mountDual(overrides = {}, options = {}) {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
 if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
+      if (name === '@/components/refract-background') return {
+        RefractBackground: ({ active, ...props }) => jsx('View', { ...props, pointerEvents: 'none' }),
+      };
       if (name === 'react-native') return {
         ...Object.fromEntries(['ActivityIndicator', 'FlatList', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View', 'KeyboardAvoidingView'].map((type) => [type, type])),
         useWindowDimensions: () => options.window ?? { width: 390, height: 844 },
         Platform: { OS: options.platform ?? 'android' },
+        AppState: appState,
         Alert: { alert: (...args) => calls.alerts.push(args) },
       };
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 0, right: 0 } };
@@ -239,6 +253,12 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
     },
     get pendingRevealFrames() { return revealFrames.size; },
     get props() { return props; },
+    setAppState(state) {
+      act(() => {
+        appState.currentState = state;
+        for (const listener of appStateListeners.get('change') ?? []) listener(state);
+      });
+    },
     update(next) { props = { ...props, ...next }; render(); },
     scroll(index) { windowStart = index; render(); },
     edit(index, value, language = 'English') { const node = input(index, language); assert.equal(node.props.editable, true); act(() => node.props.onChangeText(value)); },
