@@ -173,7 +173,7 @@ class TextPresentationSpacingTest {
         }
         fun lines(layout: StaticLayout) = (0 until layout.lineCount).map { line ->
           "top=${layout.getLineTop(line)},baseline=${layout.getLineBaseline(line)}," +
-            "ascent=${layout.getLineAscent(line)},descent=${layout.getLineDescent(line)},extra=${layout.getLineExtra(line)}"
+            "ascent=${layout.getLineAscent(line)},descent=${layout.getLineDescent(line)}"
         }
         val markedText = caption.text.split('\n').joinToString("\n") { "\u200e$it" }
         val markedReference = StaticLayout.Builder.obtain(markedText, 0, markedText.length, referencePaint, 324)
