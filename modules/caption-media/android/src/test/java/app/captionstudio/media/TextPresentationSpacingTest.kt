@@ -141,9 +141,9 @@ class TextPresentationSpacingTest {
       assertTrue("The first baseline step must also stay forward", tightRuns[1].y > tightRuns[0].y)
       assertTrue("Overlapping lines must still advance forward", tightDistance > 0f)
       assertTrue("The quarter-height setting must allow substantial line overlap", tightDistance < normalDistance * 0.5f)
-      // Compare with Android layout without replacement spans. A fixed fraction
-      // of the baseline distance at 1x also scales padding/fallback contributions
-      // that StaticLayout does not necessarily scale with its line multiplier.
+      // Compare with ordinary Android typography at matching metric-run
+      // boundaries. No-op metric spans preserve native fallback segmentation
+      // without reusing InkSpan's replacement sizing or its drawing code.
       val referencePaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
         textSize = normal.style.fontSize
         typeface = Typeface.create(Typeface.create("sans-serif", Typeface.NORMAL), 800, false)
@@ -209,6 +209,8 @@ class TextPresentationSpacingTest {
               x: Float, top: Int, y: Int, bottom: Int, paint: Paint) = Unit
           }, spanned.getSpanStart(span), spanned.getSpanEnd(span), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
+        val metricReference = controlLayout(segmentedText, true)
+        assertEquals(3, metricReference.lineCount)
         val diagnostics = "lineHeight=${caption.style.lineHeight}; exactLayoutTextCodePoints=$exactCodePoints; width=${actualLayout.width}; " +
           "referencePaint=${paintDetails(referencePaint)}; actualPaint=${paintDetails(actualLayout.paint)}; " +
           "spanMetrics=$spanMetrics; referenceLines=${lines(reference)}; actualLines=${lines(actualLayout)}; " +
@@ -222,9 +224,9 @@ class TextPresentationSpacingTest {
           "minimalReplacementFallbackOn=${lines(controlLayout(minimalReplacementText, true))}; " +
           "minimalReplacementFallbackOff=${lines(controlLayout(minimalReplacementText, false))}"
         diagnosticRows += diagnostics
-        for (line in 1 until reference.lineCount) {
-          baselineComparisons += Triple("${caption.style.lineHeight}x line $line must match unspanned Android typography",
-            (reference.getLineBaseline(line) - reference.getLineBaseline(line - 1)).toFloat(),
+        for (line in 1 until metricReference.lineCount) {
+          baselineComparisons += Triple("${caption.style.lineHeight}x line $line must match ordinary Android metric-span typography",
+            (metricReference.getLineBaseline(line) - metricReference.getLineBaseline(line - 1)).toFloat(),
             actual[line].y - actual[line - 1].y)
         }
       }
