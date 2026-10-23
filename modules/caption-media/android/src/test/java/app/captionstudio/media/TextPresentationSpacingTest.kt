@@ -17,9 +17,18 @@ import kotlin.math.abs
 @Config(sdk = [34], manifest = Config.NONE)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class TextPresentationSpacingTest {
-  private fun style() = parseTextStyle(mapOf(
+  private fun styleFields(lineHeight: Double = 1.0): Map<String, Any> = mapOf(
     "font" to mapOf("source" to "system", "family" to "sans-serif"),
-  )).copy(
+    "stroke" to emptyMap<String, Any>(),
+    "shadow" to emptyMap<String, Any>(),
+    "background" to emptyMap<String, Any>(),
+    "position" to emptyMap<String, Any>(),
+    "box" to emptyMap<String, Any>(),
+    "animation" to emptyMap<String, Any>(),
+    "lineHeight" to lineHeight,
+  )
+
+  private fun style() = parseTextStyle(styleFields()).copy(
     fontSize = 48f, fontWeight = 800, italic = false,
     alignment = "left", letterSpacing = 0f, lineHeight = 1f,
     strokeWidth = 0f, shadowOpacity = 0f, textTreatment = "solid",
@@ -109,9 +118,9 @@ class TextPresentationSpacingTest {
   }
 
   @Test fun quarterHeightSurvivesNativeParsingAndMovesBaselinesWithoutSquashingGlyphs() {
-    val parsed = parseTextStyle(mapOf("lineHeight" to 0.25))
+    val parsed = parseTextStyle(styleFields(0.25))
     assertEquals("Native parser must accept the same slider floor as JS", 0.25f, parsed.lineHeight, 0f)
-    assertEquals(0.25f, parseTextStyle(mapOf("lineHeight" to -10)).lineHeight, 0f)
+    assertEquals(0.25f, parseTextStyle(styleFields(-10.0)).lineHeight, 0f)
     TimelineTextPainter(RuntimeEnvironment.getApplication()).use { painter ->
       val normal = cue("Hello\nworld", style())
       val tight = cue(normal.text, normal.style.copy(lineHeight = parsed.lineHeight))
