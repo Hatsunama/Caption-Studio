@@ -1,4 +1,4 @@
-export const CAPTION_LINE_HEIGHT_MIN = 0.55;
+export const CAPTION_LINE_HEIGHT_MIN = 0.25;
 export const CAPTION_LINE_HEIGHT_MAX = 1.12;
 
 export function normalizeCaptionLineHeight(value: number) {
