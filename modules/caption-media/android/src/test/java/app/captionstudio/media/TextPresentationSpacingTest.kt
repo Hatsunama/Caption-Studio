@@ -6,8 +6,10 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Layout
 import android.text.StaticLayout
+import android.text.Spanned
 import android.text.TextDirectionHeuristics
 import android.text.TextPaint
+import android.text.style.ReplacementSpan
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -155,8 +157,46 @@ class TextPresentationSpacingTest {
           .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
           .build()
         assertEquals(3, reference.lineCount)
+        val actualLayout = painter.presentationFor(caption, caption.words, 360, 640, true).layout
+        val spanned = actualLayout.text as Spanned
+        fun paintDetails(paint: Paint) = "size=${paint.textSize},flags=${paint.flags}," +
+          "scaleX=${paint.textScaleX},skewX=${paint.textSkewX},letterSpacing=${paint.letterSpacing}," +
+          "typeface=${paint.typeface},weight=${paint.typeface?.weight},style=${paint.typeface?.style}," +
+          "elegant=${paint.isElegantTextHeight},locales=${paint.textLocales}," +
+          "features=${paint.fontFeatureSettings},variations=${paint.fontVariationSettings},fm=${paint.fontMetricsInt}"
+        val spanMetrics = spanned.getSpans(0, spanned.length, ReplacementSpan::class.java).map { span ->
+          val fm = Paint.FontMetricsInt()
+          span.getSize(actualLayout.paint, spanned, spanned.getSpanStart(span), spanned.getSpanEnd(span), fm)
+          val measureField = span.javaClass.getDeclaredField("measure").apply { isAccessible = true }
+          val measurePaint = measureField.get(span) as Paint
+          "range=${spanned.getSpanStart(span)}..${spanned.getSpanEnd(span)},reported=$fm,paint=${paintDetails(measurePaint)}"
+        }
+        fun lines(layout: StaticLayout) = (0 until layout.lineCount).map { line ->
+          "top=${layout.getLineTop(line)},baseline=${layout.getLineBaseline(line)}," +
+            "ascent=${layout.getLineAscent(line)},descent=${layout.getLineDescent(line)},extra=${layout.getLineExtra(line)}"
+        }
+        val markedText = caption.text.split('\n').joinToString("\n") { "\u200e$it" }
+        val markedReference = StaticLayout.Builder.obtain(markedText, 0, markedText.length, referencePaint, 324)
+          .setIncludePad(true).setLineSpacing(0f, caption.style.lineHeight)
+          .setUseLineSpacingFromFallbacks(true).setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
+          .setAlignment(Layout.Alignment.ALIGN_NORMAL).setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+          .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE).build()
+        val exactText = actualLayout.text.toString()
+        val exactCodePoints = exactText.codePoints().toArray().joinToString(" ") { "U+${it.toString(16).uppercase()}" }
+        fun exactUnspanned(fallback: Boolean): StaticLayout = StaticLayout.Builder.obtain(
+          exactText, 0, exactText.length, TextPaint(actualLayout.paint), actualLayout.width,
+        ).setIncludePad(true).setLineSpacing(0f, caption.style.lineHeight)
+          .setUseLineSpacingFromFallbacks(fallback).setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
+          .setAlignment(Layout.Alignment.ALIGN_NORMAL).setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+          .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE).build()
+        val diagnostics = "exactLayoutTextCodePoints=$exactCodePoints; width=${actualLayout.width}; " +
+          "referencePaint=${paintDetails(referencePaint)}; actualPaint=${paintDetails(actualLayout.paint)}; " +
+          "spanMetrics=$spanMetrics; referenceLines=${lines(reference)}; actualLines=${lines(actualLayout)}; " +
+          "markedReferenceLines=${lines(markedReference)}; " +
+          "exactUnspannedFallbackOn=${lines(exactUnspanned(true))}; " +
+          "exactUnspannedFallbackOff=${lines(exactUnspanned(false))}"
         for (line in 1 until reference.lineCount) {
-          assertEquals("${caption.style.lineHeight}x line $line must match unspanned Android typography",
+          assertEquals("${caption.style.lineHeight}x line $line must match unspanned Android typography; $diagnostics",
             (reference.getLineBaseline(line) - reference.getLineBaseline(line - 1)).toFloat(),
             actual[line].y - actual[line - 1].y, 1f)
         }
