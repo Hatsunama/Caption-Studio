@@ -219,6 +219,7 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
     update: (values) => act(() => Object.assign(props, values)),
     edit: (index) => act(() => row(index).props.onPress()),
     input: (index) => find('TextInput', row(index)).props,
+    hasAction: (index, label) => !!walk(row(index), (node) => node.props?.label === label),
     action: (index, label) => act(() => walk(row(index), (node) => node.props?.label === label).props.onPress()),
     recover: (payload) => act(() => recover(payload === null ? null : {
       payload,
@@ -230,6 +231,54 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
   };
 }
+
+for (const edited of [false, true]) test(`retapping a natively focused input after keyboard dismissal restores joins without losing ${edited ? 'edited' : 'source'} text or caret`, async () => {
+  let closes = 0;
+  const h = mount({ onSave: async (captions) => { h.calls.saves.push(plain(captions)); return true; }, onCancel: () => { closes++; } });
+  h.recover(null);
+  h.act(() => h.input(2).onFocus());
+  h.keyboard('keyboardDidShow');
+  if (edited) h.act(() => h.input(2).onChangeText('Hello again'));
+  const before = plain(h.list().data);
+  h.act(() => h.input(2).onSelectionChange({ nativeEvent: { selection: { start: 2, end: 2 } } }));
+  assert.equal(h.hasAction(2, 'Join previous'), true);
+  assert.equal(h.hasAction(2, 'Join next'), true);
+  h.keyboard('keyboardDidHide');
+  assert.equal(h.hasAction(2, 'Join next'), false, 'keyboard dismissal still collapses the row');
+  assert.equal(h.calls.selects.at(-1), 'cue-2');
+  h.calls.focuses.length = 0;
+  h.update({ currentMs: 2100 }); h.viewport(200); h.measure(2);
+  assert.deepEqual(h.calls.focuses, [], 'layout and transport updates cannot reopen the keyboard');
+
+  // Android retains native focus: deliver only the input press, never a second
+  // onFocus or the outer card onPress (the timestamp workaround).
+  h.act(() => h.input(2).onPressIn());
+  h.keyboard('keyboardDidShow');
+  assert.equal(h.hasAction(2, 'Join previous'), true, 'input retap must reactivate Join previous');
+  assert.equal(h.hasAction(2, 'Join next'), true, 'input retap must reactivate Join next');
+  assert.equal(h.calls.editing.at(-1), 'cue-2');
+  assert.equal(h.calls.selects.at(-1), 'cue-2');
+  assert.ok(h.calls.focuses.every((id) => id === 'cue-2'), 'activation cannot bounce focus to another cue');
+  assert.deepEqual(plain(h.list().data), before, 'reactivation preserves every draft cue');
+  assert.equal(h.input(2).selection, undefined, 'reactivation must not force the native caret');
+
+  h.calls.focuses.length = 0; h.calls.indices.length = 0;
+  h.fire('onScrollBeginDrag'); h.fire('onScroll', 392); h.fire('onScrollEndDrag', 392);
+  h.advance(150); h.measure(2); h.viewport(120); h.update({ currentMs: 3100 });
+  assert.equal(h.hasAction(2, 'Join next'), true, 'dragging with the IME open retains the editing controls');
+  assert.deepEqual(h.calls.focuses, [], 'scroll and resize cannot refocus the input');
+  assert.deepEqual(h.calls.indices, [], 'late layouts cannot bounce a user-owned scroll');
+  assert.deepEqual(h.calls.saves, [], 'focus and keyboard transitions never save');
+
+  h.action(2, 'Split here');
+  assert.equal(h.list().data[2].text, before[2].text.slice(0, 2), 'split uses the caret retained across dismissal and retap');
+  assert.equal(h.list().data[3].text, before[2].text.slice(2));
+  h.act(() => h.button('Save all caption edits').onPress());
+  await h.flush();
+  assert.equal(h.calls.saves.length, 1, 'one explicit Done produces one save');
+  assert.equal(closes, 1);
+  h.unmount();
+});
 
 test('drag seeks using cell-content coordinates and preserves native layout reporting', () => {
   const h = mount();

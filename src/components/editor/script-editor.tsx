@@ -737,7 +737,7 @@ export function ScriptEditor(props: {
                         value={item.text}
                         onChangeText={(text) => updateText(item, text)}
                         onFocus={() => selectForEditing(item)}
-                        onPressIn={() => { if (editing) selectForEditing(item); }}
+                        onPressIn={() => selectForEditing(item)}
                         onContentSizeChange={(event) => {
                           const height = Math.ceil(event.nativeEvent.contentSize.height);
                           if (!Number.isFinite(height) || height <= 0) return;
