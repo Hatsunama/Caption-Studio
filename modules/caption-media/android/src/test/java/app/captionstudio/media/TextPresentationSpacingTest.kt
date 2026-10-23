@@ -4,6 +4,10 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextDirectionHeuristics
+import android.text.TextPaint
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -128,13 +132,35 @@ class TextPresentationSpacingTest {
       val tightRuns = runs(painter.presentationFor(tight, tight.words, 360, 640, true))
       assertEquals(3, normalRuns.size)
       assertEquals(3, tightRuns.size)
-      // IncludePad changes the first line's ascent before applying spacing.
-      // Measure the next baseline step to isolate the font-relative multiplier.
       val normalDistance = normalRuns[2].y - normalRuns[1].y
       val tightDistance = tightRuns[2].y - tightRuns[1].y
       assertTrue("The first baseline step must also stay forward", tightRuns[1].y > tightRuns[0].y)
       assertTrue("Overlapping lines must still advance forward", tightDistance > 0f)
-      assertEquals(normalDistance * 0.25f, tightDistance, 2f)
+      assertTrue("The quarter-height setting must allow substantial line overlap", tightDistance < normalDistance * 0.5f)
+      // Compare with Android layout without replacement spans. A fixed fraction
+      // of the baseline distance at 1x also scales padding/fallback contributions
+      // that StaticLayout does not necessarily scale with its line multiplier.
+      val referencePaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+        textSize = normal.style.fontSize
+        typeface = Typeface.create(Typeface.create("sans-serif", Typeface.NORMAL), 800, false)
+      }
+      for ((caption, actual) in listOf(normal to normalRuns, tight to tightRuns)) {
+        val reference = StaticLayout.Builder.obtain(caption.text, 0, caption.text.length, referencePaint, 324)
+          .setIncludePad(true)
+          .setLineSpacing(0f, caption.style.lineHeight)
+          .setUseLineSpacingFromFallbacks(true)
+          .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
+          .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+          .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+          .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+          .build()
+        assertEquals(3, reference.lineCount)
+        for (line in 1 until reference.lineCount) {
+          assertEquals("${caption.style.lineHeight}x line $line must match unspanned Android typography",
+            (reference.getLineBaseline(line) - reference.getLineBaseline(line - 1)).toFloat(),
+            actual[line].y - actual[line - 1].y, 1f)
+        }
+      }
       normalRuns.zip(tightRuns).forEach { (expected, actual) -> assertEquals(expected.advance, actual.advance, 0f) }
     }
   }
