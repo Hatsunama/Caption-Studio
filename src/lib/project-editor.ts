@@ -19,6 +19,7 @@ import {
 import {
   anchorCaptionsToClips,
   buildClipTimeline,
+  completeVideoTimelineEdit,
   mapSourceWordsToTimeline,
   MINIMUM_CLIP_TIMELINE_MS,
   remapCaptionsToTimeline,
@@ -42,7 +43,6 @@ import { editProjectTimelineRange, timelineArtifactEditLimit } from '@/lib/timel
 import { normalizeLayerGeometry } from '@/lib/layer-geometry';
 import { hasCanonicalSourceWords } from '@/lib/primary-caption-timing';
 import { applyCaptionMergeDraft } from '@/lib/caption-merge';
-import { completeVideoTimelineEdit } from '@/lib/video-timeline';
 
 export function setCaptionTexts(project: CaptionProject, changes: CaptionTextChanges) {
   const changed = applyCaptionTextChanges(project.captions, changes);

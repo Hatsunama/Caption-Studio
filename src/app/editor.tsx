@@ -2,7 +2,6 @@ import { AdaptiveDialog, AdaptiveDialogTextInput } from '@/components/editor/ada
 import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
 import { editorWorkspaceLayout } from '@/lib/adaptive-workspace';
 import { projectTimelineDuration } from '@/lib/project-timeline';
-import { completeVideoTimelineEdit } from '@/lib/video-timeline';
 import { absorbShortCaptionCues } from '@/lib/caption-merge';
 import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
@@ -119,6 +118,7 @@ import {
 import { applyStylePatch, resolveCaptionStyle, type StyleScope } from '@/lib/style-resolver';
 import {
   buildClipTimeline,
+  completeVideoTimelineEdit,
   setClipPlaybackRate,
   timelineEntryAt,
   totalClipDuration,

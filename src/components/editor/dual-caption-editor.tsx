@@ -114,6 +114,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
   const [store] = useState(() => new DualCaptionDraftStore(sourceDrafts));
   const [openingRevision] = useState(() => dualCaptionDraftRevision(sourceDrafts));
+  // Recovery belongs to the opening session, even as committed pairs update.
+  const [openingRecovery] = useState(() => ({ pairs: props.pairs, trackId: props.trackId }));
   const editCount = useSyncExternalStore(store.subscribeDirty, store.getDirtyCount, store.getDirtyCount);
   const [journalReady, setJournalReady] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -149,8 +151,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       if (!active) return;
       setJournalRecovery(journal?.recovery);
       const preserveRecovery = !!journal?.recovery?.failures.length;
-      const aliasRecovery = journal && props.pairs.some(pair => pair.source.mergeProvenance)
-        ? recoverMergedDualCaptionDrafts(journal.payload, props.pairs, props.trackId, journal.baseRevision) : undefined;
+      const aliasRecovery = journal && openingRecovery.pairs.some(pair => pair.source.mergeProvenance)
+        ? recoverMergedDualCaptionDrafts(journal.payload, openingRecovery.pairs, openingRecovery.trackId, journal.baseRevision) : undefined;
       const recovered = aliasRecovery?.drafts ?? decodeDualDraft(journal?.payload, allowedIds);
       const nextCommitted = store.committed;
       const revisionConflict = !!journal && journal.baseRevision !== openingRevision;
@@ -193,7 +195,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       }
     });
     return () => { active = false; };
-  }, [journalKind, openingRevision, props.projectId, store]);
+  }, [journalKind, openingRecovery, openingRevision, props.projectId, store]);
 
   useEffect(() => {
     if (!journalReady || props.busy || saving || closing) return;
