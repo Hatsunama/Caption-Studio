@@ -7,7 +7,6 @@ import { totalClipDuration } from '@/lib/video-timeline';
 import {
   captionLayoutText,
   captionSpokenTokenSpans,
-  captionTokensNeedSpace,
 } from '@/lib/caption-text-breaks';
 import type { CaptionBlock, CaptionProject, CaptionStyle, WordToken } from '@/types/project';
 
@@ -151,7 +150,7 @@ function assCaptionText(
   captionStyle: CaptionStyle,
   scale: number,
 ) {
-  const sourceText = normalizeLineEndings(caption.text).trim();
+  const sourceText = normalizeLineEndings(caption.text);
   const wordsById = new Map(project.transcription?.words?.map((word) => [word.id, word]) ?? []);
   const words = caption.wordIds.flatMap((id) => {
     const word = wordsById.get(id);
@@ -161,21 +160,33 @@ function assCaptionText(
     return assText(transformText(sourceText, captionStyle.textTransform));
   }
 
-  const tokens = captionSpokenTokenSpans(sourceText);
-  if (tokens.length !== words.length) {
-    return words.map((word, index) => {
-      const separator = index > 0 && captionTokensNeedSpace(words[index - 1].text, word.text) ? ' ' : '';
-      return `${separator}${styledAssWord(word.text, project, caption, word, scale)}`;
-    }).join('');
+  let tokens = captionSpokenTokenSpans(sourceText);
+  let alignedWords = words;
+  if (tokens.length !== words.length
+    || tokens.some((token, index) => comparableText(token.text) !== comparableText(words[index].text))) {
+    // Symbol-only authored spans are gaps, never a reason to rebuild from ASR.
+    const spokenWords = words.flatMap((word) => captionSpokenTokenSpans(word.text)
+      .filter((token) => comparableText(token.text))
+      .map((token) => ({ key: comparableText(token.text), word })));
+    tokens = tokens.filter((token) => comparableText(token.text));
+    if (tokens.length !== spokenWords.length
+      || tokens.some((token, index) => comparableText(token.text) !== spokenWords[index].key)) {
+      return assText(transformText(sourceText, captionStyle.textTransform));
+    }
+    alignedWords = spokenWords.map(({ word }) => word);
   }
 
+  const authoredGap = (text: string) => {
+    const reset = /\S/u.test(text) ? `{${assPaintTags(captionStyle, scale)}}` : '';
+    return `${reset}${assText(transformText(text, captionStyle.textTransform))}`;
+  };
   let cursor = 0;
   const styled = tokens.map((token, index) => {
-    const separator = assWhitespace(sourceText.slice(cursor, token.start));
+    const separator = authoredGap(sourceText.slice(cursor, token.start));
     cursor = token.end;
-    return `${separator}${styledAssWord(token.text, project, caption, words[index], scale)}`;
+    return `${separator}${styledAssWord(sourceText.slice(token.start, token.end), project, caption, alignedWords[index], scale)}`;
   }).join('');
-  return `${styled}${assWhitespace(sourceText.slice(cursor))}`;
+  return `${styled}${authoredGap(sourceText.slice(cursor))}`;
 }
 
 function styledAssWord(
@@ -280,14 +291,11 @@ function assColor(value: string, opacity = 1) {
 
 function assText(value: string) {
   return value
+    .replace(/\t/g, '  ')
     .replace(/\\/g, '\\\\')
     .replace(/{/g, '\\{')
     .replace(/}/g, '\\}')
     .replace(/\r?\n/g, '\\N');
-}
-
-function assWhitespace(value: string) {
-  return value.replace(/\r?\n/g, '\\N').replace(/\t/g, '    ');
 }
 
 function assTagText(value: string) {
