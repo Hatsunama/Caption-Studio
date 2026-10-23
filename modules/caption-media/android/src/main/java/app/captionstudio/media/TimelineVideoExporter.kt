@@ -585,7 +585,6 @@ internal class TimelineVideoExporter(private val context: Context) {
     val overlay: TimelineBitmapOverlay,
     val transitionTimeline: TimelineTransitionTimeline,
     val sourceInfoByUri: Map<String, MediaSourceInfo>,
-    val exportTimestampMs: Long = System.currentTimeMillis(),
     var transformer: Transformer? = null,
     val cancelled: AtomicBoolean = AtomicBoolean(false),
     val resourcesReleased: AtomicBoolean = AtomicBoolean(false),
@@ -593,7 +592,9 @@ internal class TimelineVideoExporter(private val context: Context) {
     @Volatile var stage: ExportStage = ExportStage.PREPARING,
     @Volatile var publishedUri: Uri? = null,
     @Volatile var publishedFile: File? = null,
-  )
+  ) {
+    val exportTimestampMs: Long = System.currentTimeMillis()
+  }
 
   private enum class ExportStage { PREPARING, RENDERING, PUBLISHING }
 

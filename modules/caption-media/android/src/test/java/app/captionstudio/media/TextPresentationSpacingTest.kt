@@ -122,14 +122,17 @@ class TextPresentationSpacingTest {
     assertEquals("Native parser must accept the same slider floor as JS", 0.25f, parsed.lineHeight, 0f)
     assertEquals(0.25f, parseTextStyle(styleFields(-10.0)).lineHeight, 0f)
     TimelineTextPainter(RuntimeEnvironment.getApplication()).use { painter ->
-      val normal = cue("Hello\nworld", style())
+      val normal = cue("Hello\nworld\nagain", style())
       val tight = cue(normal.text, normal.style.copy(lineHeight = parsed.lineHeight))
       val normalRuns = runs(painter.presentationFor(normal, normal.words, 360, 640, true))
       val tightRuns = runs(painter.presentationFor(tight, tight.words, 360, 640, true))
-      assertEquals(2, normalRuns.size)
-      assertEquals(2, tightRuns.size)
-      val normalDistance = normalRuns[1].y - normalRuns[0].y
-      val tightDistance = tightRuns[1].y - tightRuns[0].y
+      assertEquals(3, normalRuns.size)
+      assertEquals(3, tightRuns.size)
+      // IncludePad changes the first line's ascent before applying spacing.
+      // Measure the next baseline step to isolate the font-relative multiplier.
+      val normalDistance = normalRuns[2].y - normalRuns[1].y
+      val tightDistance = tightRuns[2].y - tightRuns[1].y
+      assertTrue("The first baseline step must also stay forward", tightRuns[1].y > tightRuns[0].y)
       assertTrue("Overlapping lines must still advance forward", tightDistance > 0f)
       assertEquals(normalDistance * 0.25f, tightDistance, 2f)
       normalRuns.zip(tightRuns).forEach { (expected, actual) -> assertEquals(expected.advance, actual.advance, 0f) }
@@ -166,6 +169,54 @@ class TextPresentationSpacingTest {
             }
             assertTrue("$animation at $time must actually draw ink", visible > 0)
           } finally { preview.recycle(); exported.recycle() }
+        }
+      }
+    }
+  }
+
+  @Test fun wrappedRtlAndAuthoredMixedDirectionLinesKeepDecoratedAnimatedInkInsideTheBox() {
+    val arabic = "\u0645\u0631\u062d\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645"
+    TimelineTextPainter(RuntimeEnvironment.getApplication()).use { painter ->
+      for (authored in listOf(false, true)) {
+        val text = if (authored) "$arabic\nLatin $arabic" else "$arabic $arabic $arabic"
+        for (animation in listOf("none", "word-spin", "wobble")) {
+          val caption = cue(text, style().copy(
+            fontSize = 54f, lineHeight = 0.25f, boxWidth = 0.45f, boxHeight = 0.42f,
+            strokeWidth = 4f, shadowOpacity = 0.8f, shadowBlur = 8f,
+            shadowOffsetX = -7f, shadowOffsetY = 5f,
+            textTreatment = "duotone-neon", animationId = animation, animationIntensity = 1f,
+          ))
+          val words = if (authored) emptyList() else caption.words
+          val fitted = painter.presentationFor(caption, words, 360, 640, authored)
+          assertTrue("Fixture must exercise multiple lines: authored=$authored", fitted.layout.lineCount >= 2)
+          assertTrue(fitted.bounds.width() * fitted.fit <= 162.01f)
+          assertTrue(fitted.bounds.height() * fitted.fit <= 268.81f)
+          for (time in listOf(125L, 625L, 1_125L, 1_625L)) {
+            val preview = Bitmap.createBitmap(360, 640, Bitmap.Config.ARGB_8888)
+            val exported = Bitmap.createBitmap(360, 640, Bitmap.Config.ARGB_8888)
+            try {
+              painter.drawPreview(Canvas(preview), caption, time, 360, 640, authored, false)
+              if (authored) {
+                painter.drawTextLayer(Canvas(exported), TextRenderLayer("rtl-text", true, text, 0L, 2_000L, caption.style), time, 360, 640)
+              } else {
+                painter.drawCaption(Canvas(exported), caption, time, 360, 640)
+              }
+              assertTrue("RTL preview/export differ: authored=$authored $animation at $time", preview.sameAs(exported))
+              val pixels = IntArray(360 * 640)
+              exported.getPixels(pixels, 0, 360, 0, 0, 360, 640)
+              var visible = 0
+              pixels.forEachIndexed { index, pixel ->
+                if ((pixel ushr 24) > 16) {
+                  visible++
+                  val x = index % 360
+                  val y = index / 360
+                  assertTrue("RTL ink escaped: authored=$authored $animation at $time ($x,$y)",
+                    abs(x - 180) <= 82 && abs(y - 320) <= 136)
+                }
+              }
+              assertTrue("RTL fixture must render visible ink: authored=$authored $animation at $time", visible > 0)
+            } finally { preview.recycle(); exported.recycle() }
+          }
         }
       }
     }
