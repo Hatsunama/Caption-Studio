@@ -1,10 +1,13 @@
+import type { CaptionBlock } from '@/types/project';
+import { captionLayoutText } from '@/lib/caption-text-breaks';
+
 export type DualCaptionDraft = {
   primaryText: string;
   translatedText: string;
 };
 
 type DualCaptionPairLike = {
-  source: { id: string; text: string };
+  source: { id: string; text: string; mergeProvenance?: CaptionBlock['mergeProvenance'] };
   translation: { text: string };
 };
 
@@ -110,4 +113,81 @@ function recoveredTranslationLooksCommitted(draft: DualCaptionDraft, committed: 
   if (translated === comparable(committed.primaryText)) return false;
   if (translated === comparable(draft.primaryText)) return Boolean(committedTranslation) && committedTranslation !== translated;
   return true;
+}
+
+/** Reconcile retired identities before strict validation; failure never consumes the journal. */
+export function recoverMergedDualCaptionDrafts(
+  value: unknown, pairs: readonly DualCaptionPairLike[], trackId: string, baseRevision?: string,
+): { drafts: Record<string, DualCaptionDraft>; remapped: boolean } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Recovery draft data is invalid and has been preserved.');
+  const entries = Object.entries(value);
+  if (entries.length > 100_000 || entries.some(([, draft]) => !draft || typeof draft !== 'object'
+    || typeof draft.primaryText !== 'string' || typeof draft.translatedText !== 'string'
+    || draft.primaryText.length > 100_000 || draft.translatedText.length > 100_000)) {
+    throw new Error('Recovery draft text is invalid and has been preserved.');
+  }
+  const payload = Object.fromEntries(entries) as Record<string, DualCaptionDraft>;
+  const committed = dualCaptionDraftsFromPairs(pairs);
+  const aliases = new Map<string, string>();
+  for (const pair of pairs) for (const fragment of pair.source.mergeProvenance?.aliasesRetired ? [] : pair.source.mergeProvenance?.fragments ?? []) {
+    const owner = aliases.get(fragment.captionId);
+    if (owner && owner !== pair.source.id) throw new Error('Recovery identity conflict. The original draft is preserved.');
+    aliases.set(fragment.captionId, pair.source.id);
+  }
+  for (const [id] of entries) if (!Object.hasOwn(committed, id) && !aliases.has(id)) {
+    throw new Error(`Recovery identity conflict: unknown caption identity ${id}. The original draft is preserved.`);
+  }
+  const result = { ...committed };
+  let remapped = false;
+  const consumed = new Set<string>();
+  for (const pair of pairs) {
+    const history = pair.source.mergeProvenance;
+    if (!history) continue;
+    if (history.aliasesRetired) {
+      if (baseRevision !== dualCaptionDraftRevision(committed)) {
+        throw new Error('Recovery identity conflict: a split retired the old caption aliases. The original draft is preserved.');
+      }
+      continue;
+    }
+    const fragments = history.fragments;
+    const oldIdsPresent = fragments.some(fragment => fragment.captionId !== pair.source.id && Object.hasOwn(payload, fragment.captionId));
+    const originalBaseline = { ...committed };
+    delete originalBaseline[pair.source.id];
+    for (const fragment of fragments) originalBaseline[fragment.captionId] = {
+      primaryText: fragment.primaryText, translatedText: fragment.translations[trackId] ?? '',
+    };
+    const oldRevision = baseRevision !== undefined && baseRevision === dualCaptionDraftRevision(originalBaseline);
+    if (!oldIdsPresent && !oldRevision) {
+      if (baseRevision !== undefined && baseRevision !== dualCaptionDraftRevision(committed)
+        && Object.hasOwn(payload, pair.source.id)) {
+        throw new Error('Recovery identity conflict: this survivor-only draft may predate the join. The original draft is preserved.');
+      }
+      continue;
+    }
+    const chunks: { ids: string[]; primaryText: string; translatedText: string }[] = [];
+    for (let index = 0; index < fragments.length;) {
+      const fragment = fragments[index];
+      const previous = [...(history.previousJoins ?? [])].reverse().find(join => join.captionIds[0] === fragment.captionId
+        && join.captionIds.length > 1
+        && join.captionIds.every((id, offset) => fragments[index + offset]?.captionId === id)
+        && join.captionIds.slice(1).every(id => !Object.hasOwn(payload, id)));
+      const ids = previous?.captionIds ?? [fragment.captionId];
+      chunks.push({ ids, primaryText: previous?.primary.text ?? fragment.primaryText,
+        translatedText: previous?.translationCues[trackId]?.text ?? fragment.translations[trackId] ?? '' });
+      index += ids.length;
+    }
+    const expectedPrimary = captionLayoutText(chunks.map(chunk => chunk.primaryText));
+    const expectedTranslation = captionLayoutText(chunks.map(chunk => chunk.translatedText));
+    if (pair.source.text !== expectedPrimary || pair.translation.text !== expectedTranslation) {
+      throw new Error('Recovery conflict: joined caption text changed after the saved fragments. The original draft is preserved.');
+    }
+    result[pair.source.id] = {
+      primaryText: captionLayoutText(chunks.map(chunk => committedDualCaptionText(payload[chunk.ids[0]]?.primaryText ?? chunk.primaryText, chunk.primaryText))),
+      translatedText: captionLayoutText(chunks.map(chunk => committedDualCaptionText(payload[chunk.ids[0]]?.translatedText ?? chunk.translatedText, chunk.translatedText))),
+    };
+    fragments.forEach(fragment => consumed.add(fragment.captionId));
+    remapped = true;
+  }
+  for (const [id, draft] of entries) if (!consumed.has(id)) result[id] = draft as DualCaptionDraft;
+  return { drafts: result, remapped };
 }

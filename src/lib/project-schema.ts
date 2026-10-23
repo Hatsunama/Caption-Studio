@@ -375,6 +375,7 @@ export function decodeCaption(value: unknown, index: number): CaptionBlock {
     startMs,
     endMs,
     wordIds,
+    ...(caption.mergeProvenance === undefined ? {} : { mergeProvenance: decodeCaptionMergeProvenance(caption.mergeProvenance) }),
     textMode: optionalEnum(caption.textMode, ['automatic', 'manual'] as const, `caption ${index + 1} text mode`),
     ...(timingMode === undefined ? {} : { timingMode }),
     timelineVisible: caption.timelineVisible === undefined ? true : booleanValue(caption.timelineVisible, `caption ${index + 1} timeline visibility`),
@@ -396,6 +397,96 @@ function decodeCaptionSourceAnchor(value: unknown, index: number) {
       ? []
       : decodeStringArray(anchor.wordIds, `caption ${index + 1} source word identifiers`, 10_000),
   };
+}
+
+function decodeCaptionMergeProvenance(value: unknown): NonNullable<CaptionBlock['mergeProvenance']> {
+  const provenance = record(value, 'caption merge provenance');
+  const aliasesRetired = provenance.aliasesRetired === undefined ? undefined : booleanValue(provenance.aliasesRetired, 'caption retired aliases');
+  const fragments = decodeArray(provenance.fragments, 'caption merge fragments', 32, (raw, index) => {
+    const fragment = record(raw, 'caption merge fragment');
+    const captionId = identifierValue(fragment.captionId, 'caption merge fragment identity');
+    const translations = record(fragment.translations, 'caption merge fragment translations');
+    const translationCues = fragment.translationCues === undefined ? undefined : record(fragment.translationCues, 'caption merge original translations');
+    const originals = translationCues && Object.fromEntries(Object.entries(translationCues).map(([trackId, rawCue]) => {
+      identifierValue(trackId, 'caption merge original track');
+      const cue = record(rawCue, 'caption merge original translation');
+      return [trackId, {
+        id: translationCueIdentifierValue(cue.id, 'caption merge original translation identity'),
+        sourceCaptionId: identifierValue(cue.sourceCaptionId, 'caption merge original source identity'),
+        sourceTextSnapshot: boundedString(cue.sourceTextSnapshot, 'caption merge original source text', 100_000),
+        text: boundedString(cue.text, 'caption merge original translated text', 100_000),
+        status: enumValue(cue.status, ['pending', 'translated', 'reviewed', 'stale', 'failed'] as const, 'caption merge original status'),
+        reviewed: booleanValue(cue.reviewed, 'caption merge original review state'),
+        startMs: optionalFiniteNumber(cue.startMs, 'caption merge original start', 0, Number.MAX_SAFE_INTEGER),
+        endMs: optionalFiniteNumber(cue.endMs, 'caption merge original end', 0, Number.MAX_SAFE_INTEGER),
+        timelineVisible: cue.timelineVisible === undefined ? undefined : booleanValue(cue.timelineVisible, 'caption merge original visibility'),
+        translationSkipped: cue.translationSkipped === undefined ? undefined : booleanValue(cue.translationSkipped, 'caption merge original skipped state'),
+        failureReason: cue.failureReason === undefined ? undefined : boundedString(cue.failureReason, 'caption merge original failure', 4096),
+        styleOverride: decodeCaptionStylePatch(cue.styleOverride, 'caption merge original style'),
+      }];
+    }));
+    let primary: Omit<CaptionBlock, 'mergeProvenance'> | undefined;
+    if (fragment.primary !== undefined) {
+      const original = record(fragment.primary, 'caption merge original primary');
+      if (original.mergeProvenance !== undefined) throw new Error('Nested caption merge history is invalid');
+      primary = decodeCaption(original, index);
+    }
+    return { captionId, primaryText: boundedString(fragment.primaryText, 'caption merge original text', 100_000),
+      translations: Object.fromEntries(Object.entries(translations).map(([id, text]) => [identifierValue(id, 'caption merge translation track'), boundedString(text, 'caption merge translation text', 100_000)])),
+      ...(primary ? { primary } : {}), ...(originals ? { translationCues: originals } : {}),
+      ...(fragment.translationOrigins === undefined ? {} : { translationOrigins: decodeIndependentTimingOrigins(fragment.translationOrigins) }),
+    };
+  });
+  if (fragments.length < 2 || (!aliasesRetired && new Set(fragments.map(fragment => fragment.captionId)).size !== fragments.length)) {
+    throw new Error('Caption merge fragments require distinct original identities');
+  }
+  const previousJoins = provenance.previousJoins === undefined ? undefined
+    : decodeArray(provenance.previousJoins, 'caption previous joins', 30, raw => {
+      const join = record(raw, 'caption previous join');
+      const captionIds = decodeStringArray(join.captionIds, 'caption previous join identities', 32);
+      if (captionIds.length < 2 || (!aliasesRetired && new Set(captionIds).size !== captionIds.length)
+        || captionIds.some(id => !fragments.some(fragment => fragment.captionId === id))) {
+        throw new Error('Caption previous join identities are invalid');
+      }
+      const original = record(join.primary, 'caption previous join primary');
+      if (original.mergeProvenance !== undefined) throw new Error('Nested caption merge history is invalid');
+      const primary = decodeCaption(original, 0);
+      if (primary.id !== captionIds[0]) throw new Error('Caption previous join survivor is invalid');
+      const originals = record(join.translationCues, 'caption previous join translations');
+      const translationCues = Object.fromEntries(Object.entries(originals).map(([trackId, rawCue]) => {
+        identifierValue(trackId, 'caption previous join track');
+        const cue = record(rawCue, 'caption previous join cue');
+        return [trackId, {
+          id: translationCueIdentifierValue(cue.id, 'caption previous join cue identity'),
+          sourceCaptionId: identifierValue(cue.sourceCaptionId, 'caption previous join source'),
+          sourceTextSnapshot: boundedString(cue.sourceTextSnapshot, 'caption previous join source text', 100_000),
+          text: boundedString(cue.text, 'caption previous join text', 100_000),
+          status: enumValue(cue.status, ['pending', 'translated', 'reviewed', 'stale', 'failed'] as const, 'caption previous join status'),
+          reviewed: booleanValue(cue.reviewed, 'caption previous join review'),
+          startMs: optionalFiniteNumber(cue.startMs, 'caption previous join start', 0, Number.MAX_SAFE_INTEGER),
+          endMs: optionalFiniteNumber(cue.endMs, 'caption previous join end', 0, Number.MAX_SAFE_INTEGER),
+          timelineVisible: cue.timelineVisible === undefined ? undefined : booleanValue(cue.timelineVisible, 'caption previous join visibility'),
+          translationSkipped: cue.translationSkipped === undefined ? undefined : booleanValue(cue.translationSkipped, 'caption previous join skipped'),
+          failureReason: cue.failureReason === undefined ? undefined : boundedString(cue.failureReason, 'caption previous join failure', 4096),
+          styleOverride: decodeCaptionStylePatch(cue.styleOverride, 'caption previous join style'),
+        }];
+      }));
+      return { captionIds, primary, translationCues,
+        ...(join.translationOrigins === undefined ? {} : { translationOrigins: decodeIndependentTimingOrigins(join.translationOrigins) }),
+      };
+    });
+  return { fragments, ...(aliasesRetired === undefined ? {} : { aliasesRetired }), ...(previousJoins ? { previousJoins } : {}) };
+}
+
+function decodeIndependentTimingOrigins(value: unknown, allowedIds?: ReadonlySet<string>): Record<string, number> {
+  const origins = record(value, 'independent translation timing origins');
+  const entries = Object.entries(origins);
+  if (entries.length > 100_000) throw new Error('Independent translation timing origins exceed the cue limit');
+  return Object.fromEntries(entries.map(([id, origin]) => {
+    translationCueIdentifierValue(id, 'independent translation timing cue');
+    if (allowedIds && !allowedIds.has(id)) throw new Error('Independent translation timing references an unknown cue');
+    return [id, finiteNumber(origin, 'independent translation timing origin', 0, Number.MAX_SAFE_INTEGER)];
+  }));
 }
 
 function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLanguage: string, projectStyle: CaptionStyle): CaptionTrackCollection {
@@ -546,7 +637,10 @@ function decodeCaptionTracks(value: unknown, captions: CaptionBlock[], primaryLa
   const normalizedTranslations = translations;
   return synchronizeCaptionTracks({
     captions,
-    captionTracks: { schemaVersion: 1, primaryTrackId: 'captions', translations: normalizedTranslations },
+    captionTracks: { schemaVersion: 1, primaryTrackId: 'captions', translations: normalizedTranslations,
+      ...(collection.independentTimingOrigins === undefined ? {} : { independentTimingOrigins:
+        decodeIndependentTimingOrigins(collection.independentTimingOrigins, new Set(normalizedTranslations.flatMap(track => track.cues.map(cue => cue.id)))) }),
+    },
   });
 }
 
@@ -653,7 +747,7 @@ function decodeCaptionStyle(value: unknown, fallback: CaptionStyle, label: strin
     background: decodeTextBackground(style.background, fallback.background, `${label} background`),
     alignment: optionalEnum(style.alignment, ['left', 'center', 'right'] as const, `${label} alignment`) ?? fallback.alignment,
     letterSpacing: optionalNumber(style.letterSpacing, fallback.letterSpacing, `${label} letter spacing`, -20, 100),
-    lineHeight: normalizeCaptionLineHeight(optionalNumber(style.lineHeight, fallback.lineHeight, `${label} line height`, 0.5, 5)),
+    lineHeight: normalizeCaptionLineHeight(optionalNumber(style.lineHeight, fallback.lineHeight, `${label} line height`, 0.25, 5)),
     textTransform: optionalEnum(style.textTransform, ['none', 'uppercase', 'lowercase'] as const, `${label} transform`) ?? fallback.textTransform,
     position: style.position === undefined ? { ...fallback.position } : decodePoint(style.position, `${label} position`, -4, 4),
     box: style.box === undefined ? { ...fallback.box } : decodeBox(style.box, `${label} box`),
@@ -684,7 +778,7 @@ function decodeCaptionStylePatch(value: unknown, label: string): CaptionStylePat
   if (patch.background !== undefined) decoded.background = decodeBackgroundPatch(patch.background, `${label} background`);
   if (patch.alignment !== undefined) decoded.alignment = enumValue(patch.alignment, ['left', 'center', 'right'] as const, `${label} alignment`);
   if (patch.letterSpacing !== undefined) decoded.letterSpacing = finiteNumber(patch.letterSpacing, `${label} letter spacing`, -20, 100);
-  if (patch.lineHeight !== undefined) decoded.lineHeight = normalizeCaptionLineHeight(finiteNumber(patch.lineHeight, `${label} line height`, 0.5, 5));
+  if (patch.lineHeight !== undefined) decoded.lineHeight = normalizeCaptionLineHeight(finiteNumber(patch.lineHeight, `${label} line height`, 0.25, 5));
   if (patch.textTransform !== undefined) decoded.textTransform = enumValue(patch.textTransform, ['none', 'uppercase', 'lowercase'] as const, `${label} transform`);
   if (patch.position !== undefined) decoded.position = decodePointPatch(patch.position, `${label} position`, -4, 4);
   if (patch.box !== undefined) decoded.box = decodeBoxPatch(patch.box, `${label} box`);

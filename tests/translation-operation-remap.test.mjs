@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { createEnglishChineseCaptionTrack, remapTranslationTrackTimings, resolveCaptionPairs } from '../src/lib/caption-tracks.ts';
 import { deleteVideoClip, reorderVideoClip, setVideoClipGap, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
-import { rippleTimedContent, setClipPlaybackRate, translationSpliceMapping } from '../src/lib/video-timeline.ts';
+import { rippleTimedContent, setClipPlaybackRate, totalClipDuration, translationSpliceMapping } from '../src/lib/video-timeline.ts';
 import { decodeVersionTwoProject } from '../src/lib/project-schema.ts';
 import { exportCaptionPairs } from '../src/lib/export-caption-pairs.ts';
 import { serializeSrt } from '../src/lib/subtitle-export.ts';
@@ -167,8 +167,8 @@ test('gap-only and zero-overlap ranges keep absolute timing and hide only when e
     [4_200, 4_800, [4_200, 4_800], true],
     [4_000, 5_000, [4_000, 5_000], true],
     [4_500, 4_500, [4_500, 4_500], false],
-    [9_500, 10_000, [9_000, 9_000], false],
-    [3_500, 4_900, [7_500, 8_900], true],
+    [9_500, 10_000, [8_000, 8_000], false],
+    [3_500, 4_900, [7_500, 8_000], true],
     [4_100, 5_500, [0, 500], true],
   ]) {
     const project = fixture(start, end);
@@ -176,6 +176,10 @@ test('gap-only and zero-overlap ranges keep absolute timing and hide only when e
     project.captions[1].startMs += 1_000;
     project.captions[1].endMs += 1_000;
     const next = reorderVideoClip(project, 'b', 0).project;
+    assert.equal(totalClipDuration(next.clips), 8_000);
+    assert.equal(next.clips.at(-1).gapAfterMs, 0);
+    assert.equal(project.clips[0].gapAfterMs, 1_000);
+    assert.deepEqual(metadata(cue(next)), metadata(cue(project)));
     assert.deepEqual(bounds(next), expected);
     assert.equal(cue(next).timelineVisible, visible);
     assert.deepEqual(bounds(reload(next)), expected);

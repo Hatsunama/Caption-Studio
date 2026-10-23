@@ -48,7 +48,7 @@ export function normalizeProjectedPrimaryWords(
   for (let index = 0; index < words.length; index += 1) {
     const word = words[index];
     const previous = words[index - 1];
-    const minimumStepMs = previous && /[.!?\u3002\uFF01\uFF1F\u061F]$/u.test(previous.text) ? MINIMUM_GENERATED_CUE_MS : 1;
+    const minimumStepMs = 1;
     const startMs = Math.max(clipStartMs, word.startMs,
       previous && word.startMs <= starts[index - 1] ? starts[index - 1] + minimumStepMs : -Infinity);
     if (!Number.isFinite(startMs) || startMs >= Math.min(clipEndMs, word.endMs)) {
@@ -99,7 +99,10 @@ export function sequenceGeneratedPrimaryCaptions(
     const previousCandidate = previous && caption.startMs - previous.endMs <= MINIMUM_GENERATED_CUE_MS
       && caption.endMs - previous.startMs <= maxDurationMs
       ? mergeAdjacentCaptions(previous, caption) : undefined;
-    if (nextCandidate && fitsTextBudget(nextCandidate)) {
+    const usePrevious = previousCandidate && fitsTextBudget(previousCandidate)
+      && (!nextCandidate || !fitsTextBudget(nextCandidate)
+        || caption.startMs - previous!.endMs <= next!.startMs - caption.endMs);
+    if (!usePrevious && nextCandidate && fitsTextBudget(nextCandidate)) {
       sequenced.splice(index, 2, nextCandidate);
     } else if (previousCandidate && fitsTextBudget(previousCandidate)) {
       sequenced.splice(index - 1, 2, previousCandidate);

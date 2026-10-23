@@ -150,6 +150,25 @@ export type WordToken = {
 };
 
 export type CaptionBlock = {
+  /** Bounded original fragments retained by explicit/local joins for recovery. */
+  mergeProvenance?: {
+    /** Splits keep the archive but retire its former identity-routing authority. */
+    aliasesRetired?: boolean;
+    previousJoins?: {
+      captionIds: Identifier[];
+      primary: Omit<CaptionBlock, 'mergeProvenance'>;
+      translationCues: Record<string, TranslationCaptionCue>;
+      translationOrigins?: Record<string, number>;
+    }[];
+    fragments: {
+      captionId: Identifier;
+      primaryText: string;
+      translations: Record<string, string>;
+      primary?: Omit<CaptionBlock, 'mergeProvenance'>;
+      translationCues?: Record<string, TranslationCaptionCue>;
+      translationOrigins?: Record<string, number>;
+    }[];
+  };
   id: Identifier;
   text: string;
   startMs: number;
@@ -208,6 +227,8 @@ export type TranslationCaptionTrack = {
 };
 
 export type CaptionTrackCollection = {
+  /** Per-cue operation frames for independent timing; never a render offset. */
+  independentTimingOrigins?: Record<Identifier, number>;
   schemaVersion: 1;
   primaryTrackId: 'captions';
   translations: TranslationCaptionTrack[];
