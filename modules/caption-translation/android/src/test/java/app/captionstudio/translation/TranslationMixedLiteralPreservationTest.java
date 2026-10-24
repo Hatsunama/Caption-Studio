@@ -14,6 +14,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -162,6 +163,94 @@ public final class TranslationMixedLiteralPreservationTest {
     }
   }
 
+  @Test public void infixLiteralTranslatesBothProsePiecesWithOriginalContext() throws Exception {
+    try (Harness harness = new Harness(text -> "friend".equals(text) ? "amigo" : "Hola")) {
+      assertAccepted(harness.run("Hello " + EMOJI + " friend", false, BEFORE, AFTER),
+          "Hola " + EMOJI + " amigo");
+      boolean sawFriend = false;
+      for (JsonObject prompt : harness.prompts) {
+        if (!"friend".equals(prompt.getAsJsonArray("captions").get(0)
+            .getAsJsonObject().get("text").getAsString())) continue;
+        sawFriend = true;
+        assertEquals(BEFORE, prompt.get("contextBefore").getAsString());
+        assertEquals(AFTER, prompt.get("contextAfter").getAsString());
+        JsonObject neighbors = prompt.getAsJsonObject("sourceNeighbors");
+        assertTrue(neighbors.get("before").getAsString().contains(BEFORE));
+        assertTrue(neighbors.get("before").getAsString().contains("Hello " + EMOJI));
+        assertEquals(AFTER, neighbors.get("after").getAsString());
+      }
+      assertTrue("The second prose piece must reach the actual runtime", sawFriend);
+    }
+  }
+
+  @Test public void recoveryRetainsTabsCrLfAndAttachedSourceSeams() throws Exception {
+    String source = "Hello\t" + EMOJI + "\t friend\r\nHello" + SPARKLES + "\tfriend";
+    try (Harness harness = new Harness(text -> "friend".equals(text) ? "amigo" : "Hola")) {
+      assertAccepted(harness.run(source, false, BEFORE, AFTER),
+          "Hola\t" + EMOJI + "\t amigo\r\nHola" + SPARKLES + "\tamigo");
+    }
+  }
+
+  @Test public void badSecondProsePieceCannotAcceptOrCheckpointPartialRecovery() throws Exception {
+    String source = "Hello " + EMOJI + " friend";
+    for (String bad : List.of("", "friend", "\u4f60\u597d")) {
+      try (Harness harness = new Harness(text -> "friend".equals(text) ? bad : "Hola")) {
+        Delivery failed = harness.run(source, false, BEFORE, AFTER);
+        assertRejected(cue(failed.result));
+        assertRejected(cue(failed.batch));
+        int calls = harness.prompts.size();
+        Delivery resumed = harness.run(source, true, BEFORE, AFTER);
+        assertTrue("Partial prose cannot satisfy resume", harness.prompts.size() > calls);
+        assertRejected(cue(resumed.result));
+        assertRejected(cue(resumed.batch));
+      }
+    }
+  }
+
+  @Test public void invalidRecoveryIdCannotAcceptOrCheckpointPartialRecovery() throws Exception {
+    try (Harness harness = new Harness(text -> "friend".equals(text) ? "amigo" : "Hola")) {
+      harness.invalidIdSource = "friend";
+      String source = "Hello " + EMOJI + " friend";
+      Delivery failed = harness.run(source, false, BEFORE, AFTER);
+      assertRejected(cue(failed.result));
+      assertRejected(cue(failed.batch));
+      int calls = harness.prompts.size();
+      Delivery resumed = harness.run(source, true, BEFORE, AFTER);
+      assertTrue(harness.prompts.size() > calls);
+      assertRejected(cue(resumed.result));
+      assertRejected(cue(resumed.batch));
+    }
+  }
+
+  @Test public void cancellationAfterSecondProseGenerationCannotCommitRecovery() throws Exception {
+    String source = "Hello " + EMOJI + " friend";
+    try (Harness harness = new Harness(text -> "friend".equals(text) ? "amigo" : "Hola")) {
+      harness.cancelSource = "friend";
+      harness.run(source, false, BEFORE, AFTER, true);
+      assertTrue("Cancelled recovery must not reach the accepted-batch channel",
+          harness.translator.getAcceptedBatches("mixed-literal-request").isEmpty());
+      int calls = harness.prompts.size();
+      assertAccepted(harness.run(source, true, BEFORE, AFTER), "Hola " + EMOJI + " amigo");
+      assertTrue("Cancelled recovery cannot provide a checkpoint", harness.prompts.size() > calls);
+      assertTrue("Resume must regenerate the first prose piece too",
+          harness.prompts.subList(calls, harness.prompts.size()).stream().anyMatch(prompt ->
+              "Hello".equals(prompt.getAsJsonArray("captions").get(0)
+                  .getAsJsonObject().get("text").getAsString())));
+    }
+  }
+
+  @Test public void lineBreakOnlyMismatchKeepsOrdinaryWholeCueRepair() throws Exception {
+    try (Harness harness = new Harness("Hola\namigo")) {
+      harness.omitFirstLineBreak = true;
+      assertAccepted(harness.run("Hello\nfriend", false, BEFORE, AFTER), "Hola\namigo");
+      assertTrue(harness.prompts.size() > 1);
+      for (JsonObject prompt : harness.prompts) {
+        assertEquals("Hello\nfriend", prompt.getAsJsonArray("captions").get(0)
+            .getAsJsonObject().get("text").getAsString());
+      }
+    }
+  }
+
   private void expectPreserved(String source, String expected) throws Exception {
     try (Harness harness = new Harness("Hola")) {
       assertAccepted(harness.run(source, false, BEFORE, AFTER), expected);
@@ -208,8 +297,15 @@ public final class TranslationMixedLiteralPreservationTest {
     final File model;
     final NaturalCaptionTranslator translator;
     boolean missingResponse;
+    boolean omitFirstLineBreak;
+    String invalidIdSource;
+    String cancelSource;
 
     Harness(String simulatedModelText) throws Exception {
+      this(text -> simulatedModelText);
+    }
+
+    Harness(Function<String, String> simulatedModelText) throws Exception {
       model = Files.createTempFile(temporary.getRoot().toPath(), "mixed-model-", ".litertlm").toFile();
       Files.write(model.toPath(), new byte[] {1});
       File cache = temporary.newFolder();
@@ -227,10 +323,18 @@ public final class TranslationMixedLiteralPreservationTest {
           // copies source literals, rewrites output, or implements the repair.
           if (!missingResponse) {
             for (var element : input.getAsJsonArray("captions")) {
+              String source = element.getAsJsonObject().get("text").getAsString();
               JsonObject item = new JsonObject();
-              item.addProperty("id", element.getAsJsonObject().get("id").getAsString());
-              item.addProperty("text", simulatedModelText);
+              item.addProperty("id", source.equals(invalidIdSource) ? "wrong-id"
+                  : element.getAsJsonObject().get("id").getAsString());
+              String text = simulatedModelText.apply(source);
+              item.addProperty("text", omitFirstLineBreak && prompts.size() == 1
+                  ? text.replace("\n", " ") : text);
               output.add(item);
+              if (source.equals(cancelSource)) {
+                cancelSource = null;
+                cancelGeneration();
+              }
             }
           }
           return output.toString();
@@ -246,6 +350,12 @@ public final class TranslationMixedLiteralPreservationTest {
     }
 
     Delivery run(String source, boolean reuse, String before, String after) throws Exception {
+      return run(source, reuse, before, after, false);
+    }
+
+    void cancelGeneration() { translator.cancel(); }
+
+    Delivery run(String source, boolean reuse, String before, String after, boolean expectCancellation) throws Exception {
       CountDownLatch done = new CountDownLatch(1);
       AtomicReference<Map<String, Object>> result = new AtomicReference<>();
       AtomicReference<Map<String, Object>> batch = new AtomicReference<>();
@@ -264,6 +374,13 @@ public final class TranslationMixedLiteralPreservationTest {
         }
       });
       assertTrue("Translator callback timed out", done.await(10, TimeUnit.SECONDS));
+      if (expectCancellation) {
+        assertNotNull("Recovery must report cancellation", error.get());
+        assertTrue(error.get(), error.get().startsWith(NaturalCaptionTranslator.CANCELLED + ":"));
+        assertNull("Cancellation cannot deliver success", result.get());
+        assertNull("Cancellation cannot deliver a partial batch", batch.get());
+        return null;
+      }
       assertNull("A harness/runtime error is not the expected acceptance failure", error.get());
       assertNotNull("Missing terminal success envelope", result.get());
       assertNotNull("The caller's accepted-batch channel must also be exercised", batch.get());

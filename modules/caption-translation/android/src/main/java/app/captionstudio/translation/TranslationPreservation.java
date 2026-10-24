@@ -22,6 +22,54 @@ final class TranslationPreservation {
     final int start, end;
     Span(int start, int end) { this.start = start; this.end = end; }
   }
+  /** Offsets into the original source, never into a rejected model response. */
+  static final class RecoveryRange {
+    final int start, end;
+    final boolean prose;
+    RecoveryRange(int start, int end, boolean prose) {
+      this.start = start;
+      this.end = end;
+      this.prose = prose;
+    }
+  }
+
+  /** One lexer pass; explicit breaks and gap-edge whitespace belong to the source. */
+  static List<RecoveryRange> literalRecoveryPlan(String source) {
+    List<Span> literals = spans(source);
+    List<RecoveryRange> ranges = new ArrayList<>();
+    if (literals.isEmpty()) return ranges;
+    int at = 0;
+    for (Span literal : literals) {
+      recoveryGap(source, at, literal.start, ranges);
+      ranges.add(new RecoveryRange(literal.start, literal.end, false));
+      at = literal.end;
+    }
+    recoveryGap(source, at, source.length(), ranges);
+    return ranges;
+  }
+
+  private static void recoveryGap(String source, int start, int end, List<RecoveryRange> ranges) {
+    int lineStart = start;
+    for (int at = start; at < end;) {
+      int cp = point(source, at), next = at + Character.charCount(cp);
+      if (line(cp)) {
+        recoveryLine(source, lineStart, at, ranges);
+        ranges.add(new RecoveryRange(at, next, false));
+        lineStart = next;
+      }
+      at = next;
+    }
+    recoveryLine(source, lineStart, end, ranges);
+  }
+
+  private static void recoveryLine(String source, int start, int end, List<RecoveryRange> ranges) {
+    int a = start, b = end;
+    while (a < b && white(source.codePointAt(a))) a += Character.charCount(source.codePointAt(a));
+    while (b > a && white(source.codePointBefore(b))) b -= Character.charCount(source.codePointBefore(b));
+    if (start < a) ranges.add(new RecoveryRange(start, a, false));
+    if (a < b) ranges.add(new RecoveryRange(a, b, true));
+    if (b < end) ranges.add(new RecoveryRange(b, end, false));
+  }
   private static boolean inRanges(int cp, int[] ranges) {
     int lo = 0, hi = ranges.length / 2 - 1;
     while (lo <= hi) {
