@@ -596,11 +596,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const clipTimeline = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
   const timelineDurationMs = projectTimelineDuration(project);
+  const seekTransport = transport.seek;
   const seekTimeline = useCallback((ms: number) => {
     // Capture seeks synchronously as a save receipt can arrive before React commits.
     captionTimelineMsRef.current = ms;
-    transport.seek(ms);
-  }, [transport.seek]);
+    seekTransport(ms);
+  }, [seekTransport]);
 
   useEffect(() => {
     let active = true;

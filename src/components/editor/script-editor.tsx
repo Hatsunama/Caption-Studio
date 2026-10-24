@@ -678,7 +678,7 @@ export function ScriptEditor(props: {
       { text: 'Keep editing', style: 'cancel' },
       { text: 'Discard', style: 'destructive', onPress: () => { void close(); } },
     ]);
-  }, [closing, draftCaptions, journalProtected, journalReady, onCancel, projectId, saving, sourceCaptions]);
+  }, [closing, journalProtected, journalReady, onCancel, projectId, saving, sourceCaptions]);
 
   useEffect(() => {
     if (!props.visible) {
