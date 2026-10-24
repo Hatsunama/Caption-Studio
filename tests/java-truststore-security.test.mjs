@@ -357,3 +357,10 @@ test('CI CLI hardens both runtime stores, preserves active JDK and properties, a
     assert.deepEqual(repeated.runtimes.map(r => r.removed), [0, 0]);
     assert.ok(fs.readFileSync(properties, 'utf8').startsWith(props));
   });
+
+test('CI refusal identifies the public override category without disclosing its value', async () => {
+  const { runCi } = await api();
+  for (const name of ['GRADLE_HOME', 'JAVA_TOOL_OPTIONS', 'JAVA_OPTS']) {
+    assert.throws(() => runCi({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'Hatsunama/Caption-Studio', [name]: 'private-do-not-log' }), error => error.message.includes(name) && !error.message.includes('private-do-not-log'));
+  }
+});

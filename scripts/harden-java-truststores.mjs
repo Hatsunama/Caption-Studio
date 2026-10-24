@@ -281,8 +281,9 @@ export function runCi(env = process.env) {
   const forbidden = new Set(['JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS', 'GRADLE_OPTS',
     'JAVA_OPTS', 'GRADLE_HOME', 'GRADLE_JAVA_HOME', 'JAVACMD', 'JAVA_CMD', 'JDK_HOME', 'JAVA_HOME_OVERRIDE']);
   for (const [name, value] of Object.entries(ambient)) {
-    requireThat(!value || (!forbidden.has(name.toUpperCase())
-      && !/^ORG_GRADLE_PROJECT_/i.test(name)), 'Unverified ambient Java/Gradle launcher or runtime override');
+    const known = forbidden.has(name.toUpperCase());
+    requireThat(!value || (!known && !/^ORG_GRADLE_PROJECT_/i.test(name)),
+      'Unverified ambient Java/Gradle launcher or runtime override: ' + (known ? name.toUpperCase() : 'ORG_GRADLE_PROJECT_*'));
   }
   const cache = guardedPath(env.RUNNER_TOOL_CACHE, { directory: true });
   const temp = guardedPath(env.RUNNER_TEMP, { directory: true });
