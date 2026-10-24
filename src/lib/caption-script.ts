@@ -92,6 +92,7 @@ const MINIMUM_CAPTION_MS = 80;
 export type CaptionScriptMutation = {
   captions: CaptionBlock[];
   focusedId: string;
+  focusedSelection?: { start: number; end: number };
 };
 
 export type CaptionMergeResult = CaptionScriptMutation | null;
@@ -210,7 +211,7 @@ export function splitCaptionScriptBlock(
   };
   const next = [...captions];
   next.splice(index, 1, left, right);
-  return { captions: next, focusedId: right.id };
+  return { captions: next, focusedId: right.id, focusedSelection: { start: 0, end: 0 } };
 }
 
 export function splitCaptionScriptBlockAtTime(
@@ -254,6 +255,7 @@ export function splitCaptionScriptBlockAtTime(
       return candidate;
     }),
     focusedId: result.focusedId,
+    focusedSelection: result.focusedSelection,
   };
 }
 
@@ -282,10 +284,14 @@ export function mergeCaptionScriptBlock(
         wordIds,
       }
     : undefined;
+  const text = normalizeText(captionLayoutText([previous.text.trim(), current.text.trim()]));
+  // The right text begins after the actual normalized separator (which can be
+  // absent for punctuation/CJK), rather than at the original left text length.
+  const seam = safeCaptionTextOffset(text, text.length - normalizeText(current.text).length);
   const merged: CaptionBlock = {
     ...previous,
     mergeProvenance: joinedCaptionProvenance(previous, current),
-    text: normalizeText(captionLayoutText([previous.text.trim(), current.text.trim()])),
+    text,
     textMode: 'manual',
     timingMode: sourceAnchor ? 'source' : 'timeline',
     startMs: Math.min(previous.startMs, current.startMs),
@@ -299,7 +305,7 @@ export function mergeCaptionScriptBlock(
   // Use the persisted cue contract before publishing a draft or focusing it.
   decodeCaption(merged, leftIndex);
   assertProjectSnapshotSize(JSON.stringify(next));
-  return { captions: next, focusedId: merged.id };
+  return { captions: next, focusedId: merged.id, focusedSelection: { start: seam, end: seam } };
 }
 
 function nearestWordBoundary(words: WordToken[], requestedTimeMs: number) {

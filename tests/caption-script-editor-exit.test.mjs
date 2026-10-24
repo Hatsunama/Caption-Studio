@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
+import { captionAtTimelinePosition } from '../src/lib/caption-timeline-anchor.ts';
 
 const source = readFileSync(new URL('../src/hooks/use-script-editor-exit.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -123,6 +124,7 @@ test('Done and Cancel share presentation-only cleanup; rejected or stale saves s
   let closes = 0, receipt;
   const close = () => { closes++; };
   const save = evaluate(initializer('commitCaptionScript'), {
+    captionAtTimelinePosition, captionTimelineMsRef: { current: 0 },
     commitEditorProject: async () => { if (receipt instanceof Error) throw receipt; return receipt; },
     editorSession: { isCurrent: (value) => value.current },
     selectedCaptionId: 'cue-1', setSelectedCaptionId: () => assert.fail('existing selection must survive'),

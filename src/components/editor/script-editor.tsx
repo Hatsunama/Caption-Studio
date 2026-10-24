@@ -21,6 +21,7 @@ import {
   splitCaptionScriptBlock,
   updateCaptionScriptText,
 } from '@/lib/caption-script';
+import { captionAtTimelinePosition } from '@/lib/caption-timeline-anchor';
 import {
   archiveEditorDraftJournal,
   clearEditorDraftJournal,
@@ -100,11 +101,36 @@ export function ScriptEditor(props: {
   const stopJournalRef = useRef<(() => void) | undefined>(undefined);
   const [journalRestart, setJournalRestart] = useState(0);
   const [journalReady, setJournalReady] = useState(false);
+  const editable = props.visible && !saving && !closing && journalReady;
+  const editableRef = useRef(editable);
+  editableRef.current = editable;
+  const inputSessionRef = useRef({ projectId, visible: props.visible, active: true, revision: 0 });
+  if (inputSessionRef.current.projectId !== projectId || inputSessionRef.current.visible !== props.visible) {
+    inputSessionRef.current = { projectId, visible: props.visible, active: true, revision: 0 };
+  }
+  const inputSession = inputSessionRef.current;
+  const inputRevision = inputSession.revision;
+  const inputReadyRef = useRef(false);
+  inputReadyRef.current = props.visible && journalReady && !closing;
+  const pendingTextCaptionRef = useRef<string | undefined>(undefined);
+  const ownsInput = () => inputSession.active && inputSessionRef.current === inputSession
+    && inputSession.revision === inputRevision;
+  const canMutateInput = () => ownsInput() && editableRef.current;
+  useEffect(() => {
+    inputSession.active = inputSessionRef.current === inputSession;
+    return () => { inputSession.active = false; };
+  }, [inputSession]);
+  // Native text/selection events can precede the next React render. Commands
+  // read the latest accepted controlled draft, never a submit-event snapshot.
+  const draftCaptionsRef = useRef(draftCaptions);
+  draftCaptionsRef.current = draftCaptions;
+  const pendingFocusRef = useRef<{ id: string; selection: { start: number; end: number } } | undefined>(undefined);
   const [journalError, setJournalError] = useState<string>();
   const [journalRecovery, setJournalRecovery] = useState<EditorDraftJournalRecovery>();
   const [journalConflict, setJournalConflict] = useState(false);
   const journalProtected = journalConflict || !!journalRecovery?.failures.length;
   const wasVisibleRef = useRef(false);
+  const openedProjectRef = useRef(projectId);
   const draftVersionRef = useRef(0);
   const captionLayoutsRef = useRef<Record<string, { y: number; height: number; index: number }>>({});
   const listViewportHeightRef = useRef(0);
@@ -162,8 +188,19 @@ export function ScriptEditor(props: {
   }, [onDraftChange, onKeyboardChange, onEditingCaptionChange, props.visible]);
 
   useEffect(() => {
-    if (editingCaptionId) inputRefs.current[editingCaptionId]?.focus();
+    if (editableRef.current && editingCaptionId && !pendingFocusRef.current) inputRefs.current[editingCaptionId]?.focus();
   }, [editingCaptionId]);
+
+  useEffect(() => {
+    const pending = pendingFocusRef.current;
+    if (!editableRef.current || !pending || pending.id !== editingCaptionId) return;
+    const input = inputRefs.current[pending.id];
+    if (!input) return;
+    pendingFocusRef.current = undefined;
+    selectionRef.current[pending.id] = pending.selection;
+    input.focus();
+    input.setNativeProps({ selection: pending.selection });
+  }, [draftCaptions, editingCaptionId, editable]);
 
   const cancelNavigation = useCallback(() => {
     clearTimeout(navigationTimerRef.current);
@@ -213,9 +250,9 @@ export function ScriptEditor(props: {
   );
   const sourceRevision = useMemo(() => captionScriptRevision(sourceCaptions), [sourceCaptions]);
   const initialIndex = useMemo(() => {
-    const index = sourceCaptions.findIndex((caption) => caption.id === props.initialCaptionId);
-    return index < 0 ? 0 : index;
-  }, [sourceCaptions, props.initialCaptionId]);
+    const active = captionAtTimelinePosition(sourceCaptions, props.currentMs);
+    return active ? sourceCaptions.findIndex((caption) => caption.id === active.id) : -1;
+  }, [sourceCaptions, props.currentMs]);
 
   // Only opening/closing owns recovery's lifetime. A style or project revision
   // update while storage is loading must not cancel that read or reset the draft.
@@ -225,31 +262,42 @@ export function ScriptEditor(props: {
   }, [sourceCaptions, initialIndex, onDraftChange, sourceRevision]);
 
   useEffect(() => {
-    const opening = props.visible && !wasVisibleRef.current;
+    const opening = props.visible && (!wasVisibleRef.current || openedProjectRef.current !== projectId);
     wasVisibleRef.current = props.visible;
-    if (!opening) return;
-    const { sourceCaptions, initialIndex, onDraftChange } = openingStateRef.current;
-    setDraftCaptions(sourceCaptions);
-    draftVersionRef.current = 0;
-    setInputHeights({});
-    onDraftChange(sourceCaptions);
-    setSelectedCaptionId(sourceCaptions[initialIndex]?.id);
-    setEditingCaptionId(undefined);
-    setEmptyCaptionId(undefined);
-    setBoundaryMessage(undefined);
-    setSaveError(undefined);
-    setSaving(false);
-    journalQueueRef.current.pause();
-    acceptedDraftRef.current = undefined;
-    cleanupPendingRef.current = false;
-    setCleanupPending(false);
-    setKeyboardOpen(Keyboard.isVisible());
-    setJournalReady(false);
-    setJournalError(undefined);
-    setJournalRecovery(undefined);
-    setJournalConflict(false);
-    selectionRef.current = {};
-    splitCounterRef.current = 0;
+    if (!props.visible) return;
+    // A replay replaces the cancelled read without resetting accepted input.
+    // Opening another project still initializes a distinct draft and revision.
+    if (opening) {
+      openedProjectRef.current = projectId;
+      inputSessionRef.current.revision += 1;
+      pendingTextCaptionRef.current = undefined;
+      const { sourceCaptions, initialIndex, onDraftChange } = openingStateRef.current;
+      setDraftCaptions(sourceCaptions);
+      draftCaptionsRef.current = sourceCaptions;
+      pendingFocusRef.current = undefined;
+      draftVersionRef.current = 0;
+      setInputHeights({});
+      onDraftChange(sourceCaptions);
+      setSelectedCaptionId(sourceCaptions[initialIndex]?.id);
+      setEditingCaptionId(undefined);
+      setEmptyCaptionId(undefined);
+      setBoundaryMessage(undefined);
+      setSaveError(undefined);
+      setSaving(false);
+      setClosing(false);
+      editableRef.current = false;
+      journalQueueRef.current.pause();
+      acceptedDraftRef.current = undefined;
+      cleanupPendingRef.current = false;
+      setCleanupPending(false);
+      setKeyboardOpen(Keyboard.isVisible());
+      setJournalReady(false);
+      setJournalError(undefined);
+      setJournalRecovery(undefined);
+      setJournalConflict(false);
+      selectionRef.current = {};
+      splitCounterRef.current = 0;
+    }
     let active = true;
     void readEditorDraftJournal(projectId, 'caption-script').then((journal) => {
       if (!active) return;
@@ -294,10 +342,15 @@ export function ScriptEditor(props: {
           },
           { text: 'Restore', onPress: () => {
             if (!active) return;
+            inputSessionRef.current.revision += 1;
             cleanupPendingRef.current = false;
             setCleanupPending(false);
             draftVersionRef.current += 1;
             setDraftCaptions(recovered);
+            draftCaptionsRef.current = recovered;
+            setEditingCaptionId(undefined);
+            pendingFocusRef.current = undefined;
+            selectionRef.current = {};
             finishConflict();
           } },
         ],
@@ -336,11 +389,11 @@ export function ScriptEditor(props: {
 
   useEffect(() => {
     if (!props.visible) return;
-    const active = draftCaptions.find((caption) => props.currentMs >= caption.startMs && props.currentMs < caption.endMs);
+    const active = captionAtTimelinePosition(draftCaptions, props.currentMs);
     const changed = lastTimelineCaptionIdRef.current !== active?.id;
     lastTimelineCaptionIdRef.current = active?.id;
     // A transport tick must never take the input (or a drag) off screen.
-    if (editingCaptionId || userScrollingRef.current || pendingScrollSeekRef.current || !props.isPlaying || !active || !changed) return;
+    if (editingCaptionId || userScrollingRef.current || pendingScrollSeekRef.current || !active || !changed) return;
     scrollOwnerRef.current = 'programmatic';
     setSelectedCaptionId(active.id);
     revealCaption(active.id);
@@ -353,6 +406,7 @@ export function ScriptEditor(props: {
 
   const seekToAnchoredCaption = useCallback((offsetY: number) => {
     listOffsetRef.current = offsetY;
+    if (!editableRef.current) return;
     if ((!userScrollingRef.current && !pendingScrollSeekRef.current) || listViewportHeightRef.current <= 0) return;
     const anchorY = offsetY + SCRIPT_ANCHOR;
     const firstLayout = captionLayoutsRef.current[draftCaptions[0]?.id];
@@ -391,6 +445,7 @@ export function ScriptEditor(props: {
   }, [editingCaptionId, selectedCaptionId, revealCaption, seekToAnchoredCaption]);
 
   const selectForEditing = (caption: CaptionBlock) => {
+    if (!canMutateInput() || !draftCaptionsRef.current.some((candidate) => candidate.id === caption.id)) return;
     clearTimeout(scrollEndTimerRef.current);
     userScrollingRef.current = false;
     scrollOwnerRef.current = 'programmatic';
@@ -403,12 +458,13 @@ export function ScriptEditor(props: {
     setEmptyCaptionId(undefined);
     setBoundaryMessage(undefined);
     props.onSelectCaption(caption);
-    props.onSeekTimeline(caption.startMs);
     inputRefs.current[caption.id]?.focus();
     revealCaption(caption.id);
   };
 
-  const focusCaption = (captionId: string, captions: CaptionBlock[]) => {
+  const focusCaption = (captionId: string, captions: CaptionBlock[], selection?: { start: number; end: number }) => {
+    if (!canMutateInput()) return;
+    pendingFocusRef.current = selection ? { id: captionId, selection } : undefined;
     clearTimeout(scrollEndTimerRef.current);
     userScrollingRef.current = false;
     scrollOwnerRef.current = 'programmatic';
@@ -418,6 +474,7 @@ export function ScriptEditor(props: {
     setCleanupPending(false);
     draftVersionRef.current += 1;
     setDraftCaptions(captions);
+    draftCaptionsRef.current = captions;
     setSelectedCaptionId(captionId);
     setEditingCaptionId(captionId);
     onEditingCaptionChange(captionId);
@@ -425,71 +482,82 @@ export function ScriptEditor(props: {
     const caption = captions.find((candidate) => candidate.id === captionId);
     if (caption) {
       onSelectCaption(caption);
-      onSeekTimeline(caption.startMs);
     }
   };
 
   const updateText = (caption: CaptionBlock, text: string) => {
-    // Wrapping and literal newlines are text edits. Only the explicit split/join
-    // actions below may change cue boundaries or move text to another caption.
+    // Disabling native editing cannot retract text already queued by the active
+    // input. Keep that delivery in the live draft/version while Save awaits its
+    // receipt, without granting focus or structural commands permission to run.
+    if (!ownsInput() || !journalReady || !inputReadyRef.current
+      || (!editableRef.current && pendingTextCaptionRef.current !== caption.id)
+      || !draftCaptionsRef.current.some((candidate) => candidate.id === caption.id)) return;
+    // Wrapping, paste and literal newlines are text-only. Native submit is the
+    // single Enter command; onChangeText must never infer structural edits.
     cleanupPendingRef.current = false;
     setCleanupPending(false);
     draftVersionRef.current += 1;
-    setDraftCaptions(updateCaptionScriptText(draftCaptions, caption.id, text));
+    const next = updateCaptionScriptText(draftCaptionsRef.current, caption.id, text);
+    draftCaptionsRef.current = next;
+    setDraftCaptions(next);
     setBoundaryMessage(undefined);
     if (text.trim()) setEmptyCaptionId(undefined);
   };
 
   const mergeWithPrevious = (caption: CaptionBlock) => {
+    if (!canMutateInput()) return;
     try {
-      const result = mergeCaptionScriptBlock(draftCaptions, caption.id);
+      const result = mergeCaptionScriptBlock(draftCaptionsRef.current, caption.id);
       if (!result) return;
       setBoundaryMessage(undefined);
-      focusCaption(result.focusedId, result.captions);
+      focusCaption(result.focusedId, result.captions, result.focusedSelection);
     } catch (error) {
       setBoundaryMessage(error instanceof Error ? error.message : 'The subtitles could not be joined. Originals were preserved.');
     }
   };
 
   const mergeWithNext = (caption: CaptionBlock) => {
+    if (!canMutateInput()) return;
     try {
-      const result = mergeCaptionScriptBlock(draftCaptions, caption.id, 'next');
+      const result = mergeCaptionScriptBlock(draftCaptionsRef.current, caption.id, 'next');
       if (!result) {
         setBoundaryMessage('There is no subtitle below this one to join.');
         return;
       }
       setBoundaryMessage(undefined);
-      focusCaption(result.focusedId, result.captions);
+      focusCaption(result.focusedId, result.captions, result.focusedSelection);
     } catch (error) {
       setBoundaryMessage(error instanceof Error ? error.message : 'The subtitles could not be joined. Originals were preserved.');
     }
   };
 
   const splitAtCursor = (caption: CaptionBlock) => {
+    if (!canMutateInput()) return;
     const selection = selectionRef.current[caption.id];
     if (!selection || selection.start !== selection.end) {
       setBoundaryMessage('Place the cursor where you want to split, then choose Split here.');
       return;
     }
     const result = splitCaptionScriptBlock(
-      draftCaptions,
+      draftCaptionsRef.current,
       caption.id,
       selection.start,
       props.words,
-      nextSplitCaptionId(caption.id, draftCaptions, splitCounterRef),
+      nextSplitCaptionId(caption.id, draftCaptionsRef.current, splitCounterRef),
     );
     if (!result) {
       setBoundaryMessage('Splitting needs text on both sides and at least 0.16 seconds.');
       return;
     }
     setBoundaryMessage(undefined);
-    focusCaption(result.focusedId, result.captions);
+    focusCaption(result.focusedId, result.captions, result.focusedSelection);
   };
 
   const retryCleanup = useCallback(async function retrySavedRecoveryCleanup(): Promise<void> {
     const accepted = acceptedDraftRef.current;
     if (!sessionRef.current.visible || !cleanupPendingRef.current || !accepted || draftVersionRef.current !== accepted.version) return;
     stopJournalRef.current?.();
+    editableRef.current = false;
     setClosing(true);
     try {
       const cleared = await journalQueueRef.current.clear(
@@ -500,6 +568,7 @@ export function ScriptEditor(props: {
       cleanupPendingRef.current = false;
       setCleanupPending(false);
       setJournalError(undefined);
+      inputSessionRef.current.active = false;
       onCancel();
     } catch {
       Alert.alert('Changes saved', CAPTION_CLEANUP_WARNING, [
@@ -513,23 +582,25 @@ export function ScriptEditor(props: {
   }, [onCancel, projectId]);
 
   const save = async () => {
-    if (saving || closing || !journalReady) return;
+    if (!editableRef.current) return;
     if (acceptedDraftRef.current?.version === draftVersionRef.current && cleanupPendingRef.current) {
       await retryCleanup();
       return;
     }
-    const empty = draftCaptions.find((caption) => !caption.text.trim());
+    const savingDraft = draftCaptionsRef.current;
+    const empty = savingDraft.find((caption) => !caption.text.trim());
     if (empty) {
-      focusCaption(empty.id, draftCaptions);
+      focusCaption(empty.id, savingDraft);
       setEmptyCaptionId(empty.id);
       return;
     }
+    editableRef.current = false;
+    pendingTextCaptionRef.current = editingCaptionId;
     setSaving(true);
     stopJournalRef.current?.();
     journalQueueRef.current.pause();
     setSaveError(undefined);
     const savingVersion = draftVersionRef.current;
-    const savingDraft = draftCaptions;
     let saved = false;
     try {
       if (!await props.onSave(savingDraft)) {
@@ -545,6 +616,7 @@ export function ScriptEditor(props: {
     } catch (caught) {
       setSaveError(caught instanceof Error ? caught.message : 'Caption changes were not saved. Try again.');
     } finally {
+      pendingTextCaptionRef.current = undefined;
       setSaving(false);
       setJournalRestart((value) => value + 1);
     }
@@ -554,7 +626,10 @@ export function ScriptEditor(props: {
       cleanupPendingRef.current = true;
       setCleanupPending(true);
       await retryCleanup();
-    } else props.onCancel();
+    } else {
+      inputSession.active = false;
+      props.onCancel();
+    }
   };
 
   const cancel = useCallback(() => {
@@ -562,10 +637,12 @@ export function ScriptEditor(props: {
     const close = async () => {
       stopJournalRef.current?.();
       journalQueueRef.current.pause();
+      editableRef.current = false;
       setClosing(true);
       setSaveError(undefined);
       try {
         if (journalReady && !journalProtected) await journalQueueRef.current.clear(() => clearEditorDraftJournal(projectId, 'caption-script'));
+        inputSessionRef.current.active = false;
         onCancel();
       } catch (caught) {
         setJournalError(cleanupPendingRef.current ? CAPTION_CLEANUP_WARNING : caught instanceof Error ? caught.message : 'Caption recovery could not be cleared. Your edits are still open.');
@@ -574,7 +651,8 @@ export function ScriptEditor(props: {
         setJournalRestart((value) => value + 1);
       }
     };
-    if (sameCaptionDraft(draftCaptions, sourceCaptions) || (acceptedDraftRef.current && sameCaptionDraft(draftCaptions, acceptedDraftRef.current.captions))) {
+    const currentDraft = draftCaptionsRef.current;
+    if (sameCaptionDraft(currentDraft, sourceCaptions) || (acceptedDraftRef.current && sameCaptionDraft(currentDraft, acceptedDraftRef.current.captions))) {
       void close();
       return;
     }
@@ -662,6 +740,7 @@ export function ScriptEditor(props: {
               if (id) revealCaption(id);
             }}
             onScrollBeginDrag={() => {
+              if (!editableRef.current) return;
               clearTimeout(scrollEndTimerRef.current);
               cancelNavigation();
               userScrollingRef.current = true;
@@ -720,7 +799,7 @@ export function ScriptEditor(props: {
             const editing = item.id === editingCaptionId;
             const invalid = item.id === emptyCaptionId;
             return (
-              <Pressable accessibilityRole="button" accessibilityLabel={`Edit caption ${index + 1} at ${formatTimestamp(item.startMs)}`} onPress={() => selectForEditing(item)} style={{ minHeight: 72, flexDirection: 'row', gap: 12, padding: 14, borderRadius: chrome.radius.lg, backgroundColor: selected ? chrome.surfaceRaised : chrome.surface }}>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Edit caption ${index + 1} at ${formatTimestamp(item.startMs)}`} disabled={!editable} onPress={() => selectForEditing(item)} style={{ minHeight: 72, flexDirection: 'row', gap: 12, padding: 14, borderRadius: chrome.radius.lg, backgroundColor: selected ? chrome.surfaceRaised : chrome.surface }}>
                 <View style={{ width: 54, paddingTop: 3 }}>
                   <Text style={{ color: selected ? chrome.accent : chrome.muted, fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] }}>{formatTimestamp(item.startMs)}</Text>
                   <Text style={{ marginTop: 4, color: '#5E6874', fontSize: 9, fontVariant: ['tabular-nums'] }}>{formatTimestamp(item.endMs)}</Text>
@@ -733,9 +812,15 @@ export function ScriptEditor(props: {
                         disableFullscreenUI
                         editable={!saving && !closing && journalReady}
                         scrollEnabled={false}
-                        submitBehavior="newline"
+                        submitBehavior="submit"
                         value={item.text}
                         onChangeText={(text) => updateText(item, text)}
+                        onSubmitEditing={() => splitAtCursor(item)}
+                        onKeyPress={(event) => {
+                          if (!canMutateInput() || event.nativeEvent.key !== 'Backspace') return;
+                          const selection = selectionRef.current[item.id];
+                          if (selection?.start === 0 && selection.end === 0) mergeWithPrevious(item);
+                        }}
                         onFocus={() => selectForEditing(item)}
                         onPressIn={() => selectForEditing(item)}
                         onContentSizeChange={(event) => {
@@ -750,14 +835,14 @@ export function ScriptEditor(props: {
                           // using its committed size, without seeking the video.
                           if (editing) revealCaption(item.id);
                         }}
-                        onSelectionChange={(event) => { selectionRef.current[item.id] = event.nativeEvent.selection; }}
+                        onSelectionChange={(event) => { if (canMutateInput()) selectionRef.current[item.id] = event.nativeEvent.selection; }}
                         selectionColor={chrome.accent}
                         style={{ height: inputHeights[item.id], minHeight: editing ? 46 : 23, padding: 0, color: chrome.text, fontSize: 17, lineHeight: 23, fontWeight: '400', textAlignVertical: 'top' }}
                       />
                       {editing ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
-                        <ScriptAction label="Split here" disabled={saving || closing} onPress={() => splitAtCursor(item)} />
-                        <ScriptAction label="Join previous" disabled={saving || closing} onPress={() => mergeWithPrevious(item)} />
-                        <ScriptAction label="Join next" disabled={saving || closing} onPress={() => mergeWithNext(item)} />
+                        <ScriptAction label="Split here" disabled={!editable} onPress={() => splitAtCursor(item)} />
+                        <ScriptAction label="Join previous" disabled={!editable} onPress={() => mergeWithPrevious(item)} />
+                        <ScriptAction label="Join next" disabled={!editable} onPress={() => mergeWithNext(item)} />
                       </View> : null}
                     </View>
                   {invalid ? <Text style={{ marginTop: 4, color: '#FF8FA2', fontSize: 11 }}>A subtitle cannot be empty. Merge it or delete its timeline block.</Text> : null}
