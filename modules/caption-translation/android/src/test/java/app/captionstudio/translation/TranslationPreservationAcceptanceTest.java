@@ -88,7 +88,9 @@ public final class TranslationPreservationAcceptanceTest {
   @Test public void failedRepairCannotBecomeAcceptedBatchOrCheckpoint() throws Exception {
     File checkpoints = temporary.newFolder();
     AtomicInteger calls = new AtomicInteger();
-    Map<String,Object> result = run(checkpoints, calls, "Bonjour", true);
+    // Initial output loses the emoji; the prose-only retry must actually fail.
+    // Valid Bonjour prose is now safely recoverable from source-owned literals.
+    Map<String,Object> result = run(checkpoints, calls, "failed-repair", true);
     assertEquals(2, calls.get());
     assertEquals(false, cue(result).get("valid"));
     assertEquals("", cue(result).get("text"));
@@ -461,6 +463,7 @@ public final class TranslationPreservationAcceptanceTest {
             answer = sourceText.replace("Hello", target.equals("zh-Hans") ? "\u4f60\u597d" : "Bonjour")
                 .replace("World", target.equals("zh-Hans") ? "\u4e16\u754c" : "Monde");
           } else if ("repair".equals(output)) answer = "Bonjour";
+          else if ("failed-repair".equals(output)) answer = call == 1 ? "Bonjour" : "";
           item.addProperty("text", answer);
           response.add(item);
         }
