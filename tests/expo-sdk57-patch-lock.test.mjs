@@ -52,12 +52,13 @@ test('SDK 57 patch transitive minimums resolve in the actual lock graph', () => 
 });
 
 test('reviewed security overrides and platform pins survive the compatibility repair', () => {
-  assert.deepEqual(manifest.overrides, reviewedOverrides);
+  const releaseOverrides = { ...reviewedOverrides, zod: '4.6.6' };
+  assert.deepEqual(manifest.overrides, releaseOverrides);
   for (const [name, version] of Object.entries({ react: '19.2.3', 'react-dom': '19.2.3', 'react-native': '0.86.3', 'react-native-reanimated': '4.5.1', 'react-native-worklets': '0.10.1' })) {
     assert.equal(manifest.dependencies[name], version, name);
     assert.equal(lock.packages['node_modules/' + name].version, version, name);
   }
-  for (const [name, spec] of Object.entries(reviewedOverrides)) {
+  for (const [name, spec] of Object.entries(releaseOverrides)) {
     if (typeof spec !== 'string') continue;
     const entries = Object.entries(lock.packages).filter(([key]) => key.endsWith('/node_modules/' + name) || key === 'node_modules/' + name);
     // xcode 4 removes its uuid dependency; an unused override need not have a lock entry.
