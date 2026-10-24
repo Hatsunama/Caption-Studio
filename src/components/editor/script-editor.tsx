@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -103,23 +103,29 @@ export function ScriptEditor(props: {
   const [journalReady, setJournalReady] = useState(false);
   const editable = props.visible && !saving && !closing && journalReady;
   const editableRef = useRef(editable);
-  editableRef.current = editable;
-  const inputSessionRef = useRef({ projectId, visible: props.visible, active: true, revision: 0 });
-  if (inputSessionRef.current.projectId !== projectId || inputSessionRef.current.visible !== props.visible) {
-    inputSessionRef.current = { projectId, visible: props.visible, active: true, revision: 0 };
-  }
-  const inputSession = inputSessionRef.current;
-  const inputRevision = inputSession.revision;
+  const inputSession = useMemo(() => ({ projectId, visible: props.visible, active: false, revision: 0 }), [projectId, props.visible]);
+  const inputSessionRef = useRef(inputSession);
+  const [inputRevision, setInputRevision] = useState(0);
   const inputReadyRef = useRef(false);
-  inputReadyRef.current = props.visible && journalReady && !closing;
+  const inputSavingRef = useRef(false);
   const pendingTextCaptionRef = useRef<string | undefined>(undefined);
   const ownsInput = () => inputSession.active && inputSessionRef.current === inputSession
     && inputSession.revision === inputRevision;
   const canMutateInput = () => ownsInput() && editableRef.current;
-  useEffect(() => {
-    inputSession.active = inputSessionRef.current === inputSession;
+  const renewInput = useCallback(() => {
+    inputSession.revision += 1;
+    setInputRevision(inputSession.revision);
+  }, [inputSession]);
+  useLayoutEffect(() => {
+    inputSessionRef.current = inputSession;
+    inputSession.active = true;
     return () => { inputSession.active = false; };
   }, [inputSession]);
+  useLayoutEffect(() => {
+    editableRef.current = editable;
+    inputReadyRef.current = props.visible && !closing;
+    inputSavingRef.current = saving;
+  }, [closing, editable, inputRevision, props.visible, saving]);
   // Native text/selection events can precede the next React render. Commands
   // read the latest accepted controlled draft, never a submit-event snapshot.
   const draftCaptionsRef = useRef(draftCaptions);
@@ -269,7 +275,7 @@ export function ScriptEditor(props: {
     // Opening another project still initializes a distinct draft and revision.
     if (opening) {
       openedProjectRef.current = projectId;
-      inputSessionRef.current.revision += 1;
+      renewInput();
       pendingTextCaptionRef.current = undefined;
       const { sourceCaptions, initialIndex, onDraftChange } = openingStateRef.current;
       setDraftCaptions(sourceCaptions);
@@ -301,6 +307,11 @@ export function ScriptEditor(props: {
     let active = true;
     void readEditorDraftJournal(projectId, 'caption-script').then((journal) => {
       if (!active) return;
+      // Every read outcome starts a new native-delivery epoch, including a
+      // repeated failure whose readiness/error state would not cause a render.
+      renewInput();
+      editableRef.current = false;
+      setJournalReady(false);
       setJournalRecovery(journal?.recovery);
       const preserveRecovery = !!journal?.recovery?.failures.length;
       const recovered = decodeCaptionDraft(journal?.payload);
@@ -342,7 +353,7 @@ export function ScriptEditor(props: {
           },
           { text: 'Restore', onPress: () => {
             if (!active) return;
-            inputSessionRef.current.revision += 1;
+            renewInput();
             cleanupPendingRef.current = false;
             setCleanupPending(false);
             draftVersionRef.current += 1;
@@ -357,6 +368,8 @@ export function ScriptEditor(props: {
       );
     }).catch((caught) => {
       if (active) {
+        renewInput();
+        editableRef.current = false;
         setJournalError(caught instanceof Error ? caught.message : 'Caption recovery storage could not be read. Existing recovery data is preserved.');
         // A failed read must never authorize overwriting an unread journal.
         setJournalReady(false);
@@ -365,7 +378,7 @@ export function ScriptEditor(props: {
     return () => {
       active = false;
     };
-  }, [projectId, props.visible]);
+  }, [projectId, props.visible, renewInput]);
 
   useEffect(() => {
     const committed = acceptedDraftRef.current?.captions ?? sourceCaptions;
@@ -487,10 +500,10 @@ export function ScriptEditor(props: {
 
   const updateText = (caption: CaptionBlock, text: string) => {
     // Disabling native editing cannot retract text already queued by the active
-    // input. Keep that delivery in the live draft/version while Save awaits its
-    // receipt, without granting focus or structural commands permission to run.
-    if (!ownsInput() || !journalReady || !inputReadyRef.current
-      || (!editableRef.current && pendingTextCaptionRef.current !== caption.id)
+    // input. Unread/failed recovery permits transient delivery, never journal
+    // writes or editing commands. Save retains only its active input's delivery.
+    if (!ownsInput() || !inputReadyRef.current
+      || (inputSavingRef.current && pendingTextCaptionRef.current !== caption.id)
       || !draftCaptionsRef.current.some((candidate) => candidate.id === caption.id)) return;
     // Wrapping, paste and literal newlines are text-only. Native submit is the
     // single Enter command; onChangeText must never infer structural edits.
@@ -558,6 +571,7 @@ export function ScriptEditor(props: {
     if (!sessionRef.current.visible || !cleanupPendingRef.current || !accepted || draftVersionRef.current !== accepted.version) return;
     stopJournalRef.current?.();
     editableRef.current = false;
+    inputReadyRef.current = false;
     setClosing(true);
     try {
       const cleared = await journalQueueRef.current.clear(
@@ -595,6 +609,7 @@ export function ScriptEditor(props: {
       return;
     }
     editableRef.current = false;
+    inputSavingRef.current = true;
     pendingTextCaptionRef.current = editingCaptionId;
     setSaving(true);
     stopJournalRef.current?.();
@@ -638,6 +653,7 @@ export function ScriptEditor(props: {
       stopJournalRef.current?.();
       journalQueueRef.current.pause();
       editableRef.current = false;
+      inputReadyRef.current = false;
       setClosing(true);
       setSaveError(undefined);
       try {

@@ -288,7 +288,7 @@ function fixture() {
 function mount(initialProject = fixture()) {
   const slots = [], pendingWrites = [], listeners = new Map(), frames = new Map();
   let keyboardVisible = false, frameId = 0;
-  let cursor = 0, dirty = true, effects = [], tree, actions, appState = 'active', disk = initialProject;
+  let cursor = 0, dirty = true, effects = [], layoutEffects = [], tree, actions, appState = 'active', disk = initialProject;
   const calls = { writes: [], alerts: [], audio: [], synchronizations: [], plays: 0, pauses: 0, exits: [], selections: [], scrolls: [], dismisses: 0 };
   let translationOptions, waveform;
   const sameDeps = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
@@ -297,6 +297,13 @@ function mount(initialProject = fixture()) {
     if (!slots[index] || !sameDeps(slots[index].deps, deps)) slots[index] = { value: factory(), deps };
     return slots[index].value;
   };
+  function enqueueEffect(callback, deps, queue) {
+    const index = cursor++;
+    if (!slots[index] || !sameDeps(slots[index].deps, deps)) queue.push(() => {
+      slots[index]?.cleanup?.();
+      slots[index] = { deps, cleanup: callback() };
+    });
+  }
   const react = {
     useMemo: memo, useCallback: (callback, deps) => memo(() => callback, deps),
     useRef: (value) => memo(() => ({ current: value }), []),
@@ -309,11 +316,10 @@ function mount(initialProject = fixture()) {
       }];
     },
     useEffect(callback, deps) {
-      const index = cursor++;
-      if (!slots[index] || !sameDeps(slots[index].deps, deps)) effects.push(() => {
-        slots[index]?.cleanup?.();
-        slots[index] = { deps, cleanup: callback() };
-      });
+      enqueueEffect(callback, deps, effects);
+    },
+    useLayoutEffect(callback, deps) {
+      enqueueEffect(callback, deps, layoutEffects);
     },
   };
   const transport = {
@@ -431,11 +437,13 @@ function mount(initialProject = fixture()) {
     let passes = 0;
     do {
       assert.ok(++passes < 25, 'workspace must settle');
-      dirty = false; cursor = 0; effects = [];
+      dirty = false; cursor = 0; effects = []; layoutEffects = [];
       tree = exports.Workspace({ initialProject });
       for (const scroll of all((node) => node.type === 'ScrollView' && node.props.ref)) {
         scroll.props.ref.current = { scrollTo: (request) => calls.scrolls.push(plain(request)) };
       }
+      // Commit attached refs and layout effects before passive subscriptions.
+      for (const effect of layoutEffects) effect();
       for (const effect of effects) effect();
     } while (dirty);
   }

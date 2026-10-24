@@ -46,11 +46,15 @@ function mount(kind) {
     sourceCaptions: [{ id: 'c', text: 'Original', startMs: 0, endMs: 1000 }],
     draftCaptions: [{ id: 'c', text: 'Edited', startMs: 0, endMs: 1000 }],
     draftVersionRef: { current: 1 }, acceptedDraftRef: { current: undefined },
+    editableRef: { current: true }, inputReadyRef: { current: true }, inputSavingRef: { current: false },
+    inputSessionRef: { current: { projectId: 'p', visible: true, active: true, revision: 0 } },
+    pendingTextCaptionRef: { current: undefined }, editingCaptionId: 'c',
     sessionRef: { current: { visible: true } }, recoveryActiveRef: { current: true },
     cleanupPendingRef: { current: false }, stopJournalRef: { current: undefined },
     journalQueueRef: { current: helper().createCaptionJournalQueue?.() },
     Alert: { alert: (...args) => alerts.push(args) },
-    setSaving: (value) => { context.saving = value; }, setClosing: (value) => { context.closing = value; },
+    setSaving: (value) => { context.saving = value; commitInputRefs(); },
+    setClosing: (value) => { context.closing = value; commitInputRefs(); },
     setSaveError: (value) => { context.saveError = value; }, setJournalError: (value) => { context.journalError = value; },
     setJournalRestart: () => { restart++; }, setCleanupPending: (value) => { context.cleanupPending = value; },
     focusCaption: () => {}, setEmptyCaptionId: () => {},
@@ -63,6 +67,23 @@ function mount(kind) {
       onSave: async () => { saveCalls++; if (saveResult instanceof Error) throw saveResult; return saveResult; },
       onCancel: () => { closes++; } },
   };
+  // Model committed hook refs while allowing the existing tests to deliver a
+  // newer controlled draft during an outstanding save, without changing it.
+  function commitInputRefs() {
+    context.editableRef.current = context.props.visible && !context.saving && !context.closing && context.journalReady;
+    context.inputReadyRef.current = context.props.visible && !context.closing;
+    context.inputSavingRef.current = context.saving;
+  }
+  context.inputSession = context.inputSessionRef.current;
+  context.inputRevision = context.inputSession.revision;
+  context.draftCaptionsRef = {
+    get current() { return context.draftCaptions; },
+    set current(value) { context.draftCaptions = value; },
+  };
+  if (kind === 'script') {
+    context.ownsInput = expression(kind, 'ownsInput', context);
+    context.canMutateInput = expression(kind, 'canMutateInput', context);
+  }
   if (kind === 'dual-caption') {
     const ast = sources[kind];
     const store = ast.statements.find((node) => ts.isClassDeclaration(node) && node.name.text === 'DualCaptionDraftStore');
@@ -71,7 +92,7 @@ function mount(kind) {
     context.store.setDraft('c', 'primaryText', 'Edited');
   }
   // These are the production callbacks, executed with storage faults and real draft logic.
-  try { context.retryCleanup = expression(kind, 'retryCleanup', context); } catch { /* absent on the failing baseline */ }
+  context.retryCleanup = expression(kind, 'retryCleanup', context);
   const save = expression(kind, 'save', context);
   return { context, alerts, timers, save,
     effect: () => journalEffect(kind, context),

@@ -110,6 +110,7 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
         slots[index]?.cleanup?.(); slots[index] = { deps, setup: callback, cleanup: callback() };
       });
     },
+    useLayoutEffect(callback, deps) { react.useEffect(callback, deps); },
     createContext(value) { const context = { value }; context.Provider = { context }; return context; },
     useContext: (context) => context.value,
   };
@@ -132,7 +133,10 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
       if (name === './caption-save-recovery') return saveRecoveryHelpers;
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, pill: 20 } } };
       if (name === '@/services/editor-draft-journal') return {
-        readEditorDraftJournal: () => ({ then: (callback) => { recover = callback; return { catch: (callback) => { recoveryError = callback; } }; } }),
+        readEditorDraftJournal: () => {
+          calls.journalReads = (calls.journalReads ?? 0) + 1;
+          return { then: (callback) => { recover = callback; return { catch: (callback) => { recoveryError = callback; } }; } };
+        },
         archiveEditorDraftJournal: async () => { calls.journalArchives = (calls.journalArchives ?? 0) + 1; },
         clearEditorDraftJournal: async () => {
           calls.journalClears = (calls.journalClears ?? 0) + 1;
@@ -235,6 +239,8 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
     calls, props, list, row, find, act, fire, measure, viewport, advance,
     replayEffects: () => act(replayEffects),
     captureRecovery: () => recover,
+    captureRecoveryFailure: () => recoveryError,
+    hasPendingRender: () => dirty,
     async flush() { await new Promise(setImmediate); render(); },
     keyboard: (name) => act(() => keyboardListeners.get(name)?.()),
     update: (values) => act(() => Object.assign(props, values)),
@@ -412,7 +418,7 @@ test('failed Enter preserves tiny cues, selected ranges and edge text without in
   }
 });
 
-for (const state of ['unread', 'failed', 'saving', 'closing']) test(`${state} guard retains only queued active text during Save and blocks structural handlers`, async () => {
+for (const state of ['unread', 'failed', 'saving', 'closing']) test(`${state} guard preserves owned transient delivery and blocks structural handlers`, async () => {
   let finish;
   let actions = [];
   const h = mount({ onSave: () => new Promise(resolve => { finish = resolve; }) }, 'android', { deferRecovery: true });
@@ -432,13 +438,61 @@ for (const state of ['unread', 'failed', 'saving', 'closing']) test(`${state} gu
     h.row(1).props.onPress();
     for (const action of actions) action.onPress();
   });
-  assert.deepEqual(plain(h.list().data), state === 'saving'
+  assert.deepEqual(plain(h.list().data), state !== 'closing'
     ? before.map((cue, index) => index === 1 ? { ...cue, text: 'blocked', textMode: 'manual' } : cue)
     : before);
   assert.equal(h.calls.focuses.length, focuses);
   assert.equal(h.input(1).editable, false);
   assert.deepEqual(h.calls.seeks, []);
+  h.advance(1000); await h.flush();
+  assert.equal(h.calls.journals, undefined);
+  assert.equal(h.calls.journalClears, state === 'closing' ? 1 : undefined);
   finish?.(false); await h.flush(); h.unmount();
+});
+
+for (const state of ['unread', 'failed', 'undecodable']) for (const text of ['Current typing', '   ', '']) {
+  test(`${state} transient ${JSON.stringify(text)} survives Keep editing without touching recovery`, async () => {
+    let closes = 0;
+    const h = mount({ onCancel: () => { closes++; } }, 'android', { deferRecovery: true });
+    if (state === 'failed') h.failRecovery();
+    if (state === 'undecodable') h.recover([{ ...cues[0], wordIds: 'invalid' }]);
+    h.act(() => h.input(1).onChangeText(text));
+    assert.equal(h.input(1).value, text);
+    assert.equal(h.input(1).editable, false);
+    assert.equal(h.button('Save all caption edits').disabled, true);
+    h.act(() => h.button('Cancel caption edits').onPress());
+    assert.equal(closes, 0);
+    assert.match(h.calls.alerts.at(-1)[1], /preserved/);
+    h.act(() => h.calls.alerts.at(-1)[2].find(choice => choice.text === 'Keep editing').onPress?.());
+    assert.equal(h.input(1).value, text);
+    h.advance(2000); await h.flush();
+    assert.equal(h.calls.journals, undefined);
+    assert.equal(h.calls.journalClears, undefined);
+    h.act(() => h.button('Cancel caption edits').onPress());
+    h.act(() => h.calls.alerts.at(-1)[2].find(choice => choice.text === 'Discard').onPress());
+    await h.flush();
+    assert.equal(closes, 1);
+    assert.equal(h.calls.journalClears, undefined);
+    h.unmount();
+  });
+}
+
+for (const outcome of ['empty', 'failed', 'undecodable']) test(`${outcome} recovery outcome renews callback ownership even with unchanged status`, () => {
+  const h = mount({}, 'android', { deferRecovery: true });
+  const complete = () => outcome === 'failed' ? h.captureRecoveryFailure()(new Error('Read failed'))
+    : h.captureRecovery()(outcome === 'empty' ? null : { payload: [{ ...cues[0], wordIds: 'invalid' }] });
+  h.act(complete);
+  h.act(() => h.input(1).onChangeText('owned before outcome'));
+  const stale = h.input(1);
+  complete();
+  assert.equal(h.hasPendingRender(), true, 'a completed outcome must publish its new input epoch');
+  h.act(() => {});
+  h.act(() => stale.onChangeText('obsolete phase'));
+  assert.equal(h.input(1).value, 'owned before outcome');
+  h.act(() => h.input(1).onChangeText('current phase'));
+  assert.equal(h.input(1).value, 'current phase');
+  assert.equal(h.calls.journalReads, 1, 'publishing an input epoch cannot start another recovery read');
+  h.unmount();
 });
 
 test('join failure preserves original cues and caret without publishing a partial mutation', () => {

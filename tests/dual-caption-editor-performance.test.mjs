@@ -6,10 +6,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as draftHelpers from '../src/lib/dual-caption-drafts.ts';
 import * as saveRecoveryHelpers from '../src/components/editor/caption-save-recovery.ts';
-const timelineHelpers = await import('../src/lib/caption-timeline-anchor.ts').catch((error) => {
-  if (error.code === 'ERR_MODULE_NOT_FOUND') return {};
-  throw error;
-});
+import * as timelineHelpers from '../src/lib/caption-timeline-anchor.ts';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { createTranslationCaptionTrack, resolveCaptionPairs, setTranslationCueTiming, setTranslationCueStyle, setTranslationStackGap, updatePairedCaptionTexts } from '../src/lib/caption-tracks.ts';
 import { resolveCaptionStyle } from '../src/lib/style-resolver.ts';

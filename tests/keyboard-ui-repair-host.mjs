@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as draftHelpers from '../src/lib/dual-caption-drafts.ts';
+import * as timelineHelpers from '../src/lib/caption-timeline-anchor.ts';
 import * as saveRecoveryHelpers from '../src/components/editor/caption-save-recovery.ts';
 import { fontChoicePatch } from '../src/lib/font-style-choice.ts';
 import { keyboardViewportHostProps } from './keyboard-viewport-host.mjs';
@@ -120,6 +121,7 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 0, right: 0 } };
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, md: 8, pill: 20, xl: 20 } } };
       if (name === '@/lib/dual-caption-drafts') return draftHelpers;
+      if (name === '@/lib/caption-timeline-anchor') return timelineHelpers;
       if (name === './caption-save-recovery') return saveRecoveryHelpers;
       if (name === '@/services/editor-draft-journal') return {
         archiveEditorDraftJournal: async () => {},

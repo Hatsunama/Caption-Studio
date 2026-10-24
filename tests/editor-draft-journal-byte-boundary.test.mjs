@@ -8,6 +8,7 @@ import { createKeyedOperationQueue } from '../src/lib/keyed-operation-queue.ts';
 import * as scriptHelpers from '../src/lib/caption-script.ts';
 import * as dualHelpers from '../src/lib/dual-caption-drafts.ts';
 import * as saveRecoveryHelpers from '../src/components/editor/caption-save-recovery.ts';
+import * as timelineHelpers from '../src/lib/caption-timeline-anchor.ts';
 
 const compile = (path) => ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
@@ -243,7 +244,7 @@ test('explicit clear removes fallback before primary so it cannot resurrect on r
 // Minimal deterministic hooks execute the real recovery effects and close paths.
 // Rendering remains synthetic; no native runtime or device is needed.
 async function mountEditor(kind, options = {}) {
-  const slots = [], effects = [], alerts = [], timers = new Map();
+  const slots = [], effects = [], layoutEffects = [], alerts = [], timers = new Map();
   const appStateListeners = new Map();
   const appState = {
     currentState: 'active',
@@ -263,10 +264,10 @@ async function mountEditor(kind, options = {}) {
     if (!slots[index] || !same(slots[index].deps, deps)) slots[index] = { value: fn(), deps };
     return slots[index].value;
   };
-  const effect = (fn, deps) => {
+  const effect = (fn, deps, queue = effects) => {
     const index = cursor++;
     if (!slots[index] || !same(slots[index].deps, deps)) {
-      effects.push(() => {
+      queue.push(() => {
         slots[index]?.cleanup?.();
         slots[index] = { deps, cleanup: fn() };
       });
@@ -283,7 +284,7 @@ async function mountEditor(kind, options = {}) {
         if (!Object.is(next, slots[index].value)) { slots[index].value = next; changed = true; }
       }];
     },
-    useEffect: effect, useLayoutEffect: effect,
+    useEffect: effect, useLayoutEffect: (fn, deps) => effect(fn, deps, layoutEffects),
     useSyncExternalStore: (_subscribe, get) => get(),
     createContext: (value) => ({ value }), useContext: (context) => context.value,
   };
@@ -310,6 +311,7 @@ async function mountEditor(kind, options = {}) {
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
       if (name === '@/lib/ui-theme') return { chrome: { radius: {} } };
       if (name === '@/lib/caption-script') return scriptHelpers;
+      if (name === '@/lib/caption-timeline-anchor') return timelineHelpers;
       if (name === '@/lib/dual-caption-drafts') return dualHelpers;
       if (name === './caption-save-recovery') return saveRecoveryHelpers;
       if (name === '@/services/editor-draft-journal') return {
@@ -335,6 +337,7 @@ async function mountEditor(kind, options = {}) {
       if (changed) {
         changed = false; cursor = 0;
         tree = (kind === 'script' ? exports.ScriptEditor : exports.Session)(props);
+        while (layoutEffects.length) layoutEffects.shift()();
         while (effects.length) effects.shift()();
       }
       await new Promise(setImmediate);
