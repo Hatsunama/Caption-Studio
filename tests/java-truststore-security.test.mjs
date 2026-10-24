@@ -83,7 +83,7 @@ test('actual keytool refuses blocked-only and empty stores before publishing a c
 test('CI rejects unverified launcher and runtime overrides before accessing paths without leaking values', async () => {
   const { runCi } = await api();
   for (const name of ['JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS', 'GRADLE_OPTS', 'JAVA_OPTS',
-    'GRADLE_HOME', 'GRADLE_JAVA_HOME', 'JAVACMD', 'ORG_GRADLE_PROJECT_org.gradle.java.home',
+    'GRADLE_JAVA_HOME', 'JAVACMD', 'ORG_GRADLE_PROJECT_org.gradle.java.home',
     'ORG_GRADLE_PROJECT_systemProp.javax.net.ssl.trustStore']) {
     assert.throws(() => runCi({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'Hatsunama/Caption-Studio',
       [name]: '-Djavax.net.ssl.trustStore=private-do-not-log' }), error =>
@@ -317,7 +317,7 @@ test('CI CLI hardens both runtime stores, preserves active JDK and properties, a
     const secret = 'private.token=do-not-log\norg.gradle.java.home=/third/jdk\n';
     fs.writeFileSync(properties, secret);
     const env = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'Hatsunama/Caption-Studio',
-      RUNNER_TOOL_CACHE: cache, RUNNER_TEMP: runnerTemp, HOME: home, GRADLE_USER_HOME: '',
+      RUNNER_TOOL_CACHE: cache, RUNNER_TEMP: runnerTemp, HOME: home, GRADLE_USER_HOME: '', GRADLE_HOME: '/unused-system-gradle',
       JAVA_TOOL_OPTIONS: '', JDK_JAVA_OPTIONS: '', _JAVA_OPTIONS: '', GRADLE_OPTS: '', JAVA_OPTS: '',
       JAVA_HOME_17_X64: homes[0], JAVA_HOME_21_X64: homes[1], JAVA_HOME: homes[1] };
     const stores = homes.map(jdk => path.join(jdk, 'lib/security/cacerts'));
@@ -360,7 +360,12 @@ test('CI CLI hardens both runtime stores, preserves active JDK and properties, a
 
 test('CI refusal identifies the public override category without disclosing its value', async () => {
   const { runCi } = await api();
-  for (const name of ['GRADLE_HOME', 'JAVA_TOOL_OPTIONS', 'JAVA_OPTS']) {
+  for (const name of ['GRADLE_JAVA_HOME', 'JAVA_TOOL_OPTIONS', 'JAVA_OPTS']) {
     assert.throws(() => runCi({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'Hatsunama/Caption-Studio', [name]: 'private-do-not-log' }), error => error.message.includes(name) && !error.message.includes('private-do-not-log'));
   }
+});
+
+test('unused installed Gradle location does not act as a wrapper JVM override', async () => {
+  const { runCi } = await api();
+  assert.throws(() => runCi({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'Hatsunama/Caption-Studio', RUNNER_TOOL_CACHE: undefined, GRADLE_HOME: '/unused-installed-gradle-do-not-log' }), error => !/ambient|override|launcher/i.test(error.message) && !error.message.includes('unused-installed-gradle-do-not-log'));
 });

@@ -279,7 +279,9 @@ export function runCi(env = process.env) {
     'In-place mode is restricted to the authorized isolated GitHub Actions repository');
   const ambient = { ...process.env, ...env };
   const forbidden = new Set(['JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS', 'GRADLE_OPTS',
-    'JAVA_OPTS', 'GRADLE_HOME', 'GRADLE_JAVA_HOME', 'JAVACMD', 'JAVA_CMD', 'JDK_HOME', 'JAVA_HOME_OVERRIDE']);
+    'JAVA_OPTS', 'GRADLE_JAVA_HOME', 'JAVACMD', 'JAVA_CMD', 'JDK_HOME', 'JAVA_HOME_OVERRIDE']);
+  // Workflows invoke ./gradlew, not the installed Gradle selected by GRADLE_HOME.
+  // Wrapper JVM options and toolchain redirects remain rejected above.
   for (const [name, value] of Object.entries(ambient)) {
     const known = forbidden.has(name.toUpperCase());
     requireThat(!value || (!known && !/^ORG_GRADLE_PROJECT_/i.test(name)),
