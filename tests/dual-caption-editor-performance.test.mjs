@@ -34,6 +34,7 @@ const shallow = (left, right) => left && right && same(Object.keys(left), Object
 function mount(overrides = {}, options = {}) {
   const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   const instances = new Map(), timers = new Map(), inputIdentities = new Map();
+  const appStateListeners = new Set();
   const calls = { alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
   let current, cursor, pending = [], changed = false, tree, now = 0, nextTimer = 0, windowStart = 0;
   const memoHook = (factory, deps) => {
@@ -84,10 +85,19 @@ function mount(overrides = {}, options = {}) {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
 if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
+      if (name === '@/components/refract-background') return { RefractBackground: 'RefractBackground' };
       if (name === 'react-native') return {
         ...Object.fromEntries(['ActivityIndicator', 'FlatList', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View', 'KeyboardAvoidingView'].map((type) => [type, type])),
         useWindowDimensions: () => options.window ?? { width: 390, height: 844 },
         Platform: { OS: options.platform ?? 'android' },
+        AppState: {
+          currentState: 'active',
+          addEventListener(event, listener) {
+            assert.equal(event, 'change');
+            appStateListeners.add(listener);
+            return { remove: () => appStateListeners.delete(listener) };
+          },
+        },
         Alert: { alert: (...args) => calls.alerts.push(args) },
       };
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 0, right: 0 } };

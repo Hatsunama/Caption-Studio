@@ -27,7 +27,9 @@ test('canonical source words survive checkpoint projection and a clip edit witho
   };
   project.transcription.words = mapSourceWordsToTimeline(project.clips, { [sourceId]: canonical });
   const edited = setVideoClipLeadingGap(project, project.clips[0].id, 100).project;
-  assert.deepEqual(edited.transcription.words.map(({ startMs, endMs }) => [startMs, endMs]), [[200, 250], [250, 700]]);
+  assert.equal(edited.clips[0].gapBeforeMs, 0);
+  assert.deepEqual(edited.transcription.words.map(({ startMs, endMs }) => [startMs, endMs]), [[100, 150], [150, 600]]);
+  assert.deepEqual(edited.transcription.words, project.transcription.words);
   assert.deepEqual(edited.transcription.sourceResults[sourceId].words, canonical);
 });
 
@@ -39,13 +41,16 @@ test('new primary groups remain sequential without squeezing a cue to one millis
     { id: 'c', text: 'Third.', startMs: 120, endMs: 370 },
   ] });
   const words = normalizeProjectedPrimaryWords(projected, project.clips[0].id, 0, 1_000);
+  const acousticBefore = structuredClone(words);
   const captions = groupWordsIntoCaptions(words);
   assert.deepEqual(captions.map(({ text, wordIds }) => [text, wordIds]), [
-    ['First.', [words[0].id]], ['Second. Third.', [words[1].id, words[2].id]],
+    ['First. Second.', [words[0].id, words[1].id]], ['Third.', [words[2].id]],
   ]);
   assert.ok(captions.every((caption, index) => caption.endMs - caption.startMs >= 80
     && (index === 0 || caption.startMs >= captions[index - 1].endMs)));
-  assert.deepEqual(captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 100], [100, 370]]);
+  assert.deepEqual(captions.map(({ startMs, endMs }) => [startMs, endMs]), [[0, 120], [120, 370]]);
+  assert.deepEqual(words, acousticBefore);
+  assert.deepEqual(captions.flatMap(caption => caption.wordIds), words.map(word => word.id));
 });
 
 test('clip projection preserves source word timing for legacy recovery and edits', () => {

@@ -2,6 +2,7 @@ package app.captionstudio.media
 
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
@@ -118,8 +119,26 @@ internal class TextPresentation private constructor(
         -measured.height / 2f - style.backgroundPaddingY,
         lineRight - measured.width / 2f + style.backgroundPaddingX,
         measured.height / 2f + style.backgroundPaddingY)
+      // Decoration and animation may overlap adjacent runs and lines. Reserve
+      // their union around the laid-out phrase instead of padding every span.
+      val selection = Path()
+      val selectionBounds = RectF()
+      content.getSpans(0, content.length, InkSpan::class.java).forEach { span ->
+        val start = content.getSpanStart(span)
+        selection.reset()
+        // Selection geometry supplies the physical left edge for either bidi
+        // direction, including spans ending at a wrapped line boundary.
+        measured.getSelectionPath(start, content.getSpanEnd(span), selection)
+        selection.computeBounds(selectionBounds, true)
+        val baseline = measured.getLineBaseline(measured.getLineForOffset(start)).toFloat()
+        rectangle.union(span.inkAt(
+          selectionBounds.left - measured.width / 2f,
+          baseline - measured.height / 2f,
+        ))
+      }
       val states = (0..512).map { step -> captionAnimationState(style.animationId, CaptionAnimationClock(min(1f, step / 128f), step / 128f), style.animationIntensity) }
-      val bounds = animationBounds(rectangle, states)
+      // The painter applies phrase animation around the layout origin.
+      val bounds = animationBounds(rectangle, states, 0f, 0f)
       val ratio = min(1f, min(boxWidth / max(1f, bounds.width()), boxHeight / max(1f, bounds.height())))
       return TextPresentation(measured, ratio, bounds, text, dispatch)
     }
@@ -140,29 +159,35 @@ private class InkSpan(
   private val decoration = max(run.style.strokeWidth, max(shadow, treatment)) + if (run.style.animationId == "glow-pulse") 45f else 0f
   private val original = RectF(min(0f, ink.left.toFloat()) - decoration, min(metrics.top, ink.top.toFloat()) - decoration,
     max(advance, ink.right.toFloat()) + decoration, max(metrics.bottom, ink.bottom.toFloat()) + decoration)
-  private val bounds = animationBounds(original, states)
   private val baselineCenter = (original.top + original.bottom) / 2f
+  private val bounds = animationBounds(original, states, advance / 2f, baselineCenter)
+
+  fun inkAt(x: Float, baseline: Float) = RectF(bounds).apply { offset(x, baseline) }
 
   override fun getSize(paint: Paint, text: CharSequence, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int {
     fm?.let {
-      it.top = kotlin.math.floor(bounds.top.toDouble()).toInt()
-      it.ascent = it.top
-      it.bottom = ceil(bounds.bottom.toDouble()).toInt()
-      it.descent = it.bottom
-      it.leading = 0
+      val font = measure.fontMetricsInt
+      it.top = font.top
+      it.ascent = font.ascent
+      it.bottom = font.bottom
+      it.descent = font.descent
+      it.leading = font.leading
     }
-    return ceil(bounds.width().toDouble()).toInt()
+    return ceil(advance.toDouble()).toInt()
   }
 
   override fun draw(canvas: Canvas, text: CharSequence, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {
-    dispatch.draw?.invoke(run, x - bounds.left, y.toFloat(), advance, baselineCenter)
+    dispatch.draw?.invoke(run, x, y.toFloat(), advance, baselineCenter)
   }
 }
 
-internal fun animationBounds(rectangle: RectF, states: List<TextAnimationState>): RectF {
+internal fun animationBounds(
+  rectangle: RectF,
+  states: List<TextAnimationState>,
+  cx: Float = rectangle.centerX(),
+  cy: Float = rectangle.centerY(),
+): RectF {
   val result = RectF(rectangle)
-  val cx = rectangle.centerX()
-  val cy = rectangle.centerY()
   states.forEach { state ->
     val angle = state.rotation * Math.PI.toFloat() / 180f
     for (x in listOf(rectangle.left, rectangle.right)) for (y in listOf(rectangle.top, rectangle.bottom)) {

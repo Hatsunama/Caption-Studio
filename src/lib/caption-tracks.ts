@@ -312,7 +312,7 @@ export function setTranslationCueTiming(
   endMs: number,
   updatedAt = project.updatedAt,
 ) {
-  return mapTranslationTrack(project, trackId, (track) => ({
+  const next = mapTranslationTrack(project, trackId, (track) => ({
     ...track,
     cues: track.cues.map((cue) => {
       if (cue.sourceCaptionId !== sourceCaptionId) return cue;
@@ -323,6 +323,10 @@ export function setTranslationCueTiming(
       return { ...cue, ...range, timelineVisible: true };
     }),
   }), updatedAt);
+  const cue = next.captionTracks.translations.find(track => track.id === trackId)?.cues.find(item => item.sourceCaptionId === sourceCaptionId);
+  return cue ? { ...next, captionTracks: { ...next.captionTracks,
+    independentTimingOrigins: { ...next.captionTracks.independentTimingOrigins, [cue.id]: 0 },
+  } } : next;
 }
 
 export function setTranslationCueSkipped(
@@ -489,7 +493,8 @@ export function resolveCaptionPairs(project: CaptionProject, trackId: string): C
       visible: track.visible,
       startMs: translation.startMs ?? source.startMs,
       endMs: translation.endMs ?? source.endMs,
-      timelineVisible: !translation.translationSkipped && (translation.timelineVisible ?? source.timelineVisible !== false),
+      timelineVisible: !translation.translationSkipped && (translation.timelineVisible ?? source.timelineVisible !== false)
+        && (translation.endMs ?? source.endMs) > (translation.startMs ?? source.startMs),
       source,
       translation,
       displayText: translation.text.trim() ? translation.text
@@ -532,7 +537,12 @@ export function synchronizeCaptionTracks(
   captions = project.captions,
 ): CaptionTrackCollection {
   const tracks = project.captionTracks ?? emptyCaptionTrackCollection();
+  const retainedIds = new Set(captions.map(caption => caption.id));
+  const retainedCueIds = new Set(tracks.translations.flatMap(track => track.cues.filter(cue => retainedIds.has(cue.sourceCaptionId)).map(cue => cue.id)));
   return {
+    ...tracks,
+    ...(tracks.independentTimingOrigins ? { independentTimingOrigins: Object.fromEntries(Object.entries(tracks.independentTimingOrigins)
+      .filter(([id]) => retainedCueIds.has(id))) } : {}),
     schemaVersion: 1,
     primaryTrackId: 'captions',
     translations: tracks.translations.map((track) => {
@@ -559,6 +569,8 @@ export function remapTranslationTrackTimings(
 ) {
   const tracks = captionTracks ?? emptyCaptionTrackCollection();
   const beforeById = new Map(beforeCaptions.map((caption) => [caption.id, caption]));
+  const afterById = new Map(mapping.afterCaptions?.map(caption => [caption.id, caption]));
+  const origins = { ...tracks.independentTimingOrigins };
   if (!Number.isFinite(mapping.durationMs) || mapping.durationMs < 0) {
     throw new Error('Translation timing mapping has an invalid timeline duration.');
   }
@@ -574,22 +586,36 @@ export function remapTranslationTrackTimings(
           || range.startMs < 0 || range.endMs < range.startMs) {
           throw new Error(`Translation cue ${cue.id} has invalid timing.`);
         }
-        const mapped = mapping.mapRange(range, before);
+        const origin = tracks.independentTimingOrigins?.[cue.id];
+        const independent = origin !== undefined || range.startMs !== before.startMs || range.endMs !== before.endMs;
+        if (mapping.operation === 'trim') {
+          if (independent) {
+            const delta = mapping.independentOriginDeltaMs ?? 0;
+            if (origin !== undefined || delta !== 0) origins[cue.id] = Math.max(0, (origin ?? 0) + delta);
+            return { ...cue, ...range };
+          }
+          const after = afterById.get(before.id);
+          if (after) return { ...cue, startMs: after.startMs, endMs: after.endMs };
+        }
+        const offset = independent ? origin ?? 0 : 0;
+        const mapped = mapping.mapRange({ startMs: range.startMs - offset, endMs: range.endMs - offset }, before);
         if (!Number.isFinite(mapped.startMs) || !Number.isFinite(mapped.endMs)
           || mapped.endMs < mapped.startMs) {
           throw new Error(`Translation ${mapping.operation} mapping produced invalid timing.`);
         }
-        const startMs = clamp(mapped.startMs, 0, mapping.durationMs);
-        const endMs = clamp(mapped.endMs, startMs, mapping.durationMs);
+        const limit = independent && mapping.operation === 'speed' ? Number.MAX_SAFE_INTEGER : mapping.durationMs + offset;
+        const startMs = clamp(mapped.startMs + offset, 0, limit);
+        const endMs = clamp(mapped.endMs + offset, startMs, limit);
         return {
           ...cue,
           startMs,
           endMs,
-          timelineVisible: (cue.timelineVisible ?? before.timelineVisible !== false)
-            && mapped.timelineVisible !== false && endMs > startMs,
+          ...(independent ? { timelineVisible: (cue.timelineVisible ?? before.timelineVisible !== false)
+            && mapped.timelineVisible !== false && endMs > startMs } : {}),
         };
       }),
     })),
+    ...(tracks.independentTimingOrigins || Object.keys(origins).length ? { independentTimingOrigins: origins } : {}),
   };
 }
 
@@ -667,6 +693,7 @@ function synchronizeCue(trackId: string, source: CaptionBlock, cue: TranslationC
   // A source edit does not undo an unsuccessful attempt or erase its reason.
   // Retain the snapshot belonging to saved text until a replacement is committed.
   if (cue.status === 'failed') return cue;
+  if (source.mergeProvenance && cue.status === 'stale' && !cue.reviewed) return cue;
   if (cue.sourceTextSnapshot === source.text) {
     if (cue.status !== 'stale') return cue;
     return { ...cue, status: cue.reviewed ? 'reviewed' as const : 'translated' as const };

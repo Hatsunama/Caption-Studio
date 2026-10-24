@@ -33,6 +33,7 @@ import androidx.media3.common.VideoCompositorSettings
 import androidx.media3.common.audio.GainProcessor
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.Size
+import androidx.media3.container.Mp4TimestampData
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
@@ -44,6 +45,7 @@ import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
+import androidx.media3.transformer.InAppMp4Muxer
 import androidx.media3.transformer.Transformer
 import expo.modules.kotlin.Promise
 import java.io.File
@@ -115,6 +117,13 @@ internal class TimelineVideoExporter(private val context: Context) {
           val transformer = Transformer.Builder(context)
             .setVideoMimeType(MimeTypes.VIDEO_H264)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
+            .setMuxerFactory(InAppMp4Muxer.Factory { entries ->
+              // Source timestamps describe the input, not this newly rendered export.
+              // Retain unrelated metadata and use one captured time for every header.
+              entries.removeAll { it is Mp4TimestampData }
+              val seconds = Mp4TimestampData.unixTimeToMp4TimeSeconds(task.exportTimestampMs)
+              entries.add(Mp4TimestampData(seconds, seconds))
+            })
             .addListener(object : Transformer.Listener {
               override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                 if (!isActive(task)) return
@@ -465,7 +474,7 @@ internal class TimelineVideoExporter(private val context: Context) {
         task.output.inputStream().use { source -> copyCancellable(source, destination, task) }
       }
       ensureActive(task)
-      check(resolver.update(uri, finishedVideoContentValues(verified), null, null) == 1) {
+      check(resolver.update(uri, finishedVideoContentValues(verified, task.exportTimestampMs), null, null) == 1) {
         "Android could not finish publishing the exported video"
       }
       return uri
@@ -583,7 +592,9 @@ internal class TimelineVideoExporter(private val context: Context) {
     @Volatile var stage: ExportStage = ExportStage.PREPARING,
     @Volatile var publishedUri: Uri? = null,
     @Volatile var publishedFile: File? = null,
-  )
+  ) {
+    val exportTimestampMs: Long = System.currentTimeMillis()
+  }
 
   private enum class ExportStage { PREPARING, RENDERING, PUBLISHING }
 

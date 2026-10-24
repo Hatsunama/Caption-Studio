@@ -19,6 +19,7 @@ import {
 import {
   anchorCaptionsToClips,
   buildClipTimeline,
+  completeVideoTimelineEdit,
   mapSourceWordsToTimeline,
   MINIMUM_CLIP_TIMELINE_MS,
   remapCaptionsToTimeline,
@@ -41,6 +42,7 @@ import { editCanvasTimelineRange, splitTimelineRange, type TimelineTimingEdge } 
 import { editProjectTimelineRange, timelineArtifactEditLimit } from '@/lib/timeline-edit-bounds';
 import { normalizeLayerGeometry } from '@/lib/layer-geometry';
 import { hasCanonicalSourceWords } from '@/lib/primary-caption-timing';
+import { applyCaptionMergeDraft } from '@/lib/caption-merge';
 
 export function setCaptionTexts(project: CaptionProject, changes: CaptionTextChanges) {
   const changed = applyCaptionTextChanges(project.captions, changes);
@@ -159,6 +161,8 @@ function withTimelineCaptionTiming(
 export function replaceVisibleCaptionScript(project: CaptionProject, captions: CaptionProject['captions']) {
   if (!decodeCaptionDraft(captions)) throw new Error('Caption edits were not saved. The draft contains invalid caption data.');
   captions = reconcileCaptionScriptDraft(project, captions);
+  const joined = applyCaptionMergeDraft(project, captions);
+  captions = joined.captions;
   const visible = project.captions.filter((caption) => caption.timelineVisible !== false);
   const hidden = project.captions.filter((caption) => caption.timelineVisible === false);
   const hiddenIds = new Set(hidden.map((caption) => caption.id));
@@ -207,6 +211,7 @@ export function replaceVisibleCaptionScript(project: CaptionProject, captions: C
   })) return project;
   return updateProject(project, {
     captions: [...captions, ...hidden].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs),
+    captionTracks: joined.captionTracks,
   });
 }
 
@@ -450,7 +455,7 @@ export function reorderVideoClip(project: CaptionProject, clipId: string, toInde
     };
   });
   const rebuilt = rebuildAfterLayoutEdit(project, clips, project.captions, { atMs: 0, removeMs: 0, insertMs: 0 });
-  const next = {
+  const next = completeVideoTimelineEdit({
     ...rebuilt,
     captions,
     audioClips: remapAudioAfterVideoEdit(project.audioClips, clips),
@@ -459,7 +464,7 @@ export function reorderVideoClip(project: CaptionProject, clipId: string, toInde
       project.captions,
       translationReorderMapping(project.clips, clips),
     ),
-  };
+  });
   const entry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId);
   return { project: next, seekMs: entry?.startMs ?? 0 };
 }
@@ -475,7 +480,7 @@ export function deleteVideoClip(project: CaptionProject, clipId: string) {
     removeMs: entry.afterGapEndMs - entry.gapStartMs,
     insertMs: 0,
   }, project.layers, 'splice', 'ripple');
-  const next = { ...rebuilt, canvas: resolveSourceCanvas(rebuilt) };
+  const next = completeVideoTimelineEdit({ ...rebuilt, canvas: resolveSourceCanvas(rebuilt) });
   const duration = projectTimelineDuration(next);
   return { project: next, seekMs: Math.min(entry.gapStartMs, Math.max(0, duration - 1)) };
 }
@@ -528,7 +533,7 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
   const audioClips = remapAudioAfterVideoEdit(
     splitAttachedAudioForVideo(project.audioClips, clipId, leftId, rightId, sourceSplitMs), clips,
   );
-  const next = { ...project, updatedAt: new Date().toISOString(), clips, captions, layers, audioClips };
+  const next = completeVideoTimelineEdit({ ...project, updatedAt: new Date().toISOString(), clips, captions, layers, audioClips });
   return { project: next, rightClipId: right.id };
 }
 
@@ -554,7 +559,8 @@ export function trimVideoClip(project: CaptionProject, clipId: string, edge: 'st
         insertMs: 0,
       }
       : { atMs: entry.startMs, removeMs: 0, insertMs: 0 };
-  const next = rebuildAfterLayoutEdit(project, clips, project.captions, splice, project.layers, 'trim');
+  const originDeltaMs = edge === 'start' && project.clips[0]?.id === clipId ? -Math.max(0, delta) : 0;
+  const next = completeVideoTimelineEdit(rebuildAfterLayoutEdit(project, clips, project.captions, splice, project.layers, 'trim', 'fixed', originDeltaMs), 'trim');
   const nextEntry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId)!;
   return {
     project: next,
@@ -598,7 +604,7 @@ export function setVideoClipGap(
   const splice = delta > 0
     ? { atMs: gapStartMs, removeMs: 0, insertMs: delta }
     : { atMs: gapStartMs + gapMs, removeMs: -delta, insertMs: 0 };
-  const next = rebuildAfterLayoutEdit(project, clips, project.captions, splice);
+  const next = completeVideoTimelineEdit(rebuildAfterLayoutEdit(project, clips, project.captions, splice));
   const nextEntry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId)!;
   return { project: next, seekMs: edge === 'before' ? nextEntry.startMs : nextEntry.endMs };
 }
@@ -643,7 +649,7 @@ export function setVideoClipLeadingGap(
   const splice = delta > 0
     ? { atMs: previousEndMs, removeMs: 0, insertMs: delta }
     : { atMs: previousEndMs + gapMs, removeMs: -delta, insertMs: 0 };
-  const next = rebuildAfterLayoutEdit(project, clips, project.captions, splice);
+  const next = completeVideoTimelineEdit(rebuildAfterLayoutEdit(project, clips, project.captions, splice));
   return { project: next, seekMs: buildClipTimeline(next.clips)[index].startMs };
 }
 
@@ -682,6 +688,7 @@ function rebuildAfterLayoutEdit(
   sourceLayers: CaptionProject['layers'] = project.layers,
   translationOperation: 'trim' | 'splice' = 'splice',
   audioOperation: 'fixed' | 'ripple' = 'fixed',
+  independentOriginDeltaMs = 0,
 ) {
   clips = normalizeVideoTransitionBoundaries(clips);
   const sourceWords = Object.fromEntries(
@@ -713,7 +720,8 @@ function rebuildAfterLayoutEdit(
     transcription: { ...project.transcription, words },
     captions,
     captionTracks: remapTranslationTrackTimings(project.captionTracks, project.captions,
-      translationSpliceMapping(splice, totalClipDuration(clips), translationOperation)),
+      { ...translationSpliceMapping(splice, totalClipDuration(clips), translationOperation),
+        afterCaptions: captions, independentOriginDeltaMs }),
     layers,
     audioClips: remapAudioAfterVideoEdit(audioOperation === 'ripple'
       ? applyTimelineSpliceToAudioClips(project.audioClips, splice) : project.audioClips, clips),
@@ -758,7 +766,7 @@ function spliceTimedRange<T extends { startMs: number; endMs: number }>(
       endMs += splice.insertMs;
     }
   }
-  return endMs - startMs >= 80 ? { ...range, startMs, endMs } : undefined;
+  return endMs > startMs ? { ...range, startMs, endMs } : undefined;
 }
 
 function anchorVisualLayers(layers: CaptionProject['layers'], clips: VideoClip[]) {

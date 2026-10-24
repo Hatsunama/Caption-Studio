@@ -9,10 +9,17 @@ import {
 } from '../src/lib/caption-line-spacing.ts';
 
 test('caption line spacing stays inside the usable font-relative range', () => {
-  assert.equal(CAPTION_LINE_HEIGHT_MIN, 0.55);
+  assert.equal(CAPTION_LINE_HEIGHT_MIN, 0.25);
   assert.equal(CAPTION_LINE_HEIGHT_MAX, 1.12);
   assert.equal(normalizeCaptionLineHeight(-10), CAPTION_LINE_HEIGHT_MIN);
   assert.equal(normalizeCaptionLineHeight(2.2), CAPTION_LINE_HEIGHT_MAX);
+});
+
+test('overlapping line heights survive normalization without being raised to the old floor', () => {
+  for (const value of [0.25, 0.3, 0.4, 0.5, 0.55, 1, 1.12]) {
+    assert.equal(normalizeCaptionLineHeight(value), value);
+  }
+  assert.equal(normalizeCaptionLineHeight(0.24), 0.25);
 });
 
 test('line spacing is owned by layout baselines rather than glyph geometry', () => {

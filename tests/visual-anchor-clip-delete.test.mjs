@@ -72,6 +72,10 @@ for (const kind of ['text', 'image']) {
   test(`${kind}: mixed anchors retain only the surviving clip and remain visible after reopen and a later splice`, () => {
     const project = fixture(kind, true);
     const [first, second] = project.clips;
+    // Keep the later splice internal: completed edits remove outer video gaps.
+    project.clips.unshift({ ...first, id: `unanchored-prefix-${kind}` });
+    project.layers.at(-1).startMs += 2_000;
+    project.layers.at(-1).endMs += 2_000;
     const survivingAnchor = structuredClone(project.layers.at(-1).sourceAnchors[1]);
     const result = deleteVideoClip(project, first.id);
     assert.ok(result);
@@ -80,13 +84,13 @@ for (const kind of ['text', 'image']) {
       assert.deepEqual(layer.sourceAnchors, [survivingAnchor]);
       assert.deepEqual([layer.startMs, layer.endMs], [250 + offset, 1_250 + offset]);
     };
-    const reopened = assertPersistable(result.project, first.id, checkAt(0));
+    const reopened = assertPersistable(result.project, first.id, checkAt(2_000));
     const inserted = setVideoClipGap(reopened, second.id, 400, 'before');
     assert.ok(inserted);
-    const afterInsertion = assertPersistable(inserted.project, first.id, checkAt(400));
+    const afterInsertion = assertPersistable(inserted.project, first.id, checkAt(2_400));
     const removed = setVideoClipGap(afterInsertion, second.id, 0, 'before');
     assert.ok(removed);
-    assertPersistable(removed.project, first.id, checkAt(0));
+    assertPersistable(removed.project, first.id, checkAt(2_000));
     assert.equal(project.layers.at(-1).sourceAnchors.length, 2);
   });
 }

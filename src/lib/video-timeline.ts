@@ -5,11 +5,14 @@ import { captionLayoutText } from '@/lib/caption-text-breaks';
 import { effectiveVideoTransition } from '@/lib/video-transitions';
 import { isProjectIdentifier } from '@/lib/project-identifiers';
 import { primaryCaptionSurvives, primaryCaptionVisible } from '@/lib/primary-caption-timing';
+import { absorbShortCaptionCues } from '@/lib/caption-merge';
 
 export const MINIMUM_CLIP_TIMELINE_MS = 120;
 
 /** Supplied by the timeline mutation, never inferred from caption geometry. */
 export type TranslationTimeMapping = {
+  afterCaptions?: readonly CaptionBlock[];
+  independentOriginDeltaMs?: number;
   operation: 'trim' | 'splice' | 'reorder' | 'speed';
   durationMs: number;
   mapRange: (range: { startMs: number; endMs: number }, beforeCaption: CaptionBlock) => {
@@ -377,7 +380,7 @@ export function rippleDelete(project: CaptionProject, cutStartMs: number, cutEnd
 export function rippleTimedContent(project: CaptionProject, cutStartMs: number, cutEndMs: number): CaptionProject {
   const words = project.transcription.words
     .map((word) => {
-      const range = rippleRange(word.startMs, word.endMs, cutStartMs, cutEndMs);
+      const range = rippleRange(word.startMs, word.endMs, cutStartMs, cutEndMs, primaryCaptionSurvives);
       return range ? { ...word, ...range } : undefined;
     })
     .filter((word): word is NonNullable<typeof word> => Boolean(word));
@@ -441,7 +444,7 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
     : { ...layer, startMs: mapTime(layer.startMs), endMs: mapTime(layer.endMs) });
   const nextClips = project.clips.map((clip) => clip.id === clipId ? replacement : clip);
   const audioClips = remapAudioAfterVideoEdit(project.audioClips, nextClips);
-  return {
+  return completeVideoTimelineEdit({
     ...project,
     updatedAt: new Date().toISOString(),
     clips: nextClips,
@@ -454,7 +457,43 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
     }),
     layers,
     audioClips,
-  };
+  });
+}
+
+/** Called by completed edits only. Independent media ranges are never truncated. */
+export function completeVideoTimelineEdit(project: CaptionProject, operation: 'layout' | 'trim' = 'layout'): CaptionProject {
+  const first = project.clips[0], last = project.clips.at(-1);
+  const leading = first ? validGap(first.gapBeforeMs) : 0;
+  const trailing = last ? validGap(last.gapAfterMs) : 0;
+  let next = project;
+  if (leading > 0 || trailing > 0) {
+    const clips = project.clips.map((clip, index) => ({ ...clip,
+      ...(index === 0 ? { gapBeforeMs: 0 } : {}),
+      ...(index === project.clips.length - 1 ? { gapAfterMs: 0 } : {}),
+    }));
+    const shift = <T extends { startMs: number; endMs: number }>(range: T): T => ({
+      ...range, startMs: Math.max(0, range.startMs - leading), endMs: Math.max(0, range.endMs - leading),
+    });
+    const words = project.transcription.words.map(shift).filter(word => word.endMs > word.startMs);
+    const anchored = anchorCaptionsToClips(project.captions, project.clips, project.transcription.words);
+    const captions = remapCaptionsToTimeline(anchored.filter(caption => !!caption.sourceAnchor), clips, words);
+    captions.push(...anchored.filter(caption => !caption.sourceAnchor).map(caption => {
+      const moved = shift(caption);
+      return { ...moved, timelineVisible: caption.timelineVisible !== false && moved.endMs > moved.startMs };
+    }));
+    next = { ...project, clips, transcription: { ...project.transcription, words },
+      captions: captions.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs),
+      captionTracks: remapTranslationTrackTimings(project.captionTracks, project.captions,
+        operation === 'trim'
+          ? { ...translationReorderMapping(project.clips, clips), operation: 'trim', afterCaptions: captions,
+            independentOriginDeltaMs: leading }
+          : translationReorderMapping(project.clips, clips)),
+      layers: project.layers.map(layer => layer.kind !== 'captions' && layer.timingMode !== 'timeline' && layer.sourceAnchors?.length
+        ? shift(layer) : layer),
+      audioClips: remapAudioAfterVideoEdit(project.audioClips, clips),
+    };
+  }
+  return absorbShortCaptionCues(next);
 }
 
 function rippleRange(

@@ -168,9 +168,13 @@ for (const kind of ['text', 'image']) {
     assert.deepEqual(orphan.sourceAnchors, []);
     assert.equal(setLayerTiming(project, 'selected', 'end', 500, 9000), project);
     assert.equal(splitVisualLayer(project, 'selected', 1000, 'left', 'right'), null);
+    // Exercise a real internal splice, not an automatically removed outer gap.
+    const prefixId = `orphan-prefix-${kind}`;
+    project = { ...project, clips: [{ ...project.clips[0], id: prefixId }, ...project.clips] };
     project = reopen(setVideoClipGap(project, second.id, 500).project);
     project = reopen(setVideoClipGap(project, second.id, 0).project);
     project = reopen(deleteVideoClip(project, second.id).project);
+    project = reopen(deleteVideoClip(project, prefixId).project);
     assert.deepEqual(layerAt(project), orphan);
     assert.equal(projectTimelineDuration(project), orphan.endMs);
   });

@@ -2,6 +2,7 @@ import { AdaptiveDialog, AdaptiveDialogTextInput } from '@/components/editor/ada
 import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
 import { editorWorkspaceLayout } from '@/lib/adaptive-workspace';
 import { projectTimelineDuration } from '@/lib/project-timeline';
+import { absorbShortCaptionCues } from '@/lib/caption-merge';
 import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type EditorSelection, type EditorTool } from '@/lib/editor-selection';
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
 import { usePreviewSceneGesture, type PreviewSceneTarget } from '@/hooks/use-preview-scene-gesture';
@@ -117,6 +118,7 @@ import {
 import { applyStylePatch, resolveCaptionStyle, type StyleScope } from '@/lib/style-resolver';
 import {
   buildClipTimeline,
+  completeVideoTimelineEdit,
   setClipPlaybackRate,
   timelineEntryAt,
   totalClipDuration,
@@ -810,6 +812,24 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     const snapshot = interactionStartRef.current;
     interactionStartRef.current = undefined;
     if (snapshot === editorSession.current()) return;
+    const current = editorSession.current();
+    const videoTimingChanged = snapshot && (snapshot.clips.length !== current.clips.length || snapshot.clips.some((clip, index) => {
+      const next = current.clips[index];
+      return !next || clip.id !== next.id || clip.sourceStartMs !== next.sourceStartMs || clip.sourceEndMs !== next.sourceEndMs
+        || clip.playbackRate !== next.playbackRate || clip.gapBeforeMs !== next.gapBeforeMs || clip.gapAfterMs !== next.gapAfterMs;
+    }));
+    const captionTimingChanged = snapshot && (snapshot.captions.length !== current.captions.length || snapshot.captions.some(caption => {
+      const next = current.captions.find(item => item.id === caption.id);
+      return !next || caption.startMs !== next.startMs || caption.endMs !== next.endMs;
+    }));
+    if (videoTimingChanged || captionTimingChanged) {
+      const next = videoTimingChanged ? completeVideoTimelineEdit(current) : absorbShortCaptionCues(current);
+      if (next !== current) {
+        transport.synchronizeProject(next);
+        setProject(next);
+        transport.seek(Math.max(0, Math.min(currentMs - (videoTimingChanged ? current.clips[0]?.gapBeforeMs ?? 0 : 0), Math.max(0, projectTimelineDuration(next) - 1))));
+      }
+    }
     if (snapshot) pushUndo(snapshot);
     persistProjectInBackground();
   };
@@ -1547,6 +1567,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject(result.project);
     persistProjectInBackground();
     transport.pause();
+    queueMicrotask(() => seekTimeline(result.seekMs));
   };
 
   const setClipLeadingGap = (clipId: string, gapMs: number) => {
@@ -1557,6 +1578,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     setProject(result.project);
     persistProjectInBackground();
     transport.pause();
+    queueMicrotask(() => seekTimeline(result.seekMs));
   };
 
   const addAudio = async (origin: 'audio-file' | 'video-audio') => {

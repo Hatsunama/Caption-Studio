@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   FlatList,
   Modal,
   Pressable,
@@ -14,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusedInputReveal, type FocusedInputReveal } from '@/hooks/use-focused-input-reveal';
 import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
+import { RefractBackground } from '@/components/refract-background';
 import { CAPTION_CLEANUP_WARNING, createCaptionJournalQueue } from './caption-save-recovery';
 
 import { chrome } from '@/lib/ui-theme';
@@ -22,6 +24,8 @@ import {
   committedDualCaptionText,
   dualCaptionDraftRevision,
   dualCaptionDraftsFromPairs,
+  dualCaptionDraftsMatch,
+  recoverMergedDualCaptionDrafts,
   mergeRecoveredDualCaptionDrafts,
   shouldRestoreDualCaptionJournal,
   type DualCaptionDraft,
@@ -87,6 +91,12 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   } = props;
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
+  const [appForeground, setAppForeground] = useState(() => AppState.currentState === 'active');
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => setAppForeground(state === 'active'));
+    setAppForeground(AppState.currentState === 'active');
+    return () => subscription.remove();
+  }, []);
   const [rootSize, setRootSize] = useState<{ width: number; height: number }>();
   const [actionsOpen, setActionsOpen] = useState(false);
   const width = (rootSize?.width ?? window.width) - insets.left - insets.right;
@@ -104,6 +114,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
   const [store] = useState(() => new DualCaptionDraftStore(sourceDrafts));
   const [openingRevision] = useState(() => dualCaptionDraftRevision(sourceDrafts));
+  // Recovery belongs to the opening session, even as committed pairs update.
+  const [openingRecovery] = useState(() => ({ pairs: props.pairs, trackId: props.trackId }));
   const editCount = useSyncExternalStore(store.subscribeDirty, store.getDirtyCount, store.getDirtyCount);
   const [journalReady, setJournalReady] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -139,7 +151,9 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       if (!active) return;
       setJournalRecovery(journal?.recovery);
       const preserveRecovery = !!journal?.recovery?.failures.length;
-      const recovered = decodeDualDraft(journal?.payload, allowedIds);
+      const aliasRecovery = journal && openingRecovery.pairs.some(pair => pair.source.mergeProvenance)
+        ? recoverMergedDualCaptionDrafts(journal.payload, openingRecovery.pairs, openingRecovery.trackId, journal.baseRevision) : undefined;
+      const recovered = aliasRecovery?.drafts ?? decodeDualDraft(journal?.payload, allowedIds);
       const nextCommitted = store.committed;
       const revisionConflict = !!journal && journal.baseRevision !== openingRevision;
       if (revisionConflict) setJournalConflict(true);
@@ -154,9 +168,12 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       };
       if (journal && !recovered) {
         setJournalError('The recovery draft could not be decoded. It is preserved; close and reopen the editor to retry.');
+        setJournalConflict(true);
+        setJournalReady(true);
         return;
       }
-      if (!recovered || !shouldRestoreDualCaptionJournal(recovered, nextCommitted)) {
+      if (!recovered || !(aliasRecovery?.remapped
+        ? !dualCaptionDraftsMatch(recovered, nextCommitted) : shouldRestoreDualCaptionJournal(recovered, nextCommitted))) {
         if (recovered && !preserveRecovery && !revisionConflict) void clearEditorDraftJournal(props.projectId, journalKind).catch(() => { if (active) setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'); });
         if (revisionConflict) setJournalError('Recovery conflict: the captions changed since this draft was saved. The recovery draft is preserved.');
         finishConflict();
@@ -167,17 +184,18 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
         [journal?.recovery?.warning, revisionConflict ? 'Recovery conflict: the captions changed since this draft was saved. Restoring may replace newer caption text; the recovery draft will be preserved.' : undefined, 'Caption Studio found typed edits that were not saved. Keeping the current translation leaves the second language as it is now.'].filter(Boolean).join('\n\n'),
         [
           { text: 'Keep current translation', style: 'cancel', onPress: () => { if (!active) return; store.replace(store.committed); if (!preserveRecovery && !revisionConflict) void clearEditorDraftJournal(props.projectId, journalKind).catch(() => { if (active) setJournalError('Old recovery data could not be cleared. Your current translation is unchanged.'); }); finishConflict(); } },
-          { text: 'Restore unsaved typing', onPress: () => { if (!active) return; store.replace(mergeRecoveredDualCaptionDrafts(recovered, store.committed)); finishConflict(); } },
+          { text: 'Restore unsaved typing', onPress: () => { if (!active) return; store.replace(aliasRecovery?.remapped ? { ...store.committed, ...recovered } : mergeRecoveredDualCaptionDrafts(recovered, store.committed)); finishConflict(); } },
         ],
       );
     }).catch((caught) => {
       if (active) {
         setJournalError(caught instanceof Error ? caught.message : 'Dual-subtitle recovery storage could not be read. Existing recovery data is preserved.');
-        setJournalReady(false);
+        setJournalConflict(true);
+        setJournalReady(true);
       }
     });
     return () => { active = false; };
-  }, [journalKind, openingRevision, props.projectId, store]);
+  }, [journalKind, openingRecovery, openingRevision, props.projectId, store]);
 
   useEffect(() => {
     if (!journalReady || props.busy || saving || closing) return;
@@ -384,7 +402,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
       {({ safeAreaBottom }) => (
       <View testID="dual-caption-root" onLayout={({ nativeEvent: { layout } }) => setRootSize({ width: layout.width, height: layout.height })}
         style={{ flex: 1, minHeight: 0, backgroundColor: chrome.background, paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }}>
-        <View style={{ paddingHorizontal: 18, paddingTop: compact ? 4 : 22, paddingBottom: compact ? 4 : 14, borderBottomWidth: 1, borderBottomColor: chrome.hairline }}>
+        <RefractBackground active={visible && appForeground} pointerEvents="none" style={{ position: 'absolute', inset: 0 }} />
+        <View style={{ paddingHorizontal: 18, paddingTop: compact ? 4 : 22, paddingBottom: compact ? 4 : 14, borderBottomWidth: 1, borderBottomColor: chrome.hairline, backgroundColor: 'rgba(5,20,28,0.9)' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <View style={{ flex: 1 }}>
               <Text style={{ color: chrome.text, fontSize: compact ? 22 : 28, fontWeight: '700' }}>Dual subtitles</Text>
@@ -425,8 +444,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
         </View>
 
         {props.busy || props.errorMessage || props.warningMessage ? (
-          <View accessibilityViewIsModal style={{ position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center', paddingTop: Math.max(8, insets.top), paddingBottom: Math.max(8, safeAreaBottom), paddingLeft: Math.max(12, insets.left), paddingRight: Math.max(12, insets.right), backgroundColor: 'rgba(0,0,0,0.78)' }}>
-            <ScrollView keyboardShouldPersistTaps="handled" style={{ width: '100%', maxWidth: 380, maxHeight: '100%', flexShrink: 1, borderRadius: chrome.radius.xl, backgroundColor: chrome.surfaceRaised }} contentContainerStyle={{ gap: 14, padding: 22 }}>
+          <View accessibilityViewIsModal style={{ position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center', paddingTop: Math.max(8, insets.top), paddingBottom: Math.max(8, safeAreaBottom), paddingLeft: Math.max(12, insets.left), paddingRight: Math.max(12, insets.right), backgroundColor: 'rgba(3,10,16,0.34)' }}>
+            <ScrollView keyboardShouldPersistTaps="handled" style={{ width: '100%', maxWidth: 380, maxHeight: '100%', flexShrink: 1, borderRadius: chrome.radius.xl, borderWidth: 1, borderColor: 'rgba(188,239,229,0.24)', backgroundColor: 'rgba(5,20,28,0.88)' }} contentContainerStyle={{ gap: 14, padding: 22 }}>
               {props.busy ? <ActivityIndicator color={chrome.accent} size="large" /> : null}
               <Text accessibilityRole={props.errorMessage || props.warningMessage ? 'alert' : undefined} selectable style={{ color: props.warningMessage ? chrome.warning : props.errorMessage ? chrome.dangerText : chrome.text, fontSize: 17, lineHeight: 24, fontWeight: '700', textAlign: 'center' }}>
                 {props.warningMessage ?? props.errorMessage ?? props.progressLabel ?? 'Translating locally…'}
@@ -442,19 +461,19 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
                     <Text style={{ color: chrome.accentInk, fontWeight: '800' }}>Retry</Text>
                   </Pressable>
                 ) : null}
-                <Pressable accessibilityRole="button" onPress={props.errorMessage || props.warningMessage ? props.onDismissError : props.onCancelBusy} style={{ flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: chrome.radius.md, backgroundColor: chrome.fill }}>
-                  <Text style={{ color: props.errorMessage || props.warningMessage ? chrome.text : chrome.dangerText, fontWeight: '800' }}>{props.errorMessage || props.warningMessage ? 'Close' : 'Cancel'}</Text>
+                <Pressable accessibilityRole="button" onPress={props.errorMessage || props.warningMessage ? props.onDismissError : props.onCancelBusy} style={{ flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: chrome.radius.md, backgroundColor: '#173E46' }}>
+                  <Text style={{ color: props.errorMessage || props.warningMessage ? chrome.text : '#D5FFF4', fontWeight: '800' }}>{props.errorMessage || props.warningMessage ? 'Close' : 'Cancel'}</Text>
                 </Pressable>
               </View>
               {props.translationActive && !props.errorMessage && !props.warningMessage ? (
-                <Text style={{ color: chrome.muted, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
+                <Text style={{ color: '#BCEFE5', fontSize: 16, lineHeight: 22, textAlign: 'center' }}>
                   Translations are happening locally with a 1.5B Qwen model. It will not be instant and I apologize for that.
                 </Text>
               ) : null}
             </ScrollView>
           </View>
         ) : null}
-        <View testID="dual-caption-footer" style={{ padding: shortWide ? 0 : compact ? 8 : 14, paddingBottom: shortWide ? safeAreaBottom : Math.max(compact ? 8 : 14, safeAreaBottom), borderTopWidth: shortWide ? 0 : 1, borderTopColor: chrome.hairline, backgroundColor: chrome.background }}>
+        <View testID="dual-caption-footer" style={{ padding: shortWide ? 0 : compact ? 8 : 14, paddingBottom: shortWide ? safeAreaBottom : Math.max(compact ? 8 : 14, safeAreaBottom), borderTopWidth: shortWide ? 0 : 1, borderTopColor: chrome.hairline, backgroundColor: 'rgba(5,20,28,0.9)' }}>
           {!compact && journalRecovery?.warning ? (
             <Text accessibilityRole="alert" selectable style={{ marginBottom: 8, color: chrome.dangerText, fontSize: 12, lineHeight: 17, textAlign: 'center' }}>
               {journalRecovery.warning}
