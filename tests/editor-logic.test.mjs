@@ -1342,8 +1342,13 @@ test('caption editing opens the full timestamped script and keeps text-layer edi
   assert.match(scriptEditor, /<FlatList/);
   assert.match(scriptEditor, /formatTimestamp\(item\.startMs\)/);
   assert.match(scriptEditor, /Scroll this list to seek the video/);
-  assert.doesNotMatch(scriptEditor, /onKeyPress=.*Backspace/);
-  assert.match(scriptEditor, /updateCaptionScriptText\(draftCaptions, caption\.id, text\)/);
+  const split = splitCaptionScriptBlock([{ id: 'primary', text: 'hello', startMs: 0, endMs: 1000, wordIds: [] }], 'primary', 2, [], 'right');
+  assert.deepEqual(split.focusedSelection, { start: 0, end: 0 });
+  const joined = mergeCaptionScriptBlock(split.captions, 'right');
+  assert.deepEqual(joined.focusedSelection, { start: 3, end: 3 });
+  const timedSplit = splitCaptionScriptBlockAtTime([{ id: 'primary', text: 'hello world', startMs: 0, endMs: 1000, wordIds: [] }], 'primary', 500, [], 'right');
+  assert.deepEqual(timedSplit.focusedSelection, { start: 0, end: 0 });
+  assert.match(scriptEditor, /updateCaptionScriptText\(draftCaptionsRef\.current, caption\.id, text\)/);
   assert.match(scriptEditor, /Split here/);
   assert.match(scriptEditor, /Join previous/);
   assert.match(scriptEditor, /Join next/);

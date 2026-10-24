@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
+import { createRequire } from 'node:module';
 import * as scriptMutations from '../src/lib/caption-script.ts';
+import { captionAtTimelinePosition } from '../src/lib/caption-timeline-anchor.ts';
 import * as saveRecoveryHelpers from '../src/components/editor/caption-save-recovery.ts';
 import { applyStylePatch, resolveCaptionStyle } from '../src/lib/style-resolver.ts';
 import { captionTransform } from '../src/lib/caption-transform.ts';
@@ -30,6 +32,10 @@ const layoutEvent = (y, height) => ({ nativeEvent: { layout: { x: 0, y, width: 3
 const scrollEvent = (y) => ({ nativeEvent: { contentOffset: { x: 0, y } } });
 const contentSizeEvent = (height, width = 240) => ({ nativeEvent: { contentSize: { width, height } } });
 const plain = (value) => JSON.parse(JSON.stringify(value));
+const requireModule = createRequire(import.meta.url);
+
+const selectionEvent = (start, end = start) => ({ nativeEvent: { selection: { start, end } } });
+const keyEvent = (key) => ({ nativeEvent: { key } });
 
 // Evaluate the real workspace expressions without loading its unrelated native
 // services. This covers the parent selection and the layout the sheet receives.
@@ -57,6 +63,7 @@ function workspaceValue(name, context) {
       || (ts.isObjectBindingPattern(node.name) && node.name.elements.some((element) => element.name.getText(editorAst) === name)));
   const value = evaluate(declaration.initializer.getText(editorAst), { scriptEditorOpen: true, scriptKeyboardOpen: false,
     scriptEditingCaption: undefined, scriptCropActive: false, currentMs: 0, selectedCaptionId: undefined,
+    captionAtTimelinePosition, captionTimelineMsRef: { current: context.currentMs ?? 0 }, timelineCaptions: cues,
     useMemo: (fn) => fn(), captionPreviewState, project: { captions: cues },
     reconcileCaptionScriptDraft: scriptMutations.reconcileCaptionScriptDraft, ...context });
   if (!ts.isObjectBindingPattern(declaration.name)) return value;
@@ -100,9 +107,10 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
     useEffect(callback, deps) {
       const index = cursor++;
       if (!slots[index] || !sameDeps(slots[index].deps, deps)) effects.push(() => {
-        slots[index]?.cleanup?.(); slots[index] = { deps, cleanup: callback() };
+        slots[index]?.cleanup?.(); slots[index] = { deps, setup: callback, cleanup: callback() };
       });
     },
+    useLayoutEffect(callback, deps) { react.useEffect(callback, deps); },
     createContext(value) { const context = { value }; context.Provider = { context }; return context; },
     useContext: (context) => context.value,
   };
@@ -121,10 +129,14 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native') return native;
       if (name === '@/lib/caption-script') return scriptMutations;
+      if (name === '@/lib/caption-timeline-anchor') return requireModule('../src/lib/caption-timeline-anchor.ts');
       if (name === './caption-save-recovery') return saveRecoveryHelpers;
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, pill: 20 } } };
       if (name === '@/services/editor-draft-journal') return {
-        readEditorDraftJournal: () => ({ then: (callback) => { recover = callback; return { catch: (callback) => { recoveryError = callback; } }; } }),
+        readEditorDraftJournal: () => {
+          calls.journalReads = (calls.journalReads ?? 0) + 1;
+          return { then: (callback) => { recover = callback; return { catch: (callback) => { recoveryError = callback; } }; } };
+        },
         archiveEditorDraftJournal: async () => { calls.journalArchives = (calls.journalArchives ?? 0) + 1; },
         clearEditorDraftJournal: async () => {
           calls.journalClears = (calls.journalClears ?? 0) + 1;
@@ -171,7 +183,8 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
       };
       if (list) list.props.data.forEach((item, index) => {
         const input = find('TextInput', list.props.renderItem({ item, index }));
-        input?.props.ref?.({ focus: () => calls.focuses.push(item.id) });
+        input?.props.ref?.({ focus: () => calls.focuses.push(item.id),
+          setNativeProps: (value) => (calls.placements ??= []).push({ id: item.id, ...plain(value) }) });
       });
       for (const effect of effects) effect();
     } while (dirty);
@@ -209,17 +222,32 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
     }
     now = until;
   }
-  render(); viewport(200);
+  function replayEffects() {
+    const mountedEffects = slots.filter(slot => slot?.setup);
+    for (const slot of mountedEffects) slot.cleanup?.();
+    for (const slot of mountedEffects) slot.cleanup = slot.setup();
+  }
+  render();
+  if (storage.strictReplay) { replayEffects(); render(); }
+  // Most scenarios begin after a successful empty-journal read. Explicitly
+  // deferred scenarios below exercise the unread and failed-read boundary.
+  if (!storage.deferRecovery) { recover(null); render(); }
+  viewport(200);
   for (let index = 0; index < list().data.length; index += 1) measure(index);
   calls.indices.length = 0;
   return {
     calls, props, list, row, find, act, fire, measure, viewport, advance,
+    replayEffects: () => act(replayEffects),
+    captureRecovery: () => recover,
+    captureRecoveryFailure: () => recoveryError,
+    hasPendingRender: () => dirty,
     async flush() { await new Promise(setImmediate); render(); },
     keyboard: (name) => act(() => keyboardListeners.get(name)?.()),
     update: (values) => act(() => Object.assign(props, values)),
     edit: (index) => act(() => row(index).props.onPress()),
     input: (index) => find('TextInput', row(index)).props,
     hasAction: (index, label) => !!walk(row(index), (node) => node.props?.label === label),
+    actionProps: (index, label) => walk(row(index), (node) => node.props?.label === label)?.props,
     action: (index, label) => act(() => walk(row(index), (node) => node.props?.label === label).props.onPress()),
     recover: (payload) => act(() => recover(payload === null ? null : {
       payload,
@@ -231,6 +259,253 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
   };
 }
+
+test('StrictMode initial effect replay replaces the cancelled recovery read and accepts native editing', () => {
+  const h = mount({}, 'android', { strictReplay: true, deferRecovery: true });
+  h.recover(null);
+  assert.equal(h.input(1).editable, true, 'the replayed recovery read must complete');
+  h.edit(1);
+  h.act(() => {
+    h.input(1).onChangeText('replayed words');
+    h.input(1).onSelectionChange(selectionEvent(4));
+  });
+  assert.equal(h.input(1).value, 'replayed words', 'the current input session must own events after replay');
+  h.action(1, 'Split here');
+  assert.deepEqual(plain(h.list().data.slice(1, 3).map(cue => cue.text)), ['repl', 'ayed words']);
+  h.unmount();
+});
+
+for (const restored of [false, true]) test(`effect replay preserves ${restored ? 'recovered' : 'edited'} text and caret while replacing recovery ownership`, () => {
+  const h = mount({}, 'android', { deferRecovery: true });
+  if (restored) { h.recover(cues.map(cue => ({ ...cue, text: `restored ${cue.text}` }))); h.restore(); }
+  else h.recover(null);
+  h.edit(1);
+  if (!restored) h.act(() => h.input(1).onChangeText('edited words'));
+  h.act(() => h.input(1).onSelectionChange(selectionEvent(3)));
+  const before = plain(h.list().data), placements = plain(h.calls.placements ?? []);
+  const staleRecovery = h.captureRecovery();
+  h.replayEffects();
+  assert.deepEqual(plain(h.list().data), before, 'replay cannot initialize the draft again');
+  assert.deepEqual(plain(h.calls.placements ?? []), placements, 'replay cannot reset the caret');
+  const alerts = h.calls.alerts.length;
+  h.act(() => staleRecovery({ payload: cues, baseRevision: 'obsolete' }));
+  assert.equal(h.calls.alerts.length, alerts, 'the cancelled read must stay inactive');
+  h.recover(null);
+  h.action(1, 'Split here');
+  assert.deepEqual(plain(h.list().data.slice(1, 3).map(cue => cue.text)), [before[1].text.slice(0, 3), before[1].text.slice(3)]);
+  const input = h.input(2), publications = h.calls.drafts.length;
+  h.unmount();
+  const afterUnmount = h.calls.drafts.length;
+  input.onChangeText('unmounted input'); input.onSubmitEditing({ nativeEvent: {} });
+  assert.deepEqual(plain(h.list().data.slice(1, 3).map(cue => cue.text)), [before[1].text.slice(0, 3), before[1].text.slice(3)]);
+  assert.equal(h.calls.drafts.length, afterUnmount);
+  assert.ok(afterUnmount > publications, 'real unmount still clears the parent preview');
+});
+
+test('a visible project change starts its own recovery and rejects captured input and read callbacks', () => {
+  const h = mount(); h.edit(1);
+  h.act(() => h.input(1).onChangeText('previous project draft'));
+  const stale = h.input(1), staleRecovery = h.captureRecovery();
+  const captions = cues.map(cue => ({ ...cue, text: `new ${cue.text}` }));
+  h.update({ projectId: 'new-project', captions });
+  assert.deepEqual(plain(h.list().data), captions);
+  assert.equal(h.input(1).editable, false, 'the new project waits for its recovery read');
+  const alerts = h.calls.alerts.length;
+  h.act(() => { stale.onChangeText('old delivery'); staleRecovery({ payload: cues, baseRevision: 'obsolete' }); });
+  assert.equal(h.calls.alerts.length, alerts);
+  h.recover(null); h.edit(1);
+  h.act(() => h.input(1).onChangeText('new project edit'));
+  assert.equal(h.input(1).value, 'new project edit');
+  h.unmount();
+});
+
+test('authoritative paused time wins over stale initial identity on open, follow, recovery and reopen', () => {
+  const h = mount({ initialCaptionId: 'cue-0', currentMs: 3500 });
+  h.viewport(180);
+  assert.equal(h.calls.indices.at(-1)?.index, 3);
+  h.update({ currentMs: 4500 });
+  assert.equal(h.calls.indices.at(-1)?.index, 4);
+  const restored = cues.map(cue => ({ ...cue, text: `Recovered\n${cue.text}` }));
+  h.recover(restored); h.restore();
+  assert.equal(h.input(4).value, restored[4].text);
+  assert.equal(h.calls.indices.at(-1)?.index, 4);
+  h.edit(2); h.act(() => h.input(2).onPressIn());
+  h.act(() => h.input(2).onFocus()); h.viewport(120); h.measure(2);
+  assert.deepEqual(h.calls.seeks, []);
+  h.update({ visible: false }); h.update({ visible: true, currentMs: 1500 });
+  h.viewport(180);
+  assert.equal(h.calls.indices.at(-1)?.index, 1);
+  assert.deepEqual(h.calls.seeks, []);
+});
+
+test('native submit uses latest controlled text and caret once; literal and pasted line breaks remain text', () => {
+  const h = mount(); h.edit(1);
+  assert.equal(h.input(1).submitBehavior, 'submit');
+  assert.equal(typeof h.input(1).onSubmitEditing, 'function');
+  const input = h.input(1);
+  h.act(() => {
+    input.onChangeText('helloworld');
+    input.onSelectionChange(selectionEvent(2));
+    input.onKeyPress?.(keyEvent('Enter'));
+    input.onSubmitEditing({ nativeEvent: { text: 'stale native text' } });
+  });
+  assert.deepEqual(plain(h.list().data.slice(1, 3).map(cue => cue.text)), ['he', 'lloworld']);
+  const id = h.list().data[2].id;
+  assert.deepEqual(h.calls.placements, [{ id, selection: { start: 0, end: 0 } }]);
+  assert.equal(h.input(2).selection, undefined);
+  h.act(() => h.input(2).onSelectionChange(selectionEvent(2)));
+  h.act(() => h.input(2).onChangeText('ll\n\noworld\r\n'));
+  h.viewport(120); h.measure(2); h.update({ currentMs: 1700 });
+  assert.equal(h.list().data.length, 7);
+  assert.equal(h.input(2).value, 'll\n\noworld\r\n');
+  assert.equal(h.calls.placements.length, 1, 'ordinary renders must not reset the native caret');
+  assert.deepEqual(h.calls.seeks, []);
+});
+
+test('Backspace at collapsed zero joins at the normalized seam and preserves paired translation provenance', () => {
+  const primary = { ...cues[0], text: '  left \n  side  ', mergeProvenance: {
+    fragments: [{ captionId: 'original-left', primaryText: 'left side', translations: { spanish: 'izquierda' } }],
+  } };
+  const h = mount({ captions: [primary, { ...cues[1], text: ' right  side ' }, cues[2]] });
+  h.edit(1); h.act(() => h.input(1).onSelectionChange(selectionEvent(0)));
+  h.act(() => h.input(1).onKeyPress?.(keyEvent('Backspace')));
+  assert.equal(h.list().data.length, 2);
+  assert.equal(h.input(0).value, 'left side right side');
+  assert.deepEqual(h.calls.placements, [{ id: primary.id, selection: { start: 10, end: 10 } }]);
+  assert.equal(h.list().data[0].mergeProvenance.fragments[0].translations.spanish, 'izquierda');
+  assert.equal(h.list().data[0].mergeProvenance.fragments[1].captionId, cues[1].id);
+  h.act(() => h.input(0).onSelectionChange(selectionEvent(4)));
+  h.action(0, 'Split here');
+  assert.equal(h.list().data[0].mergeProvenance.aliasesRetired, true);
+  assert.equal(h.list().data[1].mergeProvenance, undefined);
+  assert.deepEqual(h.calls.seeks, []);
+});
+
+test('selected-range Backspace, ordinary Backspace and first-cue zero retain native editing', () => {
+  const h = mount();
+  for (const [index, start, end] of [[1, 0, 2], [1, 2, 2], [0, 0, 0]]) {
+    h.edit(index); h.act(() => h.input(index).onSelectionChange(selectionEvent(start, end)));
+    const before = plain(h.list().data);
+    h.act(() => h.input(index).onKeyPress?.(keyEvent('Backspace')));
+    assert.deepEqual(plain(h.list().data), before);
+  }
+  assert.equal(h.calls.placements, undefined);
+});
+
+test('native Enter preserves complete graphemes at interior UTF-16 caret positions', () => {
+  for (const cluster of ['e\u0301', '\u{1F469}\u{1F3FD}\u200D\u{1F4BB}', '\u{1F1FA}\u{1F1F8}',
+    '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}']) {
+    const original = { ...cues[0], text: `a${cluster}z` };
+    const h = mount({ captions: [original] }); h.edit(0);
+    h.act(() => h.input(0).onSelectionChange(selectionEvent(cluster.includes('\u{E0067}') ? 5 : 2)));
+    h.act(() => h.input(0).onSubmitEditing({ nativeEvent: { text: original.text } }));
+    assert.equal(h.list().data.length, 2);
+    assert.equal(h.list().data.map(cue => cue.text).join(''), original.text);
+    assert.ok(h.list().data.some(cue => cue.text.includes(cluster)));
+    assert.deepEqual(h.calls.placements.at(-1).selection, { start: 0, end: 0 });
+  }
+});
+
+test('failed Enter preserves tiny cues, selected ranges and edge text without inventing durations', () => {
+  for (const [duration, start, end] of [[159, 2, 2], [1000, 0, 0], [1000, 5, 5], [1000, 1, 3]]) {
+    const caption = { ...cues[0], text: 'hello', endMs: duration };
+    const h = mount({ captions: [caption] }); h.edit(0);
+    h.act(() => h.input(0).onSelectionChange(selectionEvent(start, end)));
+    h.act(() => h.input(0).onSubmitEditing?.({ nativeEvent: { text: 'hello' } }));
+    assert.deepEqual(plain(h.list().data), [caption]);
+    assert.equal(h.calls.placements, undefined);
+    assert.deepEqual(h.calls.seeks, []);
+  }
+});
+
+for (const state of ['unread', 'failed', 'saving', 'closing']) test(`${state} guard preserves owned transient delivery and blocks structural handlers`, async () => {
+  let finish;
+  let actions = [];
+  const h = mount({ onSave: () => new Promise(resolve => { finish = resolve; }) }, 'android', { deferRecovery: true });
+  if (state === 'failed') h.failRecovery();
+  if (state === 'saving' || state === 'closing') {
+    h.recover(null); h.edit(1);
+    actions = ['Split here', 'Join previous', 'Join next'].map(label => h.actionProps(1, label));
+    if (state === 'saving') h.act(() => h.button('Save all caption edits').onPress());
+    else h.act(() => h.button('Cancel caption edits').onPress());
+  }
+  const before = plain(h.list().data), focuses = h.calls.focuses.length;
+  h.act(() => {
+    const input = h.input(1);
+    input.onSelectionChange(selectionEvent(0)); input.onFocus(); input.onPressIn();
+    input.onChangeText('blocked'); input.onSubmitEditing?.({ nativeEvent: { text: 'blocked' } });
+    input.onKeyPress?.(keyEvent('Backspace'));
+    h.row(1).props.onPress();
+    for (const action of actions) action.onPress();
+  });
+  assert.deepEqual(plain(h.list().data), state !== 'closing'
+    ? before.map((cue, index) => index === 1 ? { ...cue, text: 'blocked', textMode: 'manual' } : cue)
+    : before);
+  assert.equal(h.calls.focuses.length, focuses);
+  assert.equal(h.input(1).editable, false);
+  assert.deepEqual(h.calls.seeks, []);
+  h.advance(1000); await h.flush();
+  assert.equal(h.calls.journals, undefined);
+  assert.equal(h.calls.journalClears, state === 'closing' ? 1 : undefined);
+  finish?.(false); await h.flush(); h.unmount();
+});
+
+for (const state of ['unread', 'failed', 'undecodable']) for (const text of ['Current typing', '   ', '']) {
+  test(`${state} transient ${JSON.stringify(text)} survives Keep editing without touching recovery`, async () => {
+    let closes = 0;
+    const h = mount({ onCancel: () => { closes++; } }, 'android', { deferRecovery: true });
+    if (state === 'failed') h.failRecovery();
+    if (state === 'undecodable') h.recover([{ ...cues[0], wordIds: 'invalid' }]);
+    h.act(() => h.input(1).onChangeText(text));
+    assert.equal(h.input(1).value, text);
+    assert.equal(h.input(1).editable, false);
+    assert.equal(h.button('Save all caption edits').disabled, true);
+    h.act(() => h.button('Cancel caption edits').onPress());
+    assert.equal(closes, 0);
+    assert.match(h.calls.alerts.at(-1)[1], /preserved/);
+    h.act(() => h.calls.alerts.at(-1)[2].find(choice => choice.text === 'Keep editing').onPress?.());
+    assert.equal(h.input(1).value, text);
+    h.advance(2000); await h.flush();
+    assert.equal(h.calls.journals, undefined);
+    assert.equal(h.calls.journalClears, undefined);
+    h.act(() => h.button('Cancel caption edits').onPress());
+    h.act(() => h.calls.alerts.at(-1)[2].find(choice => choice.text === 'Discard').onPress());
+    await h.flush();
+    assert.equal(closes, 1);
+    assert.equal(h.calls.journalClears, undefined);
+    h.unmount();
+  });
+}
+
+for (const outcome of ['empty', 'failed', 'undecodable']) test(`${outcome} recovery outcome renews callback ownership even with unchanged status`, () => {
+  const h = mount({}, 'android', { deferRecovery: true });
+  const complete = () => outcome === 'failed' ? h.captureRecoveryFailure()(new Error('Read failed'))
+    : h.captureRecovery()(outcome === 'empty' ? null : { payload: [{ ...cues[0], wordIds: 'invalid' }] });
+  h.act(complete);
+  h.act(() => h.input(1).onChangeText('owned before outcome'));
+  const stale = h.input(1);
+  complete();
+  assert.equal(h.hasPendingRender(), true, 'a completed outcome must publish its new input epoch');
+  h.act(() => {});
+  h.act(() => stale.onChangeText('obsolete phase'));
+  assert.equal(h.input(1).value, 'owned before outcome');
+  h.act(() => h.input(1).onChangeText('current phase'));
+  assert.equal(h.input(1).value, 'current phase');
+  assert.equal(h.calls.journalReads, 1, 'publishing an input epoch cannot start another recovery read');
+  h.unmount();
+});
+
+test('join failure preserves original cues and caret without publishing a partial mutation', () => {
+  const bad = cues.slice(0, 2).map(cue => ({ ...cue, mergeProvenance: {
+    fragments: [{ captionId: 'duplicate', primaryText: cue.text, translations: {} }],
+  } }));
+  const h = mount({ captions: bad }); h.edit(1);
+  h.act(() => h.input(1).onSelectionChange(selectionEvent(0)));
+  h.act(() => h.input(1).onKeyPress?.(keyEvent('Backspace')));
+  assert.deepEqual(plain(h.list().data), bad);
+  assert.equal(h.calls.placements, undefined);
+  assert.match(h.list().ListHeaderComponent.props.children[1]?.props.children ?? '', /Originals were preserved/);
+});
 
 for (const edited of [false, true]) test(`retapping a natively focused input after keyboard dismissal restores joins without losing ${edited ? 'edited' : 'source'} text or caret`, async () => {
   let closes = 0;
@@ -369,9 +644,9 @@ test('tapping during momentum hands navigation to the focused input before keybo
   assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.selects, []);
 });
 
-test('selecting an offscreen caption seeks it and keeps its input visible during playback', () => {
+test('selecting an offscreen caption preserves transport and keeps its input visible during playback', () => {
   const h = mount(); h.edit(4);
-  assert.deepEqual(h.calls.selects, ['cue-4']); assert.deepEqual(h.calls.seeks, [4000]);
+  assert.deepEqual(h.calls.selects, ['cue-4']); assert.deepEqual(h.calls.seeks, []);
   assert.equal(h.calls.indices.at(-1)?.index, 4);
   h.calls.indices.length = 0;
   h.update({ isPlaying: true, currentMs: 1100 }); h.update({ currentMs: 2100 });
@@ -482,6 +757,147 @@ test('typing delivered while Save is pending stays open for an explicit second s
   assert.equal(h.calls.saves[0][0].text, 'first revision');
 });
 
+for (const [initialText, latestText] of [['original', 'same-batch revision'], ['', 'filled before Save'], ['original', '  \n']]) {
+  test(`same-batch input then Save validates and snapshots latest text ${JSON.stringify(latestText)}`, async () => {
+    let closes = 0;
+    const h = mount({ captions: [{ ...cues[0], text: initialText }],
+      onSave: async captions => { h.calls.saves.push(plain(captions)); return true; },
+      onCancel: () => { closes++; },
+    });
+    h.edit(0);
+    const input = h.input(0), save = h.button('Save all caption edits');
+    h.act(() => { input.onChangeText(latestText); save.onPress(); });
+    await h.flush();
+    assert.equal(h.input(0).value, latestText);
+    if (latestText.trim()) {
+      assert.equal(h.calls.saves.length, 1);
+      assert.equal(h.calls.saves[0][0].text, latestText);
+      assert.equal(closes, 1);
+    } else {
+      assert.deepEqual(h.calls.saves, []);
+      assert.equal(closes, 0);
+      assert.equal(h.calls.journalClears ?? 0, 0);
+      assert.equal(h.input(0).editable, true);
+    }
+    h.unmount();
+  });
+}
+
+for (const accepted of [false, true]) test(`same-batch input then Cancel prompts for edits after ${accepted ? 'accepted' : 'source'} draft`, async () => {
+  let closes = 0;
+  const storage = { clearError: true };
+  const h = mount({ onSave: async () => true, onCancel: () => { closes++; } }, 'android', storage);
+  h.edit(0);
+  if (accepted) {
+    h.act(() => h.input(0).onChangeText('accepted draft'));
+    h.act(() => h.button('Save all caption edits').onPress()); await h.flush();
+    assert.equal(h.calls.alerts.at(-1)[0], 'Changes saved');
+  }
+  storage.clearError = false;
+  h.calls.alerts.length = 0;
+  const clears = h.calls.journalClears ?? 0;
+  const input = h.input(0), cancel = h.button('Cancel caption edits');
+  h.act(() => { input.onChangeText('new text before Cancel'); cancel.onPress(); });
+  await h.flush();
+  assert.equal(closes, 0);
+  assert.equal(h.calls.journalClears ?? 0, clears);
+  assert.equal(h.calls.alerts.at(-1)?.[0], 'Discard unsaved caption edits?');
+  assert.equal(h.input(0).value, 'new text before Cancel');
+  h.act(() => h.calls.alerts.at(-1)[2].find(button => button.text === 'Keep editing').onPress?.());
+  assert.equal(h.input(0).editable, true);
+  h.unmount();
+});
+
+for (const restored of [false, true]) for (const outcome of ['success', 'false', 'rejection']) {
+  test(`queued text survives ${outcome} receipt from ${restored ? 'restored' : 'source'} draft with journal/version ownership`, async () => {
+    let resolveSave, rejectSave, closes = 0;
+    const receipt = new Promise((resolve, reject) => { resolveSave = resolve; rejectSave = reject; });
+    const h = mount({
+      onSave: (captions) => {
+        h.calls.saves.push(plain(captions));
+        return h.calls.saves.length === 1 ? receipt : Promise.resolve(true);
+      },
+      onCancel: () => { closes++; },
+    }, 'android', { deferRecovery: true });
+    if (restored) { h.recover(cues.map(cue => ({ ...cue, text: `restored ${cue.text}` }))); h.restore(); }
+    else h.recover(null);
+    h.edit(1);
+    h.act(() => h.input(1).onChangeText('submitted words'));
+    h.act(() => h.input(1).onSelectionChange(selectionEvent(0)));
+    const queued = h.input(1), other = h.input(2), row = h.row(2);
+    const actions = ['Split here', 'Join previous', 'Join next'].map(label => h.actionProps(1, label));
+    const before = plain(h.list().data), focuses = h.calls.focuses.length;
+    h.act(() => {
+      h.button('Save all caption edits').onPress();
+      queued.onChangeText('first queued words');
+      queued.onSubmitEditing({ nativeEvent: { text: 'first queued words' } });
+      queued.onKeyPress(keyEvent('Backspace'));
+      queued.onSelectionChange(selectionEvent(3));
+      for (const action of actions) action.onPress();
+      other.onFocus(); other.onPressIn(); row.props.onPress(); other.onChangeText('foreign cue');
+      queued.onChangeText('newest\nqueued words');
+    });
+    assert.equal(h.input(1).editable, false);
+    assert.equal(h.calls.focuses.length, focuses);
+    assert.deepEqual(plain(h.list().data), before.map((cue, index) => index === 1
+      ? { ...cue, text: 'newest\nqueued words', textMode: 'manual' } : cue));
+    assert.equal(h.calls.saves[0][1].text, 'submitted words');
+    if (outcome === 'rejection') rejectSave(new Error('receipt rejected'));
+    else resolveSave(outcome === 'success');
+    await h.flush();
+    assert.equal(closes, 0);
+    assert.equal(h.calls.journalClears ?? 0, 0);
+    assert.equal(h.input(1).value, 'newest\nqueued words');
+    assert.equal(h.button('Save all caption edits').disabled, false);
+    if (outcome === 'success') h.update({ captions: h.calls.saves[0] });
+    h.advance(1000); await h.flush();
+    const journal = h.calls.journals.at(-1);
+    assert.equal(journal[0], 'project');
+    assert.equal(journal[2], scriptMutations.captionScriptRevision(outcome === 'success' ? h.calls.saves[0] : cues));
+    assert.equal(journal[3][1].text, 'newest\nqueued words');
+    if (outcome === 'success') assert.match(h.list().ListHeaderComponent.props.children[4].props.children, /Newer caption edits are still unsaved/);
+    h.act(() => h.button('Save all caption edits').onPress()); await h.flush();
+    assert.equal(h.calls.saves.length, 2);
+    assert.equal(h.calls.saves[1][1].text, 'newest\nqueued words');
+    assert.equal(closes, 1);
+    assert.equal(h.calls.journalClears, 1);
+    h.unmount();
+  });
+}
+
+for (const boundary of ['project', 'reopen', 'restore', 'removed', 'cancel', 'unmount']) {
+  test(`captured text cannot cross ${boundary} ownership boundary`, async () => {
+    const h = mount(); h.edit(1);
+    const stale = h.input(1);
+    if (boundary === 'project') h.update({ projectId: 'another-project' });
+    if (boundary === 'reopen') { h.update({ visible: false }); h.update({ visible: true }); h.recover(null); }
+    if (boundary === 'restore') { h.recover(cues.map(cue => ({ ...cue, text: `restored ${cue.text}` }))); h.restore(); }
+    if (boundary === 'removed') h.action(1, 'Join previous');
+    if (boundary === 'cancel') { h.act(() => h.button('Cancel caption edits').onPress()); await h.flush(); }
+    if (boundary === 'unmount') h.unmount();
+    const before = plain(h.list().data), publications = h.calls.drafts.length;
+    if (boundary === 'unmount') stale.onChangeText('stale delivery');
+    else h.act(() => stale.onChangeText('stale delivery'));
+    assert.deepEqual(plain(h.list().data), before);
+    assert.equal(h.calls.drafts.length, publications);
+    h.advance(1000); await h.flush();
+    assert.ok((h.calls.journals ?? []).every(entry => entry[3].every(cue => cue.text !== 'stale delivery')));
+    if (boundary !== 'unmount') h.unmount();
+  });
+}
+
+for (const decision of ['unread', 'failed', 'restore']) test(`pre-recovery callback stays blocked after ${decision} recovery`, () => {
+  const h = mount({}, 'android', { deferRecovery: true });
+  const stale = h.input(1);
+  if (decision === 'failed') h.failRecovery();
+  if (decision === 'restore') { h.recover(cues); h.restore(); }
+  if (decision === 'unread') h.recover(null);
+  const before = plain(h.list().data);
+  h.act(() => stale.onChangeText('pre-recovery text'));
+  assert.deepEqual(plain(h.list().data), before);
+  h.unmount();
+});
+
 test('script input measurements survive focus transfer, reject invalid events and reset on reopen', () => {
   const h = mount();
   h.act(() => h.input(0).onContentSizeChange(contentSizeEvent(345)));
@@ -539,7 +955,7 @@ for (const interrupt of ['drag', 'close', 'unmount']) {
 
 test('reopening resets gestures and reveals the new initial cue', () => {
   const h = mount(); h.fire('onScrollBeginDrag'); h.fire('onScroll', 192);
-  h.update({ visible: false }); h.update({ visible: true, initialCaptionId: 'cue-4' });
+  h.update({ visible: false }); h.update({ visible: true, initialCaptionId: 'cue-0', currentMs: 4100 });
   h.calls.indices.length = 0; h.viewport(200);
   assert.equal(h.calls.indices.at(-1)?.index, 4);
   h.calls.seeks.length = 0; h.fire('onScroll', 492); assert.deepEqual(h.calls.seeks, []);
@@ -598,7 +1014,7 @@ test('Android resized workspace keeps the video controls and focused input above
     assert.equal(h.input(4).style.maxHeight, undefined, 'keyboard resize must never cap the text height');
     h.fire('onScroll', 500 - request.viewOffset);
   }
-  assert.deepEqual(h.calls.seeks, [4000], 'resize and reveal must not seek away from the edited cue');
+  assert.deepEqual(h.calls.seeks, [], 'focus, resize and reveal preserve authoritative transport');
   assert.ok(workspaceValue('previewHeight', { scriptEditorOpen: false, workspaceHeight: 280, height: 800 }) <= 136);
   assert.equal(jsxProp(tools, 'style', { scriptEditorOpen: false }).display, 'flex');
 });
@@ -641,7 +1057,7 @@ test('dragging and tapping retain native inputs and focus without reopening a na
   h.edit(4);
   assert.equal(h.input(1).value, 'caption 1', 'the previous native input must not unmount during focus transfer');
   assert.equal(h.input(4).scrollEnabled, false);
-  assert.equal(h.input(4).submitBehavior, 'newline');
+  assert.equal(h.input(4).submitBehavior, 'submit');
   assert.equal(h.calls.focuses.at(-1), 'cue-4');
   h.keyboard('keyboardDidHide'); h.calls.focuses.length = 0;
   h.viewport(500); h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 0); h.advance(150);
@@ -650,8 +1066,9 @@ test('dragging and tapping retain native inputs and focus without reopening a na
 });
 
 test('draft text, empty text, splits, joins and recovery reach the actual parent preview selection before Save', () => {
-  let scriptDraftCaptions = null, selectedCaptionId = cues[0].id, currentMs = 0;
+  let scriptDraftCaptions = null, selectedCaptionId = cues[0].id, currentMs = 1100;
   const h = mount({
+    currentMs,
     onDraftChange: (draft) => { scriptDraftCaptions = draft; },
     onSelectCaption: (caption) => { selectedCaptionId = caption.id; },
     onSeekTimeline: (ms) => { currentMs = ms; },
@@ -977,6 +1394,7 @@ test('a fast fling waits for virtualized cells and resolves its final seek after
   const h = mount();
   // A new session clears measured cells. Simulate only the first batch mounting.
   h.update({ visible: false }); h.update({ visible: true, captions }); h.viewport(200);
+  h.recover(null);
   h.measure(0); h.measure(1);
   h.calls.seeks.length = 0;
   h.fire('onScrollBeginDrag'); h.fire('onScroll', 5092);
@@ -1032,6 +1450,7 @@ for (const viewport of [120, 300, 600]) {
 
 test('unmeasured first cue owns the leading edge, including overscroll and delayed second-cell layout', () => {
   const h = mount(); h.update({ visible: false }); h.update({ visible: true }); h.viewport(500);
+  h.recover(null);
   h.measure(1, 176, 72);
   h.calls.seeks.length = 0; h.calls.selects.length = 0;
   h.fire('onScrollBeginDrag'); h.fire('onScroll', -18); h.fire('onScroll', 0);

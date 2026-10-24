@@ -109,7 +109,8 @@ for (const direction of ['previous', 'next']) for (const failure of ['capacity',
     ] };
     const before = structuredClone(project.captions);
     let message, focused = false;
-    const context = { Error, draftCaptions: project.captions, mergeCaptionScriptBlock,
+    const context = { Error, editableRef: { current: true }, canMutateInput: () => context.editableRef.current,
+      draftCaptionsRef: { current: project.captions }, mergeCaptionScriptBlock,
       setBoundaryMessage: value => { message = value; }, focusCaption: () => { focused = true; } };
     const declaration = declarations.find(node => node.name.getText(ast) === (direction === 'previous' ? 'mergeWithPrevious' : 'mergeWithNext'));
     const callback = runInNewContext(ts.transpileModule(`(${declaration.initializer.getText(ast)})`, {
@@ -118,6 +119,28 @@ for (const direction of ['previous', 'next']) for (const failure of ['capacity',
     assert.doesNotThrow(() => callback(project.captions[direction === 'previous' ? 1 : 0]));
     assert.match(message, failure === 'capacity' ? /limit|capacity/i : /identity|identit/i);
     assert.equal(focused, false);
+    assert.deepEqual(project.captions, before);
+  });
+}
+
+for (const direction of ['previous', 'next']) {
+  test(`UI Join ${direction}: disabled editing exits before merging and preserves the draft and focus`, () => {
+    const project = fixture();
+    const before = structuredClone(project.captions);
+    const draftCaptionsRef = { current: project.captions };
+    let mergeCalls = 0, message = 'Existing boundary message', focused = false;
+    const context = { Error, editableRef: { current: false }, draftCaptionsRef, canMutateInput: () => context.editableRef.current,
+      mergeCaptionScriptBlock: (...args) => { mergeCalls++; return mergeCaptionScriptBlock(...args); },
+      setBoundaryMessage: value => { message = value; }, focusCaption: () => { focused = true; } };
+    const declaration = declarations.find(node => node.name.getText(ast) === (direction === 'previous' ? 'mergeWithPrevious' : 'mergeWithNext'));
+    const callback = runInNewContext(ts.transpileModule(`(${declaration.initializer.getText(ast)})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    }).outputText, context);
+    assert.doesNotThrow(() => callback(project.captions[direction === 'previous' ? 1 : 0]));
+    assert.equal(mergeCalls, 0);
+    assert.equal(message, 'Existing boundary message');
+    assert.equal(focused, false);
+    assert.equal(draftCaptionsRef.current, project.captions);
     assert.deepEqual(project.captions, before);
   });
 }

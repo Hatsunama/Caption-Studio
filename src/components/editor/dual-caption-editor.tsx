@@ -11,6 +11,9 @@ import {
   TextInput,
   View,
   useWindowDimensions,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  type ViewToken,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusedInputReveal, type FocusedInputReveal } from '@/hooks/use-focused-input-reveal';
@@ -20,6 +23,7 @@ import { CAPTION_CLEANUP_WARNING, createCaptionJournalQueue } from './caption-sa
 
 import { chrome } from '@/lib/ui-theme';
 import type { CaptionPair } from '@/lib/caption-tracks';
+import { captionAtTimelinePosition } from '@/lib/caption-timeline-anchor';
 import {
   committedDualCaptionText,
   dualCaptionDraftRevision,
@@ -48,6 +52,8 @@ type DualCaptionEditorProps = {
   sourceLanguageLabel: string;
   targetLanguageLabel: string;
   pairs: CaptionPair[];
+  currentMs?: number;
+  onSeekTimeline?: (ms: number) => void;
   trackVisible: boolean;
   automaticTranslation: boolean;
   busy: boolean;
@@ -105,12 +111,115 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const paired = width >= 600;
   const shortWide = paired && height < 260;
   const listRef = useRef<FlatList<CaptionPair>>(null);
+  const [navigation] = useState(() => ({
+    alive: false, intentional: false, momentumAllowed: false,
+    currentMs: props.currentMs ?? 0,
+    onSeek: props.onSeekTimeline,
+    pairs: props.pairs,
+    targetIndex: -1,
+    pendingIndex: -1,
+    attempts: 0,
+    echoMs: undefined as number | undefined,
+    timer: undefined as ReturnType<typeof setTimeout> | undefined,
+  }));
+  const stopListNavigation = useCallback(() => {
+    navigation.intentional = false;
+    navigation.momentumAllowed = false;
+    navigation.pendingIndex = -1;
+    clearTimeout(navigation.timer);
+    navigation.timer = undefined;
+  }, [navigation]);
+  useLayoutEffect(() => {
+    navigation.alive = true;
+    return () => { navigation.alive = false; stopListNavigation(); };
+  }, [navigation, stopListNavigation]);
+  useLayoutEffect(() => {
+    navigation.currentMs = props.currentMs ?? 0;
+    navigation.onSeek = props.onSeekTimeline;
+    navigation.pairs = props.pairs;
+  }, [navigation, props.currentMs, props.onSeekTimeline, props.pairs]);
   const [listHeight, setListHeight] = useState<number>();
   // Share the measured pane budget between the metadata rail and both fields.
   // LanguageInput uses inline labels when a stacked label would crowd out 44dp.
   const inputMaxHeight = shortWide ? Math.max(MIN_LANGUAGE_INPUT_HEIGHT, (listHeight ?? height) - SHORT_WIDE_ROW_VERTICAL_CHROME) : undefined;
-  const scrollToOffset = useCallback((offset: number) => listRef.current?.scrollToOffset({ offset, animated: false }), []);
-  const [viewportRef, reveal] = useFocusedInputReveal(scrollToOffset);
+  const scrollToOffset = useCallback((offset: number) => {
+    stopListNavigation();
+    if (navigation.alive) listRef.current?.scrollToOffset({ offset, animated: false });
+  }, [navigation, stopListNavigation]);
+  const [viewportRef, inputReveal] = useFocusedInputReveal(scrollToOffset);
+  const reveal = useMemo(() => ({
+    ...inputReveal,
+    focus: (field: Parameters<FocusedInputReveal['focus']>[0]) => {
+      stopListNavigation();
+      inputReveal.focus(field);
+    },
+  }), [inputReveal, stopListNavigation]);
+  // Pair times belong to independently editable translations. Navigation always
+  // uses primary source identity and timing, shared with the main/script editors.
+  const sourceCaptions = useMemo(() => props.pairs.map(pair => pair.source), [props.pairs]);
+  const anchor = useMemo(() => captionAtTimelinePosition(sourceCaptions, props.currentMs ?? 0), [sourceCaptions, props.currentMs]);
+  const anchorIndex = useMemo(() => anchor ? props.pairs.findIndex(pair => pair.source.id === anchor.id) : -1, [anchor, props.pairs]);
+  useLayoutEffect(() => {
+    if (navigation.echoMs === (props.currentMs ?? 0)) {
+      navigation.echoMs = undefined;
+      navigation.targetIndex = anchorIndex;
+      return;
+    }
+    navigation.echoMs = undefined;
+    if (navigation.targetIndex === anchorIndex) return;
+    stopListNavigation();
+    navigation.targetIndex = anchorIndex;
+    navigation.pendingIndex = anchorIndex;
+    navigation.attempts = 0;
+    if (anchorIndex >= 0) listRef.current?.scrollToIndex({ index: anchorIndex, animated: false, viewPosition: 0 });
+  }, [anchorIndex, navigation, props.currentMs, stopListNavigation]);
+  const onScrollToIndexFailed = useCallback((info: { index: number; averageItemLength: number }) => {
+    if (!navigation.alive || navigation.pendingIndex !== info.index || navigation.timer !== undefined
+      || navigation.attempts >= 2 || !Number.isFinite(info.averageItemLength) || info.averageItemLength <= 0) return;
+    navigation.attempts++;
+    listRef.current?.scrollToOffset({ offset: Math.max(0, info.averageItemLength * info.index), animated: false });
+    navigation.timer = setTimeout(() => {
+      navigation.timer = undefined;
+      if (!navigation.alive || navigation.pendingIndex !== info.index || info.index >= navigation.pairs.length) return;
+      listRef.current?.scrollToIndex({ index: info.index, animated: false, viewPosition: 0 });
+    }, 100);
+  }, [navigation]);
+  const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken<CaptionPair>[] }) => {
+    if (!navigation.alive) return;
+    let first: ViewToken<CaptionPair> | undefined;
+    for (const token of viewableItems) {
+      if (!token.isViewable || token.index == null) continue;
+      if (token.index === navigation.pendingIndex) {
+        navigation.pendingIndex = -1;
+        clearTimeout(navigation.timer);
+        navigation.timer = undefined;
+      }
+      const source = token.item.source;
+      if (captionAtTimelinePosition([source], source.startMs) !== source) continue;
+      if (!first || token.index < first.index!) first = token;
+    }
+    if (!navigation.intentional || !first || !navigation.onSeek) return;
+    // Reject queued viewability notifications from data that has been replaced.
+    if (navigation.pairs[first.index!] !== first.item) return;
+    const ms = first.item.source.startMs;
+    if (ms === navigation.currentMs) return;
+    navigation.currentMs = ms;
+    navigation.echoMs = ms;
+    navigation.onSeek(ms);
+  }, [navigation]);
+  const onScrollBeginDrag = useCallback(() => {
+    if (!navigation.alive) return;
+    stopListNavigation();
+    navigation.intentional = true;
+    inputReveal.onScrollBeginDrag();
+  }, [inputReveal, navigation, stopListNavigation]);
+  const onScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    navigation.momentumAllowed = navigation.intentional && Math.abs(event.nativeEvent.velocity?.y ?? 0) > 0;
+    navigation.intentional = navigation.momentumAllowed;
+  }, [navigation]);
+  const onMomentumScrollBegin = useCallback(() => {
+    navigation.intentional = navigation.alive && navigation.momentumAllowed;
+  }, [navigation]);
   const sourceDrafts = useMemo(() => dualCaptionDraftsFromPairs(props.pairs), [props.pairs]);
   const [store] = useState(() => new DualCaptionDraftStore(sourceDrafts));
   const [openingRevision] = useState(() => dualCaptionDraftRevision(sourceDrafts));
@@ -426,7 +535,12 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
         <FlatList
           ref={listRef}
           onScroll={reveal.onScroll}
-          onScrollBeginDrag={reveal.onScrollBeginDrag}
+          onScrollBeginDrag={onScrollBeginDrag}
+          onScrollEndDrag={onScrollEndDrag}
+          onMomentumScrollBegin={onMomentumScrollBegin}
+          onMomentumScrollEnd={stopListNavigation}
+          onViewableItemsChanged={onViewableItemsChanged}
+          onScrollToIndexFailed={onScrollToIndexFailed}
           scrollEventThrottle={16}
           style={{ flex: 1, minHeight: 0 }}
           ListHeaderComponent={compact && (actionsOpen || hasStatus) ? <View style={{ gap: 12 }}>{actionsOpen ? actions : null}{hasStatus ? recoveryStatus : null}</View> : null}

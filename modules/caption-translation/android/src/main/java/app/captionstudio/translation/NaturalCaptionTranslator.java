@@ -626,7 +626,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       FragmentWork fragment = fragments.get(index);
       Caption candidate = candidates.get(index);
       if (usable(candidate, fragment.requestCaption.text, targetLanguage)) {
+        checkCancelled(run);
         fragment.accept(candidate.text);
+        checkCancelled(run);
         writeCheckpoint(
             checkpoints,
             fragment.checkpointKey,
@@ -677,6 +679,15 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
         batchIndex,
         totalBatches
     );
+    if (fragment.qualityReason == TranslationOutputQuality.Reason.PROTECTED_CONTENT) {
+      List<TranslationPreservation.RecoveryRange> plan =
+          TranslationPreservation.literalRecoveryPlan(fragment.requestCaption.text);
+      if (!plan.isEmpty()) {
+        recoverSourceLiterals(run, runtime, checkpoints, fragment, plan,
+            sourceLanguage, targetLanguage, contextBefore, contextAfter, batchIndex);
+        continue;
+      }
+    }
     ValidatedRequest retry = new ValidatedRequest(
         sourceLanguage,
         targetLanguage,
@@ -715,7 +726,9 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
           List.of(fragment.requestCaption), repairDiagnostic).get(0);
     }
     if (usable(candidate, fragment.requestCaption.text, targetLanguage)) {
+      checkCancelled(run);
       fragment.accept(candidate.text);
+      checkCancelled(run);
       writeCheckpoint(
           checkpoints,
           fragment.checkpointKey,
@@ -730,10 +743,95 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
     }
   }
 
+  /** Recovery pieces are ephemeral; only the original complete fragment can be committed. */
+  private void recoverSourceLiterals(ActiveRun run, TranslationRuntime runtime,
+      TranslationCheckpointStore checkpoints, FragmentWork fragment,
+      List<TranslationPreservation.RecoveryRange> plan, String sourceLanguage,
+      String targetLanguage, String contextBefore, String contextAfter, int batchIndex)
+      throws Exception {
+    String source = fragment.requestCaption.text;
+    StringBuilder assembled = new StringBuilder();
+    AttemptDiagnostic diagnostic = null;
+    for (TranslationPreservation.RecoveryRange range : plan) {
+      checkCancelled(run);
+      String piece = source.substring(range.start, range.end);
+      String output = piece;
+      if (range.prose && !literalOnly(piece)) {
+        Caption expected = new Caption(fragment.requestCaption.id, piece);
+        List<Caption> expectedItems = List.of(expected);
+        String before = extendContext(fragment.contextBefore,
+            recoveryNeighbor(source, 0, range.start, true), true);
+        String after = extendContext(fragment.contextAfter,
+            recoveryNeighbor(source, range.end, source.length(), false), false);
+        ValidatedRequest request = new ValidatedRequest(sourceLanguage, targetLanguage,
+            expectedItems, contextBefore, contextAfter);
+        String prompt = withSourceNeighbors(buildRetryPrompt(request, 0,
+            TranslationOutputQuality.Reason.NONE), before, after);
+        int tokens = outputTokenLimit(expectedItems, true);
+        if (!fitsPromptCapacity(prompt, tokens)) {
+          request = new ValidatedRequest(sourceLanguage, targetLanguage, expectedItems, "", "");
+          prompt = withSourceNeighbors(buildRetryPrompt(request, 0,
+              TranslationOutputQuality.Reason.NONE), before, after);
+        }
+        requirePromptCapacity(prompt, tokens);
+        diagnostic = new AttemptDiagnostic(diagnosticSink, batchIndex, ++run.diagnosticAttempt,
+            AttemptStage.REPAIR, 1, prompt.length(), tokens);
+        Caption candidate = generateAndParse(run, runtime, prompt, tokens, expectedItems, diagnostic).get(0);
+        if (!usable(candidate, piece, targetLanguage)) {
+          rejectRecovery(run, fragment, candidate, piece, targetLanguage, diagnostic);
+          return;
+        }
+        output = candidate.text;
+      }
+      // Enforce the existing per-fragment output bound before allocating more text.
+      if (assembled.length() + output.length() > MAX_OUTPUT_TEXT_CHARACTERS * 2) {
+        rejectRecovery(run, fragment,
+            new Caption(fragment.requestCaption.id, "", false, FailureClass.TEXT_TOO_LONG.name()),
+            source, targetLanguage, diagnostic);
+        return;
+      }
+      assembled.append(output);
+    }
+    checkCancelled(run);
+    // Reuse strict whole-source limits, marker checks and quality/count validation.
+    Caption complete = parseSingleCaptionRetryResponse(checkpointResponse(List.of(
+        new Caption(fragment.requestCaption.id, assembled.toString()))), fragment.requestCaption);
+    if (!usable(complete, source, targetLanguage)) {
+      rejectRecovery(run, fragment, complete, source, targetLanguage, diagnostic);
+      return;
+    }
+    checkCancelled(run);
+    fragment.accept(complete.text);
+    checkCancelled(run);
+    writeCheckpoint(checkpoints, fragment.checkpointKey,
+        checkpointResponse(List.of(new Caption("fragment", complete.text))));
+  }
+
+  private static void rejectRecovery(ActiveRun run, FragmentWork fragment, Caption candidate,
+      String source, String target, AttemptDiagnostic diagnostic) {
+    fragment.qualityReason = qualityReason(candidate, source, target);
+    if (diagnostic != null && candidate.valid) {
+      diagnostic.emitQuality(fragment.qualityReason, 0, candidate.text.length());
+    }
+    run.batchMetrics.reject(candidate.valid);
+    fragment.failureReason = candidate.valid ? FailureClass.QUALITY_REVIEW.name() : candidate.failureReason;
+  }
+
+  private static String recoveryNeighbor(String source, int start, int end, boolean before) {
+    // Slice only a bounded window, avoiding repeated full-prefix/suffix copies.
+    int boundary = before ? end : start;
+    for (int count = 0; count < CONTEXT_CODE_POINT_LIMIT && (before ? boundary > start : boundary < end); count++) {
+      boundary += before ? -Character.charCount(source.codePointBefore(boundary))
+          : Character.charCount(source.codePointAt(boundary));
+    }
+    return before ? source.substring(boundary, end) : source.substring(start, boundary);
+  }
+
   private static List<Caption> generateAndParse(ActiveRun run, TranslationRuntime runtime,
       String prompt, int tokens, List<Caption> expected, AttemptDiagnostic diagnostic)
       throws Exception {
     String response;
+    checkCancelled(run);
     try {
       String schema = null;
       if (runtime.supportsStructuredOutput()) {
@@ -743,6 +841,7 @@ public final class NaturalCaptionTranslator implements AutoCloseable {
       }
       response = run.batchMetrics.generate(runtime, prompt, tokens,
           diagnostic.stage == AttemptStage.REPAIR, schema);
+      checkCancelled(run);
     } catch (Exception | Error failure) {
       diagnostic.captureRuntime(runtime);
       FailureClass kind = failure instanceof CancellationException || failure instanceof InterruptedException

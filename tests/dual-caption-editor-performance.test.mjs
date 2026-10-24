@@ -6,6 +6,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as draftHelpers from '../src/lib/dual-caption-drafts.ts';
 import * as saveRecoveryHelpers from '../src/components/editor/caption-save-recovery.ts';
+import * as timelineHelpers from '../src/lib/caption-timeline-anchor.ts';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { createTranslationCaptionTrack, resolveCaptionPairs, setTranslationCueTiming, setTranslationCueStyle, setTranslationStackGap, updatePairedCaptionTexts } from '../src/lib/caption-tracks.ts';
 import { resolveCaptionStyle } from '../src/lib/style-resolver.ts';
@@ -35,7 +36,7 @@ function mount(overrides = {}, options = {}) {
   const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   const instances = new Map(), timers = new Map(), inputIdentities = new Map();
   const appStateListeners = new Set();
-  const calls = { alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
+  const calls = { reveals: [], offsets: [], seeks: [], alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
   let current, cursor, pending = [], changed = false, tree, now = 0, nextTimer = 0, windowStart = 0;
   const memoHook = (factory, deps) => {
     const index = cursor++;
@@ -103,6 +104,7 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 0, right: 0 } };
       if (name === '@/lib/ui-theme') return { chrome: { radius: { lg: 12, md: 8, pill: 20, xl: 20 } } };
       if (name === '@/lib/dual-caption-drafts') return draftHelpers;
+      if (name === '@/lib/caption-timeline-anchor') return timelineHelpers;
       if (name === './caption-save-recovery') return saveRecoveryHelpers;
       if (name === '@/services/editor-draft-journal') return {
         archiveEditorDraftJournal: async () => {},
@@ -119,6 +121,7 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
     visible: true, projectId: 'project', baseRevision: 'r1', trackId: 'zh', pairs: pairs(),
     sourceLanguageLabel: 'English', targetLanguageLabel: 'Chinese', trackVisible: true,
     automaticTranslation: true, busy: false, retryErrorAvailable: false,
+    onSeekTimeline: (ms) => calls.seeks.push(ms),
     onSave: async (edits) => { calls.saves.push(plain(edits)); return false; },
     onClose: () => { calls.close++; }, onRefresh: (ids) => calls.refresh.push(plain(ids)),
     onSkip: (...args) => calls.skip.push(args), onToggleVisibility: () => { calls.visibility++; },
@@ -143,10 +146,16 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
       return renderNode(instance.output, `${id}/output`, visited, inputs);
     }
     let children = node.props.children;
-    if (node.type === 'FlatList') children = [node.props.ListHeaderComponent,
+    if (node.type === 'FlatList') {
+      if (node.props.ref) node.props.ref.current = {
+        scrollToIndex(command) { calls.reveals.push(plain(command)); },
+        scrollToOffset(command) { calls.offsets.push(plain(command)); },
+      };
+      children = [node.props.ListHeaderComponent,
       ...node.props.data.slice(windowStart, windowStart + node.props.initialNumToRender)
         .map((item, index) => ({ ...node.props.renderItem({ item, index: windowStart + index }), key: node.props.keyExtractor(item) })),
       node.props.ListFooterComponent];
+    }
     if (node.type === 'TextInput') {
       const id = `${path}:${node.key ?? ''}`;
       inputs.add(id);
@@ -643,4 +652,56 @@ test('keyboard-short dual editor does not keep a navigation-bar spacer above an 
   const footer = h.all(node => node.props.testID === 'dual-caption-footer')[0];
   assert.equal(footer.props.style.paddingBottom, 0);
   assert.equal(h.input(0).props.value, 'Source 0');
+});
+
+const timelinePairs = () => pairs(100).map((pair, index) => ({
+  ...pair, startMs: index * 1000 + 30000, endMs: index * 1000 + 30500,
+  source: { ...pair.source, startMs: index * 1000, endMs: index * 1000 + 500 },
+}));
+const listOf = (h) => h.all(node => node.type === 'FlatList')[0].props;
+const viewable = (h, indexes) => h.act(() => listOf(h).onViewableItemsChanged({
+  viewableItems: indexes.map(index => ({ index, item: h.props.pairs[index], isViewable: true })), changed: [],
+}));
+
+test('dual opens/reopens at source playhead, follows external seeks and ignores translated offsets', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 80500 }); await h.flush();
+  assert.equal(h.calls.reveals.at(-1)?.index, 80);
+  assert.deepEqual(h.calls.seeks, []);
+  h.update({ currentMs: 95000 });
+  assert.equal(h.calls.reveals.at(-1).index, 95);
+  h.update({ visible: false }); h.update({ visible: true }); await h.flush();
+  assert.equal(h.calls.reveals.at(-1).index, 95);
+  assert.deepEqual(h.calls.refresh, []);
+  assert.deepEqual(h.calls.seeks, []);
+});
+
+test('dual only shares intentional list navigation and does not rerender rows for clock ticks', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 200 }); await h.flush();
+  const initialRows = [...h.calls.renders].filter(([key]) => key.startsWith('row:'));
+  const callback = listOf(h).onViewableItemsChanged;
+  h.update({ currentMs: 250 });
+  assert.equal(listOf(h).onViewableItemsChanged, callback);
+  assert.deepEqual([...h.calls.renders].filter(([key]) => key.startsWith('row:')), initialRows);
+  viewable(h, [5, 6]); assert.deepEqual(h.calls.seeks, []);
+  h.act(() => listOf(h).onScrollBeginDrag({ nativeEvent: { contentOffset: { y: 100 } } }));
+  viewable(h, [8, 9]); assert.deepEqual(h.calls.seeks, [8000]);
+  h.update({ currentMs: 8000 });
+  h.act(() => listOf(h).onScrollEndDrag({ nativeEvent: { velocity: { y: 0 } } }));
+  viewable(h, [2, 3]); assert.deepEqual(h.calls.seeks, [8000]);
+  h.act(() => h.input(0).props.onFocus());
+  h.act(() => listOf(h).onScroll({ nativeEvent: { contentOffset: { y: 20 } } }));
+  h.act(() => h.all(node => node.props.testID === 'dual-caption-root')[0].props.onLayout({ nativeEvent: { layout: { width: 900, height: 150 } } }));
+  viewable(h, [1, 2]); assert.deepEqual(h.calls.seeks, [8000]);
+});
+
+test('dual measurement failures have bounded retries and stale callbacks cannot seek after close', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 90000 }); await h.flush();
+  const stale = listOf(h).onViewableItemsChanged;
+  const fail = () => listOf(h).onScrollToIndexFailed({ index: 90, averageItemLength: 120, highestMeasuredFrameIndex: 5 });
+  for (let n = 0; n < 8; n++) { h.act(fail); await h.advance(100); }
+  assert.ok(h.calls.reveals.length >= 1 && h.calls.reveals.length <= 3);
+  assert.ok(h.calls.offsets.length <= 2);
+  h.act(() => listOf(h).onScrollBeginDrag({})); h.update({ visible: false });
+  h.act(() => stale({ viewableItems: [{ item: timelinePairs()[3], index: 3, isViewable: true }] }));
+  await h.advance(1000); assert.deepEqual(h.calls.seeks, []);
 });

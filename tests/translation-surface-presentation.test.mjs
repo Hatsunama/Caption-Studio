@@ -4,6 +4,7 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as captionTextBreaks from '../src/lib/caption-text-breaks.ts';
+import * as timelineHelpers from '../src/lib/caption-timeline-anchor.ts';
 
 const compile = path => ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
@@ -32,7 +33,7 @@ const style = value => Object.assign({}, ...[value].flat(Infinity).filter(Boolea
 function mount(overrides = {}, options = {}) {
   const instances = new Map(), listeners = new Set(), timers = new Map();
   const calls = { cancel: 0, dismiss: 0, retry: 0, subscriptions: 0, removals: 0, alerts: [] };
-  let current, cursor, dirty = true, pending = [], tree, timerId = 0;
+  let current, cursor, dirty = true, pending = [], pendingLayout = [], tree, timerId = 0;
   let dimensions = options.dimensions ?? { width: 390, height: 844 };
   let covered = false;
   const memo = (factory, deps) => {
@@ -40,17 +41,18 @@ function mount(overrides = {}, options = {}) {
     if (!same(current.slots[index]?.deps, deps)) current.slots[index] = { value: factory(), deps };
     return current.slots[index].value;
   };
-  const effect = (callback, deps) => {
+  const effect = (callback, deps, queue = pending) => {
     const instance = current, index = cursor++;
     if (!same(instance.slots[index]?.deps, deps)) {
       const previous = instance.slots[index];
       const slot = instance.slots[index] = { deps };
-      pending.push(() => { previous?.cleanup?.(); slot.cleanup = callback(); });
+      queue.push(() => { previous?.cleanup?.(); slot.cleanup = callback(); });
     }
   };
   const react = {
     memo: fn => fn, useMemo: memo, useCallback: (fn, deps) => memo(() => fn, deps),
-    useRef: initial => memo(() => ({ current: initial }), []), useEffect: effect, useLayoutEffect: effect,
+    useRef: initial => memo(() => ({ current: initial }), []), useEffect: effect,
+    useLayoutEffect: (callback, deps) => effect(callback, deps, pendingLayout),
     useState(initial) {
       const instance = current, index = cursor++;
       instance.slots[index] ??= { value: typeof initial === 'function' ? initial() : initial };
@@ -90,6 +92,7 @@ function mount(overrides = {}, options = {}) {
     react, 'react/jsx-runtime': runtime, 'react-native': native,
     'react-native-safe-area-context': { useSafeAreaInsets: () => options.insets ?? { top: 24, bottom: 20, left: 0, right: 0 } },
     '@/components/refract-background': background,
+    '@/lib/caption-timeline-anchor': timelineHelpers,
     '@/components/editor/keyboard-viewport': { KeyboardViewport: 'KeyboardViewport' },
     '@/hooks/use-focused-input-reveal': { useFocusedInputReveal: () => [{ current: null }, reveal] },
     '@/lib/ui-theme': { chrome }, '@/lib/dual-caption-drafts': evaluate(draftsCode, {
@@ -130,12 +133,13 @@ function mount(overrides = {}, options = {}) {
     let passes = 0;
     do {
       assert.ok(++passes < 30, 'render/effects must settle');
-      dirty = false; pending = [];
+      dirty = false; pending = []; pendingLayout = [];
       const visited = new Set();
       tree = renderNode(jsx(editor.DualCaptionEditor, props), 'root', visited);
       for (const [id, instance] of instances) if (!visited.has(id)) {
         instance.slots.forEach(slot => slot?.cleanup?.()); instances.delete(id);
       }
+      pendingLayout.forEach(callback => callback());
       pending.forEach(callback => callback());
     } while (dirty);
   }

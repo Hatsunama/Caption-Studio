@@ -11,7 +11,8 @@ import { videoClipPreviewGeometry } from '@/lib/video-transform';
 import { LayerTransformOverlay } from '@/components/editor/layer-transform-overlay';
 import { captionPreviewState, projectHasEditorLayer } from '@/lib/caption-preview';
 import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { captionAtTimelinePosition } from '@/lib/caption-timeline-anchor';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { AudioModule, RecordingPresets, useAudioRecorder } from 'expo-audio';
 import { useVoiceoverRecorderState } from '@/hooks/use-voiceover-recorder-state';
@@ -440,6 +441,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const transport = useTimelineVideoController(project, setError, runtimePolicy.videoSurfacesAdmitted);
   const { currentMs, isPlaying } = transport;
+  const captionTimelineMsRef = useRef(currentMs);
+  useLayoutEffect(() => { captionTimelineMsRef.current = currentMs; }, [currentMs]);
   useEffect(
     () => registerCaptionTranslationResources(transport.suspendForTranslation),
     [transport.suspendForTranslation],
@@ -593,7 +596,12 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
 
   const clipTimeline = useMemo(() => buildClipTimeline(project.clips), [project.clips]);
   const timelineDurationMs = projectTimelineDuration(project);
-  const seekTimeline = transport.seek;
+  const seekTransport = transport.seek;
+  const seekTimeline = useCallback((ms: number) => {
+    // Capture seeks synchronously as a save receipt can arrive before React commits.
+    captionTimelineMsRef.current = ms;
+    seekTransport(ms);
+  }, [seekTransport]);
 
   useEffect(() => {
     let active = true;
@@ -1084,7 +1092,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     if (!receipt || !editorSession.isCurrent(receipt)) return false;
     const { before, project: next } = receipt;
     if (!next.captions.some((caption) => caption.id === selectedCaptionId && caption.timelineVisible !== false)) {
-      setSelectedCaptionId(captions[0]?.id);
+      setSelectedCaptionId(captionAtTimelinePosition(next.captions, captionTimelineMsRef.current)?.id);
     }
     const changedCaptionIds = changedPrimaryCaptionTextIds(before, next);
     const visibleTranslation = next.captionTracks.translations.find((track) => track.visible);
@@ -2556,7 +2564,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         baseRevision={project.updatedAt}
         captions={timelineCaptions}
         words={project.transcription.words}
-        initialCaptionId={selectedCaptionId ?? activeCaption?.id}
+        initialCaptionId={captionAtTimelinePosition(timelineCaptions, currentMs)?.id}
         currentMs={currentMs}
         isPlaying={isPlaying}
         onSeekTimeline={seekTimeline}
@@ -2583,6 +2591,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         sourceLanguageLabel={captionLanguageLabel(primaryCaptionLanguage)}
         targetLanguageLabel={selectedTranslationTrack?.displayName ?? 'Second language'}
         pairs={selectedTranslationEditorPairs}
+        currentMs={currentMs}
+        onSeekTimeline={seekTimeline}
         trackVisible={selectedTranslationTrack?.visible ?? false}
         automaticTranslation={Boolean(
           selectedTranslationTrack

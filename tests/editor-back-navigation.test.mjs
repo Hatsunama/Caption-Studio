@@ -49,13 +49,20 @@ function fixture(translated = true) {
 
 function mount(t, initialProject = fixture()) {
   const slots = [], listeners = new Map(), frames = new Map(), hookModules = new Map();
-  let cursor = 0, dirty = true, effects = [], tree, frameId = 0, keyboardVisible = false;
+  let cursor = 0, dirty = true, effects = [], layoutEffects = [], tree, frameId = 0, keyboardVisible = false;
   const calls = { alerts: [], exits: [], writes: [], scrolls: [], dismisses: 0 };
   const sameDeps = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
   function memo(factory, deps) {
     const index = cursor++;
     if (!slots[index] || !sameDeps(slots[index].deps, deps)) slots[index] = { value: factory(), deps };
     return slots[index].value;
+  }
+  function enqueueEffect(callback, deps, queue) {
+    const index = cursor++;
+    if (!slots[index] || !sameDeps(slots[index].deps, deps)) queue.push(() => {
+      slots[index]?.cleanup?.();
+      slots[index] = { deps, cleanup: callback() };
+    });
   }
   const react = {
     useMemo: memo, useCallback: (callback, deps) => memo(() => callback, deps),
@@ -69,11 +76,10 @@ function mount(t, initialProject = fixture()) {
       }];
     },
     useEffect(callback, deps) {
-      const index = cursor++;
-      if (!slots[index] || !sameDeps(slots[index].deps, deps)) effects.push(() => {
-        slots[index]?.cleanup?.();
-        slots[index] = { deps, cleanup: callback() };
-      });
+      enqueueEffect(callback, deps, effects);
+    },
+    useLayoutEffect(callback, deps) {
+      enqueueEffect(callback, deps, layoutEffects);
     },
   };
   function subscribe(name, callback) {
@@ -190,11 +196,13 @@ function mount(t, initialProject = fixture()) {
     let passes = 0;
     do {
       assert.ok(++passes < 25, 'workspace settles after input');
-      dirty = false; cursor = 0; effects = [];
+      dirty = false; cursor = 0; effects = []; layoutEffects = [];
       tree = exports.Workspace({ initialProject });
       for (const node of all((node) => node.type === 'ScrollView' && node.props.ref)) {
         node.props.ref.current = { scrollTo: (request) => calls.scrolls.push(plain(request)) };
       }
+      // Commit attached refs and layout effects before passive subscriptions.
+      layoutEffects.forEach((effect) => effect());
       effects.forEach((effect) => effect());
     } while (dirty);
   }

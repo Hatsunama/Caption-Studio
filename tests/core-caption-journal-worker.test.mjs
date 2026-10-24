@@ -21,7 +21,10 @@ const harnessExports = {};
 const prefix = harnessSource.slice(0, firstTest.getStart(ast)).replaceAll('import.meta.url', '__harnessUrl');
 runInNewContext(ts.transpileModule(`${prefix}\nexports.mount = mount; exports.pairs = pairs;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-}).outputText, { exports: harnessExports, require: specifier => modules.get(specifier),
+}).outputText, { exports: harnessExports, require: specifier => {
+    assert.ok(modules.has(specifier), `Missing harness dependency: ${specifier}`);
+    return modules.get(specifier);
+  },
   __harnessUrl: harnessUrl.href, URL, process, setTimeout, clearTimeout });
 const { mount, pairs } = harnessExports;
 

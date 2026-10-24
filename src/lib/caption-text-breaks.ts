@@ -16,7 +16,8 @@ const TOKEN_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{S
 const CLOSING_PUNCTUATION = /^[,.;:!?%\u2026\u3001\u3002\uFF01\uFF0C\uFF0E\uFF1A\uFF1B\uFF1F\uFF05)\]}\u3009\u300B\u300D\u300F\u3011\u3015\u3017\u3019\u301B\u2019\u201D]+$/u;
 const OPENING_PUNCTUATION = /^[([{\u3008\u300A\u300C\u300E\u3010\u3014\u3016\u3018\u301A\u2018\u201C]+$/u;
 const CJK_PUNCTUATION_EDGE = /[\u3001\u3002\uFF01\uFF0C\uFF0E\uFF1A\uFF1B\uFF1F\uFF05\u3008-\u301B]/u;
-const COMBINING_CHARACTER = /[\p{Mark}\uFE00-\uFE0F\u{1F3FB}-\u{1F3FF}]/u;
+const COMBINING_CHARACTER = /[\p{Mark}\uFE00-\uFE0F\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}]/u;
+const REGIONAL_INDICATOR = /[\u{1F1E6}-\u{1F1FF}]/u;
 
 export function captionTextTokenSpans(text: string): CaptionTextTokenSpan[] {
   return [...text.matchAll(TOKEN_PATTERN)].map((match) => ({
@@ -283,10 +284,14 @@ function captionGraphemeSpans(text: string): CaptionTextTokenSpan[] {
   const spans: CaptionTextTokenSpan[] = [];
   let offset = 0;
   let joinsNext = false;
+  let regionalIndicatorRun = 0;
   for (const character of text) {
     const start = offset;
     offset += character.length;
-    const append = spans.length > 0 && (joinsNext || character === '\u200D' || COMBINING_CHARACTER.test(character));
+    const isRegionalIndicator = REGIONAL_INDICATOR.test(character);
+    // Consecutive regional indicators form pairs from the start of each run.
+    const append = spans.length > 0 && (joinsNext || character === '\u200D' || COMBINING_CHARACTER.test(character)
+      || (isRegionalIndicator && regionalIndicatorRun % 2 === 1));
     if (append) {
       const previous = spans[spans.length - 1];
       spans[spans.length - 1] = {
@@ -298,6 +303,7 @@ function captionGraphemeSpans(text: string): CaptionTextTokenSpan[] {
       spans.push({ text: character, start, end: offset });
     }
     joinsNext = character === '\u200D';
+    regionalIndicatorRun = isRegionalIndicator ? regionalIndicatorRun + 1 : 0;
   }
   return spans;
 }
