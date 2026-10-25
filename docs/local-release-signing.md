@@ -136,20 +136,19 @@ metadata is a compatible identity/hash record, not permission to publish.
 
 ## Cloud responsibilities replaced and remaining proof
 
-For a future approved workflow transition, local signing replaces cloud access
-to production private keys/passwords, cloud APK/AAB signing, and cloud signed
-artifact verification/receipt creation. The unsigned producer retains source
-approval, clean native build, dependency/security checks, unit tests, R8 mapping,
-ABI/ELF and unsigned artifact provenance responsibilities. This change does not
-edit any workflow or disable its current signing/publishing behavior. The parent
-must complete its separate reviewed transition before retiring that behavior.
+Local signing replaces cloud access to production private keys/passwords and
+cloud APK/AAB signing. The unsigned producer retains source approval, clean native
+build, dependency/security checks, unit tests, R8 mapping, ABI/ELF and unsigned
+artifact provenance responsibilities. The signer itself never modifies Actions
+workflows or secrets; the separately reviewed transition retires cloud signers.
 
-Keep GitHub production signing secrets until the parent has recovered both
-original keys on C, proved private-key signing with the original D02 and 50D,
-and run this full signer against a trusted future unsigned build. Secret removal
-is a separate parent action after those local proofs. This signer never deletes
-secrets or claims their deletion. Original Solana recovery/main integration was
-still pending when this signer was implemented.
+Before removing cloud signing credentials, recover both original keys on C,
+prove private-key signing and verification against D02 and 50D, and preserve the
+verified encrypted backup. Secret removal is a separate explicit operator action.
+The [integration record](cloud-signing-retirement.md) records the completed local
+proofs and removal. Full unsigned-build/local-signing verification remains a
+separate prerequisite for accepting the replacement production pipeline; local
+receipts never substitute for final device verification or publication approval.
 
 After actual production signing, independently verify certificate pins, hashes,
 source and store version ordering, and retain mapping/receipts. Device update

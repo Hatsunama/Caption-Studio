@@ -1,17 +1,27 @@
-# Cloud signing retirement proposal
+# Local production signing and cloud retirement
 
-These working-tree edits are not active on main. Parent reports original D02
-private-key sign/verify proof completed on C after recovery run 40239617753;
-50D Play proof had already succeeded. Parent retained the encrypted C backup and
-deleted the recovery artifact after proof. Parent also reports the three legacy
-workflow IDs are now `disabled_manually`. This follow-up does not inspect keys or
-independently establish those remote facts.
+On 2026-10-25 the existing Solana D02 key was recovered through approved run
+40239617753. Both D02 and the distinct Play upload 50D key signed and verified
+locally, and passed again after relocation to `C:\caption_studio\signing`.
+The protected C folder retains the original keys, DPAPI passwords, encrypted
+recovery backup and local proof receipt. The completed encrypted Actions artifact
+was deleted after local proof. No new production key or certificate was generated.
 
-The four original signing secrets remain retained pending full unsigned/local
-signer pipeline proof. Parent reports future unsigned 1.4.136/code 148 build
-40239905976 running on main e4e8aef without secrets. Parent alone owns that run,
-Actions changes and eventual secret removal. Published 1.4.135 APK/AAB bytes remain
-immutable. Key recovery no longer blocks review of this retirement proposal.
+After both local private-key proofs, the four original repository signing secrets
+were removed. The repository and `github-pages` environment each reported zero
+remaining secrets. The three legacy workflow IDs are disabled manually. This PR
+also replaces their source with the fail-closed tombstones below. These operational
+facts were checked separately from source tests; possession of a certificate or a
+passing unit test alone was not accepted as private-key proof.
+
+The published 1.4.135 APK/AAB bytes remain unchanged. Actual future unsigned/local
+pipeline verification is incomplete: run 40239905976 passed source, native build
+and artifact checks but failed creating its final output because `dist` was absent.
+The clean-checkout regression reproduced that ENOENT; this PR creates the parent
+while retaining exclusive final-output ownership. The local producer/signer suite
+then passed 28/28. A successful fresh trusted-main unsigned build and full local
+APK/AAB signing remain required after the owner merge, before this replacement
+pipeline is accepted. New releases additionally require exact-artifact device tests.
 
 `publish-sidecar.yml`, `verify-play-aab.yml` and `recover-local-signing.yml` retain
 their filenames as manual compatibility tombstones. Each has empty permissions
@@ -71,8 +81,8 @@ All Node commands used the existing
 with `--max-old-space-size=64`; multi-file tests used `--test-concurrency=1`.
 Recovery selected `C:/Python311/python.exe` and existing Git OpenSSL; the refusal
 harness selected existing Git Bash. No dependency installation or local Gradle ran.
-The remaining validation gap is hosted follow-up workflow execution and parent's
-full unsigned/local signer pipeline proof; this task does not establish either.
+Hosted final-head checks and a successful fresh trusted-main unsigned/local
+signing proof remain acceptance prerequisites; synthetic tests do not establish them.
 
 Changed files (17):
 
