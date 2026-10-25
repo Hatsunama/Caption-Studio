@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "roles": {
+    "apk": "d02d23b28cbc615e3686d181aedefbbe5de993a0b6ba3f8e4ea2b6160211b35f",
+    "aab": "50d77dfe5b3239d2fa86856613cb193898662a6a9dad2103812ea099ba102ddb"
+  },
+  "publishedBaseline": {
+    "version": "1.4.135",
+    "versionCode": 147
+  }
+}
