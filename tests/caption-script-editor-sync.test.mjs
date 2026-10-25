@@ -813,6 +813,66 @@ for (const order of ['focus then selection', 'selection then focus']) {
   });
 }
 
+test('structural selection is a committed render snapshot until the release commits', () => {
+  const { h } = mountAndroidMiddleWordSplit('after placement', 'focus then selection', false);
+  try {
+    const committed = h.list(), item = committed.data[1];
+    const committedInput = () => h.find('TextInput', committed.renderItem({ item, index: 1 })).props;
+    assert.deepEqual(plain(committedInput().selection), { start: 0, end: 0 });
+    // Deliver real intent without flushing queued React state. VirtualizedList
+    // may still invoke the committed renderItem during this interval.
+    committedInput().onPressIn();
+    assert.equal(h.hasPendingRender(), true);
+    assert.deepEqual(plain(committedInput().selection ?? null), { start: 0, end: 0 },
+      'releasing imperative ownership cannot mutate an existing render snapshot');
+    h.act(() => {});
+    assert.equal(h.input(1).selection, undefined, 'the next commit releases control');
+    assert.deepEqual(plain(committedInput().selection), { start: 0, end: 0 },
+      'even a retained old render callback keeps its immutable projection');
+  } finally { h.unmount(); }
+});
+
+test('effect replay releases a pending structural projection and keeps renewed input editable', () => {
+  const { h, nativeInputs, rightId } = mountAndroidMiddleWordSplit('after placement', 'focus then selection', false);
+  try {
+    assert.deepEqual(plain(h.input(1).selection), { start: 0, end: 0 });
+    h.replayEffects();
+    assert.equal(h.input(1).selection, undefined, 'replay cleanup must release React control with its imperative owner');
+    h.recover(null);
+    h.act(() => nativeInputs.completeFocus());
+    h.act(() => nativeInputs.moveCaret(rightId, 4));
+    h.act(() => nativeInputs.type(rightId, 'IME'));
+    assert.equal(h.input(1).value, 'llo IME👩🏽‍💻✨');
+    assert.equal(h.input(1).selection, undefined);
+    assert.equal(h.input(1).editable, true);
+  } finally { h.unmount(); }
+});
+
+for (const outcome of ['empty', 'failed', 'undecodable']) {
+  test(`pending structural projection releases on ${outcome} recovery epoch renewal`, () => {
+    const { h } = mountAndroidMiddleWordSplit('after placement', 'focus then selection', false);
+    try {
+      const stale = h.input(1);
+      assert.deepEqual(plain(stale.selection), { start: 0, end: 0 });
+      if (outcome === 'failed') h.failRecovery();
+      else h.recover(outcome === 'empty' ? null : [{ ...cues[0], wordIds: 'invalid' }]);
+      assert.equal(h.input(1).selection, undefined);
+      h.act(() => {
+        stale.onFocus(); stale.onSelectionChange(selectionEvent(0));
+        stale.onKeyPress(keyEvent('Backspace')); stale.onChangeText('obsolete text');
+      });
+      assert.equal(h.input(1).value, 'llo 👩🏽‍💻✨');
+      assert.equal(h.list().data.length, 6);
+      h.act(() => h.input(1).onChangeText('current IME text'));
+      assert.equal(h.input(1).value, 'current IME text', 'renewal preserves current native text delivery');
+      h.recover(null);
+      assert.equal(h.input(1).editable, true);
+      assert.equal(h.input(1).selection, undefined, 'restored editability cannot resurrect the projection');
+      assert.equal(h.input(1).value, 'current IME text');
+    } finally { h.unmount(); }
+  });
+}
+
 for (const intent of ['press', 'key', 'text', 'drag', 'blur']) {
   test(`pending structural selection yields promptly to ${intent} before focus acknowledgment`, () => {
     const { h, nativeInputs, rightId } = mountAndroidMiddleWordSplit('after placement', 'focus then selection', false);

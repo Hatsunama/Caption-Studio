@@ -89,12 +89,14 @@ export function ScriptEditor(props: {
     id: string; selection: { start: number; end: number };
     requested?: boolean; acknowledged?: boolean; placing?: boolean;
   } | undefined>(undefined);
-  const [selectionEpoch, setSelectionEpoch] = useState(0);
-  const releaseSelection = () => {
-    if (!pendingFocusRef.current) return;
+  // JSX owns an immutable render snapshot; native handoff flags stay imperative.
+  const [structuralSelection, setStructuralSelection] = useState<{
+    id: string; selection: { start: number; end: number };
+  }>();
+  const releaseSelection = useCallback(() => {
     pendingFocusRef.current = undefined;
-    setSelectionEpoch((value) => value + 1);
-  };
+    setStructuralSelection(undefined);
+  }, []);
   const splitCounterRef = useRef(0);
   const [draftCaptions, setDraftCaptions] = useState<CaptionBlock[]>([]);
   const [inputHeights, setInputHeights] = useState<Record<string, number>>({});
@@ -120,30 +122,29 @@ export function ScriptEditor(props: {
   const inputReadyRef = useRef(false);
   const inputSavingRef = useRef(false);
   const pendingTextCaptionRef = useRef<string | undefined>(undefined);
-  const ownsInput = () => inputSession.active && inputSessionRef.current === inputSession
-    && inputSession.revision === inputRevision;
-  const canMutateInput = () => ownsInput() && editableRef.current;
+  const ownsInput = useCallback(() => inputSession.active && inputSessionRef.current === inputSession
+    && inputSession.revision === inputRevision, [inputRevision, inputSession]);
+  const canMutateInput = useCallback(() => ownsInput() && editableRef.current, [ownsInput]);
   const renewInput = useCallback(() => {
-    pendingFocusRef.current = undefined;
-    setSelectionEpoch((value) => value + 1);
+    releaseSelection();
     inputSession.revision += 1;
     setInputRevision(inputSession.revision);
-  }, [inputSession]);
+  }, [inputSession, releaseSelection]);
   useLayoutEffect(() => {
     inputSessionRef.current = inputSession;
     inputSession.active = true;
     return () => {
       inputSession.active = false;
-      pendingFocusRef.current = undefined;
+      releaseSelection();
       focusedInputRef.current = null;
     };
-  }, [inputSession]);
+  }, [inputSession, releaseSelection]);
   useLayoutEffect(() => {
     editableRef.current = editable;
     if (!editable) releaseSelection();
     inputReadyRef.current = props.visible && !closing;
     inputSavingRef.current = saving;
-  }, [closing, editable, inputRevision, props.visible, saving]);
+  }, [closing, editable, inputRevision, props.visible, releaseSelection, saving]);
   // Native text/selection events can precede the next React render. Commands
   // read the latest accepted controlled draft, never a submit-event snapshot.
   const draftCaptionsRef = useRef(draftCaptions);
@@ -214,7 +215,7 @@ export function ScriptEditor(props: {
     if (editableRef.current && editingCaptionId && !pendingFocusRef.current) inputRefs.current[editingCaptionId]?.focus();
   }, [editingCaptionId]);
 
-  const placePendingSelection = (id: string, input: TextInput | null) => {
+  const placePendingSelection = useCallback((id: string, input: TextInput | null) => {
     const pending = pendingFocusRef.current;
     if (!canMutateInput() || !pending || pending.id !== id || !input || pending.requested) return;
     pending.requested = true;
@@ -226,10 +227,10 @@ export function ScriptEditor(props: {
     pending.placing = true;
     try { input.setNativeProps({ selection: pending.selection }); }
     finally { pending.placing = false; }
-  };
+  }, [canMutateInput]);
   useEffect(() => {
     if (editingCaptionId) placePendingSelection(editingCaptionId, inputRefs.current[editingCaptionId]);
-  }, [draftCaptions, editingCaptionId, editable, selectionEpoch]);
+  }, [draftCaptions, editingCaptionId, editable, placePendingSelection, structuralSelection]);
 
   const cancelNavigation = useCallback(() => {
     clearTimeout(navigationTimerRef.current);
@@ -305,7 +306,6 @@ export function ScriptEditor(props: {
       const { sourceCaptions, initialIndex, onDraftChange } = openingStateRef.current;
       setDraftCaptions(sourceCaptions);
       draftCaptionsRef.current = sourceCaptions;
-      pendingFocusRef.current = undefined;
       draftVersionRef.current = 0;
       setInputHeights({});
       onDraftChange(sourceCaptions);
@@ -385,7 +385,6 @@ export function ScriptEditor(props: {
             setDraftCaptions(recovered);
             draftCaptionsRef.current = recovered;
             setEditingCaptionId(undefined);
-            pendingFocusRef.current = undefined;
             selectionRef.current = {};
             finishConflict();
           } },
@@ -504,6 +503,7 @@ export function ScriptEditor(props: {
   const focusCaption = (captionId: string, captions: CaptionBlock[], selection?: { start: number; end: number }) => {
     if (!canMutateInput()) return;
     pendingFocusRef.current = selection ? { id: captionId, selection } : undefined;
+    setStructuralSelection(selection ? { id: captionId, selection: { ...selection } } : undefined);
     if (selection) selectionRef.current[captionId] = selection;
     clearTimeout(scrollEndTimerRef.current);
     userScrollingRef.current = false;
@@ -880,7 +880,7 @@ export function ScriptEditor(props: {
                         scrollEnabled={false}
                         submitBehavior="submit"
                         value={item.text}
-                        selection={editable && pendingFocusRef.current?.id === item.id ? pendingFocusRef.current.selection : undefined}
+                        selection={editable && structuralSelection?.id === item.id ? structuralSelection.selection : undefined}
                         onChangeText={(text) => updateText(item, text)}
                         onSubmitEditing={() => splitAtCursor(item)}
                         onKeyPress={(event) => {
