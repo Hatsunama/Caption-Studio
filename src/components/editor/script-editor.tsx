@@ -214,7 +214,7 @@ export function ScriptEditor(props: {
     navigationRef.current = undefined;
   }, []);
 
-  const revealCaption = useCallback((id: string, attempts = 0) => {
+  const revealCaption = useCallback((id: string, attempts = 0, contentReady = false) => {
     const session = sessionRef.current;
     if (!session.visible || scrollOwnerRef.current === 'user' || userScrollingRef.current || listViewportHeightRef.current <= 0) return;
     pendingScrollSeekRef.current = false;
@@ -224,7 +224,9 @@ export function ScriptEditor(props: {
     const targetOffset = layout?.index === index
       ? Math.max(0, layout.y - SCRIPT_ANCHOR)
       : undefined;
-    if (targetOffset !== undefined && Math.abs(targetOffset - listOffsetRef.current) <= 1) return;
+    // Native viewport clamping can precede its queued scroll notification.
+    // Validated content readiness must reissue the target despite that cache.
+    if (!contentReady && targetOffset !== undefined && Math.abs(targetOffset - listOffsetRef.current) <= 1) return;
     cancelNavigation();
     navigationRef.current = { id, attempts };
     listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0, viewOffset: SCRIPT_ANCHOR });
@@ -769,7 +771,7 @@ export function ScriptEditor(props: {
               // request only once native dimensions can accommodate its anchor.
               const targetOffset = Math.max(0, layout.y - SCRIPT_ANCHOR);
               if (targetOffset > Math.max(0, height - listViewportHeightRef.current)) return;
-              revealCaption(pending.id, pending.attempts);
+              revealCaption(pending.id, pending.attempts, true);
             }}
             onScrollBeginDrag={() => {
               if (!editableRef.current) return;

@@ -100,6 +100,13 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
   };
   calls.nativeFailures = [];
   calls.nativePositions = [];
+  const nativeScrollEvents = [];
+  function notifyNativeScroll(offset) {
+    const onScroll = list().onScroll;
+    const notify = () => onScroll?.(scrollEvent(offset));
+    if (nativeReadiness?.queueScrollEvents) nativeScrollEvents.push(notify);
+    else notify();
+  }
   function applyNativeOffset(offset) {
     if (!nativePosition.scrollRefReady) return;
     // Android retains requests when content has zero dimensions. Once it has
@@ -109,7 +116,7 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
     nativePosition.offset = Math.max(0, Math.min(offset,
       Math.max(0, nativePosition.contentHeight - nativePosition.viewportHeight)));
     calls.nativePositions.push(nativePosition.offset);
-    list().onScroll?.(scrollEvent(nativePosition.offset));
+    notifyNativeScroll(nativePosition.offset);
   }
   const nativeListRef = {
     scrollToIndex(request) {
@@ -264,6 +271,10 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
   }
   const viewport = (height) => act(() => {
     nativePosition.viewportHeight = height;
+    // RN Android onLayout calls scrollTo(currentOffset), which reclamps against
+    // the new viewport and the still-committed content. JS scroll delivery is
+    // independent of layout delivery; existing scenarios retain their ordering.
+    if (nativeReadiness?.clampOnViewport) applyNativeOffset(nativePosition.offset);
     list().onLayout(layoutEvent(0, height));
   });
   const nativeContentSize = (height) => act(() => {
@@ -302,6 +313,9 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
   return {
     calls, props, list, row, find, act, fire, measure, viewport, advance,
     nativePosition, nativeContentSize,
+    flushNativeScrollEvents: () => act(() => {
+      for (const notify of nativeScrollEvents.splice(0)) notify();
+    }),
     resetNativePosition() {
       nativePosition.cells.clear();
       Object.assign(nativePosition, { viewportHeight: 0, contentHeight: 0, offset: 0, pendingOffset: undefined });
@@ -427,6 +441,83 @@ function assertInitialPosition(h) {
   assert.equal(h.nativePosition.offset, initialPositionOffset,
     'the final cue must actually reach the 8px guide after native readiness, not merely receive a scroll request');
   assert.equal(initialPositionY(4) - h.nativePosition.offset, 8);
+}
+
+// Separate native geometry from JS event delivery. In RN 0.86.3 Android,
+// ReactScrollView.onLayout replays scrollTo(currentOffset); super.scrollTo
+// clamps to contentHeight - viewportHeight and clears pending offsets once
+// content is nonzero. Its scroll event need not reach JS before content layout.
+// https://github.com/facebook/react-native/blob/v0.86.3/packages/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java
+// This is a layout-order regression, not a claim that the device screenshot
+// establishes which native events occurred. All sizes are logical pixels.
+function mountBeforePrimaryViewportExpansion() {
+  const readiness = { clampOnViewport: true, queueScrollEvents: false };
+  const h = mount({ captions: initialPositionCues, currentMs: 10000, initialCaptionId: 'cue-0' },
+    'android', { deferRecovery: true }, readiness);
+  // Commit the actual initial footer prop, not an invented content extent.
+  h.nativeContentSize(initialPositionContent(h.list().ListFooterComponent.props.style.height));
+  h.viewport(48);
+  measureInitialPositionCells(h);
+  h.advance(400);
+  assertInitialPosition(h);
+  readiness.queueScrollEvents = true;
+  h.viewport(300);
+  assert.equal(h.nativePosition.offset, initialPositionContent(48) - 300,
+    'the expanded native viewport clamps against the old committed footer');
+  assert.equal(h.list().ListFooterComponent.props.style.height, 292,
+    'React has requested the final footer before its native commit');
+  return { h, readiness };
+}
+
+for (const order of ['content before scroll', 'scroll before content', 'recovery then content before scroll']) {
+  test(`Primary queued-clamp ${order} must settle the selected last cue on the guide`, () => {
+    const { h, readiness } = mountBeforePrimaryViewportExpansion();
+    try {
+      const contentFromAttachedView = h.list().onContentSizeChange;
+      const layouts = h.calls.nativeLayouts;
+      if (order.startsWith('recovery')) h.recover(null);
+      if (order === 'scroll before content') h.flushNativeScrollEvents();
+      // Commit the current rendered footer. Keep the previously attached
+      // content callback across recovery's input epoch, as native delivery can.
+      h.nativePosition.contentHeight = initialPositionContent(h.list().ListFooterComponent.props.style.height);
+      h.act(() => contentFromAttachedView(360, h.nativePosition.contentHeight));
+      readiness.queueScrollEvents = false;
+      h.flushNativeScrollEvents();
+      h.advance(1000);
+      assert.equal(h.calls.nativeLayouts, layouts, 'footer growth must not invent another target-cell layout');
+      assert.ok(initialPositionY(4) - h.nativePosition.offset + 100 <= 300,
+        'the last cue is entirely visible even in the broken state');
+      assertInitialPosition(h);
+    } finally { h.unmount(); }
+  });
+}
+
+for (const interrupt of ['drag', 'close']) {
+  test(`Primary queued-clamp ${interrupt} retains ownership across late content and scroll delivery`, () => {
+    const { h, readiness } = mountBeforePrimaryViewportExpansion();
+    try {
+      h.recover(null);
+      const staleContent = h.list().onContentSizeChange;
+      if (interrupt === 'drag') {
+        h.fire('onScrollBeginDrag');
+        h.fire('onScrollEndDrag', h.nativePosition.offset);
+        h.advance(150);
+      } else h.update({ visible: false });
+      const requests = h.calls.indices.length, offsets = h.calls.offsets.length;
+      const seeks = [...h.calls.seeks], selects = [...h.calls.selects];
+      h.nativePosition.contentHeight = initialPositionContent(292);
+      h.act(() => staleContent(360, h.nativePosition.contentHeight));
+      readiness.queueScrollEvents = false;
+      h.flushNativeScrollEvents();
+      h.advance(1000);
+      assert.equal(h.calls.indices.length, requests, 'late callbacks cannot reclaim cancelled navigation');
+      assert.equal(h.calls.offsets.length, offsets);
+      assert.equal(h.nativePosition.offset, initialPositionContent(48) - 300);
+      assert.deepEqual(h.calls.seeks, seeks);
+      assert.deepEqual(h.calls.selects, selects);
+      assert.deepEqual(h.calls.focuses, []);
+    } finally { h.unmount(); }
+  });
 }
 
 test('Primary content readiness from the same native view survives a completed recovery read', () => {
