@@ -58,6 +58,7 @@ export function mountDual(overrides = {}, options = {}) {
     reveal.onScrollBeginDrag = () => controller.beginDrag();
   }
   const instances = new Map(), timers = new Map(), inputIdentities = new Map();
+  const contexts = new Map();
   const calls = { alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
   let current, cursor, pending = [], changed = false, tree, now = 0, nextTimer = 0, windowStart = 0;
   const memoHook = (factory, deps) => {
@@ -73,6 +74,14 @@ export function mountDual(overrides = {}, options = {}) {
     });
   };
   const react = {
+    createContext(value) {
+      const context = { value }; context.Provider = { context }; return context;
+    },
+    useContext(context) {
+      const value = contexts.has(context) ? contexts.get(context) : context.value;
+      current.contextDependencies.set(context, value);
+      return value;
+    },
     memo: (fn) => ({ fn }), useMemo: memoHook, useCallback: (fn, deps) => memoHook(() => fn, deps),
     useRef: (value) => memoHook(() => ({ current: value }), []),
     useEffect: effect, useLayoutEffect: effect,
@@ -147,14 +156,27 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
   function renderNode(node, path, visited, inputs) {
     if (Array.isArray(node)) return node.map((child, index) => renderNode(child, `${path}/${child?.key ?? index}`, visited, inputs));
     if (!node || typeof node !== 'object') return node;
+    if (node.type?.context) {
+      const context = node.type.context, had = contexts.has(context), previous = contexts.get(context);
+      contexts.set(context, node.props.value);
+      try {
+        const children = renderNode(node.props.children, `${path}/provider`, visited, inputs);
+        return { ...node, props: { ...node.props, children } };
+      } finally {
+        if (had) contexts.set(context, previous); else contexts.delete(context);
+      }
+    }
     const fn = node.type?.fn ?? (typeof node.type === 'function' ? node.type : undefined);
     if (fn) {
       const id = `${path}:${fn.name}:${node.key ?? ''}`;
       visited.add(id);
       let instance = instances.get(id);
-      if (!instance) { instance = { slots: [], dirty: true }; instances.set(id, instance); }
-      if (instance.dirty || !(node.type?.fn ? shallow(instance.props, node.props) : instance.props === node.props)) {
+      if (!instance) { instance = { slots: [], dirty: true, contextDependencies: new Map() }; instances.set(id, instance); }
+      const contextChanged = [...instance.contextDependencies].some(([context, value]) =>
+        !Object.is(value, contexts.has(context) ? contexts.get(context) : context.value));
+      if (instance.dirty || contextChanged || !(node.type?.fn ? shallow(instance.props, node.props) : instance.props === node.props)) {
         current = instance; cursor = 0; instance.dirty = false; instance.props = node.props;
+        instance.contextDependencies.clear();
         const renderKey = fn.name === 'DualCaptionRow' ? `row:${node.props.pair.source.id}` : fn.name;
         calls.renders.set(renderKey, (calls.renders.get(renderKey) ?? 0) + 1);
         instance.output = fn(node.props);
