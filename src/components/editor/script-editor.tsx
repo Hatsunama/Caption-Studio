@@ -84,6 +84,17 @@ export function ScriptEditor(props: {
   const inputRefs = useRef<Record<string, TextInput | null>>({});
   const sheetRef = useRef<View>(null);
   const selectionRef = useRef<Record<string, { start: number; end: number }>>({});
+  const focusedInputRef = useRef<TextInput | null>(null);
+  const pendingFocusRef = useRef<{
+    id: string; selection: { start: number; end: number };
+    requested?: boolean; acknowledged?: boolean; placing?: boolean;
+  } | undefined>(undefined);
+  const [selectionEpoch, setSelectionEpoch] = useState(0);
+  const releaseSelection = () => {
+    if (!pendingFocusRef.current) return;
+    pendingFocusRef.current = undefined;
+    setSelectionEpoch((value) => value + 1);
+  };
   const splitCounterRef = useRef(0);
   const [draftCaptions, setDraftCaptions] = useState<CaptionBlock[]>([]);
   const [inputHeights, setInputHeights] = useState<Record<string, number>>({});
@@ -113,16 +124,23 @@ export function ScriptEditor(props: {
     && inputSession.revision === inputRevision;
   const canMutateInput = () => ownsInput() && editableRef.current;
   const renewInput = useCallback(() => {
+    pendingFocusRef.current = undefined;
+    setSelectionEpoch((value) => value + 1);
     inputSession.revision += 1;
     setInputRevision(inputSession.revision);
   }, [inputSession]);
   useLayoutEffect(() => {
     inputSessionRef.current = inputSession;
     inputSession.active = true;
-    return () => { inputSession.active = false; };
+    return () => {
+      inputSession.active = false;
+      pendingFocusRef.current = undefined;
+      focusedInputRef.current = null;
+    };
   }, [inputSession]);
   useLayoutEffect(() => {
     editableRef.current = editable;
+    if (!editable) releaseSelection();
     inputReadyRef.current = props.visible && !closing;
     inputSavingRef.current = saving;
   }, [closing, editable, inputRevision, props.visible, saving]);
@@ -130,7 +148,6 @@ export function ScriptEditor(props: {
   // read the latest accepted controlled draft, never a submit-event snapshot.
   const draftCaptionsRef = useRef(draftCaptions);
   draftCaptionsRef.current = draftCaptions;
-  const pendingFocusRef = useRef<{ id: string; selection: { start: number; end: number } } | undefined>(undefined);
   const [journalError, setJournalError] = useState<string>();
   const [journalRecovery, setJournalRecovery] = useState<EditorDraftJournalRecovery>();
   const [journalConflict, setJournalConflict] = useState(false);
@@ -197,16 +214,22 @@ export function ScriptEditor(props: {
     if (editableRef.current && editingCaptionId && !pendingFocusRef.current) inputRefs.current[editingCaptionId]?.focus();
   }, [editingCaptionId]);
 
-  useEffect(() => {
+  const placePendingSelection = (id: string, input: TextInput | null) => {
     const pending = pendingFocusRef.current;
-    if (!editableRef.current || !pending || pending.id !== editingCaptionId) return;
-    const input = inputRefs.current[pending.id];
-    if (!input) return;
-    pendingFocusRef.current = undefined;
+    if (!canMutateInput() || !pending || pending.id !== id || !input || pending.requested) return;
+    pending.requested = true;
     selectionRef.current[pending.id] = pending.selection;
     input.focus();
-    input.setNativeProps({ selection: pending.selection });
-  }, [draftCaptions, editingCaptionId, editable]);
+    if (pendingFocusRef.current !== pending) return;
+    // Keep the declarative selection through ref attachment and native focus
+    // initialization. An imperative echo before focus is not that handoff's ack.
+    pending.placing = true;
+    try { input.setNativeProps({ selection: pending.selection }); }
+    finally { pending.placing = false; }
+  };
+  useEffect(() => {
+    if (editingCaptionId) placePendingSelection(editingCaptionId, inputRefs.current[editingCaptionId]);
+  }, [draftCaptions, editingCaptionId, editable, selectionEpoch]);
 
   const cancelNavigation = useCallback(() => {
     clearTimeout(navigationTimerRef.current);
@@ -459,8 +482,9 @@ export function ScriptEditor(props: {
     if (id === (editingCaptionId ?? selectedCaptionId)) revealCaption(id);
   }, [editingCaptionId, selectedCaptionId, revealCaption, seekToAnchoredCaption]);
 
-  const selectForEditing = (caption: CaptionBlock) => {
+  const selectForEditing = (caption: CaptionBlock, userIntent = true) => {
     if (!canMutateInput() || !draftCaptionsRef.current.some((candidate) => candidate.id === caption.id)) return;
+    if (userIntent || pendingFocusRef.current?.id !== caption.id) releaseSelection();
     clearTimeout(scrollEndTimerRef.current);
     userScrollingRef.current = false;
     scrollOwnerRef.current = 'programmatic';
@@ -480,6 +504,7 @@ export function ScriptEditor(props: {
   const focusCaption = (captionId: string, captions: CaptionBlock[], selection?: { start: number; end: number }) => {
     if (!canMutateInput()) return;
     pendingFocusRef.current = selection ? { id: captionId, selection } : undefined;
+    if (selection) selectionRef.current[captionId] = selection;
     clearTimeout(scrollEndTimerRef.current);
     userScrollingRef.current = false;
     scrollOwnerRef.current = 'programmatic';
@@ -507,6 +532,8 @@ export function ScriptEditor(props: {
     if (!ownsInput() || !inputReadyRef.current
       || (inputSavingRef.current && pendingTextCaptionRef.current !== caption.id)
       || !draftCaptionsRef.current.some((candidate) => candidate.id === caption.id)) return;
+    // Queued IME/composition text is authoritative, including while saving.
+    releaseSelection();
     // Wrapping, paste and literal newlines are text-only. Native submit is the
     // single Enter command; onChangeText must never infer structural edits.
     cleanupPendingRef.current = false;
@@ -775,6 +802,7 @@ export function ScriptEditor(props: {
             }}
             onScrollBeginDrag={() => {
               if (!editableRef.current) return;
+              releaseSelection();
               clearTimeout(scrollEndTimerRef.current);
               cancelNavigation();
               userScrollingRef.current = true;
@@ -841,21 +869,39 @@ export function ScriptEditor(props: {
                 <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
                     <View style={{ gap: 9 }}>
                       <TextInput
-                        ref={(input) => { inputRefs.current[item.id] = input; }}
+                        ref={(input) => {
+                          inputRefs.current[item.id] = input;
+                          if (input) placePendingSelection(item.id, input);
+                          else if (pendingFocusRef.current?.id === item.id) pendingFocusRef.current.requested = false;
+                        }}
                         multiline
                         disableFullscreenUI
                         editable={!saving && !closing && journalReady}
                         scrollEnabled={false}
                         submitBehavior="submit"
                         value={item.text}
+                        selection={editable && pendingFocusRef.current?.id === item.id ? pendingFocusRef.current.selection : undefined}
                         onChangeText={(text) => updateText(item, text)}
                         onSubmitEditing={() => splitAtCursor(item)}
                         onKeyPress={(event) => {
-                          if (!canMutateInput() || event.nativeEvent.key !== 'Backspace') return;
+                          if (!canMutateInput()) return;
+                          releaseSelection();
+                          if (event.nativeEvent.key !== 'Backspace') return;
                           const selection = selectionRef.current[item.id];
                           if (selection?.start === 0 && selection.end === 0) mergeWithPrevious(item);
                         }}
-                        onFocus={() => selectForEditing(item)}
+                        onFocus={() => {
+                          if (!canMutateInput()) return;
+                          focusedInputRef.current = inputRefs.current[item.id];
+                          const pending = pendingFocusRef.current;
+                          if (pending?.id === item.id && pending.acknowledged) releaseSelection();
+                          selectForEditing(item, false);
+                        }}
+                        onBlur={() => {
+                          if (!ownsInput()) return;
+                          if (focusedInputRef.current === inputRefs.current[item.id]) focusedInputRef.current = null;
+                          if (pendingFocusRef.current?.id === item.id) releaseSelection();
+                        }}
                         onPressIn={() => selectForEditing(item)}
                         onContentSizeChange={(event) => {
                           const height = Math.ceil(event.nativeEvent.contentSize.height);
@@ -869,7 +915,18 @@ export function ScriptEditor(props: {
                           // using its committed size, without seeking the video.
                           if (editing) revealCaption(item.id);
                         }}
-                        onSelectionChange={(event) => { if (canMutateInput()) selectionRef.current[item.id] = event.nativeEvent.selection; }}
+                        onSelectionChange={(event) => {
+                          if (!canMutateInput()) return;
+                          const selection = event.nativeEvent.selection;
+                          const pending = pendingFocusRef.current;
+                          if (pending?.id === item.id) {
+                            if (selection.start !== pending.selection.start || selection.end !== pending.selection.end) return;
+                            const focused = focusedInputRef.current === inputRefs.current[item.id];
+                            if (!pending.placing || focused) pending.acknowledged = true;
+                            if (pending.acknowledged && focused) releaseSelection();
+                          }
+                          selectionRef.current[item.id] = selection;
+                        }}
                         selectionColor={chrome.accent}
                         style={{ height: inputHeights[item.id], minHeight: editing ? 46 : 23, padding: 0, color: chrome.text, fontSize: 17, lineHeight: 23, fontWeight: '400', textAlignVertical: 'top' }}
                       />

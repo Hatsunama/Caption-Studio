@@ -80,10 +80,11 @@ const crop = evaluate(editorAst.statements.find((node) => ts.isFunctionDeclarati
   clamp: (value, min, max) => Math.min(max, Math.max(min, value)),
 });
 
-function mount(overrides = {}, platform = 'android', storage = {}, nativeReadiness) {
+function mount(overrides = {}, platform = 'android', storage = {}, nativeReadiness, nativeInputs) {
   const slots = [];
   const timers = new Map();
   const keyboardListeners = new Map();
+  const inputInstances = new Map(), inputProps = new Map();
   let cursor = 0, dirty = false, effects = [], tree, now = 0, timerId = 0, recover, recoveryError;
   const calls = { seeks: [], selects: [], indices: [], offsets: [], drafts: [], keyboards: [], editing: [], focuses: [], alerts: [], saves: [], nativeLayouts: 0, focusCaptures: 0 };
   // Opt in only for positioning regressions; preserve the original harness's
@@ -239,8 +240,25 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
       }
       if (list) list.props.data.forEach((item, index) => {
         const input = find('TextInput', list.props.renderItem({ item, index }));
-        input?.props.ref?.({ focus: () => calls.focuses.push(item.id),
-          setNativeProps: (value) => (calls.placements ??= []).push({ id: item.id, ...plain(value) }) });
+        const host = nativeInputs?.attach(item.id, input.props);
+        if (nativeInputs && !host) { input.props.ref?.(null); return; }
+        inputProps.set(item.id, input.props);
+        let instance = inputInstances.get(item.id);
+        if (!instance || instance.host !== host) {
+          instance = { host, ref: { focus: () => { calls.focuses.push(item.id); host?.focus(); },
+          setNativeProps: (value) => {
+            (calls.placements ??= []).push({ id: item.id, ...plain(value) });
+            host?.setNativeProps(value);
+            if (!nativeInputs && value.selection) {
+              // The legacy host delivered neither callback. Structural placement
+              // now owns selection until native focus and selection acknowledge it.
+              inputProps.get(item.id).onFocus();
+              inputProps.get(item.id).onSelectionChange(selectionEvent(value.selection.start, value.selection.end));
+            }
+          } } };
+          inputInstances.set(item.id, instance);
+        }
+        input?.props.ref?.(instance.ref);
       });
       for (const effect of effects) effect();
     } while (dirty);
@@ -655,6 +673,263 @@ test('native submit uses latest controlled text and caret once; literal and past
   assert.equal(h.calls.placements.length, 1, 'ordinary renders must not reset the native caret');
   assert.deepEqual(h.calls.seeks, []);
 });
+
+// Persistent native input state, independent of the component's selection cache.
+// Every imperative selection is applied, and its actual callback is delivered.
+// Only the newly focused input receives a default end-selection initialization;
+// repeated focus requests do not manufacture further initialization events.
+// These schedules are hypotheses for the proven native end-caret observation,
+// not a trace of Gboard/RN ordering. No product helper or callback is replaced.
+function androidSplitInputs(initialization, eventOrder = 'focus then selection') {
+  const inputs = new Map(), pending = [];
+  let focusedId;
+  function select(input, selection) {
+    input.selection = plain(selection);
+    input.props.onSelectionChange(selectionEvent(selection.start, selection.end));
+  }
+  return {
+    inputs,
+    blockNew: false,
+    get focusedId() { return focusedId; },
+    attach(id, props) {
+      let input = inputs.get(id);
+      if (!input && this.blockNew) return null;
+      if (!input) {
+        input = { selection: { start: props.value.length, end: props.value.length } };
+        inputs.set(id, input);
+      }
+      input.props = props;
+      // Honor a future narrowly controlled selection as well as imperative
+      // commands; ordinary uncontrolled rerenders leave the native caret alone.
+      if (props.selection) input.selection = plain(props.selection);
+      return input.host ??= {
+        focus() {
+          if (focusedId === id) return;
+          focusedId = id;
+          const end = input.props.value.length;
+          const complete = () => {
+            const initial = input.props.selection ?? { start: end, end };
+            if (eventOrder === 'selection then focus') select(input, initial);
+            input.props.onFocus();
+            if (eventOrder === 'focus then selection') select(input, initial);
+          };
+          if (initialization === 'before placement') complete();
+          else pending.push(complete);
+        },
+        setNativeProps(value) { if (value.selection) select(input, value.selection); },
+      };
+    },
+    completeFocus() { for (const complete of pending.splice(0)) complete(); },
+    detach(id) { inputs.delete(id); if (focusedId === id) focusedId = undefined; },
+    moveCaret(id, offset) { select(inputs.get(id), { start: offset, end: offset }); },
+    type(id, text) {
+      const input = inputs.get(id), { start, end } = input.selection;
+      input.props.onChangeText(input.props.value.slice(0, start) + text + input.props.value.slice(end));
+      select(input, { start: start + text.length, end: start + text.length });
+    },
+  };
+}
+
+function mountAndroidMiddleWordSplit(initialization, eventOrder, complete = true) {
+  const nativeInputs = androidSplitInputs(initialization, eventOrder);
+  const h = mount({ captions: [{ ...cues[0], text: 'Hello 👩🏽‍💻✨' }, ...cues.slice(1, 5)] },
+    'android', {}, undefined, nativeInputs);
+  h.edit(0);
+  h.act(() => nativeInputs.completeFocus());
+  h.act(() => nativeInputs.moveCaret('cue-0', 2));
+  h.act(() => h.input(0).onSubmitEditing({ nativeEvent: { text: 'Hello 👩🏽‍💻✨' } }));
+  const rightId = h.list().data[1].id;
+  assert.equal(h.list().data.length, 6);
+  assert.equal(h.input(0).value, 'He');
+  assert.equal(h.input(1).value, 'llo 👩🏽‍💻✨');
+  assert.equal(h.input(1).value.length, 12, 'native offsets use UTF-16, including the complete emoji');
+  assert.equal(nativeInputs.focusedId, rightId);
+  // A controlled placement can complete during synchronous focus, making the
+  // old imperative-command precondition redundant. Assert actual native state.
+  assert.deepEqual(nativeInputs.inputs.get(rightId).selection, { start: 0, end: 0 },
+    'the host must actually honor that command before delivering initialization');
+  if (complete) h.act(() => nativeInputs.completeFocus());
+  assert.equal(h.calls.editing.at(-1), rightId);
+  assert.equal(h.input(1).editable, true);
+  assert.deepEqual(h.calls.saves, [], 'no Save participates in the reproduction');
+  assert.deepEqual(h.calls.seeks, []);
+  return { h, nativeInputs, rightId };
+}
+
+for (const order of ['focus then selection', 'selection then focus']) {
+  test(`Android split caret survives new-input end initialization after placement: ${order}`, () => {
+    const { h, nativeInputs, rightId } = mountAndroidMiddleWordSplit('after placement', order);
+    try {
+      // Independent native-state assertion, before Backspace, Save or typing.
+      assert.deepEqual(nativeInputs.inputs.get(rightId).selection, { start: 0, end: 0 },
+        'the focused right tail must settle at its start after native initialization');
+    } finally { h.unmount(); }
+  });
+}
+
+test('Android split caret cache preserves immediate Backspace-at-start Join after late initialization', () => {
+  const { h } = mountAndroidMiddleWordSplit('after placement', 'focus then selection');
+  try {
+    // Do not inject another selection(0): that would hide the ownership bug.
+    // The real key callback reads selectionRef, independently of native state.
+    h.act(() => h.input(1).onKeyPress(keyEvent('Backspace')));
+    assert.equal(h.list().data.length, 5, 'Backspace must join the newly split right tail at its initial caret');
+    assert.equal(h.input(0).value, 'He llo 👩🏽‍💻✨');
+    assert.deepEqual(h.calls.saves, []);
+  } finally { h.unmount(); }
+});
+
+test('Android split caret initialization before placement honors subsequent user caret and IME text', () => {
+  const { h, nativeInputs, rightId } = mountAndroidMiddleWordSplit('before placement');
+  try {
+    assert.deepEqual(nativeInputs.inputs.get(rightId).selection, { start: 0, end: 0 });
+    h.act(() => nativeInputs.type(rightId, 'X'));
+    assert.equal(h.input(1).value, 'Xllo 👩🏽‍💻✨');
+    h.act(() => nativeInputs.moveCaret(rightId, h.input(1).value.length));
+    h.act(() => nativeInputs.type(rightId, '!'));
+    h.viewport(120); h.measure(1); h.update({ currentMs: 500 }); h.advance(1000);
+    assert.equal(h.input(1).value, 'Xllo 👩🏽‍💻✨!');
+    assert.deepEqual(nativeInputs.inputs.get(rightId).selection, { start: 14, end: 14 },
+      'completed structural placement cannot keep pinning real user typing to zero');
+    h.act(() => h.input(1).onKeyPress(keyEvent('Backspace')));
+    assert.equal(h.list().data.length, 6, 'a user-moved end caret must retain ordinary native Backspace');
+    assert.deepEqual(h.calls.saves, []);
+  } finally { h.unmount(); }
+});
+
+for (const order of ['focus then selection', 'selection then focus']) {
+  test(`structural selection handoff releases for hardware/accessibility selection after ${order}`, () => {
+    const { h, nativeInputs, rightId } = mountAndroidMiddleWordSplit('after placement', order);
+    try {
+      assert.equal(h.input(1).selection, undefined, 'native acknowledgment releases controlled selection immediately');
+      h.act(() => nativeInputs.moveCaret(rightId, 4));
+      h.viewport(100); h.measure(1); h.replayEffects();
+      assert.deepEqual(nativeInputs.inputs.get(rightId).selection, { start: 4, end: 4 });
+      h.act(() => h.input(1).onKeyPress(keyEvent('Backspace')));
+      assert.equal(h.list().data.length, 6);
+      h.act(() => nativeInputs.type(rightId, 'X'));
+      assert.equal(h.input(1).value, 'llo X👩🏽‍💻✨');
+    } finally { h.unmount(); }
+  });
+}
+
+for (const intent of ['press', 'key', 'text', 'drag', 'blur']) {
+  test(`pending structural selection yields promptly to ${intent} before focus acknowledgment`, () => {
+    const { h, nativeInputs, rightId } = mountAndroidMiddleWordSplit('after placement', 'focus then selection', false);
+    try {
+      assert.deepEqual(plain(h.input(1).selection), { start: 0, end: 0 });
+      if (intent === 'press') h.act(() => h.input(1).onPressIn());
+      if (intent === 'key') h.act(() => h.input(1).onKeyPress(keyEvent('ArrowRight')));
+      if (intent === 'text') h.act(() => nativeInputs.type(rightId, 'X'));
+      if (intent === 'drag') h.fire('onScrollBeginDrag');
+      if (intent === 'blur') h.act(() => h.input(1).onBlur());
+      assert.equal(h.input(1).selection, undefined);
+      h.act(() => nativeInputs.moveCaret(rightId, 3));
+      h.viewport(130); h.measure(1); h.update({ currentMs: 250 });
+      assert.deepEqual(nativeInputs.inputs.get(rightId).selection, { start: 3, end: 3 });
+      h.act(() => h.input(1).onKeyPress(keyEvent('Backspace')));
+      assert.equal(h.list().data.length, 6);
+      assert.equal(h.input(1).value, intent === 'text' ? 'Xllo 👩🏽‍💻✨' : 'llo 👩🏽‍💻✨');
+    } finally { h.unmount(); }
+  });
+}
+
+test('structural focus waits for a virtualized input ref and then settles its actual native selection', () => {
+  const nativeInputs = androidSplitInputs('after placement', 'selection then focus');
+  const h = mount({ captions: [{ ...cues[0], text: 'Hello 👩🏽‍💻✨' }, ...cues.slice(1, 5)] },
+    'android', {}, undefined, nativeInputs);
+  try {
+    h.edit(0); h.act(() => nativeInputs.completeFocus());
+    h.act(() => nativeInputs.moveCaret('cue-0', 2));
+    nativeInputs.blockNew = true;
+    h.act(() => h.input(0).onSubmitEditing({ nativeEvent: {} }));
+    const rightId = h.list().data[1].id;
+    assert.equal(nativeInputs.inputs.has(rightId), false);
+    assert.equal(nativeInputs.focusedId, 'cue-0');
+    nativeInputs.blockNew = false;
+    h.measure(1);
+    h.act(() => nativeInputs.completeFocus());
+    assert.equal(nativeInputs.focusedId, rightId);
+    assert.deepEqual(nativeInputs.inputs.get(rightId).selection, { start: 0, end: 0 });
+    assert.equal(h.input(1).selection, undefined);
+    h.act(() => h.input(1).onKeyPress(keyEvent('Backspace')));
+    assert.equal(h.list().data.length, 5);
+    assert.equal(h.input(0).value, 'He llo 👩🏽‍💻✨');
+  } finally { h.unmount(); }
+});
+
+test('Join next places the seam on an already focused input and releases ordinary selection', () => {
+  const nativeInputs = androidSplitInputs('before placement');
+  const h = mount({}, 'android', {}, undefined, nativeInputs);
+  try {
+    h.edit(0); h.action(0, 'Join next');
+    assert.equal(h.list().data.length, 5);
+    assert.equal(h.input(0).value, 'caption 0 caption 1');
+    assert.deepEqual(nativeInputs.inputs.get('cue-0').selection, { start: 10, end: 10 });
+    assert.equal(h.input(0).selection, undefined);
+    h.act(() => nativeInputs.moveCaret('cue-0', 3));
+    h.act(() => nativeInputs.type('cue-0', 'X'));
+    assert.equal(h.input(0).value, 'capXtion 0 caption 1');
+  } finally { h.unmount(); }
+});
+
+test('a pending structural selection reattaches to a replacement native input without losing text', () => {
+  const { h, nativeInputs, rightId } = mountAndroidMiddleWordSplit('after placement', 'selection then focus', false);
+  try {
+    h.act(() => h.input(1).onFocus());
+    assert.deepEqual(plain(h.input(1).selection), { start: 0, end: 0 }, 'focus alone cannot acknowledge placement');
+    h.input(1).ref(null);
+    nativeInputs.detach(rightId);
+    h.viewport(120);
+    assert.equal(nativeInputs.focusedId, rightId, 'replacement ref must receive focus without a draft mutation');
+    h.act(() => nativeInputs.completeFocus());
+    assert.deepEqual(nativeInputs.inputs.get(rightId).selection, { start: 0, end: 0 });
+    assert.equal(h.input(1).selection, undefined);
+    assert.equal(h.input(1).value, 'llo 👩🏽‍💻✨');
+    h.act(() => nativeInputs.type(rightId, 'X'));
+    assert.equal(h.input(1).value, 'Xllo 👩🏽‍💻✨');
+  } finally { h.unmount(); }
+});
+
+test('saving during structural handoff preserves queued composition text and releases selection', async () => {
+  const { h } = mountAndroidMiddleWordSplit('after placement', 'focus then selection', false);
+  let finish;
+  try {
+    h.update({ onSave: () => new Promise(resolve => { finish = resolve; }) });
+    const queued = h.input(1);
+    h.act(() => h.button('Save all caption edits').onPress());
+    assert.equal(h.input(1).selection, undefined);
+    h.act(() => queued.onChangeText('IME llo 👩🏽‍💻✨'));
+    finish(false); await h.flush();
+    assert.equal(h.input(1).value, 'IME llo 👩🏽‍💻✨');
+    assert.equal(h.list().data.length, 6);
+    assert.equal(h.input(1).selection, undefined);
+    assert.equal(h.button('Save all caption edits').disabled, false);
+  } finally { h.unmount(); }
+});
+
+for (const boundary of ['close/reopen', 'project', 'unmount']) {
+  test(`pending structural selection cannot cross ${boundary} or accept its stale callbacks`, () => {
+    const { h, nativeInputs } = mountAndroidMiddleWordSplit('after placement', 'focus then selection', false);
+    const stale = h.input(1);
+    try {
+      if (boundary === 'unmount') h.unmount();
+      else if (boundary === 'project') h.update({ projectId: 'another-project' });
+      else { h.update({ visible: false }); h.update({ visible: true }); }
+      if (boundary !== 'unmount') h.recover(null);
+      const before = plain(h.list().data), focuses = h.calls.focuses.length;
+      stale.onFocus(); stale.onSelectionChange(selectionEvent(12)); stale.onBlur();
+      stale.onChangeText('stale'); stale.onKeyPress(keyEvent('Backspace'));
+      if (boundary !== 'unmount') {
+        h.viewport(120);
+        assert.equal(h.input(0).selection, undefined);
+      }
+      assert.deepEqual(plain(h.list().data), before);
+      assert.equal(h.calls.focuses.length, focuses);
+      assert.deepEqual(h.calls.saves, []);
+    } finally { if (boundary !== 'unmount') h.unmount(); }
+  });
+}
 
 test('Backspace at collapsed zero joins at the normalized seam and preserves paired translation provenance', () => {
   const primary = { ...cues[0], text: '  left \n  side  ', mergeProvenance: {
