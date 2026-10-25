@@ -122,6 +122,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     attempts: 0,
     echoMs: undefined as number | undefined,
     timer: undefined as ReturnType<typeof setTimeout> | undefined,
+    frame: undefined as { handle: number } | undefined,
   }));
   const stopListNavigation = useCallback(() => {
     navigation.intentional = false;
@@ -130,6 +131,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     navigation.awaitingMeasurements = false;
     clearTimeout(navigation.timer);
     navigation.timer = undefined;
+    if (navigation.frame) cancelAnimationFrame(navigation.frame.handle);
+    navigation.frame = undefined;
   }, [navigation]);
   useLayoutEffect(() => {
     navigation.alive = true;
@@ -161,15 +164,38 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const sourceCaptions = useMemo(() => props.pairs.map(pair => pair.source), [props.pairs]);
   const anchor = useMemo(() => captionAtTimelinePosition(sourceCaptions, props.currentMs ?? 0), [sourceCaptions, props.currentMs]);
   const anchorIndex = useMemo(() => anchor ? props.pairs.findIndex(pair => pair.source.id === anchor.id) : -1, [anchor, props.pairs]);
-  const retryPendingListReveal = useCallback(() => {
+  const issuePendingListReveal = useCallback(() => {
     const index = navigation.pendingIndex;
-    if (!navigation.alive || !navigation.awaitingMeasurements || navigation.timer !== undefined
+    const sourceId = navigation.pairs[index]?.source.id;
+    if (!navigation.alive || navigation.intentional || index !== navigation.targetIndex || navigation.timer !== undefined
       || index < 0 || index >= navigation.pairs.length || !listRef.current) return;
     // Consume this readiness event before issuing a command: an unmeasured
     // failure retains the target for the next native event, without polling.
     navigation.awaitingMeasurements = false;
     listRef.current.scrollToIndex({ index, animated: false, viewPosition: 0 });
+    // JS cell layout can precede the native content mount. A successful
+    // measured command may therefore clamp against the previous native extent.
+    // Reassert once after that frame; failure waits for measurements or the
+    // existing finite timer budget, and this callback never schedules itself.
+    if (navigation.awaitingMeasurements || navigation.timer !== undefined
+      || navigation.pendingIndex !== index || navigation.frame) return;
+    const frame = { handle: 0 };
+    navigation.frame = frame;
+    frame.handle = requestAnimationFrame(() => {
+      if (navigation.frame !== frame) return;
+      navigation.frame = undefined;
+      if (!navigation.alive || navigation.intentional || navigation.pendingIndex !== index
+        || navigation.targetIndex !== index || navigation.pairs[index]?.source.id !== sourceId
+        || !listRef.current) return;
+      listRef.current.scrollToIndex({ index, animated: false, viewPosition: 0 });
+      // A synchronous index failure retains ownership for the bounded retry
+      // path. Otherwise this one native-frame handoff completes the reveal.
+      if (!navigation.awaitingMeasurements && navigation.timer === undefined) navigation.pendingIndex = -1;
+    });
   }, [navigation]);
+  const retryPendingListReveal = useCallback(() => {
+    if (navigation.awaitingMeasurements) issuePendingListReveal();
+  }, [issuePendingListReveal, navigation]);
   const onListViewportLayout = useCallback((event: { nativeEvent: { layout: { width: number; height: number } } }) => {
     if (!navigation.alive) return;
     const { width, height } = event.nativeEvent.layout;
@@ -197,7 +223,10 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     retryPendingListReveal();
   }, [anchorIndex, navigation, props.currentMs, retryPendingListReveal, stopListNavigation]);
   const onScrollToIndexFailed = useCallback((info: { index: number; averageItemLength: number }) => {
-    if (!navigation.alive || navigation.pendingIndex !== info.index || navigation.timer !== undefined) return;
+    if (!navigation.alive || navigation.intentional || navigation.pendingIndex !== info.index
+      || navigation.targetIndex !== info.index || navigation.timer !== undefined) return;
+    if (navigation.frame) cancelAnimationFrame(navigation.frame.handle);
+    navigation.frame = undefined;
     if (!Number.isFinite(info.averageItemLength) || info.averageItemLength <= 0) {
       navigation.awaitingMeasurements = true;
       return;
@@ -208,19 +237,23 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     }
     navigation.awaitingMeasurements = false;
     navigation.attempts++;
+    const sourceId = navigation.pairs[info.index]?.source.id;
     listRef.current?.scrollToOffset({ offset: Math.max(0, info.averageItemLength * info.index), animated: false });
     navigation.timer = setTimeout(() => {
       navigation.timer = undefined;
-      if (!navigation.alive || navigation.pendingIndex !== info.index || info.index >= navigation.pairs.length) return;
-      listRef.current?.scrollToIndex({ index: info.index, animated: false, viewPosition: 0 });
+      if (!navigation.alive || navigation.intentional || navigation.pendingIndex !== info.index
+        || navigation.targetIndex !== info.index || navigation.pairs[info.index]?.source.id !== sourceId) return;
+      issuePendingListReveal();
     }, 100);
-  }, [navigation]);
+  }, [issuePendingListReveal, navigation]);
   const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken<CaptionPair>[] }) => {
     if (!navigation.alive) return;
     let first: ViewToken<CaptionPair> | undefined;
     for (const token of viewableItems) {
       if (!token.isViewable || token.index == null) continue;
-      if (token.index === navigation.pendingIndex && navigation.pairs[token.index] === token.item) {
+      // Default viewability includes partial rows and uses JS cell metrics.
+      // It cannot acknowledge native mount while our handoff frame is queued.
+      if (!navigation.frame && token.index === navigation.pendingIndex && navigation.pairs[token.index] === token.item) {
         navigation.pendingIndex = -1;
         navigation.awaitingMeasurements = false;
         clearTimeout(navigation.timer);

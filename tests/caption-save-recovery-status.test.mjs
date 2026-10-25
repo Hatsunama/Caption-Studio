@@ -36,7 +36,8 @@ function journalEffect(kind, context) {
 }
 const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 function mount(kind) {
-  const alerts = [], timers = new Map();
+  const alerts = [], timers = new Map(), frames = new Map();
+  let navigationCancellations = 0, nextFrame = 0;
   let saveCalls = 0, clearCalls = 0, closes = 0, restart = 0, journal = 'unsaved', clearFailure = true, saveResult = true;
   const context = {
     ...scriptDrafts, ...dualDrafts, ...helper(),
@@ -81,6 +82,14 @@ function mount(kind) {
     set current(value) { context.draftCaptions = value; },
   };
   if (kind === 'script') {
+    // Save and cleanup share the component's real navigation cancellation closure.
+    context.navigationRef = { current: undefined };
+    context.navigationTimerRef = { current: undefined };
+    context.navigationFrameRef = { current: undefined };
+    context.requestAnimationFrame = (callback) => { const key = nextFrame++; frames.set(key, callback); return key; };
+    context.cancelAnimationFrame = (key) => frames.delete(key);
+    const cancelNavigation = expression(kind, 'cancelNavigation', context);
+    context.cancelNavigation = () => { navigationCancellations++; cancelNavigation(); };
     context.ownsInput = expression(kind, 'ownsInput', context);
     context.canMutateInput = expression(kind, 'canMutateInput', context);
   }
@@ -94,7 +103,8 @@ function mount(kind) {
   // These are the production callbacks, executed with storage faults and real draft logic.
   context.retryCleanup = expression(kind, 'retryCleanup', context);
   const save = expression(kind, 'save', context);
-  return { context, alerts, timers, save,
+  return { context, alerts, timers, frames, save,
+    get navigationCancellations() { return navigationCancellations; },
     effect: () => journalEffect(kind, context),
     flushTimers: () => { const callbacks = [...timers.values()]; timers.clear(); callbacks.forEach((callback) => callback()); },
     get saveCalls() { return saveCalls; }, get clearCalls() { return clearCalls; }, get closes() { return closes; },
@@ -102,6 +112,60 @@ function mount(kind) {
     set clearFailure(value) { clearFailure = value; }, set saveResult(value) { saveResult = value; },
   };
 }
+
+test('script: Save and cleanup cancel pending navigation before persistence and clear, including cleanup-only Save', async () => {
+  const h = mount('script');
+  const boundaries = [];
+  let navigations = 0;
+  function queueNavigation() {
+    h.context.navigationRef.current = { id: 'c', attempts: 1 };
+    h.context.navigationTimerRef.current = h.context.setTimeout(() => { navigations++; });
+    h.context.navigationFrameRef.current = h.context.requestAnimationFrame(() => { navigations++; });
+  }
+  function assertCancelled(boundary, count) {
+    boundaries.push(boundary);
+    assert.equal(h.navigationCancellations, count, `${boundary}: cancellation count`);
+    assert.equal(h.context.navigationRef.current, undefined, `${boundary}: pending target cleared`);
+    assert.equal(h.context.navigationTimerRef.current, undefined, `${boundary}: timer ref cleared`);
+    assert.equal(h.context.navigationFrameRef.current, undefined, `${boundary}: frame ref cleared`);
+    assert.equal(h.timers.size, 0, `${boundary}: pending timer cancelled`);
+    assert.equal(h.frames.size, 0, `${boundary}: pending frame cancelled`);
+  }
+  const persist = h.context.props.onSave;
+  h.context.props.onSave = async (...args) => {
+    assertCancelled('persist', 1);
+    // Give cleanup its own pending work so its cancellation is independently required.
+    queueNavigation();
+    return persist(...args);
+  };
+  const clear = h.context.clearEditorDraftJournal;
+  h.context.clearEditorDraftJournal = async (...args) => {
+    assertCancelled('clear', boundaries.length + 1);
+    return clear(...args);
+  };
+  queueNavigation();
+  await h.save();
+  assert.deepEqual(boundaries, ['persist', 'clear']);
+  assert.equal(h.navigationCancellations, 2);
+  assert.equal(h.saveCalls, 1);
+  assert.equal(h.clearCalls, 1);
+  assert.equal(h.closes, 0);
+  assert.equal(h.journal, 'unsaved', 'failed cleanup retains recovery');
+  assert.equal(h.context.cleanupPendingRef.current, true);
+
+  queueNavigation();
+  h.clearFailure = false;
+  await h.save();
+  assert.deepEqual(boundaries, ['persist', 'clear', 'clear']);
+  assert.equal(h.navigationCancellations, 3);
+  assert.equal(h.saveCalls, 1, 'cleanup-only Save must not persist again');
+  assert.equal(h.clearCalls, 2);
+  assert.equal(h.closes, 1);
+  assert.equal(h.journal, undefined);
+  h.flushTimers();
+  for (const callback of h.frames.values()) callback();
+  assert.equal(navigations, 0, 'cancelled navigation callbacks never run');
+});
 
 test('journal queue drains active writes, invalidates queued writes, and never resurrects data after clear', async () => {
   const queue = helper().createCaptionJournalQueue();
