@@ -1,4 +1,19 @@
-# One-time encrypted Solana recovery (phase 1)
+# Historical one-time encrypted Solana recovery (phase 1)
+
+The existing D02 key was recovered in approved run 40239617753 and proved by
+local private-key sign/verify, alongside the distinct Play upload 50D key. Both
+passed again after relocation to `C:\caption_studio\signing`. The three legacy
+workflow IDs are disabled; all four original repository signing secrets and the
+completed encrypted Actions artifact were removed after local proof. The encrypted
+C backup and original keys remain protected. This PR retires the workflow source.
+See the [single integration record](cloud-signing-retirement.md) for current
+pipeline verification gaps. Source tests do not establish remote Actions state.
+
+The remainder records the historical envelope protocol for retained synthetic
+acceptance tests. Its dispatch instructions describe the pre-retirement workflow;
+the tombstone accepts no recovery inputs and always fails. Future releases use
+`unsigned-store-build.yml` then `scripts/local-signing/sign-release.ps1`.
+
 
 This adds a manual export of the four existing repository Actions signing secrets.
 It does not recover anything automatically, install a local key, change signing pipelines,
@@ -82,7 +97,7 @@ solely because it accompanies the ciphertext: it is not signed. Verify the sourc
 workflow/revision and retain the independent pins as the trust anchors.
 
 In a **fresh owner-restricted staging directory** under
-`C:\Users\1thea\.caption-studio-signing`, a future importer can run the equivalent of:
+`C:\caption_studio\signing`, a future importer can run the equivalent of:
 
 ```text
 openssl cms -decrypt -binary -inform DER -in <downloaded-recovery.p7m> -recip <approved-public-recipient.crt> -inkey <encrypted-C-only-recipient-private-key> -out <fresh-private-staging-directory>\payload.pending.zip

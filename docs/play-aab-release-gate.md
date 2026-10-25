@@ -1,7 +1,24 @@
-# Production-signed Google Play AAB gate
+# Retired cloud Play AAB gate
 
-Run **Verify production-signed Google Play AAB** manually on `main` with the latest published APK release tag and its exact manifest versionCode. The workflow requires the release's manifest, APK asset digest, and tag commit to agree. It checks out the tag in a separate source directory and applies the approved manifest version and versionCode to that CI checkout's `app.json` before prebuild. The repository's stale source `app.json` version is not treated as release authority. The workflow uses the existing `CAPTION_STUDIO_FIXED_*` GitHub secrets. All four must be available to the job; absent secrets stop the gate. Keep the keystore and passwords in repository secrets, never in Git.
+`verify-play-aab.yml` is a manual fail-closed compatibility tombstone. It has no
+credentials, checkout, build, signing, artifact upload or publication path.
+`verify-play-aab.mjs` refuses every CLI mode before configuration reads, downloads
+or writes. Its pure exported approval, identity, certificate and mapping helpers
+remain available for historical tests. The D02 certificate helper describes old
+APK-lineage evidence; it must never authorize a new Play AAB. The authoritative
+local contract assigns D02 to APK and 50D to Play AAB.
 
-The gate checks the clean native release build, uses the production upload key, validates the AAB with pinned bundletool, reads package/versionCode/versionName from the bundle itself, verifies its JAR signature, and compares its certificate SHA-256 to `config/product-contract.json`. It uploads only the verified AAB and `play-aab-provenance.json` as a GitHub Actions artifact. In this public repository, signed-in users with read access can download the artifact during its retention period; it is not a private distribution channel. The record includes the approved tag and manifest digest, release source commit, gate commit, run ID/attempt, package, version, certificate, and AAB SHA-256. Download the artifact from the successful run and recheck its SHA-256 against the record before any manual Play Console action.
+Use [the unsigned producer](unsigned-local-release-build.md),
+`.github/workflows/unsigned-store-build.yml`, then the separately approved
+`scripts/local-signing/sign-release.ps1` procedure in
+[local release signing](local-release-signing.md). The producer checks immutable
+source, published version history, package/version identity, bundletool, ABI,
+16 KiB alignment, unsigned payloads and exact embedded R8 mapping. Local tools
+recheck payload provenance, roles, signatures and mapping before final output.
+Actions artifacts in this public repository are downloadable by signed-in users
+with read access during retention; they are not private distribution channels.
 
-This does not upload to Play or create a public GitHub release. The CI AAB uses an ephemeral test signer and is not a Play release candidate. The public sidecar workflow remains APK-only. The selected tag must be the highest published APK release, preserving the APK release version lineage; the workflow cannot read Play Console's versionCode history, so confirm the approved code is still higher than every versionCode previously uploaded to Play. A successful local test cannot establish whether GitHub secrets exist, whether the upload certificate is enrolled in Play App Signing, or whether Play will accept the bundle; confirm those in the protected repository and Play Console. The repository certificate pin is a consistency check, not an independent trust anchor against repository compromise.
+See [retirement sequencing and test responsibilities](cloud-signing-retirement.md).
+These local edits are not active on main. Parent reports D02 and 50D key proof
+completed on C and all three old workflow IDs disabled. Secrets remain retained
+until full unsigned/local pipeline proof. Published 1.4.135 APK/AAB remain immutable. No Play upload or release publication is authorized by this guide.

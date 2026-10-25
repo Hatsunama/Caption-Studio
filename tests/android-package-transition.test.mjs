@@ -9,7 +9,7 @@ const root = new URL('../', import.meta.url);
 const expectedPackage = 'com.xmilo_at_your_side.caption_studio';
 const contract = JSON.parse(readFileSync(new URL('config/product-contract.json', root), 'utf8'));
 const app = JSON.parse(readFileSync(new URL('app.json', root), 'utf8'));
-const releaseWorkflow = readFileSync(new URL('.github/workflows/publish-sidecar.yml', root), 'utf8');
+const releaseWorkflow = readFileSync(new URL('.github/workflows/unsigned-store-build.yml', root), 'utf8');
 const androidVerifier = readFileSync(new URL('scripts/verify-android-release-config.js', root), 'utf8');
 const generator = readFileSync(new URL('scripts/generate-product-contract.mjs', root), 'utf8');
 

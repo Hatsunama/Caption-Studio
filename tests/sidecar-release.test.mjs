@@ -62,26 +62,27 @@ test('release rejects legacy package IDs', () => {
   }
 });
 
-test('release workflow uses stable secrets and publishes a verified immutable APK', async () => {
-  const workflow = await readFile(new URL('.github/workflows/publish-sidecar.yml', root), 'utf8');
-  assert.match(workflow, /workflow_dispatch/);
-  assert.match(workflow, /CAPTION_STUDIO_FIXED_KEYSTORE_BASE64/);
-  assert.match(workflow, /CAPTION_STUDIO_RELEASE_PACKAGE/);
-  assert.match(workflow, /CAPTION_STUDIO_RELEASE_CERT_SHA256/);
-  assert.match(workflow, /apksigner verify --verbose --print-certs/);
-  assert.match(workflow, /zipalign" -c -P 16 4/);
-  assert.match(workflow, /gh release create/);
-  assert.match(workflow, /tag="v\$\{VERSION\}"/);
-  assert.match(workflow, /CAPTION_STUDIO_RELEASE_ASSET/);
+test('unsigned producer and local signer preserve release verification responsibilities', async () => {
+  const workflow = await readFile(new URL('.github/workflows/unsigned-store-build.yml', root), 'utf8');
+  const producer = await readFile(new URL('scripts/unsigned-store-build.mjs', root), 'utf8');
+  const local = await readFile(new URL('scripts/local-signing/sign-validation.mjs', root), 'utf8');
+  const signer = await readFile(new URL('scripts/local-signing/sign-release.ps1', root), 'utf8');
+  assert.match(workflow, /--check-published "\$VERSION" "\$VERSION_CODE"/);
   assert.match(workflow, /:app:lintRelease/);
-  assert.match(workflow, /--write-metadata/);
-  assert.match(workflow, /SIDECAR_BUILD_TOOLS/);
-  assert.match(workflow, /"dist\/\$CAPTION_STUDIO_RELEASE_ASSET.sha256" \\\r?\n\s+dist\/caption-studio-release.json/);
   assert.match(workflow, /--init-script \.\.\/scripts\/first-party-android-lint\.gradle/);
-  assert.doesNotMatch(workflow, /Caption Studio Fixed/);
-  assert.doesNotMatch(workflow, /v\$\{VERSION\}-fixed/);
-  assert.doesNotMatch(workflow, /caption-studio-fixed-android/);
-  assert.doesNotMatch(workflow, /keytool -genkeypair/);
+  assert.match(producer, /assertAndroidAbiCoverage/);
+  assert.match(producer, /path\.join\(buildTools, 'zipalign'\)/);
+  assert.match(producer, /\['-c', '-P', '16', '-v', '4', files\.apk\]/);
+  assert.match(local, /'verify', '--verbose', '--print-certs'/);
+  assert.match(local, /parseSigningCertificate/);
+  assert.match(local, /Embedded mapping mismatch/);
+  assert.match(local, /validateReleaseMetadata\(metadata, metadata\.tag\)/);
+  assert.match(local, /caption-studio-release\.json/);
+  assert.match(local, /flag: 'wx'/);
+  assert.match(local, /verifyJarSignature\(files\.aab, o\.javaBin, o\.stage, contract\.roles\.aab\)/);
+  assert.match(signer, /'--v2-signing-enabled','true','--v3-signing-enabled','true'/);
+  assert.doesNotMatch(workflow, /secrets\.|contents: write|gh release create/);
+  assert.doesNotMatch(signer, /keytool -genkeypair|gh release create/);
 });
 
 function metadata(overrides = {}) {

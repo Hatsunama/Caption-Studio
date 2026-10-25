@@ -3,13 +3,13 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const workflow = readFileSync(
-  new URL('../.github/workflows/publish-sidecar.yml', import.meta.url),
+  new URL('../.github/workflows/unsigned-store-build.yml', import.meta.url),
   'utf8',
 );
 
-test('sidecar prebuild keeps identity selection inside the named workflow step', () => {
-  assert.match(
-    workflow,
-    /^      - name: Generate clean Android project\r?\n        env:\r?\n          NODE_ENV: production\r?\n          CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE: \$\{\{ env\.CAPTION_STUDIO_RELEASE_PACKAGE \}\}\r?\n        run: \|$/m,
-  );
+test('unsigned prebuild retains explicit production package and verification', () => {
+  assert.match(workflow, /CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE: com\.xmilo_at_your_side\.caption_studio/);
+  assert.match(workflow, /name: Clean native prebuild and original release configuration verification\r?\n        env:\r?\n          NODE_ENV: production/);
+  assert.match(workflow, /npx expo prebuild --platform android --clean --no-install/);
+  assert.match(workflow, /npm run verify:android-config/);
 });
