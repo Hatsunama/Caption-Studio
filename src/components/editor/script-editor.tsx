@@ -253,7 +253,13 @@ export function ScriptEditor(props: {
     if (!contentReady && targetOffset !== undefined && Math.abs(targetOffset - listOffsetRef.current) <= 1) return;
     cancelNavigation();
     navigationRef.current = { id, attempts };
-    listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0, viewOffset: SCRIPT_ANCHOR });
+    // RN can retain an old index when a reindexed cell's geometry is unchanged.
+    // Prefer the current id/index's measured content-space position.
+    if (targetOffset !== undefined) {
+      listRef.current?.scrollToOffset({ offset: targetOffset, animated: false });
+    } else {
+      listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0, viewOffset: SCRIPT_ANCHOR });
+    }
   }, [cancelNavigation]);
 
   useEffect(() => {
