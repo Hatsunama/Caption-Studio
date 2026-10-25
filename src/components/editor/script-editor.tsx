@@ -170,6 +170,7 @@ export function ScriptEditor(props: {
   const lastTimelineCaptionIdRef = useRef<string | undefined>(undefined);
   const navigationRef = useRef<{ id: string; attempts: number } | undefined>(undefined);
   const navigationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const navigationFrameRef = useRef<number | undefined>(undefined);
   const sessionRef = useRef<{ visible: boolean; captions: CaptionBlock[] }>({ visible: false, captions: [] });
   const [listViewportHeight, setListViewportHeight] = useState(0);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
@@ -235,12 +236,16 @@ export function ScriptEditor(props: {
   const cancelNavigation = useCallback(() => {
     clearTimeout(navigationTimerRef.current);
     navigationTimerRef.current = undefined;
+    if (navigationFrameRef.current !== undefined) cancelAnimationFrame(navigationFrameRef.current);
+    navigationFrameRef.current = undefined;
     navigationRef.current = undefined;
   }, []);
 
   const revealCaption = useCallback((id: string, attempts = 0, contentReady = false) => {
     const session = sessionRef.current;
-    if (!session.visible || scrollOwnerRef.current === 'user' || userScrollingRef.current || listViewportHeightRef.current <= 0) return;
+    const owner = inputSessionRef.current;
+    if (!owner.active || !owner.visible || !inputReadyRef.current || inputSavingRef.current
+      || !session.visible || scrollOwnerRef.current === 'user' || userScrollingRef.current || listViewportHeightRef.current <= 0) return;
     pendingScrollSeekRef.current = false;
     const index = session.captions.findIndex((caption) => caption.id === id);
     if (index < 0) return;
@@ -250,16 +255,34 @@ export function ScriptEditor(props: {
       : undefined;
     // Native viewport clamping can precede its queued scroll notification.
     // Validated content readiness must reissue the target despite that cache.
-    if (!contentReady && targetOffset !== undefined && Math.abs(targetOffset - listOffsetRef.current) <= 1) return;
+    const alreadyAligned = !contentReady && targetOffset !== undefined && Math.abs(targetOffset - listOffsetRef.current) <= 1;
     cancelNavigation();
-    navigationRef.current = { id, attempts };
+    const navigation = { id, attempts };
+    navigationRef.current = navigation;
     // RN can retain an old index when a reindexed cell's geometry is unchanged.
     // Prefer the current id/index's measured content-space position.
     if (targetOffset !== undefined) {
-      listRef.current?.scrollToOffset({ offset: targetOffset, animated: false });
+      if (!alreadyAligned) listRef.current?.scrollToOffset({ offset: targetOffset, animated: false });
     } else {
       listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0, viewOffset: SCRIPT_ANCHOR });
     }
+    // Fabric layout delivery can precede the native mount that supplies scroll
+    // travel. Coalesce one frame handoff; the callback never schedules itself.
+    navigationFrameRef.current = requestAnimationFrame(() => {
+      if (navigationRef.current !== navigation) return;
+      navigationFrameRef.current = undefined;
+      if (!owner.active || inputSessionRef.current !== owner || !owner.visible
+        || !sessionRef.current.visible || !inputReadyRef.current || inputSavingRef.current
+        || scrollOwnerRef.current === 'user' || userScrollingRef.current || listViewportHeightRef.current <= 0) return;
+      const currentIndex = draftCaptionsRef.current.findIndex((caption) => caption.id === navigation.id);
+      if (currentIndex < 0) return;
+      const currentLayout = captionLayoutsRef.current[navigation.id];
+      if (currentLayout?.index === currentIndex) {
+        listRef.current?.scrollToOffset({ offset: Math.max(0, currentLayout.y - SCRIPT_ANCHOR), animated: false });
+      } else {
+        listRef.current?.scrollToIndex({ index: currentIndex, animated: false, viewPosition: 0, viewOffset: SCRIPT_ANCHOR });
+      }
+    });
   }, [cancelNavigation]);
 
   useEffect(() => {
@@ -277,10 +300,10 @@ export function ScriptEditor(props: {
     lastTimelineCaptionIdRef.current = undefined;
   }, [cancelNavigation, props.visible]);
 
-  useEffect(() => () => {
+  useLayoutEffect(() => () => {
     clearTimeout(scrollEndTimerRef.current);
     cancelNavigation();
-  }, [cancelNavigation]);
+  }, [cancelNavigation, inputSession]);
 
   const sourceCaptions = useMemo(
     () => [...props.captions].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs),
@@ -477,6 +500,7 @@ export function ScriptEditor(props: {
   }, [draftCaptions, onSeekTimeline, onSelectCaption]);
 
   const reportCellLayout = useCallback((id: string, index: number, layout: LayoutRectangle) => {
+    if (!inputSession.active || inputSessionRef.current !== inputSession || !inputSession.visible) return;
     captionLayoutsRef.current[id] = { ...layout, index };
     if (userScrollingRef.current || pendingScrollSeekRef.current) {
       // Layout changes alone do not own a seek. Only resolve a gesture that
@@ -485,7 +509,7 @@ export function ScriptEditor(props: {
       return;
     }
     if (id === (editingCaptionId ?? selectedCaptionId)) revealCaption(id);
-  }, [editingCaptionId, selectedCaptionId, revealCaption, seekToAnchoredCaption]);
+  }, [editingCaptionId, inputSession, selectedCaptionId, revealCaption, seekToAnchoredCaption]);
 
   const selectForEditing = (caption: CaptionBlock, userIntent = true) => {
     if (!canMutateInput() || !draftCaptionsRef.current.some((candidate) => candidate.id === caption.id)) return;
@@ -607,6 +631,7 @@ export function ScriptEditor(props: {
     stopJournalRef.current?.();
     editableRef.current = false;
     inputReadyRef.current = false;
+    cancelNavigation();
     setClosing(true);
     try {
       const cleared = await journalQueueRef.current.clear(
@@ -628,7 +653,7 @@ export function ScriptEditor(props: {
       setClosing(false);
       setJournalRestart((value) => value + 1);
     }
-  }, [onCancel, projectId]);
+  }, [cancelNavigation, onCancel, projectId]);
 
   const save = async () => {
     if (!editableRef.current) return;
@@ -645,6 +670,7 @@ export function ScriptEditor(props: {
     }
     editableRef.current = false;
     inputSavingRef.current = true;
+    cancelNavigation();
     pendingTextCaptionRef.current = editingCaptionId;
     setSaving(true);
     stopJournalRef.current?.();
@@ -689,6 +715,7 @@ export function ScriptEditor(props: {
       journalQueueRef.current.pause();
       editableRef.current = false;
       inputReadyRef.current = false;
+      cancelNavigation();
       setClosing(true);
       setSaveError(undefined);
       try {
@@ -713,7 +740,7 @@ export function ScriptEditor(props: {
       { text: 'Keep editing', style: 'cancel' },
       { text: 'Discard', style: 'destructive', onPress: () => { void close(); } },
     ]);
-  }, [closing, journalProtected, journalReady, onCancel, projectId, saving, sourceCaptions]);
+  }, [cancelNavigation, closing, journalProtected, journalReady, onCancel, projectId, saving, sourceCaptions]);
 
   useEffect(() => {
     if (!props.visible) {
@@ -785,6 +812,7 @@ export function ScriptEditor(props: {
             // mask; disabling native clipping also keeps its Android input attached.
             removeClippedSubviews={false}
             onLayout={(event) => {
+              if (!inputSession.active || inputSessionRef.current !== inputSession || !inputSession.visible) return;
               listViewportHeightRef.current = event.nativeEvent.layout.height;
               setListViewportHeight(event.nativeEvent.layout.height);
               const id = editingCaptionId ?? selectedCaptionId;
@@ -855,6 +883,8 @@ export function ScriptEditor(props: {
             </View>
           )}
           onScrollToIndexFailed={({ index, averageItemLength }) => {
+            if (!inputSession.active || inputSessionRef.current !== inputSession || !inputSession.visible
+              || !inputReadyRef.current || inputSavingRef.current) return;
             const pending = navigationRef.current;
             if (!pending || scrollOwnerRef.current === 'user' || userScrollingRef.current || !props.visible
               || draftCaptions[index]?.id !== pending.id || pending.attempts >= 3) return;

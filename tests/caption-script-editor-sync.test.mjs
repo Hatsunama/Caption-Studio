@@ -96,6 +96,7 @@ class NativeGeometry {
 function mount(overrides = {}, platform = 'android', storage = {}, nativeReadiness, nativeInputs) {
   const slots = [];
   const timers = new Map();
+  const frames = new Map(), nativeCommands = [];
   const keyboardListeners = new Map();
   const inputInstances = new Map(), inputProps = new Map();
   let cursor = 0, dirty = false, effects = [], tree, now = 0, timerId = 0, recover, recoveryError;
@@ -112,6 +113,10 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
   calls.nativeFailures = [];
   calls.nativePositions = [];
   const nativeScrollEvents = [];
+  const requestNativeOffset = (offset) => {
+    if (nativeReadiness?.queueCommands) nativeCommands.push(() => applyNativeOffset(offset));
+    else applyNativeOffset(offset);
+  };
   function notifyNativeScroll(offset) {
     const onScroll = list().onScroll;
     const notify = () => onScroll?.(scrollEvent(offset));
@@ -147,12 +152,12 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
       // stored index differs and this index is not above the highest measured.
       const average = frames.length ? frames.reduce((sum, frame) => sum + frame.height, 0) / frames.length : 0;
       const frame = measured?.index === request.index ? measured : { y: average * request.index, height: average };
-      applyNativeOffset(Math.max(0, frame.y - (request.viewPosition ?? 0)
+      requestNativeOffset(Math.max(0, frame.y - (request.viewPosition ?? 0)
         * (nativePosition.viewportHeight - frame.height)) - (request.viewOffset ?? 0));
     },
     scrollToOffset(request) {
       calls.offsets.push(plain(request));
-      if (nativeReadiness) applyNativeOffset(request.offset);
+      if (nativeReadiness) requestNativeOffset(request.offset);
     },
   };
   const sameDeps = (left, right) => left && right && left.length === right.length
@@ -217,6 +222,8 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
     },
     setTimeout(callback, delay) { timers.set(++timerId, { callback, at: now + delay }); return timerId; },
     clearTimeout(id) { timers.delete(id); },
+    requestAnimationFrame(callback) { frames.set(++timerId, callback); return timerId; },
+    cancelAnimationFrame(id) { frames.delete(id); },
   });
   const props = {
     visible: true, projectId: 'project', baseRevision: 'revision', captions: cues,
@@ -317,13 +324,18 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
     if (nativeReadiness?.clampOnViewport) applyNativeOffset(nativePosition.offset);
     list().onLayout(layoutEvent(0, height));
   });
-  const nativeContentSize = (height) => act(() => {
+  const commitNativeContent = (height) => {
     nativePosition.contentHeight = height;
     if (nativePosition.pendingOffset !== undefined) applyNativeOffset(nativePosition.pendingOffset);
+  };
+  const reportContentSize = (height) => act(() => {
+    nativePosition.reportedContentHeight = height;
     // VirtualizedList updates its content metrics and forwards this real prop.
     // It only performs its own initial reveal for an initialScrollIndex prop.
     list().onContentSizeChange?.(360, height);
   });
+  // Legacy scenarios deliberately keep their original combined semantics.
+  const nativeContentSize = (height) => { commitNativeContent(height); reportContentSize(height); };
   function advance(ms) {
     const until = now + ms;
     let iterations = 0;
@@ -352,7 +364,21 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
   }
   return {
     calls, props, list, row, find, act, fire, measure, viewport, advance,
-    nativePosition, nativeContentSize, listMetrics,
+    nativePosition, nativeContentSize, listMetrics, reportContentSize, commitNativeContent,
+    dispatchNativeCommands: () => act(() => {
+      for (const command of nativeCommands.splice(0)) command();
+    }),
+    frame: () => {
+      const pending = [...frames];
+      for (const [id, callback] of pending) {
+        if (!frames.delete(id)) continue;
+        calls.frameCallbacks = (calls.frameCallbacks ?? 0) + 1;
+        act(() => callback(now));
+      }
+    },
+    pendingFrameCount: () => frames.size,
+    captureFrames: () => [...frames.values()],
+    captureCellLayout: () => walk(tree, node => !!node.type?.context).props.value,
     commitNativeCell: (index, y, height) => nativePosition.commitCell(list().data[index].id, index, y, height),
     flushNativeScrollEvents: () => act(() => {
       for (const notify of nativeScrollEvents.splice(0)) notify();
@@ -544,6 +570,271 @@ for (const targetShift of [0, 1]) {
     } finally { h.unmount(); }
   });
 }
+
+// RN 0.86.3 ShadowTree emits layout before mount; BaseViewEventEmitter coalesces
+// unchanged frames. VirtualizedList forwards content-view onLayout as
+// onContentSizeChange. With disableEarlyViewCommandExecution=false (versioned
+// Android stable defaults), MountItemDispatcher drains commands before mounts.
+// These are permitted source orderings, NOT an observed failing-device trace.
+// See cached rn0863-{ShadowTree,BaseViewEventEmitter,MountItemDispatcher} sources
+// in ../release135-final-20261024/runtime-final-3b7a169.
+const fabricViewport = 1204 / 3;
+const fabricTargetY = 416;
+const fabricContent = footer => fabricTargetY + 72 + footer;
+function mountBeforeFabricFooterCommit(order = 'after viewport and cells', storage = {}) {
+  const h = mount({ captions: initialPositionCues, currentMs: 10000 },
+    'android', storage, { queueCommands: true });
+  h.commitNativeContent(fabricContent(48));
+  // All cells and the final viewport physically exist already. Only their JS
+  // layout delivery varies; the footer is the sole still-pending native mount.
+  h.nativePosition.viewportHeight = fabricViewport;
+  for (let index = 0; index < 5; index++) h.commitNativeCell(index, 96 + index * 80, 72);
+  const finalContent = fabricContent(fabricViewport - 8);
+  const reportViewport = () => h.act(() => h.list().onLayout(layoutEvent(0, fabricViewport)));
+  const reportCells = () => {
+    for (let index = 0; index < 5; index++) h.measure(index, 96 + index * 80, index === 4 ? 72 : 80);
+  };
+  if (order === 'before viewport and cells') {
+    // Establish footer-producing JS state first. A subsequent width-only
+    // viewport layout (320 -> 360) can follow content delivery while fixed row
+    // heights stay unchanged. Do not invent final footer geometry before JS
+    // has ever learned the height that produces it.
+    h.act(() => h.list().onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height: fabricViewport } } }));
+    h.reportContentSize(finalContent);
+  }
+  reportViewport();
+  if (order === 'between viewport and cells') h.reportContentSize(finalContent);
+  reportCells();
+  if (order === 'after viewport and cells') h.reportContentSize(finalContent);
+  assert.equal(h.list().ListFooterComponent.props.style.height, fabricViewport - 8);
+  assert.equal(h.nativePosition.reportedContentHeight, finalContent);
+  assert.equal(h.nativePosition.contentHeight, fabricContent(48), 'shadow delivery cannot mount a native footer');
+  h.dispatchNativeCommands();
+  assert.ok(h.calls.offsets.some(({ offset }) => offset === 408), 'the measured repair requests the correct 1224px target');
+  assert.ok(Math.abs(h.nativePosition.offset * 3 - 404) < 1e-9, 'early commands clamp at the old 404px native maximum');
+  assert.ok(Math.abs((408 - h.nativePosition.offset) * 3 - 820) < 1e-9);
+  return h;
+}
+function settleFabricFrames(h) {
+  // Explicit native UI phase precedes JS frame callbacks (ReactChoreographer
+  // DISPATCH_UI before TIMERS_EVENTS). No elapsed-time readiness polling.
+  for (let frame = 0; frame < 4; frame++) {
+    h.frame(); h.dispatchNativeCommands();
+  }
+  h.advance(1000); h.dispatchNativeCommands();
+  assert.equal(h.pendingFrameCount(), 0, 'completion callbacks must settle in a bounded number of frames');
+}
+for (const order of ['before viewport and cells', 'between viewport and cells', 'after viewport and cells']) {
+  test(`Primary Fabric pre-mount content ${order} reaches the physical guide without repeated layout`, () => {
+    const h = mountBeforeFabricFooterCommit(order);
+    try {
+      const layouts = h.calls.nativeLayouts;
+      h.commitNativeContent(h.nativePosition.reportedContentHeight);
+      settleFabricFrames(h);
+      assert.equal(h.calls.nativeLayouts, layouts, 'mounting unchanged shadow geometry emits no second cell layout');
+      const requests = [h.calls.indices.length, h.calls.offsets.length, h.calls.frameCallbacks ?? 0];
+      settleFabricFrames(h);
+      assert.deepEqual([h.calls.indices.length, h.calls.offsets.length, h.calls.frameCallbacks ?? 0], requests,
+        'settled navigation cannot poll or keep issuing callbacks');
+      assert.equal(h.props.currentMs, 10000);
+      assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.selects, []);
+      assert.deepEqual(h.calls.focuses, []); assert.equal(h.calls.editing.at(-1), undefined);
+      assert.ok(Math.abs(h.nativePosition.contentHeight - h.nativePosition.viewportHeight - 480) < 1e-9,
+        'final native maximum is 1440px at density 3');
+      assert.equal(h.nativePosition.guideY('cue-4'), 8,
+        'shadow-reported readiness must eventually align the physical cue after native mount, without another layout');
+    } finally { h.unmount(); }
+  });
+}
+for (const boundary of ['before mount', 'after mount before frame']) {
+  for (const interrupt of ['drag', 'close', 'unmount', 'session change', 'save']) {
+    test(`Primary Fabric pre-mount ${interrupt} ${boundary} cancels delayed completion ownership`, () => {
+      const h = mountBeforeFabricFooterCommit();
+      let unmounted = false;
+      try {
+        const staleFrames = h.captureFrames();
+        if (boundary === 'after mount before frame') h.commitNativeContent(h.nativePosition.reportedContentHeight);
+        if (interrupt === 'drag') {
+          h.fire('onScrollBeginDrag'); h.fire('onScroll', h.nativePosition.offset);
+          h.fire('onScrollEndDrag', h.nativePosition.offset);
+        }
+        if (interrupt === 'close') h.update({ visible: false });
+        if (interrupt === 'unmount') { h.unmount(); unmounted = true; }
+        // A new session owns its own future reveal. Keep its recovery pending
+        // and clock unchanged so an obsolete frame cannot target its old cue.
+        if (interrupt === 'session change') h.update({ projectId: 'next-project', captions: [] });
+        if (interrupt === 'save') {
+          h.update({ onSave: () => new Promise(() => {}) });
+          h.act(() => h.button('Save all caption edits').onPress());
+          assert.equal(h.button('Save all caption edits').disabled, true);
+        }
+        // Drain commands already dispatched by the interruption itself before
+        // recording the boundary: only newly issued stale work is forbidden.
+        h.dispatchNativeCommands();
+        const requests = [h.calls.indices.length, h.calls.offsets.length];
+        const seeks = [...h.calls.seeks], selects = [...h.calls.selects], focuses = [...h.calls.focuses];
+        const offset = h.nativePosition.offset;
+        h.commitNativeContent(h.nativePosition.reportedContentHeight);
+        // A callback already delivered to JS may outlive native cancellation.
+        for (const callback of staleFrames) h.act(() => callback(0));
+        settleFabricFrames(h);
+        assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], requests,
+          'an obsolete completion must not issue a new native command');
+        assert.equal(h.nativePosition.offset, offset, 'delayed completion cannot reclaim physical scrolling');
+        assert.deepEqual(h.calls.seeks, seeks); assert.deepEqual(h.calls.selects, selects);
+        assert.deepEqual(h.calls.focuses, focuses); assert.equal(h.props.currentMs, 10000);
+      } finally { if (!unmounted) h.unmount(); }
+    });
+  }
+}
+
+test('Primary Fabric frame coalesces notifications and uses the latest cell geometry', () => {
+  const h = mountBeforeFabricFooterCommit();
+  try {
+    const replacedFrames = h.captureFrames();
+    h.reportContentSize(h.nativePosition.reportedContentHeight);
+    h.act(() => h.list().onLayout(layoutEvent(0, fabricViewport)));
+    h.commitNativeCell(4, fabricTargetY + 12, 72);
+    h.measure(4, fabricTargetY + 12, 72);
+    h.reportContentSize(h.nativePosition.reportedContentHeight + 12);
+    assert.equal(h.pendingFrameCount(), 1, 'cell, viewport and content delivery share one outstanding handoff');
+    h.dispatchNativeCommands();
+    h.commitNativeContent(h.nativePosition.reportedContentHeight);
+    const offsets = h.calls.offsets.length;
+    for (const callback of replacedFrames) h.act(() => callback(0));
+    assert.equal(h.calls.offsets.length, offsets, 'superseded tokens cannot issue commands');
+    assert.equal(h.pendingFrameCount(), 1, 'a stale callback cannot clear its replacement');
+    h.frame(); h.dispatchNativeCommands();
+    assert.equal(h.calls.offsets.length, offsets + 1, 'one handoff issues one measured reassertion');
+    assert.equal(h.calls.offsets.at(-1).offset, 420);
+    assert.equal(h.nativePosition.guideY('cue-4'), 8);
+    assert.equal(h.pendingFrameCount(), 0, 'the frame callback must not reschedule itself');
+    settleFabricFrames(h);
+    assert.equal(h.calls.offsets.length, offsets + 1);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric pending frame survives empty recovery without another layout', () => {
+  const h = mountBeforeFabricFooterCommit('after viewport and cells', { deferRecovery: true });
+  try {
+    const layouts = h.calls.nativeLayouts;
+    const frame = h.captureFrames()[0];
+    h.recover(null);
+    assert.equal(h.input(4).editable, true);
+    assert.equal(h.captureFrames()[0], frame, 'input revision renewal retains the same navigation owner');
+    h.commitNativeContent(h.nativePosition.reportedContentHeight);
+    settleFabricFrames(h);
+    assert.equal(h.calls.nativeLayouts, layouts);
+    assert.equal(h.nativePosition.guideY('cue-4'), 8);
+    assert.deepEqual(h.calls.focuses, []);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric content before measurements retains navigation after its first frame', () => {
+  const h = mount({ captions: initialPositionCues, currentMs: 10000 },
+    'android', {}, { queueCommands: true });
+  try {
+    h.commitNativeContent(fabricContent(48));
+    h.nativePosition.viewportHeight = fabricViewport;
+    h.act(() => h.list().onLayout(layoutEvent(0, fabricViewport)));
+    h.reportContentSize(fabricContent(fabricViewport - 8));
+    h.frame(); h.dispatchNativeCommands();
+    // A previously queued scroll notification can make the JS cache appear
+    // aligned even while physical scrolling remains clamped by the old footer.
+    h.fire('onScroll', 408);
+    // No more content notification follows these late cell measurements.
+    for (let index = 0; index < 5; index++) {
+      h.commitNativeCell(index, 96 + index * 80, 72);
+      h.measure(index, 96 + index * 80, 72);
+    }
+    h.dispatchNativeCommands();
+    h.commitNativeContent(h.nativePosition.reportedContentHeight);
+    settleFabricFrames(h);
+    assert.equal(h.nativePosition.guideY('cue-4'), 8);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric unmeasured frame fallback retains the bounded index retry budget', () => {
+  const h = mount({ captions: initialPositionCues, currentMs: 10000 }, 'android', {}, {});
+  try {
+    h.viewport(fabricViewport);
+    const initialRequests = h.calls.indices.length;
+    for (let attempt = 0; attempt < 6; attempt++) { h.frame(); h.advance(100); }
+    const requests = [h.calls.indices.length, h.calls.offsets.length, h.calls.frameCallbacks];
+    assert.ok(h.calls.nativeFailures.length > 0);
+    assert.ok(h.calls.indices.length - initialRequests <= 7,
+      'one initial frame fallback plus three retries with one frame each bounds subsequent work');
+    settleFabricFrames(h);
+    assert.deepEqual([h.calls.indices.length, h.calls.offsets.length, h.calls.frameCallbacks], requests);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric effect replay replaces cancellation ownership and permits a fresh frame', () => {
+  const h = mountBeforeFabricFooterCommit();
+  try {
+    const staleFrames = h.captureFrames();
+    h.replayEffects(); h.recover(null);
+    h.commitNativeContent(h.nativePosition.reportedContentHeight);
+    const requests = h.calls.offsets.length;
+    for (const callback of staleFrames) h.act(() => callback(0));
+    assert.equal(h.calls.offsets.length, requests);
+    assert.equal(h.pendingFrameCount(), 1);
+    settleFabricFrames(h);
+    assert.equal(h.nativePosition.guideY('cue-4'), 8);
+    assert.deepEqual(h.calls.focuses, []); assert.deepEqual(h.calls.seeks, []);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric obsolete project layout and index callbacks cannot navigate reused cue IDs', () => {
+  const h = mountBeforeFabricFooterCommit();
+  try {
+    const staleList = h.list(), staleCell = h.captureCellLayout(), staleFrames = h.captureFrames();
+    h.update({ projectId: 'next-project' }); h.recover(null);
+    const requests = [h.calls.indices.length, h.calls.offsets.length];
+    h.act(() => {
+      staleList.onLayout(layoutEvent(0, 200));
+      staleCell('cue-4', 4, { x: 0, y: 900, width: 360, height: 72 });
+      staleList.onContentSizeChange(360, 1500);
+      staleList.onScrollToIndexFailed({ index: 4, averageItemLength: 200 });
+      for (const callback of staleFrames) callback(0);
+    });
+    assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], requests);
+    h.act(() => h.list().onLayout(layoutEvent(0, fabricViewport)));
+    h.commitNativeContent(h.nativePosition.reportedContentHeight);
+    settleFabricFrames(h);
+    assert.equal(h.nativePosition.guideY('cue-4'), 8, 'obsolete cell geometry cannot contaminate the new session');
+    assert.deepEqual(h.calls.focuses, []); assert.deepEqual(h.calls.seeks, []);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric Save failure and retry reject old frames and resume only the live target', async () => {
+  const h = mountBeforeFabricFooterCommit();
+  try {
+    for (const currentMs of [5000, 2500]) {
+      const staleFrames = h.captureFrames(), content = h.list().onContentSizeChange;
+      let finishSave;
+      h.update({ onSave: () => new Promise(resolve => { finishSave = resolve; }) });
+      h.act(() => h.button('Save all caption edits').onPress());
+      const requests = [h.calls.indices.length, h.calls.offsets.length];
+      h.act(() => {
+        content(360, h.nativePosition.reportedContentHeight);
+        for (const callback of staleFrames) callback(0);
+      });
+      assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], requests);
+      assert.equal(h.pendingFrameCount(), 0, 'content while Save owns input cannot restart navigation');
+      finishSave(false); await h.flush(); h.recover(null);
+      h.update({ currentMs });
+      h.commitNativeContent(h.nativePosition.reportedContentHeight);
+      const liveFrames = h.pendingFrameCount();
+      h.act(() => { for (const callback of staleFrames) callback(0); });
+      assert.equal(h.pendingFrameCount(), liveFrames);
+      settleFabricFrames(h);
+      assert.equal(h.nativePosition.guideY(currentMs === 5000 ? 'cue-2' : 'cue-1'), 8);
+      assert.deepEqual(h.calls.focuses, []); assert.deepEqual(h.calls.seeks, []);
+      assert.deepEqual(h.calls.selects, []);
+    }
+  } finally { h.unmount(); }
+});
 
 // Separate native geometry from JS event delivery. In RN 0.86.3 Android,
 // ReactScrollView.onLayout replays scrollTo(currentOffset); super.scrollTo
