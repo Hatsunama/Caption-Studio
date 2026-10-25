@@ -1,4 +1,18 @@
-# One-time encrypted Solana recovery (phase 1)
+# Historical one-time encrypted Solana recovery (phase 1)
+
+Retirement is prepared locally in `recover-local-signing.yml`; it is not active on
+main from these edits. Parent reports original D02 key sign/verify proof on C after
+recovery run 40239617753 and prior 50D Play proof. Parent disabled the three legacy
+workflow IDs and deleted the recovery artifact after local proof. The four original
+Actions secrets remain retained until full unsigned/local signer pipeline proof.
+This follow-up does not access keys or change Actions. See
+[retirement and responsibility migration](cloud-signing-retirement.md).
+
+The remainder records the historical envelope protocol for retained synthetic
+acceptance tests. Its dispatch instructions describe the pre-retirement workflow;
+the tombstone accepts no recovery inputs and always fails. Future releases use
+`unsigned-store-build.yml` then `scripts/local-signing/sign-release.ps1`.
+
 
 This adds a manual export of the four existing repository Actions signing secrets.
 It does not recover anything automatically, install a local key, change signing pipelines,

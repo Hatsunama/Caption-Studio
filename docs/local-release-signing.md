@@ -44,9 +44,10 @@ points. Output cannot overlap inputs or the key root. No input is rewritten.
 `GITHUB_ACTIONS` being present, including an empty value, refuses execution.
 There are no CLI or environment certificate-pin overrides.
 
-`-KeyRoot` defaults to `$env:USERPROFILE\.caption-studio-signing`. It must resolve
-to local C without links. The agent implementing this signer has not accessed
-that real directory. Expected profiles after the separately approved recovery:
+`-KeyRoot` defaults to the canonical `C:\caption_studio\signing`, independent of
+`USERPROFILE`. Explicit `-KeyRoot` paths remain supported for synthetic tests and
+checks and must resolve to local C without links. The relocated protected root
+has not been accessed for this default-path correction. Expected profiles:
 
 | Role | Files below key root | Password format | Alias |
 | --- | --- | --- | --- |
@@ -204,3 +205,36 @@ proof remain prerequisites. No private directory, real credentials, actual relea
 files, GitHub secrets, Gradle, uploads, commits or pushes were accessed or run for
 this review. AGENTS and its exact online Expo 57 documentation were read. No
 importer, workflow, application or dependency files changed.
+
+## Canonical root correction validation (2026-10-25)
+
+The parameter-default regression was added before the correction. It parses the
+production PowerShell `ParamBlock` and executes it with a harmless output-only
+body and synthetic mandatory arguments. Before the fix, the two synthetic
+`USERPROFILE` values produced two profile-relative `.caption-studio-signing`
+paths, failing the expected `C:\caption_studio\signing` assertion. After the fix,
+both resolve to the canonical root, and an explicit synthetic `-KeyRoot` with
+spaces is preserved. The harness never executes the production signing body or
+opens the resolved key root.
+
+The targeted regression passed after the fix. The full synthetic release-signing
+file passed **16 tests, 0 failures, 0 skips** in 29.320 seconds; the unchanged
+key-import test file then passed **7 tests, 0 failures, 0 skips** in 18.379 seconds.
+Both ran serially with `--max-old-space-size=64 --test --test-concurrency=1`, using
+Node 22.23.4 from
+`C:\caption_studio\workspace\release135-final-20261024\security-patches\tools\node-v22.23.4-win-x64\node.exe`.
+Each command set process-local `TEMP` and `TMP` to `C:\caption_studio\tmp`.
+Release tests derived Java 17 from the sibling bundled JDK and SDK build-tools
+36.0.0 from `LOCALAPPDATA`. Callers can override synthetic tools through
+`LOCAL_RELEASE_TEST_JDK` (or `LOCAL_IMPORT_TEST_JDK`) and
+`LOCAL_RELEASE_TEST_BUILD_TOOLS`; production tool validation is unchanged.
+The importer run explicitly supplied `LOCAL_IMPORT_TEST_JDK` for that same JDK
+and `LOCAL_IMPORT_TEST_OPENSSL` for `C:\Program Files\Git\usr\bin\openssl.exe`.
+Node syntax and scoped whitespace checks passed.
+
+Only `scripts/local-signing/sign-release.ps1`,
+`tests/local-release-signing.test.mjs`, `docs/local-release-signing.md`, and
+`docs/local-key-import.md` changed for this correction. Earlier evidence above
+describes its original runs and has not been rewritten to imply relocated paths.
+No protected production directory or real key/DPAPI material was accessed.
+Full production APK/AAB signing with the new default remains the parent's step.

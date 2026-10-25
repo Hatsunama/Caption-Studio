@@ -20,9 +20,12 @@ powershell.exe -NoProfile -NonInteractive -File scripts/local-signing/import-rec
   -JdkBin '<Java 17 bin directory>' `
   -OpenSslExe '<OpenSSL executable>' `
   -NodeExe '<Node 22 executable>' `
-  -DestinationRoot 'C:\Users\1thea\.caption-studio-signing'
+  -DestinationRoot 'C:\caption_studio\signing'
 ```
 
+The canonical protected root is `C:\caption_studio\signing`, matching the local
+release signer's default `-KeyRoot`. The importer still requires an explicit
+`-DestinationRoot`; synthetic tests supply their own isolated destination.
 Placeholders must be replaced with explicit parent-supplied paths. Do not take the
 approved exporter hash solely from the accompanying unsigned manifest. There is no
 production CLI/environment override for either certificate pin. The destination root

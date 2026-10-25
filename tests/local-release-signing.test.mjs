@@ -41,6 +41,35 @@ async function fixture(t) {
   await writeFile(files.provenance, JSON.stringify(provenance()));
   return { root, files, output: path.join(root, 'out') };
 }
+
+test('production parameter defaults use canonical signing root and preserve explicit KeyRoot', windowsOnly, async t => {
+  const f = await fixture(t);
+  const script = path.join(f.root, 'parameter-defaults.ps1');
+  await writeFile(script, `param($Signer,$Root)
+$ErrorActionPreference='Stop'
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($Signer,[ref]$tokens,[ref]$errors)
+if($errors.Count -or $null -eq $ast.ParamBlock){throw 'Parse failure'}
+# Execute the production parameter block only; the stub never opens any path.
+$stub=[scriptblock]::Create($ast.ParamBlock.Extent.Text + [Environment]::NewLine + 'Write-Output $KeyRoot')
+$arguments=@{}
+foreach($parameter in $ast.ParamBlock.Parameters) {
+  $name=$parameter.Name.VariablePath.UserPath
+  if($name -ne 'KeyRoot'){$arguments[$name]=Join-Path $Root ('synthetic-'+$name)}
+}
+$env:USERPROFILE=Join-Path $Root 'profile-one'
+$first=& $stub @arguments
+$env:USERPROFILE=Join-Path $Root 'profile-two'
+$second=& $stub @arguments
+$arguments.KeyRoot=Join-Path $Root 'explicit synthetic keys'
+$explicit=& $stub @arguments
+ConvertTo-Json -Compress -InputObject @($first,$second,$explicit)
+`);
+  const actual = JSON.parse(execFileSync(powershell,
+    ['-NoProfile', '-NonInteractive', '-File', script, signer, f.root],
+    { encoding: 'utf8', env: shellEnv, windowsHide: true, timeout: 15000 }));
+  assert.deepEqual(actual, ['C:\\caption_studio\\signing', 'C:\\caption_studio\\signing', path.join(f.root, 'explicit synthetic keys')]);
+});
 test('source-bound producer schema and production-only identity fail closed', () => {
   gate.assertProvenance(provenance(), commit, '123');
   const mutations = [p => p.sourceCommit = 'c'.repeat(40), p => p.runId = '124', p => p.package = 'migration',
@@ -101,7 +130,11 @@ with zipfile.ZipFile(sys.argv[1],'x') as z:
   assert.equal(gate.isSignatureMetadata('META-INF/KEY.RSA'), true);
 });
 
-const javaBin = 'C:\\Users\\1thea\\.codex\\visualizations\\2026\\10\\10\\01a12749-ea57-7032-b025-5f9a6f9071d2\\release135-final-20261024\\security-patches\\tools\\liberica-jdk-17.0.21.0.2+5\\jdk-17.0.21.0.2\\bin';
+const javaBin = process.env.LOCAL_RELEASE_TEST_JDK ?? process.env.LOCAL_IMPORT_TEST_JDK ??
+  path.resolve(path.dirname(process.execPath), '../liberica-jdk-17.0.21.0.2+5/jdk-17.0.21.0.2/bin');
+const buildTools = process.env.LOCAL_RELEASE_TEST_BUILD_TOOLS ?? path.join(
+  process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT ?? path.join(process.env.LOCALAPPDATA ?? '', 'Android', 'Sdk'),
+  'build-tools', '36.0.0');
 test('actual synthetic JAR signature verifies, rejects production role, tamper and appended unsigned entry', windowsOnly, async t => {
   const f = await fixture(t);
   const key = path.join(f.root, 'synthetic.p12'), jar = path.join(f.root, 'synthetic.jar'), der = path.join(f.root, 'synthetic.der');
@@ -130,7 +163,7 @@ test('actual synthetic JAR signature verifies, rejects production role, tamper a
   const apk = path.join(f.root,'synthetic.apk');
   execFileSync(python,['-c',"import zipfile,sys\nwith zipfile.ZipFile(sys.argv[1],'x') as z:z.writestr('AndroidManifest.xml','synthetic manifest');z.writestr('assets/data','payload')",apk]);
   const before = await gate.inspectArchive(apk,python);
-  const signerJar = 'C:\\Users\\1thea\\AppData\\Local\\Android\\Sdk\\build-tools\\36.0.0\\lib\\apksigner.jar';
+  const signerJar = path.join(buildTools, 'lib', 'apksigner.jar');
   const java = args => execFileSync(path.join(javaBin,'java.exe'),['-Xms16m','-Xmx96m','-XX:ActiveProcessorCount=1','-jar',signerJar,...args],{env,encoding:'utf8',stdio:['ignore','pipe','pipe'],windowsHide:true});
   java(['sign','--ks',key,'--ks-key-alias','synthetic','--ks-pass','env:SYNTHETIC_PASS','--key-pass','env:SYNTHETIC_PASS','--min-sdk-version','24','--v1-signing-enabled','false','--v2-signing-enabled','true','--v3-signing-enabled','true','--v4-signing-enabled','false',apk]);
   const verified = java(['verify','--min-sdk-version','24','--verbose','--print-certs',apk]);
@@ -251,10 +284,10 @@ Write-Output 'SYNTHETIC_DPAPI_OK'
 test('production CLI fails before key access on wrong bundletool and cleans staging/input handles', windowsOnly, async t => {
   const f = await fixture(t);
   const bundle = path.join(f.root, 'fake-bundletool.jar'); await writeFile(bundle, 'not bundletool');
-  await assert.rejects(gate.validateToolchain({python,javaBin,buildTools:'C:\\Users\\1thea\\AppData\\Local\\Android\\Sdk\\build-tools\\36.0.0',bundletool:bundle}),/bundletool checksum mismatch/);
+  await assert.rejects(gate.validateToolchain({python,javaBin,buildTools,bundletool:bundle}),/bundletool checksum mismatch/);
   const args = ['-NoProfile','-NonInteractive','-File',signer,'-UnsignedApk',f.files.apk,'-UnsignedAab',f.files.aab,
     '-Mapping',f.files.mapping,'-Provenance',f.files.provenance,'-ExpectedSourceCommit',commit,'-ExpectedRunId','123',
-    '-OutputDirectory',f.output,'-JavaBin',javaBin,'-BuildTools','C:\\Users\\1thea\\AppData\\Local\\Android\\Sdk\\build-tools\\36.0.0',
+    '-OutputDirectory',f.output,'-JavaBin',javaBin,'-BuildTools',buildTools,
     '-Bundletool',bundle,'-NodePath',process.execPath,'-PythonPath',python,'-KeyRoot',path.join(f.root,'absent-synthetic-keys')];
   let failed;
   try { execFileSync(powershell,args,{encoding:'utf8',stdio:['ignore','pipe','pipe'],windowsHide:true,env:shellEnv}); } catch(e) { failed=e; }

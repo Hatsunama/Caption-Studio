@@ -13,7 +13,7 @@ param(
   [Parameter(Mandatory=$true)][string]$Bundletool,
   [Parameter(Mandatory=$true)][string]$NodePath,
   [Parameter(Mandatory=$true)][string]$PythonPath,
-  [string]$KeyRoot = (Join-Path $env:USERPROFILE '.caption-studio-signing')
+  [string]$KeyRoot = 'C:\caption_studio\signing'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'

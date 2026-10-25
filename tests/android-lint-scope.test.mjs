@@ -13,7 +13,7 @@ test('Android lint excludes analyzers by dependency ownership, not package name'
 });
 
 test('both release workflows use the same first-party Android lint policy', async () => {
-  for (const file of ['.github/workflows/ci.yml', '.github/workflows/publish-sidecar.yml']) {
+  for (const file of ['.github/workflows/ci.yml', '.github/workflows/unsigned-store-build.yml']) {
     const workflow = await readFile(new URL(file, root), 'utf8');
     assert.match(workflow, /:app:lintRelease/);
     assert.match(workflow, /--init-script \.\.\/scripts\/first-party-android-lint\.gradle/);

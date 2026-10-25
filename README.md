@@ -177,7 +177,7 @@ Video and text transforms use normalized coordinates so projects remain portable
 
 ### Release metadata provenance
 
-The publish workflow uploads `caption-studio-release.json` alongside the APK and checksum in the initial release creation. Schema version 1 records `repository`, `tag`, `sourceCommit`, `package`, `version`, `versionCode`, `signingCertificateSha256`, and `apk` (`name`, `sha256`). The workflow derives APK fields from the packaged, signature-verified APK, checks them against release inputs and the existing package/certificate contract, and records the protected tag's checked commit. Tagged `app.json` is not release evidence: workflow version overrides exist only in the build checkout.
+`caption-studio-release.json` accompanies the APK and checksum. Schema version 1 records `repository`, `tag`, `sourceCommit`, `package`, `version`, `versionCode`, `signingCertificateSha256`, and `apk` (`name`, `sha256`). Future releases use the [unsigned build workflow](docs/unsigned-local-release-build.md) and [local signer](docs/local-release-signing.md): the producer binds unsigned bytes and the R8 mapping to the approved main commit, and the local signer verifies identity, distinct signing certificates and unchanged payloads before writing the release record. Publication remains a separate action after exact-artifact runtime verification. Tagged `app.json` alone is not release evidence; version overrides occur only in the build checkout.
 
 Release ordering reads this manifest, validates its identity and tag, and compares its APK hash with GitHub's asset digest when available. A malformed, unavailable, or inconsistent manifest blocks publication; it never falls back silently. The manifest and APK share the repository release trust boundary, not an independent attestation. Enable immutable releases for future publications and restrict release writers and protected tags; the workflow does not enable repository policy itself.
 
@@ -187,20 +187,20 @@ Historical checks require `gh` authentication, Java, network/disk capacity for o
 
 Requirements: Node.js 22.13 or newer, Android SDK 36, JDK 17, and an Android device with USB debugging enabled.
 
-Clone to a short path such as `C:\Caption-Studio`. Android's native CMake build can exceed Windows' object-file path limit when the repository is nested deeply under Documents.
+Keep Caption Studio work under `C:\caption_studio`; use a short checkout path such as `C:\caption_studio\source`. Android's native CMake build can exceed Windows' object-file path limit when the repository is nested deeply under Documents.
 
 ```powershell
-git clone https://github.com/Hatsunama/Caption-Studio.git C:\Caption-Studio
-cd C:\Caption-Studio
+git clone https://github.com/Hatsunama/Caption-Studio.git C:\caption_studio\source
+cd C:\caption_studio\source
 npm install
 npm run android
 ```
 
 `npm run android` generates the native Android project, applies the repository's Windows/Gradle compatibility patch, builds the app, installs it on the connected device, and launches it.
 
-Official release builds use a dedicated Caption Studio signing key, never Expo's checked-in debug key. The private keystore and `CAPTION_STUDIO_RELEASE_*` Gradle properties stay outside the repository. Maintainers build the production-key APK with `npm run release:android`, then verify the resulting package and signing-certificate SHA-256 with Android SDK `aapt2` and `apksigner` before publishing it. The checked-in certificate lineage exists only for `npm run release:android:migration`, which creates a one-time local migration APK for devices that previously received the old beta; it is never applied to public production APKs.
+Production signing is local, using two original keys under the protected `C:\caption_studio\signing` directory: D02 for the Solana APK and the distinct 50D upload key for the Google Play AAB. GitHub builds unsigned APK/AAB files and matching mapping/provenance; `scripts/local-signing/sign-release.ps1` validates and signs local copies using Windows CurrentUser DPAPI passwords. Follow the [complete local signing procedure](docs/local-release-signing.md). Do not upload production keys or passwords to Actions. The retired cloud-signing workflows refuse dispatch. Legacy `npm run release:android` and `npm run release:play` are local Gradle build helpers requiring separate external configuration, not the audited store-artifact procedure. The checked-in certificate lineage exists only for `npm run release:android:migration`, which creates a one-time local migration APK for devices that previously received the old beta; it is never applied to public production APKs.
 
-The release keystore and its private Gradle properties are the permanent Android update identity. Maintainers must keep an encrypted backup outside the repository; losing that key prevents future APK updates under the same package identity.
+The Solana private key and Play upload private key remain separate permanent signing identities. Keep their encrypted backups and required Windows recovery material outside the repository; losing a key can block future updates. Moving a CurrentUser DPAPI file does not make it decryptable by a different Windows account.
 
 Expo SDK 57 currently supplies Android Gradle Plugin 8.12. The repository uses Gradle 9.4 and has removed deprecated syntax from project-owned Gradle files. Remaining Gradle 10 deprecation notices originate inside that upstream Android Gradle Plugin and must be resolved by a future Expo-supported AGP upgrade; forcing AGP 9 onto this Expo release is unsupported and breaks its native plugins.
 
@@ -224,7 +224,7 @@ Dual-language subtitles are optional and disabled by default. Caption Studio use
 - No watermark, transcription credits, font packs, export quota, or per-style paywall is part of the product design.
 - Imported fonts remain the user's responsibility to license for their intended use.
 
-For a production submission, use `npm run release:play` to produce the signed Android App Bundle required by Google Play. The prepared [Play submission checklist](play-store/submission-checklist.md) and [Data Safety notes](play-store/data-safety-notes.md) record the audited release assumptions.
+For a production submission, use the unsigned producer and local signer above to produce the separate-key Solana APK and Google Play AAB. Verify the exact final artifacts on both supported test phones before publication or recommending installation; signing success alone is insufficient. The prepared [Play submission checklist](play-store/submission-checklist.md) and [Data Safety notes](play-store/data-safety-notes.md) record the audited release assumptions.
 
 ## License
 
