@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
   useWindowDimensions,
+  type CellRendererProps,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   type ViewToken,
@@ -78,6 +79,21 @@ const ignoreBackRequestChange = () => undefined;
 const MIN_LANGUAGE_INPUT_HEIGHT = 44;
 const LANGUAGE_LABEL_GAP = 5;
 const SHORT_WIDE_ROW_VERTICAL_CHROME = 2; // Two 1dp borders; no vertical padding.
+const DualCellLayoutContext = createContext<(sourceId: string, index: number) => void>(() => {});
+
+// Replace RN's default cell View without adding a wrapper or changing cell type
+// across session renders. RN must update its authoritative metrics first.
+function DualCaptionCell({ item, index, onLayout, onFocusCapture, style, children }: CellRendererProps<CaptionPair>) {
+  const reportLayout = useContext(DualCellLayoutContext);
+  return (
+    <View {...{ onFocusCapture }} style={style} onLayout={(event) => {
+      onLayout?.(event);
+      reportLayout(item.source.id, index);
+    }}>
+      {children}
+    </View>
+  );
+}
 
 export function DualCaptionEditor(props: DualCaptionEditorProps) {
   // Closing or changing projects/tracks owns a new draft and recovery lifetime.
@@ -122,6 +138,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     attempts: 0,
     echoMs: undefined as number | undefined,
     timer: undefined as ReturnType<typeof setTimeout> | undefined,
+    frame: undefined as { handle: number } | undefined,
   }));
   const stopListNavigation = useCallback(() => {
     navigation.intentional = false;
@@ -130,6 +147,8 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     navigation.awaitingMeasurements = false;
     clearTimeout(navigation.timer);
     navigation.timer = undefined;
+    if (navigation.frame) cancelAnimationFrame(navigation.frame.handle);
+    navigation.frame = undefined;
   }, [navigation]);
   useLayoutEffect(() => {
     navigation.alive = true;
@@ -161,15 +180,44 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const sourceCaptions = useMemo(() => props.pairs.map(pair => pair.source), [props.pairs]);
   const anchor = useMemo(() => captionAtTimelinePosition(sourceCaptions, props.currentMs ?? 0), [sourceCaptions, props.currentMs]);
   const anchorIndex = useMemo(() => anchor ? props.pairs.findIndex(pair => pair.source.id === anchor.id) : -1, [anchor, props.pairs]);
-  const retryPendingListReveal = useCallback(() => {
+  const issuePendingListReveal = useCallback((allowUnmeasuredFrame = true) => {
     const index = navigation.pendingIndex;
-    if (!navigation.alive || !navigation.awaitingMeasurements || navigation.timer !== undefined
+    const sourceId = navigation.pairs[index]?.source.id;
+    if (!navigation.alive || navigation.intentional || index !== navigation.targetIndex || navigation.timer !== undefined
       || index < 0 || index >= navigation.pairs.length || !listRef.current) return;
     // Consume this readiness event before issuing a command: an unmeasured
     // failure retains the target for the next native event, without polling.
     navigation.awaitingMeasurements = false;
     listRef.current.scrollToIndex({ index, animated: false, viewPosition: 0 });
+    // Readiness can precede both JS cell metrics and native content mount.
+    // Hand off once after that frame, including an initial zero-metric failure.
+    // A finite timer owns measured retries; this callback never schedules itself.
+    if ((!allowUnmeasuredFrame && navigation.awaitingMeasurements) || navigation.timer !== undefined
+      || navigation.pendingIndex !== index || navigation.frame) return;
+    const frame = { handle: 0 };
+    navigation.frame = frame;
+    frame.handle = requestAnimationFrame(() => {
+      if (navigation.frame !== frame) return;
+      navigation.frame = undefined;
+      if (!navigation.alive || navigation.intentional || navigation.pendingIndex !== index
+        || navigation.targetIndex !== index || navigation.pairs[index]?.source.id !== sourceId
+        || !listRef.current) return;
+      listRef.current.scrollToIndex({ index, animated: false, viewPosition: 0 });
+      // A synchronous index failure retains ownership for the bounded retry
+      // path. Otherwise this one native-frame handoff completes the reveal.
+      if (!navigation.awaitingMeasurements && navigation.timer === undefined) navigation.pendingIndex = -1;
+    });
   }, [navigation]);
+  const retryPendingListReveal = useCallback(() => {
+    if (navigation.awaitingMeasurements) issuePendingListReveal();
+  }, [issuePendingListReveal, navigation]);
+  const onCellLayout = useCallback((sourceId: string, index: number) => {
+    if (!navigation.alive || navigation.intentional || navigation.pairs !== props.pairs
+      || navigation.pairs[index]?.source.id !== sourceId || !navigation.awaitingMeasurements
+      || navigation.pendingIndex < 0 || navigation.pendingIndex !== navigation.targetIndex
+      || navigation.pairs[navigation.pendingIndex]?.source.id !== anchor?.id) return;
+    retryPendingListReveal();
+  }, [anchor?.id, navigation, props.pairs, retryPendingListReveal]);
   const onListViewportLayout = useCallback((event: { nativeEvent: { layout: { width: number; height: number } } }) => {
     if (!navigation.alive) return;
     const { width, height } = event.nativeEvent.layout;
@@ -197,30 +245,41 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     retryPendingListReveal();
   }, [anchorIndex, navigation, props.currentMs, retryPendingListReveal, stopListNavigation]);
   const onScrollToIndexFailed = useCallback((info: { index: number; averageItemLength: number }) => {
-    if (!navigation.alive || navigation.pendingIndex !== info.index || navigation.timer !== undefined) return;
+    if (!navigation.alive || navigation.intentional || navigation.pendingIndex !== info.index
+      || navigation.targetIndex !== info.index || navigation.timer !== undefined) return;
     if (!Number.isFinite(info.averageItemLength) || info.averageItemLength <= 0) {
       navigation.awaitingMeasurements = true;
       return;
     }
+    // Zero-metric readiness bursts share the already queued frame. Positive
+    // metrics instead transfer ownership to the existing bounded timer path.
+    if (navigation.frame) cancelAnimationFrame(navigation.frame.handle);
+    navigation.frame = undefined;
     if (navigation.attempts >= 2) {
       navigation.awaitingMeasurements = true;
       return;
     }
     navigation.awaitingMeasurements = false;
     navigation.attempts++;
+    const sourceId = navigation.pairs[info.index]?.source.id;
     listRef.current?.scrollToOffset({ offset: Math.max(0, info.averageItemLength * info.index), animated: false });
     navigation.timer = setTimeout(() => {
       navigation.timer = undefined;
-      if (!navigation.alive || navigation.pendingIndex !== info.index || info.index >= navigation.pairs.length) return;
-      listRef.current?.scrollToIndex({ index: info.index, animated: false, viewPosition: 0 });
+      if (!navigation.alive || navigation.intentional || navigation.pendingIndex !== info.index
+        || navigation.targetIndex !== info.index || navigation.pairs[info.index]?.source.id !== sourceId) return;
+      issuePendingListReveal(false);
     }, 100);
-  }, [navigation]);
+  }, [issuePendingListReveal, navigation]);
   const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken<CaptionPair>[] }) => {
     if (!navigation.alive) return;
     let first: ViewToken<CaptionPair> | undefined;
     for (const token of viewableItems) {
       if (!token.isViewable || token.index == null) continue;
-      if (token.index === navigation.pendingIndex && navigation.pairs[token.index] === token.item) {
+      // Default viewability includes partial rows and uses JS cell metrics.
+      // RN can emit it before our owned cell report. It cannot complete work
+      // still owned by measurements, a retry timer, or the native handoff frame.
+      if (!navigation.frame && !navigation.awaitingMeasurements && navigation.timer === undefined
+        && token.index === navigation.pendingIndex && navigation.pairs[token.index] === token.item) {
         navigation.pendingIndex = -1;
         navigation.awaitingMeasurements = false;
         clearTimeout(navigation.timer);
@@ -564,7 +623,9 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
         </View>
 
         <View collapsable={false} ref={viewportRef} onLayout={onListViewportLayout} style={{ flex: 1, minHeight: 0 }}>
+        <DualCellLayoutContext.Provider value={onCellLayout}>
         <FlatList
+          CellRendererComponent={DualCaptionCell}
           ref={listRef}
           onScroll={reveal.onScroll}
           onScrollBeginDrag={onScrollBeginDrag}
@@ -588,6 +649,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           keyboardDismissMode="on-drag"
           contentContainerStyle={{ gap: 10, padding: 14, paddingTop: shortWide ? 0 : 14, paddingBottom: shortWide ? 0 : 14 }}
         />
+        </DualCellLayoutContext.Provider>
         </View>
 
         {props.busy || props.errorMessage || props.warningMessage ? (

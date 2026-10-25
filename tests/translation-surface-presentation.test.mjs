@@ -32,6 +32,7 @@ const style = value => Object.assign({}, ...[value].flat(Infinity).filter(Boolea
 
 function mount(overrides = {}, options = {}) {
   const instances = new Map(), listeners = new Set(), timers = new Map();
+  const contexts = new Map(), frames = new Map();
   const calls = { cancel: 0, dismiss: 0, retry: 0, subscriptions: 0, removals: 0, alerts: [] };
   let current, cursor, dirty = true, pending = [], pendingLayout = [], tree, timerId = 0;
   let dimensions = options.dimensions ?? { width: 390, height: 844 };
@@ -50,6 +51,10 @@ function mount(overrides = {}, options = {}) {
     }
   };
   const react = {
+    createContext(value) {
+      const context = { value }; context.Provider = { context }; return context;
+    },
+    useContext: context => contexts.has(context) ? contexts.get(context) : context.value,
     memo: fn => fn, useMemo: memo, useCallback: (fn, deps) => memo(() => fn, deps),
     useRef: initial => memo(() => ({ current: initial }), []), useEffect: effect,
     useLayoutEffect: (callback, deps) => effect(callback, deps, pendingLayout),
@@ -103,7 +108,11 @@ function mount(overrides = {}, options = {}) {
       readEditorDraftJournal: async () => undefined, archiveEditorDraftJournal: async () => {},
       clearEditorDraftJournal: async () => {}, writeEditorDraftJournal: async () => {},
     },
-  }, { setTimeout: callback => { timers.set(++timerId, callback); return timerId; }, clearTimeout: id => timers.delete(id) });
+  }, {
+    setTimeout: callback => { timers.set(++timerId, callback); return timerId; }, clearTimeout: id => timers.delete(id),
+    requestAnimationFrame: callback => { frames.set(++timerId, callback); return timerId; },
+    cancelAnimationFrame: id => frames.delete(id),
+  });
   let props = {
     visible: true, projectId: 'project', baseRevision: 'r1', trackId: 'zh',
     sourceLanguageLabel: 'English', targetLanguageLabel: 'Chinese', trackVisible: true,
@@ -116,6 +125,15 @@ function mount(overrides = {}, options = {}) {
   function renderNode(node, path, visited) {
     if (Array.isArray(node)) return node.map((child, index) => renderNode(child, `${path}/${child?.key ?? index}`, visited));
     if (!node || typeof node !== 'object') return node;
+    if (node.type?.context) {
+      const context = node.type.context, had = contexts.has(context), previous = contexts.get(context);
+      contexts.set(context, node.props.value);
+      try {
+        return renderNode(node.props.children, `${path}/provider`, visited);
+      } finally {
+        if (had) contexts.set(context, previous); else contexts.delete(context);
+      }
+    }
     if (typeof node.type === 'function') {
       const id = `${path}:${node.type.name}:${node.key ?? ''}`;
       visited.add(id);
@@ -126,7 +144,12 @@ function mount(overrides = {}, options = {}) {
     let children = node.props.children;
     if (node.type === 'KeyboardViewport' && typeof children === 'function') children = children({ safeAreaBottom: covered ? 0 : node.props.safeAreaBottom });
     if (node.type === 'FlatList') children = [node.props.ListHeaderComponent,
-      ...node.props.data.slice(0, node.props.initialNumToRender).map((item, index) => node.props.renderItem({ item, index }))];
+      ...node.props.data.slice(0, node.props.initialNumToRender).map((item, index) => jsx(node.props.CellRendererComponent ?? 'View', {
+        item, index, style: options.cellStyle,
+        onLayout: event => options.onCellLayout?.(index, event),
+        onFocusCapture: options.onCellFocusCapture,
+        children: node.props.renderItem({ item, index }),
+      }, node.props.keyExtractor(item)))];
     return { ...node, props: { ...node.props, children: renderNode(children, `${path}/children`, visited) } };
   }
   function render() {
@@ -145,7 +168,7 @@ function mount(overrides = {}, options = {}) {
   }
   render();
   return {
-    calls, listeners, timers,
+    calls, listeners, timers, frames,
     all: predicate => walk(tree, predicate),
     one(predicate) { const found = walk(tree, predicate); assert.equal(found.length, 1); return found[0]; },
     button(label) { return this.one(node => node.type === 'Pressable' && (node.props.accessibilityLabel === label || text(node) === label)); },
@@ -271,6 +294,50 @@ test('portrait, landscape and keyboard-covered panes preserve virtualization, sa
     assert.ok(walk(card, node => node === host.button('Cancel')).length);
   }
   host.update({ visible: false });
+});
+
+test('actual list cells forward native events before provider-driven measurement retries and refresh context', () => {
+  const cellStyle = { flexDirection: 'column' }, layouts = [], requests = [], focuses = [], seeks = [];
+  const event = { nativeEvent: { layout: { x: 0, y: 14, width: 350, height: 180 } } };
+  const onFocusCapture = received => focuses.push(received);
+  const pair = id => ({ source: { id, text: 'Hello', startMs: 0, endMs: 1000 },
+    translation: { text: 'Bonjour', status: 'translated' }, startMs: 0 });
+  const host = mount({ busy: false, pairs: [pair('first')], onSeekTimeline: ms => seeks.push(ms) }, {
+    cellStyle, onCellFocusCapture: onFocusCapture,
+    onCellLayout(index, received) {
+      assert.equal(index, 0);
+      assert.equal(received, event, 'forward the original native layout event');
+      layouts.push(received);
+    },
+  });
+  const list = () => host.one(node => node.type === 'FlatList');
+  const cell = () => host.one(node => node.type === 'View' && node.props.style === cellStyle);
+  // Attach the native list ref after mount, while opening still awaits measurements.
+  list().props.ref.current = { scrollToIndex(request) {
+    assert.ok(layouts.length > requests.length, 'RN receives layout before the provider retries');
+    requests.push(request);
+    list().props.onScrollToIndexFailed({ index: request.index, averageItemLength: 0 });
+  } };
+  const firstCell = cell(), component = list().props.CellRendererComponent;
+  assert.equal(typeof component, 'function');
+  assert.equal(firstCell.props.onFocusCapture, onFocusCapture);
+  firstCell.props.onFocusCapture(event);
+  assert.equal(focuses[0], event);
+  assert.equal(walk(firstCell, node => node.type === 'TextInput').length, 2, 'real row children render inside the cell');
+  firstCell.props.onLayout(event);
+  assert.equal(requests.length, 1, 'the real provider callback retries the pending reveal');
+  assert.equal(requests[0].index, 0);
+  host.update({ pairs: [pair('replacement')] });
+  assert.equal(list().props.CellRendererComponent, component, 'cell type remains stable across provider updates');
+  const before = requests.length;
+  firstCell.props.onLayout(event);
+  assert.equal(requests.length, before, 'old cell callbacks cannot revive a replaced source');
+  cell().props.onLayout(event);
+  assert.equal(requests.length, before + 1, 'the current cell reads the updated provider callback');
+  assert.equal(layouts.length, 3);
+  assert.deepEqual(seeks, [], 'measurement retries do not seek the timeline');
+  host.update({ visible: false });
+  assert.equal(host.frames.size, 0);
 });
 
 test('non-Android background retains its noninteractive fallback', () => {

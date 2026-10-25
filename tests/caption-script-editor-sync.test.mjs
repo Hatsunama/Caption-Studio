@@ -80,9 +80,23 @@ const crop = evaluate(editorAst.statements.find((node) => ts.isFunctionDeclarati
   clamp: (value, min, max) => Math.min(max, Math.max(min, value)),
 });
 
+// Physical positions are independent of RN's last delivered cell metrics and
+// the editor's own layout cache. A JS index request cannot establish alignment.
+class NativeGeometry {
+  cells = new Map();
+  viewportHeight = 0;
+  contentHeight = 0;
+  offset = 0;
+  pendingOffset = undefined;
+  constructor(scrollRefReady = true) { this.scrollRefReady = scrollRefReady; }
+  commitCell(id, index, y, height) { this.cells.set(id, { index, y, height }); }
+  guideY(id) { return this.cells.get(id).y - this.offset; }
+}
+
 function mount(overrides = {}, platform = 'android', storage = {}, nativeReadiness, nativeInputs) {
   const slots = [];
   const timers = new Map();
+  const frames = new Map(), nativeCommands = [];
   const keyboardListeners = new Map();
   const inputInstances = new Map(), inputProps = new Map();
   let cursor = 0, dirty = false, effects = [], tree, now = 0, timerId = 0, recover, recoveryError;
@@ -94,14 +108,15 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
   // CaptionCell must forward RN's measurement before reporting to the editor.
   // https://github.com/facebook/react-native/blob/v0.86.3/packages/virtualized-lists/Lists/VirtualizedList.js
   // https://github.com/facebook/react-native/blob/v0.86.3/packages/virtualized-lists/Lists/ListMetricsAggregator.js
-  const nativePosition = {
-    cells: new Map(), viewportHeight: 0, contentHeight: 0, offset: 0,
-    scrollRefReady: nativeReadiness?.scrollRefReady ?? true,
-    pendingOffset: undefined,
-  };
+  const nativePosition = new NativeGeometry(nativeReadiness?.scrollRefReady ?? true);
+  const listMetrics = new Map();
   calls.nativeFailures = [];
   calls.nativePositions = [];
   const nativeScrollEvents = [];
+  const requestNativeOffset = (offset) => {
+    if (nativeReadiness?.queueCommands) nativeCommands.push(() => applyNativeOffset(offset));
+    else applyNativeOffset(offset);
+  };
   function notifyNativeScroll(offset) {
     const onScroll = list().onScroll;
     const notify = () => onScroll?.(scrollEvent(offset));
@@ -123,7 +138,7 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
     scrollToIndex(request) {
       calls.indices.push(plain(request));
       if (!nativeReadiness) return;
-      const frames = [...nativePosition.cells.values()];
+      const frames = [...listMetrics.values()];
       const highestMeasuredFrameIndex = Math.max(0, ...frames.map(frame => frame.index));
       if (request.index > highestMeasuredFrameIndex) {
         const failure = { index: request.index, highestMeasuredFrameIndex,
@@ -132,15 +147,17 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
         list().onScrollToIndexFailed?.(failure);
         return;
       }
-      const frame = nativePosition.cells.get(list().data[request.index]?.id);
-      if (frame?.index === request.index) {
-        applyNativeOffset(Math.max(0, frame.y - (request.viewPosition ?? 0)
-          * (nativePosition.viewportHeight - frame.height)) - (request.viewOffset ?? 0));
-      }
+      const measured = listMetrics.get(list().data[request.index]?.id);
+      // getCellMetricsApprox falls back to average * index when the key's
+      // stored index differs and this index is not above the highest measured.
+      const average = frames.length ? frames.reduce((sum, frame) => sum + frame.height, 0) / frames.length : 0;
+      const frame = measured?.index === request.index ? measured : { y: average * request.index, height: average };
+      requestNativeOffset(Math.max(0, frame.y - (request.viewPosition ?? 0)
+        * (nativePosition.viewportHeight - frame.height)) - (request.viewOffset ?? 0));
     },
     scrollToOffset(request) {
       calls.offsets.push(plain(request));
-      if (nativeReadiness) applyNativeOffset(request.offset);
+      if (nativeReadiness) requestNativeOffset(request.offset);
     },
   };
   const sameDeps = (left, right) => left && right && left.length === right.length
@@ -205,6 +222,8 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
     },
     setTimeout(callback, delay) { timers.set(++timerId, { callback, at: now + delay }); return timerId; },
     clearTimeout(id) { timers.delete(id); },
+    requestAnimationFrame(callback) { frames.set(++timerId, callback); return timerId; },
+    cancelAnimationFrame(id) { frames.delete(id); },
   });
   const props = {
     visible: true, projectId: 'project', baseRevision: 'revision', captions: cues,
@@ -270,12 +289,22 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
   function measure(index, y = 100 + index * 100, height = 80) {
     act(() => {
       const cellProps = list();
+      if (nativeReadiness) nativePosition.commitCell(cellProps.data[index].id, index, y, height);
       if (cellProps.CellRendererComponent) {
         const cell = cellProps.CellRendererComponent({
           item: cellProps.data[index], index, children: row(index),
           onLayout: () => {
             calls.nativeLayouts += 1;
-            if (nativeReadiness) nativePosition.cells.set(cellProps.data[index].id, { index, y, height });
+            if (nativeReadiness) {
+              const id = cellProps.data[index].id;
+              const previous = listMetrics.get(id);
+              // Exact RN 0.86.3 notifyCellLayout responsibility: a key's
+              // index alone does not replace its metric or raise the highest
+              // measured index when offset and length are unchanged.
+              if (!previous || previous.y !== y || previous.height !== height) {
+                listMetrics.set(id, { index, y, height });
+              }
+            }
           },
           onFocusCapture: () => { calls.focusCaptures += 1; },
         });
@@ -295,13 +324,18 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
     if (nativeReadiness?.clampOnViewport) applyNativeOffset(nativePosition.offset);
     list().onLayout(layoutEvent(0, height));
   });
-  const nativeContentSize = (height) => act(() => {
+  const commitNativeContent = (height) => {
     nativePosition.contentHeight = height;
     if (nativePosition.pendingOffset !== undefined) applyNativeOffset(nativePosition.pendingOffset);
+  };
+  const reportContentSize = (height) => act(() => {
+    nativePosition.reportedContentHeight = height;
     // VirtualizedList updates its content metrics and forwards this real prop.
     // It only performs its own initial reveal for an initialScrollIndex prop.
     list().onContentSizeChange?.(360, height);
   });
+  // Legacy scenarios deliberately keep their original combined semantics.
+  const nativeContentSize = (height) => { commitNativeContent(height); reportContentSize(height); };
   function advance(ms) {
     const until = now + ms;
     let iterations = 0;
@@ -330,12 +364,28 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
   }
   return {
     calls, props, list, row, find, act, fire, measure, viewport, advance,
-    nativePosition, nativeContentSize,
+    nativePosition, nativeContentSize, listMetrics, reportContentSize, commitNativeContent,
+    dispatchNativeCommands: () => act(() => {
+      for (const command of nativeCommands.splice(0)) command();
+    }),
+    frame: () => {
+      const pending = [...frames];
+      for (const [id, callback] of pending) {
+        if (!frames.delete(id)) continue;
+        calls.frameCallbacks = (calls.frameCallbacks ?? 0) + 1;
+        act(() => callback(now));
+      }
+    },
+    pendingFrameCount: () => frames.size,
+    captureFrames: () => [...frames.values()],
+    captureCellLayout: () => walk(tree, node => !!node.type?.context).props.value,
+    commitNativeCell: (index, y, height) => nativePosition.commitCell(list().data[index].id, index, y, height),
     flushNativeScrollEvents: () => act(() => {
       for (const notify of nativeScrollEvents.splice(0)) notify();
     }),
     resetNativePosition() {
       nativePosition.cells.clear();
+      listMetrics.clear();
       Object.assign(nativePosition, { viewportHeight: 0, contentHeight: 0, offset: 0, pendingOffset: undefined });
     },
     replayEffects: () => act(replayEffects),
@@ -423,13 +473,13 @@ test('a visible project change starts its own recovery and rejects captured inpu
 test('authoritative paused time wins over stale initial identity on open, follow, recovery and reopen', () => {
   const h = mount({ initialCaptionId: 'cue-0', currentMs: 3500 });
   h.viewport(180);
-  assert.equal(h.calls.indices.at(-1)?.index, 3);
+  assert.equal(400 - h.calls.offsets.at(-1)?.offset, 8);
   h.update({ currentMs: 4500 });
-  assert.equal(h.calls.indices.at(-1)?.index, 4);
+  assert.equal(500 - h.calls.offsets.at(-1)?.offset, 8);
   const restored = cues.map(cue => ({ ...cue, text: `Recovered\n${cue.text}` }));
   h.recover(restored); h.restore();
   assert.equal(h.input(4).value, restored[4].text);
-  assert.equal(h.calls.indices.at(-1)?.index, 4);
+  assert.equal(500 - h.calls.offsets.at(-1)?.offset, 8);
   h.edit(2); h.act(() => h.input(2).onPressIn());
   h.act(() => h.input(2).onFocus()); h.viewport(120); h.measure(2);
   assert.deepEqual(h.calls.seeks, []);
@@ -460,6 +510,331 @@ function assertInitialPosition(h) {
     'the final cue must actually reach the 8px guide after native readiness, not merely receive a scroll request');
   assert.equal(initialPositionY(4) - h.nativePosition.offset, 8);
 }
+
+// Source-proven cache disagreement, not a reconstruction of the cold-device
+// trace: recovery can insert a preceding block while wrapping changes preserve
+// the target cell's coordinates. RN keeps its old index if y/length do not
+// change; CaptionCell still reports the new index to the editor. scrollToIndex
+// then rejects a genuinely measured target. Test both sides of RN's predicate.
+for (const targetShift of [0, 1]) {
+  test(`Primary RN reindexed target with ${targetShift}px geometry change reaches the actual guide after recovery`, () => {
+    const h = mount({ captions: initialPositionCues, currentMs: 10000 },
+      'android', { deferRecovery: true }, {});
+    try {
+      h.nativeContentSize(initialPositionContent(48));
+      h.viewport(300);
+      for (let index = 0; index < 5; index++) {
+        // RN's CellRenderer includes its trailing separator in the metric.
+        h.measure(index, initialPositionY(index), index === 4 ? 100 : 108);
+      }
+      h.advance(400);
+      assert.notEqual(h.nativePosition.guideY('cue-4'), 8, 'old footer physically clamps the initial request');
+
+      const restored = initialPositionCues.flatMap((cue, index) => index === 3 ? [
+        { ...cue, endMs: 8750 },
+        { ...cue, id: 'recovered-insert', startMs: 8750, text: 'Recovered preceding block' },
+      ] : [{ ...cue }]);
+      h.recover(restored); h.restore();
+      assert.equal(h.list().data[5].id, 'cue-4');
+      const targetY = initialPositionY(4) + targetShift;
+      const precedingSpan = (targetY - 96) / 5;
+      // Native wrapping has already shrunk the five preceding cells. Commit
+      // contiguous physical geometry independently of delayed layout delivery.
+      for (let index = 0; index < 5; index++) {
+        h.commitNativeCell(index, 96 + index * precedingSpan, precedingSpan);
+      }
+      // The target's real CellRenderer callback comes before preceding cells'
+      // new callbacks, then the native footer commits. No synthetic cache poke.
+      h.measure(5, targetY, 100);
+      assert.equal(h.nativePosition.cells.get('cue-4').index, 5);
+      assert.equal(h.listMetrics.get('cue-4').index, targetShift ? 5 : 4,
+        'RN must retain its source-defined independent metric behavior');
+      h.nativeContentSize(targetY + 100 + h.list().ListFooterComponent.props.style.height);
+      for (let index = 0; index < 5; index++) {
+        h.measure(index, 96 + index * precedingSpan, precedingSpan);
+      }
+      h.advance(1000);
+      const settledRequests = h.calls.indices.length, settledOffsets = h.calls.offsets.length;
+      h.advance(1000);
+      assert.equal(h.calls.indices.length, settledRequests, 'retry budget must remain bounded');
+      assert.equal(h.calls.offsets.length, settledOffsets, 'measured requests must also settle');
+      assert.equal(h.props.currentMs, 10000);
+      assert.deepEqual(h.calls.seeks, []);
+      assert.deepEqual(h.calls.selects, []);
+      assert.deepEqual(h.calls.focuses, []);
+      assert.equal(h.calls.editing.at(-1), undefined);
+      assert.ok(targetY - 8 <= h.nativePosition.contentHeight - h.nativePosition.viewportHeight,
+        'native content has enough travel for the measured target');
+      assert.equal(h.nativePosition.guideY('cue-4'), 8,
+        'the physically measured target must reach the guide despite a stale RN index; requests and editor cache are insufficient');
+    } finally { h.unmount(); }
+  });
+}
+
+// RN 0.86.3 ShadowTree emits layout before mount; BaseViewEventEmitter coalesces
+// unchanged frames. VirtualizedList forwards content-view onLayout as
+// onContentSizeChange. With disableEarlyViewCommandExecution=false (versioned
+// Android stable defaults), MountItemDispatcher drains commands before mounts.
+// These are permitted source orderings, NOT an observed failing-device trace.
+// See cached rn0863-{ShadowTree,BaseViewEventEmitter,MountItemDispatcher} sources
+// in ../release135-final-20261024/runtime-final-3b7a169.
+const fabricViewport = 1204 / 3;
+const fabricTargetY = 416;
+const fabricContent = footer => fabricTargetY + 72 + footer;
+function mountBeforeFabricFooterCommit(order = 'after viewport and cells', storage = {}) {
+  const h = mount({ captions: initialPositionCues, currentMs: 10000 },
+    'android', storage, { queueCommands: true });
+  h.commitNativeContent(fabricContent(48));
+  // All cells and the final viewport physically exist already. Only their JS
+  // layout delivery varies; the footer is the sole still-pending native mount.
+  h.nativePosition.viewportHeight = fabricViewport;
+  for (let index = 0; index < 5; index++) h.commitNativeCell(index, 96 + index * 80, 72);
+  const finalContent = fabricContent(fabricViewport - 8);
+  const reportViewport = () => h.act(() => h.list().onLayout(layoutEvent(0, fabricViewport)));
+  const reportCells = () => {
+    for (let index = 0; index < 5; index++) h.measure(index, 96 + index * 80, index === 4 ? 72 : 80);
+  };
+  if (order === 'before viewport and cells') {
+    // Establish footer-producing JS state first. A subsequent width-only
+    // viewport layout (320 -> 360) can follow content delivery while fixed row
+    // heights stay unchanged. Do not invent final footer geometry before JS
+    // has ever learned the height that produces it.
+    h.act(() => h.list().onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height: fabricViewport } } }));
+    h.reportContentSize(finalContent);
+  }
+  reportViewport();
+  if (order === 'between viewport and cells') h.reportContentSize(finalContent);
+  reportCells();
+  if (order === 'after viewport and cells') h.reportContentSize(finalContent);
+  assert.equal(h.list().ListFooterComponent.props.style.height, fabricViewport - 8);
+  assert.equal(h.nativePosition.reportedContentHeight, finalContent);
+  assert.equal(h.nativePosition.contentHeight, fabricContent(48), 'shadow delivery cannot mount a native footer');
+  h.dispatchNativeCommands();
+  assert.ok(h.calls.offsets.some(({ offset }) => offset === 408), 'the measured repair requests the correct 1224px target');
+  assert.ok(Math.abs(h.nativePosition.offset * 3 - 404) < 1e-9, 'early commands clamp at the old 404px native maximum');
+  assert.ok(Math.abs((408 - h.nativePosition.offset) * 3 - 820) < 1e-9);
+  return h;
+}
+function settleFabricFrames(h) {
+  // Explicit native UI phase precedes JS frame callbacks (ReactChoreographer
+  // DISPATCH_UI before TIMERS_EVENTS). No elapsed-time readiness polling.
+  for (let frame = 0; frame < 4; frame++) {
+    h.frame(); h.dispatchNativeCommands();
+  }
+  h.advance(1000); h.dispatchNativeCommands();
+  assert.equal(h.pendingFrameCount(), 0, 'completion callbacks must settle in a bounded number of frames');
+}
+for (const order of ['before viewport and cells', 'between viewport and cells', 'after viewport and cells']) {
+  test(`Primary Fabric pre-mount content ${order} reaches the physical guide without repeated layout`, () => {
+    const h = mountBeforeFabricFooterCommit(order);
+    try {
+      const layouts = h.calls.nativeLayouts;
+      h.commitNativeContent(h.nativePosition.reportedContentHeight);
+      settleFabricFrames(h);
+      assert.equal(h.calls.nativeLayouts, layouts, 'mounting unchanged shadow geometry emits no second cell layout');
+      const requests = [h.calls.indices.length, h.calls.offsets.length, h.calls.frameCallbacks ?? 0];
+      settleFabricFrames(h);
+      assert.deepEqual([h.calls.indices.length, h.calls.offsets.length, h.calls.frameCallbacks ?? 0], requests,
+        'settled navigation cannot poll or keep issuing callbacks');
+      assert.equal(h.props.currentMs, 10000);
+      assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.selects, []);
+      assert.deepEqual(h.calls.focuses, []); assert.equal(h.calls.editing.at(-1), undefined);
+      assert.ok(Math.abs(h.nativePosition.contentHeight - h.nativePosition.viewportHeight - 480) < 1e-9,
+        'final native maximum is 1440px at density 3');
+      assert.equal(h.nativePosition.guideY('cue-4'), 8,
+        'shadow-reported readiness must eventually align the physical cue after native mount, without another layout');
+    } finally { h.unmount(); }
+  });
+}
+for (const boundary of ['before mount', 'after mount before frame']) {
+  for (const interrupt of ['drag', 'close', 'unmount', 'session change', 'save']) {
+    test(`Primary Fabric pre-mount ${interrupt} ${boundary} cancels delayed completion ownership`, () => {
+      const h = mountBeforeFabricFooterCommit();
+      let unmounted = false;
+      try {
+        const staleFrames = h.captureFrames();
+        if (boundary === 'after mount before frame') h.commitNativeContent(h.nativePosition.reportedContentHeight);
+        if (interrupt === 'drag') {
+          h.fire('onScrollBeginDrag'); h.fire('onScroll', h.nativePosition.offset);
+          h.fire('onScrollEndDrag', h.nativePosition.offset);
+        }
+        if (interrupt === 'close') h.update({ visible: false });
+        if (interrupt === 'unmount') { h.unmount(); unmounted = true; }
+        // A new session owns its own future reveal. Keep its recovery pending
+        // and clock unchanged so an obsolete frame cannot target its old cue.
+        if (interrupt === 'session change') h.update({ projectId: 'next-project', captions: [] });
+        if (interrupt === 'save') {
+          h.update({ onSave: () => new Promise(() => {}) });
+          h.act(() => h.button('Save all caption edits').onPress());
+          assert.equal(h.button('Save all caption edits').disabled, true);
+        }
+        // Drain commands already dispatched by the interruption itself before
+        // recording the boundary: only newly issued stale work is forbidden.
+        h.dispatchNativeCommands();
+        const requests = [h.calls.indices.length, h.calls.offsets.length];
+        const seeks = [...h.calls.seeks], selects = [...h.calls.selects], focuses = [...h.calls.focuses];
+        const offset = h.nativePosition.offset;
+        h.commitNativeContent(h.nativePosition.reportedContentHeight);
+        // A callback already delivered to JS may outlive native cancellation.
+        for (const callback of staleFrames) h.act(() => callback(0));
+        settleFabricFrames(h);
+        assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], requests,
+          'an obsolete completion must not issue a new native command');
+        assert.equal(h.nativePosition.offset, offset, 'delayed completion cannot reclaim physical scrolling');
+        assert.deepEqual(h.calls.seeks, seeks); assert.deepEqual(h.calls.selects, selects);
+        assert.deepEqual(h.calls.focuses, focuses); assert.equal(h.props.currentMs, 10000);
+      } finally { if (!unmounted) h.unmount(); }
+    });
+  }
+}
+
+test('Primary Fabric frame coalesces notifications and uses the latest cell geometry', () => {
+  const h = mountBeforeFabricFooterCommit();
+  try {
+    const replacedFrames = h.captureFrames();
+    h.reportContentSize(h.nativePosition.reportedContentHeight);
+    h.act(() => h.list().onLayout(layoutEvent(0, fabricViewport)));
+    h.commitNativeCell(4, fabricTargetY + 12, 72);
+    h.measure(4, fabricTargetY + 12, 72);
+    h.reportContentSize(h.nativePosition.reportedContentHeight + 12);
+    assert.equal(h.pendingFrameCount(), 1, 'cell, viewport and content delivery share one outstanding handoff');
+    h.dispatchNativeCommands();
+    h.commitNativeContent(h.nativePosition.reportedContentHeight);
+    const offsets = h.calls.offsets.length;
+    for (const callback of replacedFrames) h.act(() => callback(0));
+    assert.equal(h.calls.offsets.length, offsets, 'superseded tokens cannot issue commands');
+    assert.equal(h.pendingFrameCount(), 1, 'a stale callback cannot clear its replacement');
+    h.frame(); h.dispatchNativeCommands();
+    assert.equal(h.calls.offsets.length, offsets + 1, 'one handoff issues one measured reassertion');
+    assert.equal(h.calls.offsets.at(-1).offset, 420);
+    assert.equal(h.nativePosition.guideY('cue-4'), 8);
+    assert.equal(h.pendingFrameCount(), 0, 'the frame callback must not reschedule itself');
+    settleFabricFrames(h);
+    assert.equal(h.calls.offsets.length, offsets + 1);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric pending frame survives empty recovery without another layout', () => {
+  const h = mountBeforeFabricFooterCommit('after viewport and cells', { deferRecovery: true });
+  try {
+    const layouts = h.calls.nativeLayouts;
+    const frame = h.captureFrames()[0];
+    h.recover(null);
+    assert.equal(h.input(4).editable, true);
+    assert.equal(h.captureFrames()[0], frame, 'input revision renewal retains the same navigation owner');
+    h.commitNativeContent(h.nativePosition.reportedContentHeight);
+    settleFabricFrames(h);
+    assert.equal(h.calls.nativeLayouts, layouts);
+    assert.equal(h.nativePosition.guideY('cue-4'), 8);
+    assert.deepEqual(h.calls.focuses, []);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric content before measurements retains navigation after its first frame', () => {
+  const h = mount({ captions: initialPositionCues, currentMs: 10000 },
+    'android', {}, { queueCommands: true });
+  try {
+    h.commitNativeContent(fabricContent(48));
+    h.nativePosition.viewportHeight = fabricViewport;
+    h.act(() => h.list().onLayout(layoutEvent(0, fabricViewport)));
+    h.reportContentSize(fabricContent(fabricViewport - 8));
+    h.frame(); h.dispatchNativeCommands();
+    // A previously queued scroll notification can make the JS cache appear
+    // aligned even while physical scrolling remains clamped by the old footer.
+    h.fire('onScroll', 408);
+    // No more content notification follows these late cell measurements.
+    for (let index = 0; index < 5; index++) {
+      h.commitNativeCell(index, 96 + index * 80, 72);
+      h.measure(index, 96 + index * 80, 72);
+    }
+    h.dispatchNativeCommands();
+    h.commitNativeContent(h.nativePosition.reportedContentHeight);
+    settleFabricFrames(h);
+    assert.equal(h.nativePosition.guideY('cue-4'), 8);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric unmeasured frame fallback retains the bounded index retry budget', () => {
+  const h = mount({ captions: initialPositionCues, currentMs: 10000 }, 'android', {}, {});
+  try {
+    h.viewport(fabricViewport);
+    const initialRequests = h.calls.indices.length;
+    for (let attempt = 0; attempt < 6; attempt++) { h.frame(); h.advance(100); }
+    const requests = [h.calls.indices.length, h.calls.offsets.length, h.calls.frameCallbacks];
+    assert.ok(h.calls.nativeFailures.length > 0);
+    assert.ok(h.calls.indices.length - initialRequests <= 7,
+      'one initial frame fallback plus three retries with one frame each bounds subsequent work');
+    settleFabricFrames(h);
+    assert.deepEqual([h.calls.indices.length, h.calls.offsets.length, h.calls.frameCallbacks], requests);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric effect replay replaces cancellation ownership and permits a fresh frame', () => {
+  const h = mountBeforeFabricFooterCommit();
+  try {
+    const staleFrames = h.captureFrames();
+    h.replayEffects(); h.recover(null);
+    h.commitNativeContent(h.nativePosition.reportedContentHeight);
+    const requests = h.calls.offsets.length;
+    for (const callback of staleFrames) h.act(() => callback(0));
+    assert.equal(h.calls.offsets.length, requests);
+    assert.equal(h.pendingFrameCount(), 1);
+    settleFabricFrames(h);
+    assert.equal(h.nativePosition.guideY('cue-4'), 8);
+    assert.deepEqual(h.calls.focuses, []); assert.deepEqual(h.calls.seeks, []);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric obsolete project layout and index callbacks cannot navigate reused cue IDs', () => {
+  const h = mountBeforeFabricFooterCommit();
+  try {
+    const staleList = h.list(), staleCell = h.captureCellLayout(), staleFrames = h.captureFrames();
+    h.update({ projectId: 'next-project' }); h.recover(null);
+    const requests = [h.calls.indices.length, h.calls.offsets.length];
+    h.act(() => {
+      staleList.onLayout(layoutEvent(0, 200));
+      staleCell('cue-4', 4, { x: 0, y: 900, width: 360, height: 72 });
+      staleList.onContentSizeChange(360, 1500);
+      staleList.onScrollToIndexFailed({ index: 4, averageItemLength: 200 });
+      for (const callback of staleFrames) callback(0);
+    });
+    assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], requests);
+    h.act(() => h.list().onLayout(layoutEvent(0, fabricViewport)));
+    h.commitNativeContent(h.nativePosition.reportedContentHeight);
+    settleFabricFrames(h);
+    assert.equal(h.nativePosition.guideY('cue-4'), 8, 'obsolete cell geometry cannot contaminate the new session');
+    assert.deepEqual(h.calls.focuses, []); assert.deepEqual(h.calls.seeks, []);
+  } finally { h.unmount(); }
+});
+
+test('Primary Fabric Save failure and retry reject old frames and resume only the live target', async () => {
+  const h = mountBeforeFabricFooterCommit();
+  try {
+    for (const currentMs of [5000, 2500]) {
+      const staleFrames = h.captureFrames(), content = h.list().onContentSizeChange;
+      let finishSave;
+      h.update({ onSave: () => new Promise(resolve => { finishSave = resolve; }) });
+      h.act(() => h.button('Save all caption edits').onPress());
+      const requests = [h.calls.indices.length, h.calls.offsets.length];
+      h.act(() => {
+        content(360, h.nativePosition.reportedContentHeight);
+        for (const callback of staleFrames) callback(0);
+      });
+      assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], requests);
+      assert.equal(h.pendingFrameCount(), 0, 'content while Save owns input cannot restart navigation');
+      finishSave(false); await h.flush(); h.recover(null);
+      h.update({ currentMs });
+      h.commitNativeContent(h.nativePosition.reportedContentHeight);
+      const liveFrames = h.pendingFrameCount();
+      h.act(() => { for (const callback of staleFrames) callback(0); });
+      assert.equal(h.pendingFrameCount(), liveFrames);
+      settleFabricFrames(h);
+      assert.equal(h.nativePosition.guideY(currentMs === 5000 ? 'cue-2' : 'cue-1'), 8);
+      assert.deepEqual(h.calls.focuses, []); assert.deepEqual(h.calls.seeks, []);
+      assert.deepEqual(h.calls.selects, []);
+    }
+  } finally { h.unmount(); }
+});
 
 // Separate native geometry from JS event delivery. In RN 0.86.3 Android,
 // ReactScrollView.onLayout replays scrollTo(currentOffset); super.scrollTo
@@ -537,6 +912,25 @@ for (const interrupt of ['drag', 'close']) {
     } finally { h.unmount(); }
   });
 }
+
+test('Primary cold footer readiness before delayed empty recovery needs no later native event', () => {
+  const h = mount({ captions: initialPositionCues, currentMs: 10000 },
+    'android', { deferRecovery: true }, {});
+  try {
+    assert.equal(h.input(4).editable, false, 'journal read is still pending');
+    h.nativeContentSize(initialPositionContent(48));
+    h.viewport(300); measureInitialPositionCells(h); h.advance(400);
+    h.nativeContentSize(initialPositionContent(h.list().ListFooterComponent.props.style.height));
+    assertInitialPosition(h);
+    const layouts = h.calls.nativeLayouts;
+    // Resolve the cold empty read only after the final native content event.
+    // No cell, viewport, content, focus, or reopen event follows completion.
+    h.recover(null); h.advance(1000);
+    assert.equal(h.input(4).editable, true);
+    assert.equal(h.calls.nativeLayouts, layouts);
+    assertInitialPosition(h);
+  } finally { h.unmount(); }
+});
 
 test('Primary content readiness from the same native view survives a completed recovery read', () => {
   const h = mount({ captions: initialPositionCues, currentMs: 10000 },
@@ -1166,12 +1560,13 @@ for (const edited of [false, true]) test(`retapping a natively focused input aft
   assert.deepEqual(plain(h.list().data), before, 'reactivation preserves every draft cue');
   assert.equal(h.input(2).selection, undefined, 'reactivation must not force the native caret');
 
-  h.calls.focuses.length = 0; h.calls.indices.length = 0;
+  h.calls.focuses.length = 0; h.calls.indices.length = 0; h.calls.offsets.length = 0;
   h.fire('onScrollBeginDrag'); h.fire('onScroll', 392); h.fire('onScrollEndDrag', 392);
   h.advance(150); h.measure(2); h.viewport(120); h.update({ currentMs: 3100 });
   assert.equal(h.hasAction(2, 'Join next'), true, 'dragging with the IME open retains the editing controls');
   assert.deepEqual(h.calls.focuses, [], 'scroll and resize cannot refocus the input');
   assert.deepEqual(h.calls.indices, [], 'late layouts cannot bounce a user-owned scroll');
+  assert.deepEqual(h.calls.offsets, [], 'late measured layouts cannot bounce a user-owned scroll');
   assert.deepEqual(h.calls.saves, [], 'focus and keyboard transitions never save');
 
   h.action(2, 'Split here');
@@ -1229,7 +1624,7 @@ test('end-drag without momentum releases across ticks; new gestures can revisit 
 
 test('playback follows changing cues without reverse seeks', () => {
   const h = mount({ isPlaying: true }); h.update({ currentMs: 3100 });
-  assert.equal(h.calls.indices.at(-1)?.index, 3);
+  assert.equal(400 - h.calls.offsets.at(-1)?.offset, 8);
   h.fire('onScroll', 392); h.advance(2000); h.fire('onScroll', 342);
   assert.deepEqual(h.calls.seeks, []);
   assert.deepEqual(h.calls.selects, [], 'following playback must not pause or select through the parent');
@@ -1248,6 +1643,7 @@ test('paused scroll publishes preview selection and time together across parent 
       publications.push([ms, display?.id]);
     },
   });
+  h.calls.offsets.length = 0;
   h.fire('onScrollBeginDrag');
   for (const offset of [192, 292, 392]) {
     h.fire('onScroll', offset);
@@ -1258,6 +1654,7 @@ test('paused scroll publishes preview selection and time together across parent 
   h.fire('onScroll', 492);
   assert.deepEqual(publications, [[1000, 'cue-1'], [2000, 'cue-2'], [3000, 'cue-3']]);
   assert.deepEqual(h.calls.indices, [], 'parent updates must not recenter a user scroll');
+  assert.deepEqual(h.calls.offsets, [], 'parent updates must not recenter a measured user scroll');
 });
 
 test('tapping during momentum hands navigation to the focused input before keyboard resize', () => {
@@ -1268,18 +1665,18 @@ test('tapping during momentum hands navigation to the focused input before keybo
   h.keyboard('keyboardDidShow'); h.viewport(120); h.measure(4, 500, 200);
   h.fire('onScroll', 592); h.fire('onMomentumScrollEnd', 592); h.advance(200);
   assert.equal(h.input(4).value, 'caption 4');
-  assert.equal(h.calls.indices.at(-1)?.index, 4);
-  assert.equal(h.calls.indices.at(-1)?.viewPosition, 0);
+  assert.equal(500 - h.calls.offsets.at(-1)?.offset, 8);
   assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.selects, []);
 });
 
 test('selecting an offscreen caption preserves transport and keeps its input visible during playback', () => {
   const h = mount(); h.edit(4);
   assert.deepEqual(h.calls.selects, ['cue-4']); assert.deepEqual(h.calls.seeks, []);
-  assert.equal(h.calls.indices.at(-1)?.index, 4);
-  h.calls.indices.length = 0;
+  assert.equal(500 - h.calls.offsets.at(-1)?.offset, 8);
+  h.calls.indices.length = 0; h.calls.offsets.length = 0;
   h.update({ isPlaying: true, currentMs: 1100 }); h.update({ currentMs: 2100 });
   assert.ok(h.calls.indices.every(({ index }) => index === 4));
+  assert.ok(h.calls.offsets.every(({ offset }) => 500 - offset === 8));
   assert.equal(h.input(4).value, 'caption 4');
 });
 
@@ -1288,8 +1685,7 @@ test('keyboard resize and growing input reveal the focused cue without seeking',
   h.calls.indices.length = 0; h.calls.seeks.length = 0;
   h.viewport(120); h.measure(3, 400, 180);
   h.act(() => h.input(3).onContentSizeChange(contentSizeEvent(230)));
-  assert.equal(h.calls.indices.at(-1)?.index, 3);
-  assert.equal(h.calls.indices.at(-1)?.viewPosition, 0);
+  assert.equal(400 - h.calls.offsets.at(-1)?.offset, 8);
   assert.equal(h.input(3).style.height, 230);
   assert.equal(h.input(3).style.maxHeight, undefined);
   assert.deepEqual(h.calls.seeks, []);
@@ -1320,8 +1716,7 @@ for (const platform of ['android', 'ios', 'web']) {
     h.measure(0, 120, 870);
     assert.equal(h.input(0).style.height, 806, 'typing may grow beyond the keyboard viewport');
     assert.equal(h.input(0).scrollEnabled, false);
-    assert.equal(h.calls.indices.at(-1).index, 0);
-    assert.equal(h.calls.indices.at(-1).viewPosition, 0);
+    assert.equal(120 - h.calls.offsets.at(-1)?.offset, 8);
     assert.deepEqual(h.calls.seeks, []);
     assert.deepEqual(h.calls.selects, []);
     assert.deepEqual(h.calls.focuses, [], 'resizing must not recreate or refocus the input');
@@ -1563,22 +1958,28 @@ test('split and merge navigation and scrolling use current draft identities and 
 });
 
 test('failed virtualized navigation is bounded and never seeks transport', () => {
-  const h = mount(); h.edit(5); h.calls.seeks.length = 0;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    h.act(() => h.list().onScrollToIndexFailed({ index: 5, averageItemLength: 100 }));
-    h.fire('onScroll', 500); h.advance(100);
-  }
+  const h = mount({}, 'android', {}, {}); h.viewport(200); h.edit(5); h.calls.seeks.length = 0;
+  assert.equal(h.calls.indices.at(-1)?.index, 5, 'unmeasured target uses index navigation');
+  h.calls.indices.length = 0; h.calls.offsets.length = 0;
+  h.advance(1000);
+  assert.equal(h.calls.indices.length, 3, 'three bounded retries after the initial unmeasured request');
+  assert.ok(h.calls.indices.every(({ index }) => index === 5));
+  const requests = h.calls.indices.length, offsets = h.calls.offsets.length;
+  h.advance(1000);
+  assert.equal(h.calls.indices.length, requests);
+  assert.equal(h.calls.offsets.length, offsets);
   assert.ok(h.calls.offsets.length <= 3); assert.deepEqual(h.calls.seeks, []);
 });
 
 for (const interrupt of ['drag', 'close', 'unmount']) {
   test(`${interrupt} cancels pending virtualized navigation`, () => {
-    const h = mount(); h.edit(5);
+    const h = mount({}, 'android', {}, {}); h.viewport(200); h.edit(5);
     h.act(() => h.list().onScrollToIndexFailed({ index: 5, averageItemLength: 100 }));
     if (interrupt === 'drag') h.fire('onScrollBeginDrag');
     if (interrupt === 'close') h.update({ visible: false });
     if (interrupt === 'unmount') h.unmount();
-    h.calls.indices.length = 0; h.advance(1000); assert.deepEqual(h.calls.indices, []);
+    h.calls.indices.length = 0; h.calls.offsets.length = 0;
+    h.advance(1000); assert.deepEqual(h.calls.indices, []); assert.deepEqual(h.calls.offsets, []);
   });
 }
 
@@ -1635,13 +2036,14 @@ test('Android resized workspace keeps the video controls and focused input above
     const viewport = sheetHeight - headerHeight - 1;
     assert.ok(viewport >= 100, 'reserve two text lines and row insets above the keyboard');
     h.viewport(viewport); h.measure(4, 500, viewport + 80);
-    const request = h.calls.indices.at(-1);
-    assert.equal(request.index, 4); assert.equal(request.viewPosition, 0);
+    const offset = h.calls.offsets.at(-1)?.offset;
+    const guideY = 500 - offset;
+    assert.equal(guideY, 8);
     assert.ok(h.input(4).style.minHeight >= 2 * h.input(4).style.lineHeight);
-    const inputTop = previewStyle.height + headerHeight + request.viewOffset + 14;
+    const inputTop = previewStyle.height + headerHeight + guideY + 14;
     assert.ok(inputTop + h.input(4).style.lineHeight < availableHeight, 'the focused input starts above the keyboard; long text extends in the list');
     assert.equal(h.input(4).style.maxHeight, undefined, 'keyboard resize must never cap the text height');
-    h.fire('onScroll', 500 - request.viewOffset);
+    h.fire('onScroll', offset);
   }
   assert.deepEqual(h.calls.seeks, [], 'focus, resize and reveal preserve authoritative transport');
   assert.ok(workspaceValue('previewHeight', { scriptEditorOpen: false, workspaceHeight: 280, height: 800 }) <= 136);
@@ -1654,34 +2056,36 @@ test('the leading edge seeks the first cue even when multiple short rows fit in 
   h.fire('onScrollBeginDrag'); h.fire('onScroll', 0); h.fire('onScrollEndDrag', 0); h.advance(150);
   assert.deepEqual(h.calls.seeks, [0]);
   assert.deepEqual(h.calls.selects, ['cue-0']);
-  h.calls.indices.length = 0;
+  h.calls.indices.length = 0; h.calls.offsets.length = 0;
   h.measure(0, 20, 72); h.viewport(580);
   assert.deepEqual(h.calls.indices, [], 'settled user scroll must survive later layout events');
+  assert.deepEqual(h.calls.offsets, [], 'settled user scroll must survive later measured layout events');
 });
 
 test('tapping a visible or final short row aligns its editor at the top, including retry and resize', () => {
   const h = mount(); h.viewport(500);
   h.edit(1);
-  assert.equal(h.calls.indices.at(-1)?.viewPosition, 0, 'visible rows must also move to the top');
+  assert.equal(200 - h.calls.offsets.at(-1)?.offset, 8, 'visible rows must also move to the top');
   h.edit(5);
-  h.act(() => h.list().onScrollToIndexFailed({ index: 5, averageItemLength: 100 }));
   h.advance(100); h.keyboard('keyboardDidShow'); h.viewport(140);
-  assert.ok(h.calls.indices.filter(({ index }) => index === 5).every(({ viewPosition }) => viewPosition === 0));
+  assert.equal(600 - h.calls.offsets.at(-1)?.offset, 8);
   assert.ok(h.list().ListFooterComponent.props.style.height >= 132, 'the final row needs enough trailing scroll space to reach the 8px anchor');
-  h.fire('onScroll', 592); h.calls.indices.length = 0;
+  h.fire('onScroll', 592); h.calls.indices.length = 0; h.calls.offsets.length = 0;
   h.act(() => h.input(5).onContentSizeChange(contentSizeEvent(69)));
   assert.deepEqual(h.calls.indices, [], 'already aligned input must not restart navigation');
+  assert.deepEqual(h.calls.offsets, [], 'already aligned input must not restart measured navigation');
 });
 
 test('dragging and tapping retain native inputs and focus without reopening a natively hidden keyboard', () => {
   const h = mount(); h.edit(1); h.keyboard('keyboardDidShow');
   assert.equal(h.calls.focusCaptures, cues.length, 'forward focus capture so native virtualization retains the focused cell');
-  h.calls.indices.length = 0; h.calls.focuses.length = 0;
+  h.calls.indices.length = 0; h.calls.offsets.length = 0; h.calls.focuses.length = 0;
   h.fire('onScrollBeginDrag'); h.fire('onScroll', 392); h.fire('onScrollEndDrag', 392); h.advance(150);
   h.viewport(180); h.measure(1, 200, 160); h.act(() => h.input(1).onContentSizeChange(contentSizeEvent(92)));
   assert.equal(h.input(1).value, 'caption 1');
   assert.equal(h.input(1).scrollEnabled, false, 'the list scrolls the fully expanded input');
   assert.deepEqual(h.calls.indices, [], 'the old focused row must not reclaim a user scroll');
+  assert.deepEqual(h.calls.offsets, [], 'the old measured row must not reclaim a user scroll');
   assert.deepEqual(h.calls.focuses, [], 'list updates must not refocus the input');
   h.edit(4);
   assert.equal(h.input(1).value, 'caption 1', 'the previous native input must not unmount during focus transfer');
@@ -2057,14 +2461,15 @@ for (const viewport of [120, 300, 600]) {
       h.fire('onScrollBeginDrag'); h.fire('onScroll', 0);
       h.fire('onScroll', leading - 8); h.fire('onScrollEndDrag', leading - 8); h.advance(150);
       assert.deepEqual(h.calls.seeks, [0], 'leading space and the exact first anchor must never select cue 2');
+      let observedOffset = leading - 8;
       for (const index of [0, 1, 5]) {
-        h.calls.indices.length = 0; h.edit(index);
+        h.calls.indices.length = 0; h.calls.offsets.length = 0; h.edit(index);
         // An already aligned row may need no native request.
-        const request = h.calls.indices.at(-1) ?? { index, viewPosition: 0, viewOffset: 8 };
-        assert.equal(request.index, index); assert.equal(request.viewPosition, 0);
-        const requestedOffset = positions[index] - request.viewOffset;
+        assert.deepEqual(h.calls.indices, [], 'measured rows bypass index metrics');
+        const requestedOffset = h.calls.offsets.at(-1)?.offset ?? observedOffset;
         const nativeOffset = Math.max(0, Math.min(maximumOffset, requestedOffset));
         assert.equal(positions[index] - nativeOffset, 8, 'native clamping must not prevent top alignment');
+        observedOffset = nativeOffset;
         h.calls.seeks.length = 0; h.calls.selects.length = 0;
         h.fire('onScroll', nativeOffset);
         assert.deepEqual(h.calls.seeks, [], 'programmatic alignment must not seek transport');
@@ -2090,20 +2495,22 @@ test('unmeasured first cue owns the leading edge, including overscroll and delay
 
 test('forward scrolling stays user-owned across keyboard resize and late layouts without reverse seeks', () => {
   const h = mount(); h.edit(0); h.keyboard('keyboardDidShow');
-  h.calls.seeks.length = 0; h.calls.indices.length = 0;
+  h.calls.seeks.length = 0; h.calls.indices.length = 0; h.calls.offsets.length = 0;
   h.fire('onScrollBeginDrag'); h.fire('onScroll', 192);
   h.fire('onScroll', 292); h.viewport(140); h.measure(0, 100, 180);
   h.fire('onScrollEndDrag', 292); h.advance(150); h.measure(1, 200, 80);
   assert.deepEqual(h.calls.seeks, [1000, 2000]);
   assert.deepEqual(h.calls.indices, []);
+  assert.deepEqual(h.calls.offsets, []);
   assert.equal(h.calls.editing.at(-1), undefined, 'a user scroll releases the old input camera target');
   h.edit(2); assert.equal(h.calls.editing.at(-1), 'cue-2');
 });
 
 test('offscreen retry includes measured leading space and the top editing anchor', () => {
-  const h = mount();
+  const h = mount({}, 'android', {}, {}); h.viewport(200);
   h.act(() => h.list().ListHeaderComponent.props.onLayout(layoutEvent(0, 148)));
-  h.edit(5); h.act(() => h.list().onScrollToIndexFailed({ index: 5, averageItemLength: 100 }));
+  h.measure(0, 148, 100);
+  h.edit(5);
   assert.equal(h.calls.offsets.at(-1).offset, 148 + 500 - 8);
   h.advance(100);
   assert.equal(h.calls.indices.at(-1).viewOffset, 8);

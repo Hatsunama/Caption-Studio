@@ -14,6 +14,7 @@ import { resolveCaptionStyle } from '../src/lib/style-resolver.ts';
 // Like the script-editor tests, execute the complete component with deterministic
 // native, hook, storage and timer doubles. FlatList windows are simulated; these
 // tests measure subscription/render work, not native frame rate or keyboard layout.
+// The opt-in pre-mount fixture below additionally models native scroll clamping.
 const source = readFileSync(process.env.DUAL_CAPTION_EDITOR_SOURCE
   ?? new URL('../src/components/editor/dual-caption-editor.tsx', import.meta.url), 'utf8');
 const { outputText } = ts.transpileModule(source, {
@@ -33,10 +34,11 @@ const shallow = (left, right) => left && right && same(Object.keys(left), Object
   && Object.keys(left).every((key) => Object.is(left[key], right[key]));
 
 function mount(overrides = {}, options = {}) {
-  const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
-  const instances = new Map(), timers = new Map(), inputIdentities = new Map();
+  const reveal = { viewportRef: { current: null }, focus() { calls.focuses.push(true); }, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
+  const instances = new Map(), timers = new Map(), frames = new Map(), inputIdentities = new Map();
   const appStateListeners = new Set();
-  const calls = { reveals: [], nativeReveals: [], offsets: [], seeks: [], alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
+  const contexts = new Map(), cells = new Map();
+  const calls = { reveals: [], nativeReveals: [], offsets: [], focuses: [], seeks: [], alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
   let nativeListReady = !options.nativeMeasurementGate;
   let current, cursor, pending = [], changed = false, tree, now = 0, nextTimer = 0, windowStart = 0;
   const memoHook = (factory, deps) => {
@@ -52,6 +54,14 @@ function mount(overrides = {}, options = {}) {
     });
   };
   const react = {
+    createContext(value) {
+      const context = { value }; context.Provider = { context }; return context;
+    },
+    useContext(context) {
+      const value = contexts.has(context) ? contexts.get(context) : context.value;
+      current.contextDependencies.set(context, value);
+      return value;
+    },
     memo: (fn) => ({ fn }), useMemo: memoHook, useCallback: (fn, deps) => memoHook(() => fn, deps),
     useRef: (value) => memoHook(() => ({ current: value }), []),
     useEffect: effect, useLayoutEffect: effect,
@@ -117,6 +127,8 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
     },
     setTimeout(callback, delay) { timers.set(++nextTimer, { callback, at: now + delay }); return nextTimer; },
     clearTimeout(id) { timers.delete(id); },
+    requestAnimationFrame(callback) { frames.set(++nextTimer, callback); return nextTimer; },
+    cancelAnimationFrame(id) { frames.delete(id); },
   });
   let props = {
     visible: true, projectId: 'project', baseRevision: 'r1', trackId: 'zh', pairs: pairs(),
@@ -132,14 +144,24 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
   function renderNode(node, path, visited, inputs) {
     if (Array.isArray(node)) return node.map((child, index) => renderNode(child, `${path}/${child?.key ?? index}`, visited, inputs));
     if (!node || typeof node !== 'object') return node;
+    if (node.type?.context) {
+      const context = node.type.context, had = contexts.has(context), previous = contexts.get(context);
+      contexts.set(context, node.props.value);
+      const children = renderNode(node.props.children, `${path}/provider`, visited, inputs);
+      if (had) contexts.set(context, previous); else contexts.delete(context);
+      return { ...node, props: { ...node.props, children } };
+    }
     const fn = node.type?.fn ?? (typeof node.type === 'function' ? node.type : undefined);
     if (fn) {
       const id = `${path}:${fn.name}:${node.key ?? ''}`;
       visited.add(id);
       let instance = instances.get(id);
-      if (!instance) { instance = { slots: [], dirty: true }; instances.set(id, instance); }
-      if (instance.dirty || !(node.type?.fn ? shallow(instance.props, node.props) : instance.props === node.props)) {
+      if (!instance) { instance = { slots: [], dirty: true, contextDependencies: new Map() }; instances.set(id, instance); }
+      const contextChanged = [...instance.contextDependencies].some(([context, value]) =>
+        !Object.is(value, contexts.has(context) ? contexts.get(context) : context.value));
+      if (instance.dirty || contextChanged || !(node.type?.fn ? shallow(instance.props, node.props) : instance.props === node.props)) {
         current = instance; cursor = 0; instance.dirty = false; instance.props = node.props;
+        instance.contextDependencies.clear();
         const renderKey = fn.name === 'DualCaptionRow' ? `row:${node.props.pair.source.id}` : fn.name;
         calls.renders.set(renderKey, (calls.renders.get(renderKey) ?? 0) + 1);
         instance.output = fn(node.props);
@@ -151,19 +173,68 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
       if (node.props.ref) node.props.ref.current = {
         scrollToIndex(command) {
           calls.reveals.push(plain(command));
+          if (options.nativeGeometry) {
+            const geometry = options.nativeGeometry;
+            const frame = geometry.reportedRows[command.index];
+            if (!frame) {
+              geometry.failures++;
+              const measured = options.nativeCellViewability ? geometry.reportedRows.filter(Boolean) : [];
+              node.props.onScrollToIndexFailed?.({ index: command.index,
+                averageItemLength: measured.length ? measured.reduce((sum, row) => sum + row.height, 0) / measured.length : 0,
+                highestMeasuredFrameIndex: geometry.reportedRows.length - 1 });
+              return;
+            }
+            // RN 0.86.3 VirtualizedList.scrollToIndex, viewPosition=0:
+            // a measured JS cell yields a command, not a native completion ack.
+            assert.equal(command.viewPosition, 0);
+            geometry.scrollTo(frame.y);
+            calls.nativeReveals.push(plain(command));
+            return;
+          }
           if (!options.nativeMeasurementGate) return;
           if (!nativeListReady) {
-            node.props.onScrollToIndexFailed?.({ index: command.index, averageItemLength: 0, highestMeasuredFrameIndex: -1 });
+            node.props.onScrollToIndexFailed?.({ index: command.index, averageItemLength: options.nativeFailureAverage ?? 0, highestMeasuredFrameIndex: -1 });
             return;
           }
           calls.nativeReveals.push(plain(command));
           if (windowStart !== command.index) { windowStart = command.index; changed = true; }
         },
-        scrollToOffset(command) { calls.offsets.push(plain(command)); },
+        scrollToOffset(command) {
+          calls.offsets.push(plain(command));
+          options.nativeGeometry?.scrollTo(command.offset);
+        },
       };
       children = [node.props.ListHeaderComponent,
       ...node.props.data.slice(windowStart, windowStart + node.props.initialNumToRender)
-        .map((item, index) => ({ ...node.props.renderItem({ item, index: windowStart + index }), key: node.props.keyExtractor(item) })),
+        .map((item, localIndex) => {
+          const index = windowStart + localIndex;
+          let cell = cells.get(index);
+          if (!cell) {
+            cell = { style: { flexDirection: 'column' }, onFocusCapture: () => options.onCellFocusCapture?.(index) };
+            cells.set(index, cell);
+          }
+          const children = node.props.renderItem({ item, index });
+          const onLayout = event => {
+            if (options.nativeGeometry) {
+              const { y, height } = event.nativeEvent.layout;
+              options.nativeGeometry.reportedRows[index] = { y, height };
+              options.nativeGeometry.layouts++;
+              // RN 0.86.3 _onCellLayout updates metrics, then synchronously
+              // computes viewability before DualCaptionCell's owned report.
+              if (options.nativeCellViewability) node.props.onViewableItemsChanged({
+                viewableItems: options.nativeGeometry.reportedVisibleIndexes().map(index => ({
+                  item: node.props.data[index], index, isViewable: true,
+                })),
+              });
+            }
+            options.onCellMetricUpdate?.(index, event);
+          };
+          cell.component = node.props.CellRendererComponent;
+          cell.props = { item, index, onLayout, onFocusCapture: cell.onFocusCapture, style: cell.style, children };
+          // RN's default cell is already one View. A custom renderer replaces it.
+          return jsx(cell.component ?? 'View', cell.component ? cell.props
+            : { onLayout, onFocusCapture: cell.onFocusCapture, style: cell.style, children }, node.props.keyExtractor(item));
+        }),
       node.props.ListFooterComponent];
     }
     if (node.type === 'TextInput') {
@@ -171,6 +242,9 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
       inputs.add(id);
       if (!inputIdentities.has(id)) inputIdentities.set(id, {});
       return { ...node, identity: inputIdentities.get(id) };
+    }
+    if (node.type === 'View' && node.props.onFocusCapture) {
+      for (const cell of cells.values()) if (cell.onFocusCapture === node.props.onFocusCapture) cell.rawHost = node;
     }
     return { ...node, props: { ...node.props, children: renderNode(children, `${path}/children`, visited, inputs) } };
   }
@@ -214,8 +288,21 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
   render();
   return {
     calls, all, button, input, flush, act, Store: exports.Store,
+    cell(index) {
+      const cell = cells.get(index); assert.ok(cell, `missing rendered cell ${index}`);
+      const host = all(node => node.type === 'View' && node.props.onFocusCapture === cell.onFocusCapture)[0];
+      assert.ok(host, `missing RN cell host ${index}`);
+      return { ...cell, host };
+    },
     get props() { return props; },
     get timerCount() { return timers.size; },
+    get frameCount() { return frames.size; },
+    frameCallbacks() { return [...frames.values()]; },
+    async frame() {
+      const callbacks = [...frames.values()]; frames.clear();
+      for (const callback of callbacks) callback(now);
+      await flush();
+    },
     setNativeListReady(ready) { nativeListReady = ready; },
     update(next) { props = { ...props, ...next }; render(); },
     scroll(index) { windowStart = index; render(); },
@@ -224,6 +311,8 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
     choose(label) { const choice = calls.alerts.at(-1)?.[2].find((entry) => entry.text === label); assert.ok(choice, `missing alert choice: ${label}`); act(() => choice.onPress?.()); },
     async advance(ms) {
       now += ms;
+      const callbacks = [...frames.values()]; frames.clear();
+      for (const callback of callbacks) callback(now);
       for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.callback(); }
       await flush();
     },
@@ -707,7 +796,7 @@ test('dual only shares intentional list navigation and does not rerender rows fo
 });
 
 test('dual measurement failures have bounded retries and stale callbacks cannot seek after close', async () => {
-  const h = mount({ pairs: timelinePairs(), currentMs: 90000 }); await h.flush();
+  const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, { nativeMeasurementGate: true }); await h.flush();
   const stale = listOf(h).onViewableItemsChanged;
   const fail = () => listOf(h).onScrollToIndexFailed({ index: 90, averageItemLength: 120, highestMeasuredFrameIndex: 5 });
   for (let n = 0; n < 8; n++) { h.act(fail); await h.advance(100); }
@@ -740,6 +829,7 @@ async function settleNativeReveal(h) {
   // single large clock jump. No wall-clock sleeps or native runtime are used.
   for (let step = 0; step < 12; step++) await h.advance(250);
   assert.equal(h.timerCount, 0, 'native readiness must not leave an endless retry timer');
+  assert.equal(h.frameCount, 0, 'native readiness must not leave an endless frame loop');
 }
 
 for (const lastEvent of ['show', 'viewport', 'content']) {
@@ -813,6 +903,7 @@ test('dual ignores stale native readiness and failure callbacks after close and 
   h.update({ visible: true, currentMs: 40000 }); await h.flush();
   assert.equal(h.calls.reveals.at(-1)?.index, 40);
   assert.deepEqual(h.calls.nativeReveals, []);
+  await settleNativeReveal(h); // Drain the live session's own zero-metric opening frame.
   const remountedRequests = h.calls.reveals.length, remountedOffsets = h.calls.offsets.length;
   h.setNativeListReady(true);
   h.act(staleCallbacks); await settleNativeReveal(h);
@@ -873,10 +964,615 @@ test('dual later native content recovers after the partial-measurement retry bud
   h.act(() => nativeReadinessEvents(h).content());
   await settleNativeReveal(h);
   assert.equal(h.calls.nativeReveals.at(-1)?.index, 90, 'a new native readiness event can finish the still-owned target');
-  assert.equal(h.calls.reveals.length, requests + 1);
+  assert.equal(h.calls.reveals.length, requests + 2, 'one readiness command and one bounded native-frame reassertion');
   assert.equal(h.timerCount, 0, 'readiness recovery must not restart a timer loop');
   assert.deepEqual(h.calls.seeks, []);
   viewable(h, [90, 91]);
   h.act(() => nativeReadinessEvents(h).content());
-  assert.equal(h.calls.reveals.length, requests + 1, 'settled viewability ends recovery');
+  assert.equal(h.calls.reveals.length, requests + 2, 'settled viewability ends recovery');
 });
+
+// Exact cached RN 0.86.3 sources (../release135-final-20261024/runtime-final-3b7a169):
+// ShadowTree.cpp:455 emits layout before mount; BaseViewEventEmitter.cpp:62
+// coalesces an unchanged frame. MountItemDispatcher.kt:199 drains view commands
+// before mounts with disableEarlyViewCommandExecution=false (Defaults.kt:34).
+// VirtualizedList.js:183-210 accepts a measured index and computes its offset;
+// ReactScrollView.java:1363 calls super.scrollTo against the existing child.
+// isContentReady/setPendingContentOffsets:1416-1435 treats nonzero content as
+// ready, clearing the pending offset; onLayout:441 then uses current scrollY.
+// Its onLayoutChange:1444-1466 clamps excess offsets on shrink, but does not
+// replay a previously clamped command on growth. These permit this ordering;
+// they do not establish its frequency or an observed device failure.
+//
+// Six cells are actually rendered (initialNumToRender=6). A real root-width
+// update changes DualCaptionRow's language fields from row to column BEFORE
+// reporting their taller geometry. No JS state-dependent footer, getItemLayout,
+// unrendered tail metrics, focus, or translation timing is invented here.
+// Default heights are admissible fixture measurements, not a Yoga/text-layout
+// emulator. Alternate heights below are explicitly geometry-conditional.
+function dualPremountGeometry(oldHeight = 180, finalHeight = 300) {
+  const rows = height => Array.from({ length: 6 }, (_, index) => ({ y: 14 + index * (height + 10), height }));
+  const extent = frames => frames.at(-1).y + frames.at(-1).height + 14;
+  const oldRows = rows(oldHeight), finalRows = rows(finalHeight);
+  return {
+    reportedRows: [], reportedContentHeight: 0,
+    mountedRows: oldRows, contentHeight: extent(oldRows), viewportHeight: 593,
+    offset: 0, failures: 0, layouts: 0, commands: [], finalRows,
+    finalContentHeight: extent(finalRows),
+    scrollTo(requested) {
+      this.offset = Math.max(0, Math.min(requested, this.contentHeight - this.viewportHeight));
+      this.commands.push({ requested, offset: this.offset, contentHeight: this.contentHeight });
+    },
+    mount() {
+      this.mountedRows = finalRows;
+      this.contentHeight = this.finalContentHeight;
+      // Growing the child preserves scrollY. Mounting the already-reported
+      // frame is not another JS layout/content event or another scroll command.
+    },
+    fullyVisible(index) {
+      const row = this.mountedRows[index];
+      return row.y >= this.offset && row.y + row.height <= this.offset + this.viewportHeight;
+    },
+    visibleIndexes() {
+      return this.mountedRows.flatMap((row, index) =>
+        row.y < this.offset + this.viewportHeight && row.y + row.height > this.offset ? [index] : []);
+    },
+    reportedVisibleIndexes() {
+      return this.reportedRows.flatMap((row, index) =>
+        row.y < this.offset + this.viewportHeight && row.y + row.height > this.offset ? [index] : []);
+    },
+  };
+}
+
+async function prepareLateDualCellMetrics(options = {}) {
+  const geometry = dualPremountGeometry();
+  const h = mount({ pairs: timelinePairs().slice(0, 6), currentMs: 5000 }, { ...options, nativeGeometry: geometry });
+  await h.flush();
+  for (const event of ['show', 'viewport', 'content']) h.act(() => nativeReadinessEvents(h)[event]());
+  assert.equal(h.frameCount, 1, 'zero readiness bursts coalesce');
+  await h.frame(); await settleNativeReveal(h);
+  assert.equal(geometry.reportedRows.length, 0);
+  assert.equal(geometry.fullyVisible(5), false);
+  assert.equal(h.frameCount, 0); assert.equal(h.timerCount, 0);
+  return { h, geometry };
+}
+
+function deliverDualCellLayout(h, geometry, index, cell = h.cell(index)) {
+  h.act(() => cell.host.props.onLayout({ nativeEvent: {
+    layout: { x: 0, width: 347, ...geometry.finalRows[index] },
+  } }));
+}
+
+for (const timerOwned of [false, true]) {
+  test(`dual RN-first partial cell viewability preserves ${timerOwned ? 'timer-owned retry' : 'measurement wait after spent zero frame'}`, async () => {
+    // Conditional measured geometry, not an exact Yoga prediction. The target
+    // has 69dp visible at offset zero; its paired fields cannot yet be reached.
+    const geometry = dualPremountGeometry();
+    geometry.finalRows[0] = { y: 14, height: 180 };
+    geometry.finalRows[1] = { y: 524, height: 300 };
+    let notifications = 0, h;
+    h = mount({ pairs: timelinePairs().slice(0, 6), currentMs: 1000 }, {
+      nativeGeometry: geometry, nativeCellViewability: true,
+      onCellMetricUpdate(index) {
+        if (index !== 1) return;
+        notifications++;
+        assert.deepEqual(plain(geometry.reportedRows[1]), { y: 524, height: 300 });
+        assert.ok(geometry.reportedVisibleIndexes().includes(1));
+        if (timerOwned && notifications === 1) assert.equal(h.timerCount, 1, 'RN partial token must preserve the timer before owned report');
+      },
+    });
+    await h.flush();
+    for (const event of ['show', 'viewport', 'content']) h.act(() => nativeReadinessEvents(h)[event]());
+    await h.frame();
+    assert.equal(h.frameCount, 0); assert.equal(h.timerCount, 0);
+    if (timerOwned) {
+      deliverDualCellLayout(h, geometry, 0);
+      assert.equal(h.timerCount, 1, 'a normal measured cell starts the finite retry');
+    }
+    const requests = h.calls.reveals.length;
+    const offset = geometry.offset;
+    const visible = Math.min(824, offset + 593) - Math.max(524, offset);
+    assert.ok(visible > 0 && visible < 300);
+    if (!timerOwned) { assert.equal(offset, 0); assert.equal(visible, 69); }
+    deliverDualCellLayout(h, geometry, 1);
+    assert.equal(notifications, 1, 'partial viewability came from the forwarded RN callback');
+    assert.equal(h.calls.reveals.length, requests + (timerOwned ? 0 : 1), 'owned report wakes measurements, without stealing a timer');
+    if (timerOwned) {
+      await h.advance(99); assert.equal(h.calls.reveals.length, requests);
+      await h.advance(1); assert.equal(h.calls.reveals.length, requests + 1);
+    }
+    assert.equal(h.frameCount, 1);
+    geometry.mount(); await h.frame(); await settleNativeReveal(h);
+    assert.equal(geometry.fullyVisible(1), true, 'independent mounted geometry must place both fields within the viewport');
+    const completed = h.calls.reveals.length;
+    deliverDualCellLayout(h, geometry, 1);
+    h.act(() => nativeReadinessEvents(h).content());
+    await settleNativeReveal(h);
+    assert.equal(h.calls.reveals.length, completed, 'normal completed viewability cannot restart navigation');
+    assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.focuses, []);
+    assert.deepEqual(h.calls.writes, []); assert.deepEqual(h.calls.saves, []);
+  });
+}
+
+test('dual late actual cell layout wakes the target after the still-zero frame has settled', async () => {
+  const { h, geometry } = await prepareLateDualCellMetrics();
+  const failures = geometry.failures, requests = h.calls.reveals.length;
+  // Only the real rendered RN cell host supplies readiness from here onward.
+  // No second modal, viewport, content, viewability or field event is emitted.
+  deliverDualCellLayout(h, geometry, 5);
+  assert.deepEqual(plain(geometry.reportedRows[5]), geometry.finalRows[5], 'RN receives the cell metric');
+  assert.equal(geometry.failures, failures, 'RN metrics must update before owned notification attempts a reveal');
+  const afterCell = h.calls.reveals.length, handoffFrames = h.frameCount;
+  geometry.mount(); await h.frame(); await settleNativeReveal(h);
+  assert.equal(geometry.fullyVisible(5), true, 'late RN metrics must make the final cue physically visible');
+  assert.equal(afterCell, requests + 1, 'cell delivery itself wakes the pending target');
+  assert.equal(handoffFrames, 1, 'measured command owns one native handoff');
+  assert.equal(h.calls.reveals.length, requests + 2);
+  const completed = h.calls.reveals.length;
+  deliverDualCellLayout(h, geometry, 5); await settleNativeReveal(h);
+  assert.equal(h.calls.reveals.length, completed, 'completed opening work cannot become general layout following');
+  assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.focuses, []);
+  assert.deepEqual(h.calls.saves, []); assert.deepEqual(h.calls.writes, []);
+});
+
+test('dual actual cell preserves RN forwarding and stable input identity across session renders', async () => {
+  let metricCalls = 0, focusCalls = 0, event, requestsBeforeDelivery;
+  const { h, geometry } = await prepareLateDualCellMetrics({
+    onCellMetricUpdate(index, received) {
+      metricCalls++;
+      assert.equal(index, 5); assert.equal(received, event, 'forward the original RN event');
+      assert.equal(h.calls.reveals.length, requestsBeforeDelivery, 'RN callback runs before owned reveal');
+      assert.deepEqual(plain(geometry.reportedRows[5]), geometry.finalRows[5]);
+    },
+    onCellFocusCapture(index) { assert.equal(index, 5); focusCalls++; },
+  });
+  const cell = h.cell(5), identity = h.input(5).identity;
+  assert.equal(typeof cell.component, 'function');
+  assert.equal(cell.rawHost.type, 'View', 'one View replaces the default RN cell View');
+  assert.equal(cell.rawHost.props.style, cell.props.style);
+  assert.equal(cell.rawHost.props.onFocusCapture, cell.props.onFocusCapture);
+  assert.equal(cell.rawHost.props.children, cell.props.children, 'children are passed directly, without an extra wrapper');
+  h.act(() => cell.host.props.onFocusCapture({}));
+  assert.equal(focusCalls, 1);
+  requestsBeforeDelivery = h.calls.reveals.length;
+  event = { nativeEvent: { layout: { x: 0, width: 347, ...geometry.finalRows[5] } } };
+  h.act(() => cell.host.props.onLayout(event));
+  assert.equal(metricCalls, 1); assert.equal(h.calls.reveals.length, requestsBeforeDelivery + 1);
+  const root = h.all(node => node.props.testID === 'dual-caption-root')[0];
+  h.act(() => root.props.onLayout({ nativeEvent: { layout: { width: 900, height: 230 } } }));
+  h.edit(5, 'Still mounted');
+  assert.equal(h.cell(5).component, cell.component, 'session renders cannot replace the cell component type');
+  assert.equal(h.input(5).identity, identity, 'cell subscriptions cannot remount the focused input');
+});
+
+test('dual late cell readiness respects the existing 100ms timer owner and one coalesced handoff', async () => {
+  const { h, geometry } = await prepareLateDualCellMetrics();
+  h.act(() => listOf(h).onScrollToIndexFailed({ index: 5, averageItemLength: 180 }));
+  assert.equal(h.timerCount, 1);
+  const requests = h.calls.reveals.length;
+  for (let burst = 0; burst < 4; burst++) deliverDualCellLayout(h, geometry, 5);
+  assert.equal(h.calls.reveals.length, requests, 'cell delivery cannot steal timer ownership');
+  assert.equal(h.timerCount, 1); assert.equal(h.frameCount, 0);
+  await h.advance(99);
+  assert.equal(h.calls.reveals.length, requests);
+  await h.advance(1);
+  assert.equal(h.calls.reveals.length, requests + 1); assert.equal(h.frameCount, 1);
+  for (let burst = 0; burst < 4; burst++) deliverDualCellLayout(h, geometry, 5);
+  assert.equal(h.calls.reveals.length, requests + 1); assert.equal(h.frameCount, 1);
+  geometry.mount(); await h.frame(); await settleNativeReveal(h);
+  assert.equal(geometry.fullyVisible(5), true);
+  assert.equal(h.calls.reveals.length, requests + 2);
+});
+
+for (const interrupt of ['drag', 'focus', 'close', 'project', 'track', 'pairs', 'source', 'timeline']) {
+  test(`dual late cell callback cannot reclaim ownership after ${interrupt}`, async () => {
+    const { h, geometry } = await prepareLateDualCellMetrics();
+    const staleCell = h.cell(5);
+    if (interrupt === 'drag') h.act(() => listOf(h).onScrollBeginDrag({}));
+    if (interrupt === 'focus') h.act(() => h.input(0).props.onFocus());
+    if (interrupt === 'close') h.update({ visible: false });
+    if (interrupt === 'project') h.update({ projectId: 'new-project', pairs: [] });
+    if (interrupt === 'track') h.update({ trackId: 'new-track', pairs: [] });
+    if (interrupt === 'pairs') h.update({ pairs: h.props.pairs.map(pair => ({ ...pair })) });
+    if (interrupt === 'source') h.update({ pairs: h.props.pairs.map((pair, index) => index === 5
+      ? { ...pair, source: { ...pair.source, id: 'replacement' } } : pair) });
+    if (interrupt === 'timeline') h.update({ currentMs: 3000 });
+    await settleNativeReveal(h); // Settle only the new target's own zero frame.
+    const requests = h.calls.reveals.length, commands = geometry.commands.length;
+    deliverDualCellLayout(h, geometry, 5, staleCell);
+    geometry.mount(); await settleNativeReveal(h);
+    assert.equal(h.calls.reveals.length, requests, 'stale cell notification cannot issue new reveal work');
+    assert.equal(geometry.commands.length, commands);
+    assert.equal(geometry.fullyVisible(5), false);
+    assert.deepEqual(h.calls.seeks, []);
+    if (interrupt === 'pairs') {
+      deliverDualCellLayout(h, geometry, 5); await settleNativeReveal(h);
+      assert.equal(geometry.fullyVisible(5), true, 'the replacement provider still receives live cell readiness');
+    }
+  });
+}
+
+for (const metricsCommit of [true, false]) {
+  test(`dual zero-metric readiness frame ${metricsCommit ? 'reveals cells committed without another readiness event' : 'stays bounded until genuine later readiness'}`, async () => {
+    const geometry = dualPremountGeometry();
+    const h = mount({ pairs: timelinePairs().slice(0, 6), currentMs: 5000 }, { nativeGeometry: geometry });
+    await h.flush();
+    assert.equal(h.all(node => node.type === 'TextInput').length, 12, 'all six cells are rendered');
+    for (let burst = 0; burst < 3; burst++) {
+      for (const event of ['show', 'viewport', 'content']) h.act(() => nativeReadinessEvents(h)[event]());
+    }
+    assert.deepEqual(h.calls.nativeReveals, [], 'every actual readiness event saw zero cell metrics');
+    assert.deepEqual(h.calls.offsets, []);
+    assert.equal(h.timerCount, 0);
+    assert.equal(geometry.fullyVisible(5), false);
+    const requests = h.calls.reveals.length;
+    const commit = () => {
+      geometry.reportedRows = geometry.finalRows;
+      geometry.reportedContentHeight = geometry.finalContentHeight;
+      geometry.mount();
+    };
+    if (metricsCommit) commit(); // Cell/native commit emits no additional host readiness callback.
+    await h.frame();
+    assert.equal(geometry.fullyVisible(5), metricsCommit,
+      'the post-native frame must reveal committed cells without a second unchanged layout');
+    assert.equal(h.calls.reveals.length, requests + 1, 'readiness bursts share exactly one frame attempt');
+    assert.equal(h.frameCount, 0);
+    assert.equal(h.timerCount, 0);
+    await settleNativeReveal(h);
+    assert.equal(h.calls.reveals.length, requests + 1, 'a still-zero frame must never self-schedule');
+    if (!metricsCommit) {
+      commit();
+      await settleNativeReveal(h);
+      assert.equal(geometry.fullyVisible(5), false, 'exhausted handoff waits for genuine readiness');
+      assert.equal(h.calls.reveals.length, requests + 1);
+      h.act(() => nativeReadinessEvents(h).content());
+      await settleNativeReveal(h);
+      assert.equal(geometry.fullyVisible(5), true, 'a later genuine event still recovers the pending target');
+      assert.equal(h.calls.reveals.length, requests + 3);
+    }
+    assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.focuses, []);
+    assert.deepEqual(h.calls.saves, []); assert.deepEqual(h.calls.writes, []);
+    assert.deepEqual(h.calls.refresh, []); assert.deepEqual(h.calls.skip, []);
+    assert.equal(h.props.currentMs, 5000);
+  });
+}
+
+async function prepareDualPremount(commitBeforeLayout = false, geometry = dualPremountGeometry(), targetReportedVisible = commitBeforeLayout) {
+  const h = mount({ pairs: timelinePairs().slice(0, 6), currentMs: 5000 }, {
+    window: { width: 900, height: 844 }, nativeGeometry: geometry,
+  });
+  await h.flush(); // Finish the actual opening journal read; no recovery prompt.
+  assert.equal(h.calls.reads.length, 1);
+  assert.deepEqual(h.calls.alerts, []);
+  assert.equal(h.calls.reveals[0].index, 5);
+  assert.equal(geometry.failures, 1, 'opening has no cell metrics yet');
+  const languageGroups = () => h.all(node => node.type === 'View'
+    && node.props.children?.some?.(child => child?.type === 'View'
+      && h.all(input => input.type === 'TextInput', child).length === 1)
+    && h.all(input => input.type === 'TextInput', node).length === 2);
+  assert.equal(languageGroups().length, 6);
+  assert.ok(languageGroups().every(node => node.props.style.flexDirection === 'row'));
+  h.act(() => h.all(node => node.props.testID === 'dual-caption-root')[0].props.onLayout({
+    nativeEvent: { layout: { width: 390, height: 844 } },
+  }));
+  assert.ok(languageGroups().every(node => node.props.style.flexDirection === 'column'),
+    'the actual render must produce stacked inputs before reporting taller rows');
+  assert.equal(h.input(5).props.value, 'Source 5');
+  assert.equal(h.input(5, 'Chinese').props.value, 'Translation 5');
+  assert.equal(h.props.pairs[5].visible, true);
+  if (commitBeforeLayout) geometry.mount();
+  geometry.reportedRows = geometry.finalRows;
+  geometry.reportedContentHeight = geometry.finalContentHeight;
+  // VirtualizedList's cell metrics precede the wrapper viewport callback. All
+  // six cells exist; measured index 5 cannot produce onScrollToIndexFailed.
+  geometry.layouts++;
+  h.act(() => nativeReadinessEvents(h).viewport());
+  assert.equal(h.calls.nativeReveals.at(-1)?.index, 5);
+  assert.equal(geometry.failures, 1, 'the measured reveal succeeds without a failure callback');
+  const content = () => h.act(() => listOf(h).onContentSizeChange?.(347, geometry.reportedContentHeight));
+  geometry.layouts++;
+  content(); // A later, positive full-content report must not be mistaken for mount.
+  h.act(() => nativeReadinessEvents(h).show());
+  // RN viewability uses JS cell frames and the actual clamped scroll offset.
+  // It does not inspect mounted child geometry. Never substitute the requested
+  // offset here: that would fabricate target success before native mount.
+  assert.equal(geometry.reportedVisibleIndexes().includes(5), targetReportedVisible);
+  h.act(() => listOf(h).onScroll({ nativeEvent: {
+    contentOffset: { x: 0, y: geometry.offset },
+    contentSize: { width: 347, height: geometry.contentHeight },
+    layoutMeasurement: { width: 347, height: geometry.viewportHeight },
+  } }));
+  viewable(h, geometry.reportedVisibleIndexes());
+  for (const input of h.all(node => node.type === 'TextInput')) h.act(() => {
+    input.props.onLayout?.(); input.props.onContentSizeChange?.();
+  });
+  assert.deepEqual(h.calls.focuses, [], 'unfocused field layout cannot rescue initial reveal');
+  assert.deepEqual(h.calls.seeks, []);
+  return { h, geometry, content };
+}
+
+test('dual pre-mount control: native commit before reported layout makes the final source cue reachable', async () => {
+  const { h, geometry, content } = await prepareDualPremount(true);
+  await settleNativeReveal(h);
+  assert.equal(geometry.fullyVisible(5), true, 'both current-cue inputs and row controls fit the viewport');
+  assert.notEqual(geometry.mountedRows[5].y - geometry.offset, 8, 'Dual has no Primary top-guide contract');
+  const commands = geometry.commands.length;
+  content(); await settleNativeReveal(h);
+  assert.equal(geometry.commands.length, commands, 'completed viewability does not restart initial reveal');
+  assert.equal(h.props.currentMs, 5000);
+  assert.deepEqual(h.calls.seeks, []);
+});
+
+test('dual pre-mount successful measured command must finish with the final source cue physically visible', async () => {
+  const { h, geometry } = await prepareDualPremount();
+  const command = geometry.commands.at(-1);
+  assert.equal(command.requested, geometry.finalRows[5].y);
+  assert.equal(command.offset, geometry.contentHeight - geometry.viewportHeight,
+    'successful scroll command clamps against the old nonzero native extent');
+  assert.ok(geometry.reportedContentHeight > geometry.contentHeight);
+  assert.equal(geometry.reportedVisibleIndexes().includes(5), false,
+    'non-target JS viewability must leave the opening target pending');
+  // Physical visibility of the old short row is not final visibility either.
+  assert.equal(geometry.visibleIndexes().includes(5), true);
+  const layouts = geometry.layouts;
+  geometry.mount();
+  viewable(h, geometry.reportedVisibleIndexes());
+  await settleNativeReveal(h);
+  assert.equal(geometry.layouts, layouts, 'unchanged shadow geometry gives no second layout on mount');
+  assert.equal(h.props.currentMs, 5000);
+  assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.refresh, []);
+  assert.deepEqual(h.calls.focuses, []);
+  assert.equal(geometry.fullyVisible(5), true,
+    `final cue must be reachable without reopen/gesture/poll: row=${geometry.finalRows[5].y}, offset=${geometry.offset}, viewport=${geometry.viewportHeight}`);
+});
+
+// Geometry-conditional regression: these supplied native/JS measurements are
+// not a claim that the short Source/Translation strings produce these heights
+// in Yoga. Varying old mounted extent isolates the ownership bug independently
+// of text measurement; the actual component still renders the width transition.
+// A device reproduction needs content/font measurements admitting this geometry.
+test('dual partial target viewability before mount must retain the final physical reveal', async () => {
+  const { h, geometry, content } = await prepareDualPremount(false, dualPremountGeometry(253), true);
+  assert.equal(geometry.offset, 1003);
+  assert.equal(geometry.finalRows[5].y, 1564);
+  assert.equal(geometry.offset + geometry.viewportHeight - geometry.finalRows[5].y, 32);
+  assert.ok(geometry.finalRows[5].height <= geometry.viewportHeight);
+  assert.ok(geometry.reportedVisibleIndexes().includes(5), 'RN reports the partially intersecting target');
+  const commands = geometry.commands.length, layouts = geometry.layouts;
+  geometry.mount();
+  assert.equal(geometry.fullyVisible(5), false, 'only 32dp is physically visible after mount');
+  viewable(h, geometry.reportedVisibleIndexes());
+  await settleNativeReveal(h);
+  assert.equal(geometry.fullyVisible(5), true, 'the fitting current cue needs both fields and controls reachable');
+  assert.equal(geometry.commands.length, commands + 1, 'exactly one owned frame reassertion');
+  assert.equal(geometry.layouts, layouts, 'mount supplies no further layout event');
+  content(); await settleNativeReveal(h);
+  assert.equal(geometry.commands.length, commands + 1, 'no content-driven repeat or polling');
+  assert.equal(h.frameCount, 0); assert.equal(h.timerCount, 0);
+  assert.equal(h.props.currentMs, 5000);
+  assert.deepEqual(h.calls.focuses, []); assert.deepEqual(h.calls.seeks, []);
+  assert.deepEqual(h.calls.saves, []); assert.deepEqual(h.calls.writes, []);
+  assert.deepEqual(h.calls.refresh, []); assert.deepEqual(h.calls.skip, []);
+});
+
+test('dual readiness coalesces one native frame and never turns successful reassertion into polling', async () => {
+  const { h, geometry, content } = await prepareDualPremount();
+  assert.equal(h.frameCount, 1);
+  const commands = geometry.commands.length;
+  for (let n = 0; n < 4; n++) {
+    content();
+    h.act(() => { nativeReadinessEvents(h).viewport(); nativeReadinessEvents(h).show(); });
+  }
+  assert.equal(h.frameCount, 1);
+  assert.equal(geometry.commands.length, commands, 'readiness bursts do not repeat an already measured command');
+  geometry.mount();
+  await h.frame();
+  assert.equal(geometry.commands.length, commands + 1);
+  assert.equal(geometry.fullyVisible(5), true);
+  assert.equal(h.frameCount, 0);
+  await settleNativeReveal(h);
+  assert.equal(geometry.commands.length, commands + 1, 'no fabricated viewability is needed to stop frame polling');
+});
+
+test('dual normal viewability allows one initial handoff then preserves completed user navigation', async () => {
+  const { h, geometry, content } = await prepareDualPremount();
+  const callbacks = h.frameCallbacks();
+  geometry.mount();
+  // A native scroll that completes before the frame may report viewability.
+  geometry.scrollTo(geometry.finalContentHeight - geometry.viewportHeight);
+  viewable(h, geometry.reportedVisibleIndexes());
+  assert.equal(geometry.fullyVisible(5), true);
+  assert.equal(h.frameCount, 1, 'early viewability still allows one initial handoff');
+  const commands = geometry.commands.length;
+  await h.frame();
+  assert.equal(geometry.commands.length, commands + 1);
+  assert.equal(geometry.fullyVisible(5), true);
+  assert.equal(h.frameCount, 0);
+  h.act(() => callbacks.forEach(callback => callback()));
+  content(); await settleNativeReveal(h);
+  assert.equal(geometry.commands.length, commands + 1, 'completed targets cannot be reclaimed by late frames/content');
+  assert.deepEqual(h.calls.seeks, []);
+  h.act(() => listOf(h).onScrollBeginDrag({}));
+  geometry.scrollTo(geometry.finalRows[1].y);
+  viewable(h, geometry.reportedVisibleIndexes());
+  h.update({ currentMs: 1000 });
+  h.act(() => listOf(h).onScrollEndDrag({ nativeEvent: { velocity: { y: 0 } } }));
+  h.act(() => callbacks.forEach(callback => callback()));
+  content(); await settleNativeReveal(h);
+  assert.equal(geometry.offset, geometry.finalRows[1].y);
+  assert.equal(geometry.commands.length, commands + 2, 'only the physical user scroll follows the completed reveal');
+  assert.deepEqual(h.calls.seeks, [1000]);
+});
+
+test('dual tall partial row keeps one handoff without imposing full-row viewability on user seeking', async () => {
+  const { h, geometry, content } = await prepareDualPremount(false, dualPremountGeometry(600, 700), true);
+  assert.ok(geometry.finalRows[5].height > geometry.viewportHeight);
+  assert.ok(geometry.reportedVisibleIndexes().includes(5));
+  const commands = geometry.commands.length;
+  geometry.mount(); await h.frame();
+  assert.equal(geometry.offset, geometry.finalRows[5].y, 'a tall cue starts at its inputs/control row');
+  assert.equal(geometry.fullyVisible(5), false, 'full-row visibility is impossible for tall rows');
+  content(); await settleNativeReveal(h);
+  assert.equal(geometry.commands.length, commands + 1, 'tall rows cannot cause polling');
+  assert.deepEqual(h.calls.seeks, []);
+  h.act(() => listOf(h).onScrollBeginDrag({}));
+  geometry.scrollTo(geometry.finalRows[1].y + 650);
+  const indexes = geometry.reportedVisibleIndexes();
+  assert.equal(indexes[0], 1, 'the first user-visible cue has only a 50dp tail');
+  viewable(h, indexes);
+  assert.deepEqual(h.calls.seeks, [1000], 'intentional partial-row seeking retains existing semantics');
+  h.update({ currentMs: 1000 });
+  h.act(() => listOf(h).onScrollEndDrag({ nativeEvent: { velocity: { y: 0 } } }));
+  const userOffset = geometry.offset;
+  content(); await settleNativeReveal(h);
+  assert.equal(geometry.offset, userOffset);
+  assert.equal(geometry.commands.length, commands + 2);
+  assert.equal(h.frameCount, 0); assert.equal(h.timerCount, 0);
+  assert.deepEqual(h.calls.focuses, []);
+});
+
+test('dual drag after partial target viewability cancels the handoff and preserves user position', async () => {
+  const { h, geometry, content } = await prepareDualPremount(false, dualPremountGeometry(253), true);
+  assert.ok(geometry.reportedVisibleIndexes().includes(5));
+  const callbacks = h.frameCallbacks();
+  assert.equal(callbacks.length, 1);
+  geometry.mount();
+  h.act(() => listOf(h).onScrollBeginDrag({}));
+  assert.equal(h.frameCount, 0);
+  geometry.scrollTo(geometry.finalRows[1].y);
+  viewable(h, geometry.reportedVisibleIndexes());
+  h.update({ currentMs: 1000 });
+  h.act(() => listOf(h).onScrollEndDrag({ nativeEvent: { velocity: { y: 0 } } }));
+  const commands = geometry.commands.length;
+  h.act(() => callbacks.forEach(callback => callback()));
+  content(); await settleNativeReveal(h);
+  assert.equal(geometry.commands.length, commands);
+  assert.equal(geometry.offset, geometry.finalRows[1].y);
+  assert.deepEqual(h.calls.seeks, [1000]);
+  assert.deepEqual(h.calls.focuses, []); assert.deepEqual(h.calls.saves, []);
+});
+
+test('dual deferred reveal uses latest pairs for source identity and viewability completion', async () => {
+  const { h, geometry } = await prepareDualPremount();
+  const oldPair = h.props.pairs[5];
+  const updated = h.props.pairs.map(pair => ({ ...pair, source: { ...pair.source } }));
+  h.update({ pairs: updated });
+  h.act(() => listOf(h).onViewableItemsChanged({
+    viewableItems: [{ index: 5, item: oldPair, isViewable: true }],
+  }));
+  assert.equal(h.frameCount, 1, 'old pair viewability must not complete the current pending cue');
+  geometry.mount();
+  const commands = geometry.commands.length;
+  await h.frame();
+  assert.equal(geometry.commands.length, commands + 1, 'replacement pair objects retain the same source cue');
+  assert.equal(geometry.fullyVisible(5), true);
+  viewable(h, [5]);
+  await settleNativeReveal(h);
+  assert.equal(geometry.commands.length, commands + 1);
+});
+
+test('dual frame validates source identity even when a replacement source occupies the same target index', async () => {
+  const { h, geometry } = await prepareDualPremount();
+  const updated = h.props.pairs.map((pair, index) => index === 5
+    ? { ...pair, source: { ...pair.source, id: 'replacement-source' } } : pair);
+  h.update({ pairs: updated });
+  geometry.mount();
+  const commands = geometry.commands.length;
+  await h.frame(); await settleNativeReveal(h);
+  assert.equal(geometry.commands.length, commands, 'a frame for the previous source cannot scroll its replacement');
+});
+
+test('dual new timeline target cancels old frame tokens and reveals only the current source', async () => {
+  const { h, geometry } = await prepareDualPremount();
+  const callbacks = h.frameCallbacks();
+  h.update({ currentMs: 3000 });
+  assert.equal(h.frameCount, 1, 'a new target replaces the old queued frame');
+  const commands = geometry.commands.length;
+  h.act(() => callbacks.forEach(callback => callback()));
+  assert.equal(geometry.commands.length, commands, 'a canceled callback cannot consume the current frame token');
+  assert.equal(h.frameCount, 1);
+  geometry.mount(); await h.frame();
+  assert.equal(geometry.commands.length, commands + 1);
+  assert.equal(h.calls.nativeReveals.at(-1).index, 3);
+  assert.equal(geometry.fullyVisible(3), true);
+  assert.deepEqual(h.calls.seeks, []);
+});
+
+for (const average of [0, 120]) {
+  test(`dual frame index failure with average ${average} waits for measurements within the two-retry budget`, async () => {
+    const options = { nativeMeasurementGate: true };
+    const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, options);
+    await h.flush();
+    h.setNativeListReady(true);
+    h.act(() => nativeReadinessEvents(h).show());
+    assert.equal(h.frameCount, 1);
+    options.nativeFailureAverage = average;
+    h.setNativeListReady(false);
+    const requests = h.calls.reveals.length;
+    await h.frame();
+    await settleNativeReveal(h);
+    assert.equal(h.calls.reveals.length, requests + 1 + (average > 0 ? 2 : 0),
+      'one frame failure plus at most two measurement retries');
+    assert.equal(h.calls.offsets.length, average > 0 ? 2 : 0);
+    const bounded = h.calls.reveals.length;
+    await settleNativeReveal(h);
+    assert.equal(h.calls.reveals.length, bounded, 'failure never starts a frame loop');
+    h.setNativeListReady(true);
+    h.act(() => nativeReadinessEvents(h).content());
+    assert.equal(h.frameCount, 1, 'new measurements can still recover the owned target');
+    await h.frame();
+    assert.equal(h.calls.reveals.length, bounded + 2);
+    assert.deepEqual(h.calls.seeks, []);
+  });
+}
+
+test('dual finite retry timer success also schedules a post-native-frame reassertion', async () => {
+  const { h, geometry } = await prepareDualPremount();
+  h.act(() => listOf(h).onScrollToIndexFailed({ index: 5, averageItemLength: 180 }));
+  assert.equal(h.frameCount, 0, 'failure cancels the previous frame');
+  assert.equal(h.timerCount, 1);
+  await h.advance(100);
+  assert.equal(h.frameCount, 1, 'timer success uses the same measured reveal path');
+  const commands = geometry.commands.length;
+  geometry.mount(); await h.frame();
+  assert.equal(geometry.commands.length, commands + 1);
+  assert.equal(geometry.fullyVisible(5), true);
+  await settleNativeReveal(h);
+});
+
+test('dual delayed measurement retry rejects a different source at the same index', async () => {
+  const { h, geometry } = await prepareDualPremount();
+  h.act(() => listOf(h).onScrollToIndexFailed({ index: 5, averageItemLength: 180 }));
+  h.update({ pairs: h.props.pairs.map((pair, index) => index === 5
+    ? { ...pair, source: { ...pair.source, id: 'another-source' } } : pair) });
+  const commands = geometry.commands.length;
+  geometry.mount(); await settleNativeReveal(h);
+  assert.equal(geometry.commands.length, commands);
+});
+
+for (const interrupt of ['drag', 'focus', 'close', 'session change', 'track change', 'reopen']) {
+  test(`dual pre-mount ${interrupt} prevents stale opening work from reclaiming scroll ownership`, async () => {
+    const { h, geometry, content } = await prepareDualPremount();
+    const stale = nativeReadinessEvents(h);
+    const oldList = listOf(h);
+    assert.equal(h.frameCount, 1, 'the pre-mount command owns one deferred reassertion');
+    const lateFrames = h.frameCallbacks();
+    stale.content = () => oldList.onContentSizeChange?.(347, geometry.reportedContentHeight);
+    if (interrupt === 'drag') h.act(() => listOf(h).onScrollBeginDrag({}));
+    if (interrupt === 'focus') h.act(() => h.input(0).props.onFocus());
+    if (interrupt === 'close') h.update({ visible: false });
+    if (interrupt === 'session change') h.update({ projectId: 'another-project', pairs: [], currentMs: 5000 });
+    if (interrupt === 'track change') h.update({ trackId: 'another-track', pairs: [], currentMs: 5000 });
+    if (interrupt === 'reopen') { h.update({ visible: false }); h.update({ visible: true, pairs: [] }); }
+    assert.equal(h.frameCount, 0, 'ownership cancellation removes the queued frame');
+    const commands = geometry.commands.length;
+    geometry.mount();
+    h.act(() => lateFrames.forEach(callback => callback()));
+    h.act(() => { stale.show(); stale.viewport(); stale.content(); });
+    if (interrupt === 'drag' || interrupt === 'focus') content();
+    await settleNativeReveal(h);
+    assert.equal(geometry.commands.length, commands, 'late callbacks cannot resume the canceled target');
+    assert.equal(h.props.currentMs, 5000);
+    assert.deepEqual(h.calls.seeks, []);
+  });
+}
