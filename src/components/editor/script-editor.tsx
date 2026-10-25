@@ -755,6 +755,22 @@ export function ScriptEditor(props: {
               const id = editingCaptionId ?? selectedCaptionId;
               if (id) revealCaption(id);
             }}
+            onContentSizeChange={(_width, height) => {
+              if (!inputSession.active || inputSessionRef.current !== inputSession
+                || !inputSession.visible || !inputReadyRef.current || inputSavingRef.current
+                || scrollOwnerRef.current === 'user' || userScrollingRef.current
+                || !Number.isFinite(height) || height <= 0 || listViewportHeightRef.current <= 0) return;
+              const pending = navigationRef.current;
+              if (!pending) return;
+              const index = sessionRef.current.captions.findIndex((caption) => caption.id === pending.id);
+              const layout = captionLayoutsRef.current[pending.id];
+              if (index < 0 || !layout || layout.index !== index) return;
+              // JS footer changes precede native content growth. Retry the live
+              // request only once native dimensions can accommodate its anchor.
+              const targetOffset = Math.max(0, layout.y - SCRIPT_ANCHOR);
+              if (targetOffset > Math.max(0, height - listViewportHeightRef.current)) return;
+              revealCaption(pending.id, pending.attempts);
+            }}
             onScrollBeginDrag={() => {
               if (!editableRef.current) return;
               clearTimeout(scrollEndTimerRef.current);
