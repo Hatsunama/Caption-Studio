@@ -1,0 +1,146 @@
+name: One-time encrypted Solana signing recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type RECOVER_EXISTING_SOLANA_TO_C_ENCRYPTED to export existing secrets encrypted to C'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: one-time-solana-signing-recovery
+  cancel-in-progress: false
+
+jobs:
+  synthetic-tests:
+    if: >-
+      github.repository == 'Hatsunama/Caption-Studio' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Hatsunama' &&
+      github.triggering_actor == 'Hatsunama' &&
+      inputs.confirmation == 'RECOVER_EXISTING_SOLANA_TO_C_ENCRYPTED'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Exact recovery preflight
+        shell: bash
+        env:
+          RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == 'Hatsunama/Caption-Studio' ]] &&
+          [[ "$GITHUB_REPOSITORY_OWNER" == 'Hatsunama' ]] &&
+          [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]] &&
+          [[ "$GITHUB_REF" == 'refs/heads/main' ]] &&
+          [[ "$GITHUB_ACTOR" == 'Hatsunama' ]] &&
+          [[ "$GITHUB_TRIGGERING_ACTOR" == 'Hatsunama' ]] &&
+          [[ "$RECOVERY_CONFIRMATION" == 'RECOVER_EXISTING_SOLANA_TO_C_ENCRYPTED' ]] || exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.23.4
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21.0.13+9'
+          check-latest: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17.0.21+9'
+          check-latest: false
+      - name: Harden and verify Java trust stores
+        run: node scripts/harden-java-truststores.mjs --ci
+      - name: Synthetic acceptance only (no signing secrets)
+        shell: bash
+        run: node --max-old-space-size=64 --test tests/signing-recovery.test.mjs
+
+  recover:
+    needs: synthetic-tests
+    if: >-
+      github.repository == 'Hatsunama/Caption-Studio' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Hatsunama' &&
+      github.triggering_actor == 'Hatsunama' &&
+      inputs.confirmation == 'RECOVER_EXISTING_SOLANA_TO_C_ENCRYPTED'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Exact recovery preflight
+        shell: bash
+        env:
+          RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == 'Hatsunama/Caption-Studio' ]] &&
+          [[ "$GITHUB_REPOSITORY_OWNER" == 'Hatsunama' ]] &&
+          [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]] &&
+          [[ "$GITHUB_REF" == 'refs/heads/main' ]] &&
+          [[ "$GITHUB_ACTOR" == 'Hatsunama' ]] &&
+          [[ "$GITHUB_TRIGGERING_ACTOR" == 'Hatsunama' ]] &&
+          [[ "$RECOVERY_CONFIRMATION" == 'RECOVER_EXISTING_SOLANA_TO_C_ENCRYPTED' ]] || exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.23.4
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21.0.13+9'
+          check-latest: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17.0.21+9'
+          check-latest: false
+      - name: Harden and verify Java trust stores
+        run: node scripts/harden-java-truststores.mjs --ci
+      - name: Export existing secrets directly to encrypted envelope
+        shell: bash
+        env:
+          CAPTION_STUDIO_FIXED_KEYSTORE_BASE64: ${{ secrets.CAPTION_STUDIO_FIXED_KEYSTORE_BASE64 }}
+          CAPTION_STUDIO_FIXED_STORE_PASSWORD: ${{ secrets.CAPTION_STUDIO_FIXED_STORE_PASSWORD }}
+          CAPTION_STUDIO_FIXED_KEY_ALIAS: ${{ secrets.CAPTION_STUDIO_FIXED_KEY_ALIAS }}
+          CAPTION_STUDIO_FIXED_KEY_PASSWORD: ${{ secrets.CAPTION_STUDIO_FIXED_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 -B scripts/signing-recovery/export.py --output-dir "$RUNNER_TEMP/solana-recovery-output"
+      - name: Upload ciphertext and public manifest only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: solana-signing-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/solana-recovery-output/recovery.p7m
+            ${{ runner.temp }}/solana-recovery-output/manifest.json
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+      - name: Clean temporary recovery paths
+        if: always()
+        shell: bash
+        run: |
+          python3 -B - <<'PY'
+          import os
+          from pathlib import Path
+          import shutil
+          root = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+          for path in root.iterdir():
+              if path.name == 'solana-recovery-output' or path.name.startswith('solana-recovery-private-'):
+                  if path.is_symlink():
+                      path.unlink()
+                  elif path.is_dir():
+                      shutil.rmtree(path)
+          PY
