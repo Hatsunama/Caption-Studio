@@ -36,7 +36,8 @@ function mount(overrides = {}, options = {}) {
   const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   const instances = new Map(), timers = new Map(), inputIdentities = new Map();
   const appStateListeners = new Set();
-  const calls = { reveals: [], offsets: [], seeks: [], alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
+  const calls = { reveals: [], nativeReveals: [], offsets: [], seeks: [], alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
+  let nativeListReady = !options.nativeMeasurementGate;
   let current, cursor, pending = [], changed = false, tree, now = 0, nextTimer = 0, windowStart = 0;
   const memoHook = (factory, deps) => {
     const index = cursor++;
@@ -148,7 +149,16 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
     let children = node.props.children;
     if (node.type === 'FlatList') {
       if (node.props.ref) node.props.ref.current = {
-        scrollToIndex(command) { calls.reveals.push(plain(command)); },
+        scrollToIndex(command) {
+          calls.reveals.push(plain(command));
+          if (!options.nativeMeasurementGate) return;
+          if (!nativeListReady) {
+            node.props.onScrollToIndexFailed?.({ index: command.index, averageItemLength: 0, highestMeasuredFrameIndex: -1 });
+            return;
+          }
+          calls.nativeReveals.push(plain(command));
+          if (windowStart !== command.index) { windowStart = command.index; changed = true; }
+        },
         scrollToOffset(command) { calls.offsets.push(plain(command)); },
       };
       children = [node.props.ListHeaderComponent,
@@ -205,6 +215,8 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
   return {
     calls, all, button, input, flush, act, Store: exports.Store,
     get props() { return props; },
+    get timerCount() { return timers.size; },
+    setNativeListReady(ready) { nativeListReady = ready; },
     update(next) { props = { ...props, ...next }; render(); },
     scroll(index) { windowStart = index; render(); },
     edit(index, value, language = 'English') { const node = input(index, language); assert.equal(node.props.editable, true); act(() => node.props.onChangeText(value)); },
@@ -704,4 +716,167 @@ test('dual measurement failures have bounded retries and stale callbacks cannot 
   h.act(() => listOf(h).onScrollBeginDrag({})); h.update({ visible: false });
   h.act(() => stale({ viewableItems: [{ item: timelinePairs()[3], index: 3, isViewable: true }] }));
   await h.advance(1000); assert.deepEqual(h.calls.seeks, []);
+});
+
+// Dispatch native lifecycle events through the integrated component's hosts.
+// Optional props allow the implementation to choose where readiness is observed;
+// success is a delivered native scroll, not the existence of a particular handler.
+function nativeReadinessEvents(h) {
+  const modal = h.all(node => node.type === 'Modal')[0].props;
+  const list = listOf(h);
+  const viewport = h.all(node => node.type === 'View' && node.props.ref && node.props.onLayout
+    && h.all(child => child.type === 'FlatList', node).length > 0)[0];
+  assert.ok(viewport, 'use the actual measured list viewport');
+  const layout = { nativeEvent: { layout: { x: 0, y: 0, width: 347, height: 593 } } };
+  return {
+    show: () => modal.onShow?.(),
+    viewport: () => { viewport.props.onLayout(layout); list.onLayout?.(layout); },
+    content: () => list.onContentSizeChange?.(347, 17321),
+  };
+}
+
+async function settleNativeReveal(h) {
+  // Advance in bounded steps so a self-rescheduling timer cannot hide behind a
+  // single large clock jump. No wall-clock sleeps or native runtime are used.
+  for (let step = 0; step < 12; step++) await h.advance(250);
+  assert.equal(h.timerCount, 0, 'native readiness must not leave an endless retry timer');
+}
+
+for (const lastEvent of ['show', 'viewport', 'content']) {
+  test(`dual retries its unchanged opening target when native ${lastEvent} readiness arrives last`, async () => {
+    const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, { nativeMeasurementGate: true });
+    await h.flush();
+    assert.equal(h.calls.reveals[0]?.index, 90, 'opening uses source timing');
+    assert.deepEqual(h.calls.nativeReveals, [], 'zero measured rows cannot deliver the opening scroll');
+    assert.ok(h.input(0), 'the failed native reveal leaves the initial window mounted');
+    const earlierEvents = ['show', 'viewport', 'content'].filter(event => event !== lastEvent);
+    for (const event of earlierEvents) h.act(() => nativeReadinessEvents(h)[event]());
+    await settleNativeReveal(h);
+    assert.deepEqual(h.calls.nativeReveals, []);
+    assert.deepEqual(h.calls.offsets, [], 'zero metrics must not invent a row height or offset');
+    const requestedBeforeReady = h.calls.reveals.length;
+    h.setNativeListReady(true);
+    h.act(() => nativeReadinessEvents(h)[lastEvent]());
+    await settleNativeReveal(h);
+    assert.ok(h.calls.reveals.length > requestedBeforeReady, 'readiness must retry without a new playhead or anchor');
+    assert.equal(h.calls.nativeReveals.at(-1)?.index, 90, 'the same pending target must reach the native list');
+    assert.equal(h.input(90).props.value, 'Source 90');
+    assert.equal(h.input(90, 'Chinese').props.value, 'Translation 90');
+    assert.equal(h.props.currentMs, 90000);
+    assert.deepEqual(h.calls.seeks, [], 'programmatic recovery must not seek the main timeline');
+    assert.deepEqual(h.calls.refresh, []);
+    viewable(h, [90, 91]);
+    const settledRequests = h.calls.reveals.length;
+    await h.advance(1000);
+    assert.equal(h.calls.reveals.length, settledRequests, 'successful viewability ends reveal retries');
+    assert.equal(h.timerCount, 0);
+  });
+}
+
+test('dual native readiness cannot revive an opening reveal canceled by user drag', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, { nativeMeasurementGate: true });
+  await h.flush();
+  assert.deepEqual(h.calls.nativeReveals, []);
+  h.act(() => listOf(h).onScrollBeginDrag({ nativeEvent: { contentOffset: { y: 0 } } }));
+  h.scroll(12); viewable(h, [12, 13]);
+  assert.deepEqual(h.calls.seeks, [12000], 'only the intentional drag changes the timeline');
+  h.update({ currentMs: 12000 });
+  h.act(() => listOf(h).onScrollEndDrag({ nativeEvent: { velocity: { y: 0 } } }));
+  const requests = h.calls.reveals.length, offsets = h.calls.offsets.length;
+  h.setNativeListReady(true);
+  for (const event of ['show', 'viewport', 'content']) h.act(() => nativeReadinessEvents(h)[event]());
+  await settleNativeReveal(h);
+  assert.equal(h.calls.reveals.length, requests, 'late readiness must respect ownership transferred to the user');
+  assert.equal(h.calls.offsets.length, offsets);
+  assert.deepEqual(h.calls.nativeReveals, []);
+  assert.equal(h.input(12).props.value, 'Source 12');
+  assert.deepEqual(h.calls.seeks, [12000]);
+});
+
+test('dual ignores stale native readiness and failure callbacks after close and remount', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, { nativeMeasurementGate: true });
+  await h.flush();
+  const oldEvents = nativeReadinessEvents(h), oldList = listOf(h), oldPair = h.props.pairs[90];
+  const staleCallbacks = () => {
+    oldEvents.show(); oldEvents.viewport(); oldEvents.content();
+    oldList.onScrollToIndexFailed({ index: 90, averageItemLength: 0, highestMeasuredFrameIndex: -1 });
+    oldList.onScrollToIndexFailed({ index: 90, averageItemLength: 120, highestMeasuredFrameIndex: 5 });
+    oldList.onScrollBeginDrag({});
+    oldList.onViewableItemsChanged({ viewableItems: [{ index: 90, item: oldPair, isViewable: true }], changed: [] });
+  };
+  h.update({ visible: false });
+  const closedRequests = h.calls.reveals.length, closedOffsets = h.calls.offsets.length;
+  h.act(staleCallbacks); await settleNativeReveal(h);
+  assert.equal(h.calls.reveals.length, closedRequests);
+  assert.equal(h.calls.offsets.length, closedOffsets);
+  assert.deepEqual(h.calls.seeks, []);
+  h.update({ visible: true, currentMs: 40000 }); await h.flush();
+  assert.equal(h.calls.reveals.at(-1)?.index, 40);
+  assert.deepEqual(h.calls.nativeReveals, []);
+  const remountedRequests = h.calls.reveals.length, remountedOffsets = h.calls.offsets.length;
+  h.setNativeListReady(true);
+  h.act(staleCallbacks); await settleNativeReveal(h);
+  assert.equal(h.calls.reveals.length, remountedRequests, 'old hosts cannot scroll the new session');
+  assert.equal(h.calls.offsets.length, remountedOffsets);
+  assert.deepEqual(h.calls.seeks, []);
+  for (const event of ['show', 'viewport', 'content']) h.act(() => nativeReadinessEvents(h)[event]());
+  await settleNativeReveal(h);
+  assert.equal(h.calls.nativeReveals.at(-1)?.index, 40, 'the live session still recovers its own pending reveal');
+  assert.ok(h.calls.nativeReveals.every(command => command.index === 40));
+  assert.deepEqual(h.calls.seeks, []);
+});
+
+test('dual late native content after successful viewability preserves focused typing and subsequent user navigation', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, { nativeMeasurementGate: true });
+  await h.flush();
+  h.setNativeListReady(true);
+  for (const event of ['show', 'viewport', 'content']) h.act(() => nativeReadinessEvents(h)[event]());
+  await settleNativeReveal(h);
+  assert.equal(h.calls.nativeReveals.at(-1)?.index, 90);
+  viewable(h, [90, 91]);
+  const first = h.input(90).identity, second = h.input(90, 'Chinese').identity;
+  h.act(() => h.input(90).props.onFocus()); h.edit(90, 'Typing after native reveal');
+  const requests = h.calls.reveals.length, offsets = h.calls.offsets.length;
+  for (let event = 0; event < 3; event++) h.act(() => nativeReadinessEvents(h).content());
+  h.act(() => nativeReadinessEvents(h).viewport());
+  await settleNativeReveal(h);
+  assert.equal(h.calls.reveals.length, requests, 'content growth after completion must not restart the opening reveal');
+  assert.equal(h.calls.offsets.length, offsets);
+  assert.equal(h.input(90).identity, first); assert.equal(h.input(90, 'Chinese').identity, second);
+  assert.equal(h.input(90).props.value, 'Typing after native reveal');
+  assert.deepEqual(h.calls.seeks, []);
+  h.act(() => h.input(90).props.onBlur());
+  h.act(() => listOf(h).onScrollBeginDrag({}));
+  h.scroll(12); viewable(h, [12, 13]); h.update({ currentMs: 12000 });
+  h.act(() => listOf(h).onScrollEndDrag({ nativeEvent: { velocity: { y: 0 } } }));
+  h.act(() => nativeReadinessEvents(h).content()); await settleNativeReveal(h);
+  assert.equal(h.calls.reveals.length, requests);
+  assert.equal(h.calls.offsets.length, offsets);
+  assert.equal(h.input(12).props.value, 'Source 12');
+  assert.deepEqual(h.calls.seeks, [12000]);
+});
+
+test('dual later native content recovers after the partial-measurement retry budget is exhausted', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, { nativeMeasurementGate: true });
+  await h.flush();
+  // Initial metrics are empty. Later partial metrics still cannot deliver the
+  // distant target, even after both finite timer-based attempts have run.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    h.act(() => listOf(h).onScrollToIndexFailed({ index: 90, averageItemLength: 120, highestMeasuredFrameIndex: 5 }));
+    await h.advance(100);
+  }
+  await settleNativeReveal(h);
+  assert.equal(h.calls.offsets.length, 2, 'keep the existing positive-metric retry bound');
+  assert.deepEqual(h.calls.nativeReveals, []);
+  const requests = h.calls.reveals.length;
+  h.setNativeListReady(true);
+  h.act(() => nativeReadinessEvents(h).content());
+  await settleNativeReveal(h);
+  assert.equal(h.calls.nativeReveals.at(-1)?.index, 90, 'a new native readiness event can finish the still-owned target');
+  assert.equal(h.calls.reveals.length, requests + 1);
+  assert.equal(h.timerCount, 0, 'readiness recovery must not restart a timer loop');
+  assert.deepEqual(h.calls.seeks, []);
+  viewable(h, [90, 91]);
+  h.act(() => nativeReadinessEvents(h).content());
+  assert.equal(h.calls.reveals.length, requests + 1, 'settled viewability ends recovery');
 });

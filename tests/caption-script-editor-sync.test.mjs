@@ -80,12 +80,61 @@ const crop = evaluate(editorAst.statements.find((node) => ts.isFunctionDeclarati
   clamp: (value, min, max) => Math.min(max, Math.max(min, value)),
 });
 
-function mount(overrides = {}, platform = 'android', storage = {}) {
+function mount(overrides = {}, platform = 'android', storage = {}, nativeReadiness) {
   const slots = [];
   const timers = new Map();
   const keyboardListeners = new Map();
   let cursor = 0, dirty = false, effects = [], tree, now = 0, timerId = 0, recover, recoveryError;
   const calls = { seeks: [], selects: [], indices: [], offsets: [], drafts: [], keyboards: [], editing: [], focuses: [], alerts: [], saves: [], nativeLayouts: 0, focusCaptures: 0 };
+  // Opt in only for positioning regressions; preserve the original harness's
+  // event ordering and request assertions for every existing scenario.
+  // RN 0.86.3 VirtualizedList fails an unmeasured index synchronously, using
+  // highestMeasuredCellIndex=0 and averageItemLength=0 before the first cell.
+  // CaptionCell must forward RN's measurement before reporting to the editor.
+  // https://github.com/facebook/react-native/blob/v0.86.3/packages/virtualized-lists/Lists/VirtualizedList.js
+  // https://github.com/facebook/react-native/blob/v0.86.3/packages/virtualized-lists/Lists/ListMetricsAggregator.js
+  const nativePosition = {
+    cells: new Map(), viewportHeight: 0, contentHeight: 0, offset: 0,
+    scrollRefReady: nativeReadiness?.scrollRefReady ?? true,
+    pendingOffset: undefined,
+  };
+  calls.nativeFailures = [];
+  calls.nativePositions = [];
+  function applyNativeOffset(offset) {
+    if (!nativePosition.scrollRefReady) return;
+    // Android retains requests when content has zero dimensions. Once it has
+    // nonzero dimensions, even a short old footer clears that pending request.
+    // https://github.com/facebook/react-native/blob/v0.86.3/packages/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java
+    nativePosition.pendingOffset = nativePosition.contentHeight > 0 ? undefined : offset;
+    nativePosition.offset = Math.max(0, Math.min(offset,
+      Math.max(0, nativePosition.contentHeight - nativePosition.viewportHeight)));
+    calls.nativePositions.push(nativePosition.offset);
+    list().onScroll?.(scrollEvent(nativePosition.offset));
+  }
+  const nativeListRef = {
+    scrollToIndex(request) {
+      calls.indices.push(plain(request));
+      if (!nativeReadiness) return;
+      const frames = [...nativePosition.cells.values()];
+      const highestMeasuredFrameIndex = Math.max(0, ...frames.map(frame => frame.index));
+      if (request.index > highestMeasuredFrameIndex) {
+        const failure = { index: request.index, highestMeasuredFrameIndex,
+          averageItemLength: frames.length ? frames.reduce((sum, frame) => sum + frame.height, 0) / frames.length : 0 };
+        calls.nativeFailures.push(failure);
+        list().onScrollToIndexFailed?.(failure);
+        return;
+      }
+      const frame = nativePosition.cells.get(list().data[request.index]?.id);
+      if (frame?.index === request.index) {
+        applyNativeOffset(Math.max(0, frame.y - (request.viewPosition ?? 0)
+          * (nativePosition.viewportHeight - frame.height)) - (request.viewOffset ?? 0));
+      }
+    },
+    scrollToOffset(request) {
+      calls.offsets.push(plain(request));
+      if (nativeReadiness) applyNativeOffset(request.offset);
+    },
+  };
   const sameDeps = (left, right) => left && right && left.length === right.length
     && left.every((value, index) => Object.is(value, right[index]));
   const memo = (factory, deps) => {
@@ -177,10 +226,10 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
       dirty = false; cursor = 0; effects = [];
       tree = exports.ScriptEditor(props);
       const list = find('FlatList');
-      if (list) list.props.ref.current = {
-        scrollToIndex: (request) => calls.indices.push(plain(request)),
-        scrollToOffset: (request) => calls.offsets.push(plain(request)),
-      };
+      if (list) {
+        if (typeof list.props.ref === 'function') list.props.ref(nativeListRef);
+        else list.props.ref.current = nativeListRef;
+      }
       if (list) list.props.data.forEach((item, index) => {
         const input = find('TextInput', list.props.renderItem({ item, index }));
         input?.props.ref?.({ focus: () => calls.focuses.push(item.id),
@@ -199,7 +248,10 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
       if (cellProps.CellRendererComponent) {
         const cell = cellProps.CellRendererComponent({
           item: cellProps.data[index], index, children: row(index),
-          onLayout: () => { calls.nativeLayouts += 1; },
+          onLayout: () => {
+            calls.nativeLayouts += 1;
+            if (nativeReadiness) nativePosition.cells.set(cellProps.data[index].id, { index, y, height });
+          },
           onFocusCapture: () => { calls.focusCaptures += 1; },
         });
         cell.props.onLayout(layoutEvent(y, height));
@@ -210,7 +262,17 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
       }
     });
   }
-  const viewport = (height) => act(() => list().onLayout(layoutEvent(0, height)));
+  const viewport = (height) => act(() => {
+    nativePosition.viewportHeight = height;
+    list().onLayout(layoutEvent(0, height));
+  });
+  const nativeContentSize = (height) => act(() => {
+    nativePosition.contentHeight = height;
+    if (nativePosition.pendingOffset !== undefined) applyNativeOffset(nativePosition.pendingOffset);
+    // VirtualizedList updates its content metrics and forwards this real prop.
+    // It only performs its own initial reveal for an initialScrollIndex prop.
+    list().onContentSizeChange?.(360, height);
+  });
   function advance(ms) {
     const until = now + ms;
     let iterations = 0;
@@ -232,11 +294,18 @@ function mount(overrides = {}, platform = 'android', storage = {}) {
   // Most scenarios begin after a successful empty-journal read. Explicitly
   // deferred scenarios below exercise the unread and failed-read boundary.
   if (!storage.deferRecovery) { recover(null); render(); }
-  viewport(200);
-  for (let index = 0; index < list().data.length; index += 1) measure(index);
-  calls.indices.length = 0;
+  if (!nativeReadiness) {
+    viewport(200);
+    for (let index = 0; index < list().data.length; index += 1) measure(index);
+    calls.indices.length = 0;
+  }
   return {
     calls, props, list, row, find, act, fire, measure, viewport, advance,
+    nativePosition, nativeContentSize,
+    resetNativePosition() {
+      nativePosition.cells.clear();
+      Object.assign(nativePosition, { viewportHeight: 0, contentHeight: 0, offset: 0, pendingOffset: undefined });
+    },
     replayEffects: () => act(replayEffects),
     captureRecovery: () => recover,
     captureRecoveryFailure: () => recoveryError,
@@ -337,6 +406,140 @@ test('authoritative paused time wins over stale initial identity on open, follow
   assert.equal(h.calls.indices.at(-1)?.index, 1);
   assert.deepEqual(h.calls.seeks, []);
 });
+
+// Five blocks at an unchanged 0:10 playhead select the final cue without
+// requiring input focus. Their native cell coordinates include real gaps.
+const initialPositionCues = cues.slice(0, 5).map((cue, index) => ({
+  ...cue, startMs: index * 2500, endMs: (index + 1) * 2500,
+}));
+const initialPositionY = (index) => 96 + index * 108;
+const initialPositionOffset = initialPositionY(4) - 8;
+const initialPositionContent = (footer) => initialPositionY(4) + 100 + footer;
+function measureInitialPositionCells(h, count = 5) {
+  for (let index = 0; index < count; index += 1) h.measure(index, initialPositionY(index), 100);
+}
+function assertInitialPosition(h) {
+  assert.equal(h.props.currentMs, 10000, 'readiness must not advance the paused playhead');
+  assert.deepEqual(h.calls.seeks, [], 'native positioning must never seek the timeline');
+  assert.deepEqual(h.calls.selects, [], 'reveal must not invoke the parent edit-selection command');
+  assert.deepEqual(h.calls.focuses, [], 'opening and native readiness must not focus an input');
+  assert.equal(h.calls.editing.at(-1), undefined);
+  assert.equal(h.nativePosition.offset, initialPositionOffset,
+    'the final cue must actually reach the 8px guide after native readiness, not merely receive a scroll request');
+  assert.equal(initialPositionY(4) - h.nativePosition.offset, 8);
+}
+
+test('Primary content readiness from the same native view survives a completed recovery read', () => {
+  const h = mount({ captions: initialPositionCues, currentMs: 10000 },
+    'android', { deferRecovery: true }, {});
+  try {
+    h.nativeContentSize(initialPositionContent(48));
+    h.viewport(300); measureInitialPositionCells(h); h.advance(400);
+    const contentFromStillAttachedView = h.list().onContentSizeChange;
+    assert.notEqual(h.nativePosition.offset, initialPositionOffset);
+    // Reading recovery renews text-delivery ownership, but does not detach the
+    // native list or invalidate its real content measurement for this session.
+    h.recover(null);
+    h.nativePosition.contentHeight = initialPositionContent(292);
+    h.act(() => contentFromStillAttachedView?.(360, initialPositionContent(292)));
+    h.advance(1000);
+    assertInitialPosition(h);
+  } finally { h.unmount(); }
+});
+
+test('Primary late target-cell readiness recovers after zero-metric index retries are exhausted', () => {
+  const h = mount({ captions: initialPositionCues, currentMs: 10000, initialCaptionId: 'cue-0' },
+    'android', { deferRecovery: true }, {});
+  try {
+    h.nativeContentSize(initialPositionContent(292));
+    h.viewport(300);
+    h.advance(400);
+    assert.ok(h.calls.nativeFailures.some(({ index, averageItemLength }) => index === 4 && averageItemLength === 0));
+    const attempts = h.calls.indices.length;
+    h.advance(400);
+    assert.equal(h.calls.indices.length, attempts, 'failed-index retries must stop while no cells are measured');
+    measureInitialPositionCells(h, 4);
+    assert.notEqual(h.nativePosition.offset, initialPositionOffset, 'earlier cells cannot stand in for the target measurement');
+    h.measure(4, initialPositionY(4), 100);
+    h.recover(null);
+    h.advance(1000);
+    assertInitialPosition(h);
+    assert.equal(h.calls.nativeLayouts, 5, 'the real CaptionCell forwards each native layout');
+  } finally { h.unmount(); }
+});
+
+for (const session of ['opening', 'restored draft', 'persistent reopen']) {
+  test(`Primary ${session} re-reveals after the native footer grows at unchanged time and cell positions`, () => {
+    const h = mount({ captions: initialPositionCues, currentMs: 10000, initialCaptionId: 'cue-0' },
+      'android', { deferRecovery: true }, {});
+    try {
+      if (session === 'persistent reopen') {
+        h.recover(null);
+        h.nativeContentSize(initialPositionContent(292)); h.viewport(300);
+        measureInitialPositionCells(h);
+        assertInitialPosition(h);
+        h.update({ visible: false }); h.resetNativePosition();
+        h.update({ visible: true });
+      }
+      if (session === 'restored draft') {
+        const restored = initialPositionCues.map(cue => ({ ...cue, text: `Recovered ${cue.text}` }));
+        h.recover(restored); h.restore();
+        assert.equal(h.input(4).value, restored[4].text);
+      } else h.recover(null);
+
+      // The first committed footer is 48px (viewport state starts at zero).
+      // Native rows can already exist while their JS measurement events wait.
+      // onLayout publishes the 300px viewport and React requests a 292px footer;
+      // its native content layout is a later event, with unchanged cell frames.
+      h.nativeContentSize(initialPositionContent(48));
+      h.viewport(300); h.advance(400);
+      measureInitialPositionCells(h);
+      h.advance(400);
+      assert.equal(h.calls.indices.at(-1)?.index, 4, 'the requested target is already correct');
+      assert.equal(h.nativePosition.offset, initialPositionContent(48) - 300,
+        'native scrolling clamps to the old nonzero content extent');
+      assert.notEqual(h.nativePosition.offset, initialPositionOffset);
+      const layouts = h.calls.nativeLayouts;
+      h.nativeContentSize(initialPositionContent(292));
+      h.advance(1000);
+      assert.equal(h.calls.nativeLayouts, layouts, 'footer readiness does not manufacture another cell layout');
+      assertInitialPosition(h);
+    } finally { h.unmount(); }
+  });
+}
+
+for (const interrupt of ['drag', 'close', 'unmount']) {
+  test(`Primary ${interrupt} cancels zero-metric retries before late native readiness`, () => {
+    const h = mount({ captions: initialPositionCues, currentMs: 10000 },
+      'android', { deferRecovery: true }, {});
+    let unmounted = false;
+    try {
+      h.recover(null);
+      h.nativeContentSize(initialPositionContent(48)); h.viewport(300);
+      assert.ok(h.calls.nativeFailures.length > 0, 'the actual ref must deliver the failed-index callback');
+      const staleContentSize = h.list().onContentSizeChange;
+      if (interrupt === 'drag') {
+        h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 0); h.advance(150);
+      }
+      if (interrupt === 'close') h.update({ visible: false });
+      if (interrupt === 'unmount') { h.unmount(); unmounted = true; }
+      const requests = h.calls.indices.length, offsets = h.calls.offsets.length, seeks = [...h.calls.seeks];
+      if (interrupt === 'drag') {
+        measureInitialPositionCells(h);
+        h.nativeContentSize(initialPositionContent(292));
+      } else {
+        // A queued native event may retain the old callback after detachment.
+        // Do not render a detached component merely to deliver that event.
+        staleContentSize?.(360, initialPositionContent(292));
+      }
+      h.advance(1000);
+      assert.equal(h.calls.indices.length, requests, 'late readiness cannot restart cancelled navigation');
+      assert.equal(h.calls.offsets.length, offsets);
+      assert.deepEqual(h.calls.seeks, seeks, 'late readiness cannot create another timeline seek');
+      assert.deepEqual(h.calls.focuses, []);
+    } finally { if (!unmounted) h.unmount(); }
+  });
+}
 
 test('native submit uses latest controlled text and caret once; literal and pasted line breaks remain text', () => {
   const h = mount(); h.edit(1);

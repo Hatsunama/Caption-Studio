@@ -118,6 +118,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     pairs: props.pairs,
     targetIndex: -1,
     pendingIndex: -1,
+    awaitingMeasurements: false,
     attempts: 0,
     echoMs: undefined as number | undefined,
     timer: undefined as ReturnType<typeof setTimeout> | undefined,
@@ -126,6 +127,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     navigation.intentional = false;
     navigation.momentumAllowed = false;
     navigation.pendingIndex = -1;
+    navigation.awaitingMeasurements = false;
     clearTimeout(navigation.timer);
     navigation.timer = undefined;
   }, [navigation]);
@@ -159,6 +161,26 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const sourceCaptions = useMemo(() => props.pairs.map(pair => pair.source), [props.pairs]);
   const anchor = useMemo(() => captionAtTimelinePosition(sourceCaptions, props.currentMs ?? 0), [sourceCaptions, props.currentMs]);
   const anchorIndex = useMemo(() => anchor ? props.pairs.findIndex(pair => pair.source.id === anchor.id) : -1, [anchor, props.pairs]);
+  const retryPendingListReveal = useCallback(() => {
+    const index = navigation.pendingIndex;
+    if (!navigation.alive || !navigation.awaitingMeasurements || navigation.timer !== undefined
+      || index < 0 || index >= navigation.pairs.length || !listRef.current) return;
+    // Consume this readiness event before issuing a command: an unmeasured
+    // failure retains the target for the next native event, without polling.
+    navigation.awaitingMeasurements = false;
+    listRef.current.scrollToIndex({ index, animated: false, viewPosition: 0 });
+  }, [navigation]);
+  const onListViewportLayout = useCallback((event: { nativeEvent: { layout: { width: number; height: number } } }) => {
+    if (!navigation.alive) return;
+    const { width, height } = event.nativeEvent.layout;
+    setListHeight(height);
+    reveal.onViewportLayout();
+    if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) retryPendingListReveal();
+  }, [navigation, reveal, retryPendingListReveal]);
+  const onListContentSizeChange = useCallback((width: number, height: number) => {
+    if (!navigation.alive || !Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) return;
+    retryPendingListReveal();
+  }, [navigation, retryPendingListReveal]);
   useLayoutEffect(() => {
     if (navigation.echoMs === (props.currentMs ?? 0)) {
       navigation.echoMs = undefined;
@@ -170,12 +192,21 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     stopListNavigation();
     navigation.targetIndex = anchorIndex;
     navigation.pendingIndex = anchorIndex;
+    navigation.awaitingMeasurements = anchorIndex >= 0;
     navigation.attempts = 0;
-    if (anchorIndex >= 0) listRef.current?.scrollToIndex({ index: anchorIndex, animated: false, viewPosition: 0 });
-  }, [anchorIndex, navigation, props.currentMs, stopListNavigation]);
+    retryPendingListReveal();
+  }, [anchorIndex, navigation, props.currentMs, retryPendingListReveal, stopListNavigation]);
   const onScrollToIndexFailed = useCallback((info: { index: number; averageItemLength: number }) => {
-    if (!navigation.alive || navigation.pendingIndex !== info.index || navigation.timer !== undefined
-      || navigation.attempts >= 2 || !Number.isFinite(info.averageItemLength) || info.averageItemLength <= 0) return;
+    if (!navigation.alive || navigation.pendingIndex !== info.index || navigation.timer !== undefined) return;
+    if (!Number.isFinite(info.averageItemLength) || info.averageItemLength <= 0) {
+      navigation.awaitingMeasurements = true;
+      return;
+    }
+    if (navigation.attempts >= 2) {
+      navigation.awaitingMeasurements = true;
+      return;
+    }
+    navigation.awaitingMeasurements = false;
     navigation.attempts++;
     listRef.current?.scrollToOffset({ offset: Math.max(0, info.averageItemLength * info.index), animated: false });
     navigation.timer = setTimeout(() => {
@@ -189,8 +220,9 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     let first: ViewToken<CaptionPair> | undefined;
     for (const token of viewableItems) {
       if (!token.isViewable || token.index == null) continue;
-      if (token.index === navigation.pendingIndex) {
+      if (token.index === navigation.pendingIndex && navigation.pairs[token.index] === token.item) {
         navigation.pendingIndex = -1;
+        navigation.awaitingMeasurements = false;
         clearTimeout(navigation.timer);
         navigation.timer = undefined;
       }
@@ -506,7 +538,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           ) : null;
 
   return (
-    <Modal visible={props.visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={requestClose}>
+    <Modal visible={props.visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={requestClose} onShow={retryPendingListReveal}>
       <KeyboardViewport safeAreaBottom={insets.bottom} style={{ flex: 1 }}>
       {({ safeAreaBottom }) => (
       <View testID="dual-caption-root" onLayout={({ nativeEvent: { layout } }) => setRootSize({ width: layout.width, height: layout.height })}
@@ -531,7 +563,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           {!compact ? <View style={{ marginTop: 14 }}>{actions}</View> : null}
         </View>
 
-        <View collapsable={false} ref={viewportRef} onLayout={(event) => { setListHeight(event.nativeEvent.layout.height); reveal.onViewportLayout(); }} style={{ flex: 1, minHeight: 0 }}>
+        <View collapsable={false} ref={viewportRef} onLayout={onListViewportLayout} style={{ flex: 1, minHeight: 0 }}>
         <FlatList
           ref={listRef}
           onScroll={reveal.onScroll}
@@ -541,6 +573,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
           onMomentumScrollEnd={stopListNavigation}
           onViewableItemsChanged={onViewableItemsChanged}
           onScrollToIndexFailed={onScrollToIndexFailed}
+          onContentSizeChange={onListContentSizeChange}
           scrollEventThrottle={16}
           style={{ flex: 1, minHeight: 0 }}
           ListHeaderComponent={compact && (actionsOpen || hasStatus) ? <View style={{ gap: 12 }}>{actionsOpen ? actions : null}{hasStatus ? recoveryStatus : null}</View> : null}
