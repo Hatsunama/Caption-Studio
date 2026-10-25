@@ -118,6 +118,8 @@ export async function publishVerified(input, { copy = copyFile } = {}) {
   // Exclusive directory reservation: even an existing empty output is refused.
   // Each file is published atomically with an exclusive hard link. Provenance
   // is the final commit marker; failures remove only this invocation's directory.
+  // Clean checkouts have no dist parent; reserve only the final leaf exclusively.
+  await mkdir(path.dirname(output), { recursive: true });
   await mkdir(output);
   const pending = path.join(output, '.pending');
   try {

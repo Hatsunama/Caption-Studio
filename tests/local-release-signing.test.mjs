@@ -100,16 +100,61 @@ test('distinct public roles match product contract and reject wrong certificates
 });
 test('actual input bytes, size, duplicate paths, overlap and existing output are refused', async t => {
   const f = await fixture(t);
+  // Only this synthetic child is local: retain the parent's cloud marker and
+  // exercise the unmodified production API with its default process.env.
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.toUpperCase() === 'GITHUB_ACTIONS') delete env[key];
+  execFileSync(process.execPath, ['--max-old-space-size=64', '--input-type=module', '-e', `
+  import assert from 'node:assert/strict';
+  import { writeFile, mkdir, readdir } from 'node:fs/promises';
+  import * as gate from ${JSON.stringify(new URL('../scripts/local-signing/sign-validation.mjs', import.meta.url).href)};
+  const f = JSON.parse(process.argv[1]), commit = process.argv[2];
   await gate.validateInputs(f.files, f.output, commit, '123');
   await writeFile(f.files.apk, 'abd');
   await assert.rejects(gate.validateInputs(f.files, f.output, commit, '123'));
+  await writeFile(f.files.apk, 'abcd');
+  await assert.rejects(gate.validateInputs(f.files, f.output, commit, '123'), /Input size mismatch/);
   await writeFile(f.files.apk, 'abc');
   await assert.rejects(gate.validateInputs(f.files, f.root, commit, '123'));
   await assert.rejects(gate.validateInputs({ ...f.files, aab: f.files.apk }, f.output, commit, '123'));
   await mkdir(f.output);
   await assert.rejects(gate.validateInputs(f.files, f.output, commit, '123'));
   assert.deepEqual(await readdir(f.output), []);
+  `, JSON.stringify(f), commit], { env, stdio: 'pipe', windowsHide: true, timeout: 15000 });
 });
+
+for (const value of ['true', '']) {
+  test(`synthetic validateInputs refuses GITHUB_ACTIONS=${JSON.stringify(value)} before writes`, async t => {
+    const f = await fixture(t);
+    const original = await Promise.all(Object.values(f.files).map(file => readFile(file)));
+    for (const existingOutput of [false, true]) {
+      if (existingOutput) {
+        await mkdir(f.output);
+        await writeFile(path.join(f.output, 'keep'), 'synthetic existing output');
+      }
+      const entries = (await readdir(f.root)).sort();
+      for (const marker of ['GITHUB_ACTIONS', 'gItHuB_aCtIoNs']) {
+        const env = { ...process.env };
+        for (const key of Object.keys(env)) if (key.toUpperCase() === 'GITHUB_ACTIONS') delete env[key];
+        env[marker] = value;
+        execFileSync(process.execPath, ['--max-old-space-size=64', '--input-type=module', '-e', `
+          import assert from 'node:assert/strict';
+          import * as gate from ${JSON.stringify(new URL('../scripts/local-signing/sign-validation.mjs', import.meta.url).href)};
+          const f = JSON.parse(process.argv[1]), commit = process.argv[2];
+          await assert.rejects(gate.validateInputs(f.files, f.output, commit, '123'), /Cloud execution refused/);
+          // Missing inputs would fail differently if validation reached file access.
+          await assert.rejects(gate.validateInputs({ apk: f.output + '/missing' }, f.output, commit, '123'), /Cloud execution refused/);
+        `, JSON.stringify(f), commit], { env, stdio: 'pipe', windowsHide: true, timeout: 15000 });
+        assert.deepEqual(await Promise.all(Object.values(f.files).map(file => readFile(file))), original);
+        assert.deepEqual((await readdir(f.root)).sort(), entries);
+        if (existingOutput) {
+          assert.deepEqual(await readdir(f.output), ['keep']);
+          assert.equal(await readFile(path.join(f.output, 'keep'), 'utf8'), 'synthetic existing output');
+        }
+      }
+    }
+  });
+}
 test('real ZIP hashes preserve all license/assets/native/profile/mapping entries', async t => {
   const f = await fixture(t);
   const a = path.join(f.root, 'before.zip'), b = path.join(f.root, 'after.zip');

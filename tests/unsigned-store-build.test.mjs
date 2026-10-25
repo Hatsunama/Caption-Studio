@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, writeFile, rm, access, copyFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, access, copyFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import * as gate from '../scripts/unsigned-store-build.mjs';
@@ -95,6 +95,35 @@ test('payload checks reject identity, signatures, missing ABI, mapping and align
     ...['bundletool', 'zipalign16k', 'apkElf16k', 'aabElf16k'].map((key) => (e) => { delete e[key]; }),
   ];
   for (const mutate of mutations) { const e = evidence(); mutate(e); assert.throws(() => gate.assertPayload(e, release())); }
+});
+
+test('publication creates a missing parent after validation and preserves exclusive output ownership', async (t) => {
+  const f = await fixture(t);
+  f.output = path.join(f.root, 'dist', 'unsigned-store');
+  await assert.rejects(access(path.dirname(f.output)));
+  const result = await gate.publishVerified(f);
+  const manifest = await readFile(path.join(f.output, 'provenance.json'));
+  assert.deepEqual(JSON.parse(manifest), result);
+  assert.deepEqual((await readdir(f.output)).sort(), ['caption-studio-UNSIGNED-not-installable.aab',
+    'caption-studio-UNSIGNED-not-installable.apk', 'mapping.txt', 'provenance.json'].sort());
+  await assert.rejects(gate.publishVerified(f), /EEXIST/);
+  assert.deepEqual(await readFile(path.join(f.output, 'provenance.json')), manifest);
+  const invalid = await fixture(t);
+  invalid.output = path.join(invalid.root, 'dist', 'unsigned-store');
+  invalid.evidence.bundletool = false;
+  await assert.rejects(gate.publishVerified(invalid));
+  await assert.rejects(access(path.dirname(invalid.output)));
+  const failed = await fixture(t);
+  failed.output = path.join(failed.root, 'dist', 'unsigned-store');
+  await assert.rejects(gate.publishVerified(failed, { copy: async () => { throw Error('synthetic copy failure'); } }), /synthetic copy failure/);
+  await assert.rejects(access(failed.output));
+  assert.deepEqual(await readdir(path.dirname(failed.output)), []);
+  const blocked = await fixture(t);
+  const parent = path.join(blocked.root, 'dist');
+  await writeFile(parent, 'existing caller-owned file');
+  blocked.output = path.join(parent, 'unsigned-store');
+  await assert.rejects(gate.publishVerified(blocked));
+  assert.equal(await readFile(parent, 'utf8'), 'existing caller-owned file');
 });
 
 test('publication verifies real copied bytes and binds unsigned provenance to source and identity', async (t) => {
