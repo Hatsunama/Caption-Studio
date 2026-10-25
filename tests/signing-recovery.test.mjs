@@ -33,9 +33,11 @@ test('manual workflow gates credentials and restricts artifacts', () => {
   assert.equal((text.match(/persist-credentials: false/g) || []).length, 2);
   assert.equal((text.match(/ref: \$\{\{ github.sha \}\}/g) || []).length, 2);
   assert.match(text, /actions\/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1[\s\S]*?node-version: 22\.23\.4/);
-  assert.equal((text.match(/actions\/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad/g) || []).length, 2);
+  assert.equal((text.match(/actions\/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad/g) || []).length, 4);
   assert.equal((text.match(/java-version: '17\.0\.21\+9'/g) || []).length, 2);
-  assert.equal((text.match(/distribution: temurin/g) || []).length, 2);
+  assert.equal((text.match(/java-version: '21\.0\.13\+9'/g) || []).length, 2);
+  assert.equal((text.match(/run: node scripts\/harden-java-truststores\.mjs --ci/g) || []).length, 2);
+  assert.equal((text.match(/distribution: temurin/g) || []).length, 4);
   assert.match(text, /retention-days: 1/);
   assert.match(text, /if-no-files-found: error/);
   assert.doesNotMatch(text, /actions\/cache|npm (ci|install)|gradle|secrets\.[A-Z_]+\s*\}\}[^\n]*[;&]/);

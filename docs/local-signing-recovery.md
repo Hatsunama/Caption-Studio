@@ -11,12 +11,14 @@ After review/integration on main, only Hatsunama can dispatch or rerun
 the exact confirmation `RECOVER_EXISTING_SOLANA_TO_C_ENCRYPTED`. Both jobs are gated
 by job expressions and an exact, case-sensitive Bash preflight as the first step
 before checkout. GitHub expression equality is case-insensitive, so the preflight
-independently checks repository, repository owner, event, ref, actor, and confirmation.
+independently checks repository, repository owner, event, ref, original and triggering
+actors, and confirmation.
 Confirmation enters only through the step environment, never shell interpolation.
 They check out that dispatch's immutable `github.sha` with credentials
 not persisted. The synthetic job has no production secrets; only the exporter step
-receives the four existing secrets through environment variables. Both jobs use the
-existing pinned setup-java action with Temurin `17.0.21+9` and no dependency cache.
+receives the four existing secrets through environment variables. Both jobs provision
+pinned Node 22 and Temurin `17.0.21+9` / `21.0.13+9`, then run the existing Java
+trust-store hardening before Java is consumed, without dependency caches.
 No Gradle, app changes, or local tool installations are involved.
 
 The recipient certificate is pinned to the independently supplied DER SHA-256
