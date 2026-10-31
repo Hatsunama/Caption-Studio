@@ -59,6 +59,15 @@ test('approved safe npm patch versions are actually locked with integrity', () =
   }
 });
 
+test('the query-string consumer resolves the reviewed URI decoder security patch', () => {
+  assert.equal(lock.packages['node_modules/query-string'].version, '9.5.1');
+  assert.equal(lock.packages['node_modules/query-string'].dependencies['decode-uri-component'], '^0.5.0');
+  const decoder = lock.packages['node_modules/decode-uri-component'];
+  assert.equal(decoder.version, '0.5.1');
+  assert.equal(decoder.resolved, 'https://registry.npmjs.org/decode-uri-component/-/decode-uri-component-0.5.1.tgz');
+  assert.equal(decoder.integrity, 'sha512-vWHQkXgg2cE3BB4rR0c+PYw9BCQzLoNIRMI7AunIkZst74tw/vpPp7VLoYtsR/cy1f55g3XDWUslfeCZjiZJyA==');
+});
+
 test('all configured Node jobs use the security patch and reviewed setup action', () => {
   const jobs = workflows.filter(([, source]) => source.includes('actions/setup-node@'));
   assert.ok(jobs.length >= 9);
@@ -106,5 +115,14 @@ test('release gates retain Expo doctor rather than suppressing compatibility che
 test('unrelated locked packages retain every platform constraint and integrity field', async () => {
   const { createHash } = await import('node:crypto');
   const unchanged = Object.fromEntries(Object.entries(lock.packages).filter(([name]) => name && !['node_modules/tsx', 'node_modules/zod'].includes(name)));
+  // Normalize only the three independently asserted security-patch fields.
+  // Retain the original digest so every other package and decoder metadata field
+  // still has to match the pre-patch graph, including engines and licensing.
+  unchanged['node_modules/decode-uri-component'] = {
+    ...unchanged['node_modules/decode-uri-component'],
+    version: '0.5.0',
+    resolved: 'https://registry.npmjs.org/decode-uri-component/-/decode-uri-component-0.5.0.tgz',
+    integrity: 'sha512-1BiQVoK8C9gUbQU6NzAtO/tkz2qOFpEObMWpcFvhx4fYnj4Oc5yzaJN/LD36ihkVUdXyh5ZekzX+yM+ty/SrPg=='
+  };
   assert.equal(createHash('sha256').update(JSON.stringify(unchanged)).digest('hex'), '564741db7f8cac482384d93f3cd7a240d8643ded6c3e3b81b33d86e9914aaa19');
 });
