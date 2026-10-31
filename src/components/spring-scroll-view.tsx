@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react';
-import { AccessibilityInfo, AppState, Platform, ScrollView as NativeScrollView, findNodeHandle,
+import { AccessibilityInfo, AppState, Platform, ScrollView as NativeScrollView,
   StyleSheet, type HostInstance, type ScrollViewProps } from 'react-native';
 import { Gesture, GestureDetector, type NativeGesture } from 'react-native-gesture-handler';
 import Animated, { useAnimatedReaction, useAnimatedRef, useReducedMotion,
@@ -94,9 +94,9 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     const content = node?.getInnerViewRef?.();
     if (!content) return;
     life.content = content;
-    if (SCROLL_SPRING_PROBE_ENABLED) traceScrollSpringProbe('bind', id,
-      { epoch: life.generation, contentTag: findNodeHandle(content) });
     contentRef(content);
+    if (SCROLL_SPRING_PROBE_ENABLED) traceScrollSpringProbe('bind', id,
+      { epoch: life.generation, contentTag: contentRef.getTag?.() ?? null });
     scheduleOnUI(controller.contentReady, life.generation);
   }, [lifecycle, contentRef, controller, id]);
   const commitRef = useCallback((node: NativeScrollView | null) => {
@@ -107,7 +107,7 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     life.node = node;
     const generation = ++life.generation;
     if (SCROLL_SPRING_PROBE_ENABLED) traceScrollSpringProbe('public-ref', id,
-      { epoch: generation, contentTag: node ? findNodeHandle(node) : null });
+      { epoch: generation, extra: node ? 1 : 0 });
     if (node) {
       animatedRef(node);
       life.restore = interceptSpringScrollCommands(node, animatedRef, () => lifecycle.current.generation, controller.command);

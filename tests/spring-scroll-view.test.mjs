@@ -103,7 +103,7 @@ function harness(initial = {}, platform = 'android', engineOptions) {
       gesture[name]=fn=>{gesture.handlers[name]=fn;return gesture;};
     return gesture;
   }
-  const native = { ScrollView:'RN.ScrollView', Platform:{OS:platform}, I18nManager:{isRTL:initial.rtl??false}, findNodeHandle:()=>424,
+  const native = { ScrollView:'RN.ScrollView', Platform:{OS:platform}, I18nManager:{isRTL:initial.rtl??false},
     StyleSheet:{flatten:style=>Object.assign({},...[style].flat(Infinity).filter(Boolean))},
     AccessibilityInfo:{isReduceMotionEnabled:()=>({then(resolve,reject){queries.push({resolve,reject});if(!initial.pendingReducedMotion)resolve(initial.initialReducedMotion??false);}}),
       addEventListener:(name,fn)=>{listeners.set(name,fn);return {remove:()=>listeners.delete(name)};}},
@@ -112,7 +112,7 @@ function harness(initial = {}, platform = 'android', engineOptions) {
   const animated = { View:'Animated.View', ScrollView:'Animated.ScrollView' };
   const reanimated = {default:animated, __esModule:true, makeMutable:mutable,
     useSharedValue:value=>memo(()=>mutable(value),[]), useReducedMotion:()=>initial.initialReducedMotion ?? false,
-    useAnimatedRef:()=>memo(()=>{const f=value=>{if(value)f.current=value;return f.current;};f.current=null;return f;},[]),
+    useAnimatedRef:()=>memo(()=>{const f=value=>{if(value)f.current=value;return f.current;};f.current=null;f.getTag=()=>f.current?424:null;return f;},[]),
     useScrollOffset:(ref,offset)=>{memo(()=>null,[]);h.offset=offset;return offset;},
     useAnimatedStyle:fn=>({_animated:fn}),
     useAnimatedReaction(prepare,run) { const r=memo(()=>{const entry={prepare,run,previous:undefined}; reactions.push(entry);return entry;},[]);r.prepare=prepare;r.run=run; },
@@ -180,6 +180,7 @@ test('private diagnostics connect gesture release, presenter and lifecycle witho
     assert.ok(events.some(entry=>entry.event===event),event);
   }
   assert.ok(events.some(entry=>entry.event==='foreground'&&entry.foreground===false));
+  assert.ok(events.some(entry=>entry.event==='bind'&&entry.contentTag===424));
   for(const entry of events)for(const [key,value]of Object.entries(entry)) {
     if(key!=='event')assert.ok(typeof value==='number'||typeof value==='boolean'||value===null,key);
   }
