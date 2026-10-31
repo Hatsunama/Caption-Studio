@@ -1,11 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react';
+import { createContext, Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react';
 import { AccessibilityInfo, AppState, Platform, ScrollView as NativeScrollView,
-  StyleSheet, type HostInstance, type ScrollViewProps } from 'react-native';
+  StyleSheet, type HostInstance, type ScrollViewProps, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector, type NativeGesture } from 'react-native-gesture-handler';
-import Animated, { useAnimatedReaction, useAnimatedRef, useReducedMotion,
+import { useAnimatedReaction, useAnimatedRef, useReducedMotion,
   useScrollOffset, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnUI } from 'react-native-worklets';
 import { createScrollSpringAxisState } from '../lib/scroll-spring-policy';
+import { ScrollContentOwner, sameContentStyle } from './spring-scroll-content';
 import { interceptSpringScrollCommands } from './spring-scroll-gesture';
 import { createScrollSpringController, type ScrollSpringRuntimeState } from './scroll-spring-controller';
 
@@ -89,19 +90,44 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
 
   const lifecycle = useRef<{ generation: number; node: NativeScrollView | null; content: HostInstance | null;
     contentGeneration?: number; restore?: () => void; refCleanup?: () => void }>({ generation: 0, node: null, content: null });
+  const [contentBinding, setContentBinding] = useState<{ host: HostInstance; generation: number }>();
+  const [contentStyle, setContentStyle] = useState<{ generation: number; value: ViewStyle | undefined }>();
   const bindContent = useCallback(() => {
     const life = lifecycle.current;
     // RN 0.86.3 exposes this method in its public imperative interface and host
     // even though its TS declaration omits it. Never access private view fields.
     const node = life.node as (NativeScrollView & { getInnerViewRef?: () => HostInstance | null }) | null;
-    const content = node?.getInnerViewRef?.();
-    if (!content) return;
+    const content = node?.getInnerViewRef?.() ?? null;
     if (life.content === content && life.contentGeneration === life.generation) return;
+    // Retire a removed/replaced content host, even if the outer node survives.
+    // Initial late attachment keeps commands to the existing outer node valid.
+    if (life.content && life.content !== content && life.contentGeneration === life.generation) life.generation++;
+    const generation = life.generation;
+    scheduleOnUI(controller.deactivate, generation);
     life.content = content;
-    life.contentGeneration = life.generation;
-    contentRef(content);
-    scheduleOnUI(controller.contentReady, life.generation);
-  }, [lifecycle, contentRef, controller]);
+    life.contentGeneration = generation;
+    if (life.node) scheduleOnUI(controller.activate, generation, !!life.restore);
+    setContentStyle(undefined);
+    if (!content) {
+      setContentBinding(undefined);
+      return;
+    }
+    setContentBinding({ host: content, generation });
+  }, [lifecycle, controller]);
+  const publishContentStyle = useCallback((generation: number, value: ViewStyle | undefined) => {
+    if (lifecycle.current.generation !== generation || !lifecycle.current.content) return;
+    setContentStyle(previous => previous?.generation === generation && sameContentStyle(previous.value, value) ? previous : { generation, value });
+  }, [lifecycle]);
+  const onContentStyle = useCallback((value: ViewStyle | undefined) => {
+    if (contentBinding) publishContentStyle(contentBinding.generation, value);
+  }, [contentBinding, publishContentStyle]);
+  useLayoutEffect(() => {
+    if (contentBinding && lifecycle.current.content === contentBinding.host && lifecycle.current.generation === contentBinding.generation) {
+      // The child owner/ref/AnimatedComponent mounts before this parent layout
+      // effect. Native scrolling works without decoration until it is ready.
+      scheduleOnUI(controller.contentReady, contentBinding.generation);
+    }
+  }, [contentBinding, lifecycle, controller]);
   const commitRef = useCallback((node: NativeScrollView | null) => {
     const life = lifecycle.current;
     life.restore?.(); life.restore = undefined;
@@ -112,7 +138,6 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     if (node) {
       animatedRef(node);
       life.restore = interceptSpringScrollCommands(node, animatedRef, () => lifecycle.current.generation, controller.command);
-      scheduleOnUI(controller.activate, generation, !!life.restore);
       bindContent();
       if (typeof publicRef === 'function') {
         const cleanup = publicRef(node);
@@ -121,13 +146,16 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     } else {
       scheduleOnUI(controller.deactivate, generation);
       life.content = null;
+      setContentStyle(undefined);
+      life.contentGeneration = generation;
+      setContentBinding(undefined);
       if (publicRef && typeof publicRef !== 'function') publicRef.current = null;
     }
   }, [lifecycle, publicRef, animatedRef, controller, bindContent]);
   useLayoutEffect(() => {
     const life = lifecycle.current;
     if (life.node && !life.restore) life.restore = interceptSpringScrollCommands(life.node, animatedRef, () => lifecycle.current.generation, controller.command);
-    scheduleOnUI(controller.activate, ++life.generation, !!life.restore);
+    ++life.generation;
     bindContent();
     return () => {
       life.restore?.(); life.restore = undefined;
@@ -158,20 +186,27 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
   useAnimatedReaction(() => `${offset.value}:${presentationVersion.value}`, controller.present,
     [controller, offset, presentationVersion]);
 
-  return <GestureDetector gesture={controller.gesture}>
-    <Animated.ScrollView {...props} ref={commitRef} overScrollMode="never" contentContainerStyle={contentContainerStyle}
-      onLayout={event => {
-        bindContent();
-        const layout = event.nativeEvent.layout;
-        scheduleOnUI(controller.updateGeometry, lifecycle.current.generation, horizontal ? layout.width : layout.height, null);
-        onLayout?.(event);
-      }}
-      onContentSizeChange={(width, height) => {
-        bindContent();
-        scheduleOnUI(controller.updateGeometry, lifecycle.current.generation, null, horizontal ? width : height);
-        onContentSizeChange?.(width, height);
-      }}>
-      <SpringScrollGestureContext.Provider value={descendantGestures}>{children}</SpringScrollGestureContext.Provider>
-    </Animated.ScrollView>
-  </GestureDetector>;
+  const settledStyle = contentStyle?.generation === contentBinding?.generation ? contentStyle?.value : undefined;
+  return <Fragment>
+    {/* Renew only the renderless owner; native content and its refs survive. */}
+    {contentBinding ? <ScrollContentOwner key={contentBinding.generation} host={contentBinding.host} onStyle={onContentStyle} ref={contentRef} /> : null}
+    <GestureDetector gesture={controller.gesture}>
+      <NativeScrollView {...props} ref={commitRef} overScrollMode="never"
+        scrollEventThrottle={'scrollEventThrottle' in props ? props.scrollEventThrottle : 1}
+        contentContainerStyle={settledStyle ? [contentContainerStyle, settledStyle] : contentContainerStyle}
+        onLayout={event => {
+          bindContent();
+          const layout = event.nativeEvent.layout;
+          scheduleOnUI(controller.updateGeometry, lifecycle.current.generation, horizontal ? layout.width : layout.height, null);
+          onLayout?.(event);
+        }}
+        onContentSizeChange={(width, height) => {
+          bindContent();
+          scheduleOnUI(controller.updateGeometry, lifecycle.current.generation, null, horizontal ? width : height);
+          onContentSizeChange?.(width, height);
+        }}>
+        <SpringScrollGestureContext.Provider value={descendantGestures}>{children}</SpringScrollGestureContext.Provider>
+      </NativeScrollView>
+    </GestureDetector>
+  </Fragment>;
 }

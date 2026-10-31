@@ -11,6 +11,7 @@ const compile = (url) => ts.transpileModule(readFileSync(url, 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
   fileName: url.pathname,
 }).outputText;
+const contentCode = compile(new URL('spring-scroll-content.tsx', root));
 const componentCode = compile(new URL('spring-scroll-view.tsx', root));
 const gestureCode = compile(new URL('spring-scroll-gesture.ts', root));
 const controllerCode = compile(new URL('scroll-spring-controller.ts', root));
@@ -44,6 +45,8 @@ function installedEngine() {
 function harness(initial = {}, platform = 'android', engineOptions) {
   let cursor = 0, tree, props = initial, now = 0, collecting, running = false, deferred = false;
   let slots = [];
+  const pendingState = new Map(), passiveEffects = [], snapshots = [];
+  let renderCount = 0;
   const primarySlots = slots, effects = [], reactions = [], jobs = [], listeners = new Map(), queries = [];
   // Explicit native removal is separate from React ref detach: an animated ref
   // retains its wrapper on null in the pinned engine. This is a host-existence
@@ -88,17 +91,39 @@ function harness(initial = {}, platform = 'android', engineOptions) {
       current = next; react();
     } };
   };
-  const jsx = (type,props) => {if(type==='GestureDetector'){props.gesture.handlers.handlerTag=777;}return {type,props:props ?? {}};};
+  const jsx = (type,props,key) => {if(type==='GestureDetector'){props.gesture.handlers.handlerTag=777;}return {type,props:props ?? {},key};};
   const hooks = {
+    Fragment:'Fragment',
     createContext(value){return {value,Provider:Symbol('Context.Provider')};},
     useContext:context=>context.value,
     useMemo:memo, useCallback:(fn,deps)=>memo(()=>fn,deps), useRef:value=>memo(()=>({current:value}),[]),
-    useState:value=>[memo(()=>typeof value==='function'?value():value,[]),()=>{}],
+    useState(value) {
+      const store=slots, i=cursor++;
+      const slot=store[i]??=( {value:typeof value==='function'?value():value} );
+      return [slot.value,updater=>{
+        const queue=pendingState.get(slot)??[];queue.push(updater);pendingState.set(slot,queue);
+      }];
+    },
     useEffect(fn,deps) { const i=cursor++, store=slots; if (!store[i] || !equal(store[i].deps,deps)) effects.push(()=>{
       store[i]?.cleanup?.(); store[i]={deps,setup:fn,cleanup:fn()};
     }); },
   };
   hooks.useLayoutEffect=hooks.useEffect;
+  hooks.useEffect=(fn,deps)=>{const i=cursor++,store=slots;if(!store[i]||!equal(store[i].deps,deps)){
+    store[i]={deps,setup:fn,passive:true};passiveEffects.push(()=>{store[i].cleanup=fn();});
+  }};
+  function passive(){while(passiveEffects.length)passiveEffects.shift()();}
+  hooks.forwardRef=render=>({render});
+  // Commit these only after the supplied native descendant refs. This hook
+  // scheduler is a JS boundary, not a React/Fabric ordering test.
+  hooks.useImperativeHandle=(ref,factory)=>{
+    const i=cursor++;
+    slots[i]={...slots[i],imperative(){
+      const handle=factory();
+      if(typeof ref==='function'){ref(handle);return ()=>ref(null);}
+      if(ref){ref.current=handle;return ()=>{ref.current=null;};}
+    }};
+  };
   function nativeGesture() {
     calls.native++;
     const gesture={handlers:{isWorklet:[],handlerTag:-1}, config:{}};
@@ -114,7 +139,10 @@ function harness(initial = {}, platform = 'android', engineOptions) {
       addEventListener:(name,fn)=>{listeners.set(name,fn);return {remove:()=>listeners.delete(name)};}},
     AppState:{currentState:'active',addEventListener:(name,fn)=>{listeners.set('app',fn);return {remove:()=>listeners.delete('app')};}},
   };
-  const animated = { View:'Animated.View', ScrollView:'Animated.ScrollView' };
+  // Public Animated factory is transparent only in this controller fixture;
+  // spring-scroll-content.test.mjs executes the full pinned factory/class/GC.
+  const animated = { View:'Animated.View', ScrollView:'Animated.ScrollView',
+    createAnimatedComponent:Component=>props=>jsx(Component,props) };
   const reanimated = {default:animated, __esModule:true, makeMutable:mutable,
     useSharedValue:value=>memo(()=>mutable(value),[]), useReducedMotion:()=>initial.initialReducedMotion ?? false,
     useAnimatedRef:()=>memo(()=>{const f=value=>{if(value)f.current=value;return f.current;};f.current=null;return f;},[]),
@@ -142,37 +170,84 @@ function harness(initial = {}, platform = 'android', engineOptions) {
     require(id){if(id==='react')return hooks;if(id==='react/jsx-runtime')return {jsx,jsxs:jsx};if(id==='react-native')return native;
       if(id==='react-native-reanimated')return reanimated;if(id==='react-native-worklets')return worklets;
       if(id==='react-native-gesture-handler')return {Gesture:{Native:nativeGesture,Pan:()=>{calls.pan++;throw Error('Pan prohibited');}},GestureDetector:'GestureDetector'};
-      if(id.includes('scroll-spring-policy'))return modules.policy;if(id==='./spring-scroll-gesture')return modules.gesture;if(id==='./scroll-spring-controller')return modules.controller;
+      if(id.includes('scroll-spring-policy'))return modules.policy;if(id==='./spring-scroll-gesture')return modules.gesture;if(id==='./scroll-spring-controller')return modules.controller;if(id==='./spring-scroll-content')return modules.content;
       throw Error(`Unexpected dependency ${id}`);
     }});return exports; }
   function flush(){while(jobs.length)jobs.shift()();}
+  // Reconcile only the React-only owner. Native refs/children remain independent.
+  // This supplies descendant commit order; it does not execute React or Fabric.
+  function contentRenderer() {
+    let owner, store=[];
+    return {render(element){
+      if(owner?.key!==element?.key || owner?.type!==element?.type){
+        for(const slot of store)slot?.cleanup?.();
+        owner=element;store=[];
+      }
+      if(!element)return;
+      owner=element;
+      const savedSlots=slots,savedCursor=cursor,parentEffects=effects.splice(0);
+      slots=store;cursor=0;
+      let leaf=element;
+      while(leaf && (leaf.type?.render||typeof leaf.type==='function'))
+        leaf=leaf.type.render?leaf.type.render(leaf.props,leaf.props.ref):leaf.type(leaf.props);
+      assert.equal(leaf,null,'headless owner must produce no native wrapper');
+      for(const slot of store)if(slot?.imperative){slot.cleanup?.();slot.cleanup=slot.imperative();}
+      while(effects.length)effects.shift()();
+      effects.push(...parentEffects);slots=savedSlots;cursor=savedCursor;
+    },cleanup(){for(const slot of store)slot?.cleanup?.();store=[];owner=undefined;}};
+  }
+  const primaryContent=contentRenderer();
+  const detectorOf=tree=>tree.type==='Fragment'?tree.props.children.find(child=>child?.type==='GestureDetector'):tree;
+  const ownerOf=tree=>tree.type==='Fragment'?tree.props.children.find(child=>child?.type!=='GestureDetector')??null:undefined;
+  function materialize(tree,renderer){renderer.render(ownerOf(tree));return tree;}
+  function drainState(){
+    let changed=false;
+    for(const [slot,queue]of pendingState){let value=slot.value;for(const update of queue)value=typeof update==='function'?update(value):update;
+      if(!Object.is(value,slot.value)){slot.value=value;changed=true;}}
+    pendingState.clear();return changed;
+  }
   const h={calls,queries,mutable,nativeGesture,listeners,flush,jobs,
     removeNativeHost(node=h.node){assert.ok(node?.inner);removedHosts.add(node.inner);},
     setTime(value){now=value;},defer(value=true){deferred=value;},
-    render(next=props){slots=primarySlots;props=next;cursor=0;tree=modules.component.SpringScrollView(props);while(typeof tree.type==='function')tree=tree.type(tree.props);
-      while(effects.length)effects.shift()();return tree;},
+    render(next=props){
+      props=next;let passes=0;
+      do {
+        assert.ok(++passes<30,'queued React style/state feedback must settle');renderCount++;
+        slots=primarySlots;cursor=0;tree=modules.component.SpringScrollView(props);
+        while(typeof tree.type==='function')tree=tree.type(tree.props);
+        snapshots.push(detectorOf(tree).type==='GestureDetector'?detectorOf(tree).props.children.props.contentContainerStyle:undefined);
+        tree=materialize(tree,primaryContent);while(effects.length)effects.shift()();
+      }while(drainState());
+      return tree;
+    },
+    settle(){if(drainState())h.render();},
+    snapshots,owner(){return ownerOf(tree);}, renders(){return renderCount;},
     peer(peerProps,ancestors=[]){const context=modules.component.SpringScrollGestureContext,previous=context?.value;if(context)context.value=ancestors;
-      const store=[];slots=store;cursor=0;let peerTree=modules.component.SpringScrollView(peerProps);
-      while(typeof peerTree.type==='function')peerTree=peerTree.type(peerTree.props);while(effects.length)effects.shift()();slots=primarySlots;
-      if(context)context.value=previous;
-      const scroll=peerTree.type==='GestureDetector'?peerTree.props.children:peerTree;
-      return {scroll,gesture:peerTree.props.gesture,provided:scroll.props.children,attach(node=makeNode()){scroll.props.ref(node);return node;},unmount(){scroll.props.ref(null);for(const slot of store)slot?.cleanup?.();}};},
-    scroll(){return tree.type==='GestureDetector'?tree.props.children:tree;},
+      const store=[],renderer=contentRenderer();let peerTree;
+      function renderPeer(){let passes=0;do{assert.ok(++passes<30);slots=store;cursor=0;peerTree=modules.component.SpringScrollView(peerProps);
+        while(typeof peerTree.type==='function')peerTree=peerTree.type(peerTree.props);materialize(peerTree,renderer);while(effects.length)effects.shift()();
+      }while(drainState());slots=primarySlots;}
+      renderPeer();if(context)context.value=previous;
+      const detector=()=>detectorOf(peerTree),scroll=()=>detector().props.children;
+      return {get scroll(){return scroll();},get gesture(){return detector().props.gesture;},get provided(){return scroll().props.children;},
+        attach(node=makeNode()){scroll().props.ref(node);renderPeer();passive();return node;},unmount(){scroll().props.ref(null);renderer.cleanup();for(const slot of store)slot?.cleanup?.();}};
+    },
+    scroll(){const detector=detectorOf(tree);return detector.type==='GestureDetector'?detector.props.children:detector;},
     content(){const child=h.scroll().props.children;return child?.type===modules.component.SpringScrollGestureContext?.Provider?child.props.children:child;},
     provided(){return h.scroll().props.children;},
-    gesture(){return tree.props.gesture;},
-    attach(node=makeNode()){h.node=node;h.scroll().props.ref?.(node);return node;},
+    gesture(){return detectorOf(tree).props.gesture;},
+    attach(node=makeNode()){h.node=node;h.scroll().props.ref?.(node);h.settle();passive();return node;},
     presentation(){return (h.node?.inner&&!removedHosts.has(h.node.inner)?h.node.inner.updates?.transform?.[0]:undefined)??{[props.horizontal?'translateX':'translateY']:0};},
-    unmount(){h.scroll().props.ref?.(null);for(const slot of slots)slot?.cleanup?.();if(h.node?.inner)removedHosts.add(h.node.inner);},
-    replay(){for(const slot of slots)if(slot?.setup){slot.cleanup?.();slot.cleanup=slot.setup();}},
-    geometry(viewport=200,content=600){h.scroll().props.onLayout?.({nativeEvent:{layout:{width:viewport,height:viewport}}});h.scroll().props.onContentSizeChange?.(content,content);},
+    unmount(){h.scroll().props.ref?.(null);primaryContent.cleanup();for(const slot of slots)slot?.cleanup?.();if(h.node?.inner)removedHosts.add(h.node.inner);},
+    replay(){for(const slot of slots)if(slot?.setup){slot.cleanup?.();slot.cleanup=slot.setup();}h.settle();},
+    geometry(viewport=200,content=600){h.scroll().props.onLayout?.({nativeEvent:{layout:{width:viewport,height:viewport}}});h.settle();h.scroll().props.onContentSizeChange?.(content,content);h.settle();},
     touch(name,axis=0,cross=0,count=1){const point={id:1,x:axis,y:axis,absoluteX:props.horizontal?axis:cross,absoluteY:props.horizontal?cross:axis};
       h.gesture().handlers[name]?.({numberOfTouches:count,allTouches:count?[point]:[],changedTouches:[point]});},
     start(){h.touch('onTouchesDown');h.gesture().handlers.onStart?.({});},
     end(success=true){h.touch('onTouchesUp',0,0,0);h.gesture().handlers.onFinalize?.({},success);},
     motion(offset,time){now=time;h.offset.value=offset;},
   };
-  modules.policy=load(policyCode);modules.gesture=load(gestureCode);modules.controller=load(controllerCode);modules.component=load(componentCode);
+  modules.policy=load(policyCode);modules.gesture=load(gestureCode);modules.controller=load(controllerCode);modules.content=load(contentCode);modules.component=load(componentCode);
   h.exports=modules.component;h.render();return h;
 }
 function makeNode(){const inner={updates:{transform:[]}};return {inner,scrollTo(){},scrollToEnd(){},getInnerViewRef(){return inner;},getNativeScrollRef(){return this;},measure(){},flashScrollIndicators(){}};}
@@ -402,10 +477,10 @@ test('initial/live reduced motion and stale async results across replay/unmount'
 test('contentOffset change revokes a previously owned fling',()=>{
   const h=harness();h.attach();h.geometry();h.start();h.motion(200,10);h.end();h.render({contentOffset:{x:0,y:350}});h.motion(400,30);assert.equal(h.calls.springs.length,0);
 });
-test('public content host keeps children/content style identity; layout callbacks forward once',()=>{
+test('public content host keeps direct children and flattened style values; layout callbacks forward once',()=>{
   for(const horizontal of [false,true]){const seen=[],contentContainerStyle={padding:12,gap:8,flexDirection:'row',...(horizontal?{width:700}:{}),justifyContent:'center'},style={height:250};
     const h=harness({horizontal,style,contentContainerStyle,onLayout:e=>seen.push(e),onContentSizeChange:(...a)=>seen.push(a)}),s=h.scroll().props;
-    assert.equal(s.style,style);assert.equal(s.contentContainerStyle,contentContainerStyle);h.geometry();assert.equal(seen.length,2);
+    assert.equal(s.style,style);assert.deepEqual(plain(s.contentContainerStyle),plain(contentContainerStyle));h.geometry();assert.equal(seen.length,2);
   }
 });
 
@@ -423,7 +498,7 @@ test('both axes preserve layout-bearing native props and direct cell identity ac
       {key:'percentage-child',style:{width:700,height:'100%'}}];
     const style={flex:1,minHeight:0},h=harness({horizontal,style,contentContainerStyle,
       children:cells,removeClippedSubviews:true}),native=h.scroll().props;
-    assert.equal(native.style,style);assert.equal(native.contentContainerStyle,contentContainerStyle);
+    assert.equal(native.style,style);assert.deepEqual(plain(native.contentContainerStyle),plain(contentContainerStyle));
     assert.equal(native.horizontal,horizontal);assert.equal(native.removeClippedSubviews,true);
     assert.equal(h.content(),cells,'no additional native content wrapper or copied cells');
   }
@@ -485,8 +560,9 @@ test('stale spring completion cannot clear a new owner or an interrupted drag',(
 test('Android FlatList default clipping and cell identity survive with active recoil',()=>{
   const cells=[{key:'cell-1',type:'CellRenderer'},{key:'cell-2',type:'CellRenderer'}],style={padding:14};
   const h=harness({removeClippedSubviews:true,children:cells,contentContainerStyle:style});drag(h);h.end();
-  assert.equal(h.scroll().type,'Animated.ScrollView');assert.equal(h.scroll().props.removeClippedSubviews,true);
-  assert.equal(h.content(),cells);assert.equal(h.scroll().props.contentContainerStyle,style);assert.equal(h.calls.springs.length,1);
+  // Inspect the real adapter's native leaf, beyond its React-only owner.
+  assert.equal(h.scroll().type,'RN.ScrollView');assert.equal(h.scroll().props.removeClippedSubviews,true);
+  assert.equal(h.content(),cells);assert.deepEqual(plain(h.scroll().props.contentContainerStyle),plain(style));assert.equal(h.calls.springs.length,1);
 });
 test('late public inner ref becomes ready on layout without replacing or wrapping children',()=>{
   const h=harness(),node=makeNode(),getInner=node.getInnerViewRef;node.getInnerViewRef=()=>null;h.attach(node);h.geometry();h.start();h.setTime(10);h.touch('onTouchesMove',50);h.end();assert.equal(h.calls.springs.length,0);
@@ -690,11 +766,85 @@ test('queued saved-method commands cannot cross replay, same-host reattach, or r
   }
 });
 
-test('changing scroll axis retains the Native identity and moves presentation onto the new axis',()=>{
+// Supplies a stable native host: this tests controller options only. Actual RN
+// actual keyed host replacement is covered in spring-scroll-content.test.mjs.
+test('changing controller axis on a supplied stable host retains Native gesture identity and moves presentation',()=>{
   const h=harness();drag(h);h.end();const native=h.gesture();
   h.render({horizontal:true});h.geometry();
   assert.equal(h.gesture(),native);assert.deepEqual(plain(h.presentation()),{translateX:0});
   h.start();h.setTime(40);h.touch('onTouchesMove',60);h.end();
   assert.ok(h.presentation().translateX>0);assert.equal(h.presentation().translateY,undefined);
   assert.equal(h.calls.springs.length,2);
+});
+
+
+test('headless source key changes with content host while native leaf, refs and direct cells remain stable',()=>{
+  const cells=[{key:'cell'}],style={flex:1},base={padding:9},publicRef={current:null};
+  const h=harness({children:cells,style,contentContainerStyle:base,ref:publicRef}),node=h.attach();
+  const first=h.owner(),leaf=h.scroll(),ref=leaf.props.ref;
+  assert.equal(first.props.host,node.inner);assert.equal(leaf.props.style,style);assert.equal(leaf.props.contentContainerStyle,base);
+  assert.equal(leaf.key,undefined);assert.equal(publicRef.current,node);
+  const positive={transform:[{translateY:17}]};first.props.onStyle(positive);h.settle();
+  assert.equal(h.scroll().props.contentContainerStyle[1],positive);
+  const renders=h.renders();h.owner().props.onStyle({...positive});h.settle();assert.equal(h.renders(),renders,'shallow-equal GC snapshot bails out');
+  node.inner={updates:{transform:[]}};node.getInnerViewRef=()=>node.inner;h.geometry();
+  assert.notEqual(h.owner().key,first.key);assert.equal(h.owner().props.host,node.inner);
+  assert.equal(h.scroll().type,leaf.type);assert.equal(h.scroll().props.ref,ref);assert.equal(h.content(),cells);assert.equal(publicRef.current,node);
+  assert.equal(h.scroll().props.contentContainerStyle,base);
+  first.props.onStyle({transform:[{translateY:99}]});h.settle();assert.equal(h.scroll().props.contentContainerStyle,base,'retired callback cannot style replacement');
+});
+
+test('positive settled React style is cleared by same-host detach and reattach',()=>{
+  const base={padding:9},h=harness({contentContainerStyle:base}),node=h.attach();
+  h.owner().props.onStyle({transform:[{translateY:17}]});h.settle();
+  assert.equal(h.scroll().props.contentContainerStyle[1].transform[0].translateY,17);
+  const key=h.owner().key;h.scroll().props.ref(null);h.settle();assert.equal(h.owner(),null);
+  const before=h.snapshots.length;h.attach(node);assert.notEqual(h.owner().key,key,'a fresh lifecycle lease owns the returning host');
+  assert.equal(h.snapshots[before],base,'first native render after reattach must already clear stale snapshot');
+  const style=h.scroll().props.contentContainerStyle;
+  assert.ok(style===base || !style?.[1]?.transform || style[1].transform[0].translateY===0,'same-host epoch must not replay positive GC snapshot');
+});
+
+test('absent inner leaves native commands alive and layout recovers owner without throwing',()=>{
+  const h=harness(),node=makeNode();let inner=null;node.getInnerViewRef=()=>inner;
+  assert.doesNotThrow(()=>h.attach(node));h.geometry();assert.equal(h.owner(),null);
+  node.scrollTo({y:35,animated:false});node.scrollToEnd({animated:false});assert.equal(h.calls.commands.length,2);
+  h.start();h.setTime(20);h.touch('onTouchesMove',50);h.end();assert.equal(h.calls.springs.length,0);
+  inner=node.inner;h.geometry();assert.equal(h.owner().props.host,inner);
+  h.start();h.setTime(40);h.touch('onTouchesMove',50);h.end();assert.equal(h.calls.springs.length,1);
+});
+
+
+test('inner host loss disables recoil, retains native commands, and recovers on layout',()=>{
+  const base={padding:4},h=harness({contentContainerStyle:base}),node=h.attach(),host=node.inner;
+  h.geometry();h.owner().props.onStyle({transform:[{translateY:19}]});h.settle();
+  const old=h.owner();node.getInnerViewRef=()=>null;h.geometry();
+  assert.equal(h.owner(),null);assert.equal(h.scroll().props.contentContainerStyle,base);
+  old.props.onStyle({transform:[{translateY:99}]});h.settle();assert.equal(h.scroll().props.contentContainerStyle,base);
+  node.scrollTo({y:30});assert.equal(h.calls.commands.length,1);
+  h.start();h.setTime(20);h.touch('onTouchesMove',50);h.end();assert.equal(h.calls.springs.length,0);
+  node.getInnerViewRef=()=>host;const before=h.snapshots.length;h.geometry();
+  assert.equal(h.owner().props.host,host);assert.notEqual(h.owner().key,old.key);
+  assert.equal(h.snapshots[before],base,'returning inner host cannot render retired positive snapshot');
+  h.start();h.setTime(40);h.touch('onTouchesMove',50);h.end();assert.equal(h.calls.springs.length,1);
+});
+
+
+test('positive settled snapshot is retired during effect replay without remounting native content',()=>{
+  const base={padding:9},children=[{key:'cell'}],h=harness({contentContainerStyle:base,children}),node=h.attach();
+  const leaf=h.scroll(),owner=h.owner();owner.props.onStyle({transform:[{translateY:17}]});h.settle();
+  assert.equal(h.scroll().props.contentContainerStyle[1].transform[0].translateY,17);
+  h.replay();assert.notEqual(h.owner().key,owner.key);
+  assert.equal(h.scroll().type,leaf.type);assert.equal(h.scroll().props.ref,leaf.props.ref);
+  assert.equal(h.content(),children);assert.equal(h.scroll().key,undefined);
+  assert.equal(h.scroll().props.contentContainerStyle,base);
+  owner.props.onStyle({transform:[{translateY:99}]});h.settle();
+  assert.equal(h.scroll().props.contentContainerStyle,base,'retired same-host callback cannot revive its snapshot');
+  node.scrollTo({y:30});assert.equal(h.calls.commands.length,1);
+});
+
+test('native scroll sampling retains the pinned Animated.ScrollView default and explicit caller choices',()=>{
+  assert.equal(harness().scroll().props.scrollEventThrottle,1);
+  for(const value of [0,16,undefined])
+    assert.equal(harness({scrollEventThrottle:value}).scroll().props.scrollEventThrottle,value);
 });
