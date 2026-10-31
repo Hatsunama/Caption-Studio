@@ -14,6 +14,7 @@ const compile = (url) => ts.transpileModule(readFileSync(url, 'utf8'), {
 const componentCode = compile(new URL('spring-scroll-view.tsx', root));
 const gestureCode = compile(new URL('spring-scroll-gesture.ts', root));
 const controllerCode = compile(new URL('scroll-spring-controller.ts', root));
+const probeCode = compile(new URL('scroll-spring-probe.ts', root));
 const policyCode = compile(new URL('../lib/scroll-spring-policy.ts', root));
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -45,7 +46,7 @@ function harness(initial = {}, platform = 'android', engineOptions) {
   let cursor = 0, tree, props = initial, now = 0, collecting, running = false, deferred = false;
   let slots = [];
   const primarySlots = slots, effects = [], reactions = [], jobs = [], listeners = new Map(), queries = [];
-  const calls = { commands: [], springs: [], starts: [], cancels: [], warnings: [], props: [], pan: 0, native: 0 };
+  const calls = { commands: [], springs: [], starts: [], cancels: [], warnings: [], props: [], probes: [], pan: 0, native: 0 };
   const engine = engineOptions ? installedEngine() : undefined;
   let engineModifyDepth = 0;
   const equal = (a,b) => a && b && a.length === b.length && a.every((v,i) => Object.is(v,b[i]));
@@ -102,7 +103,7 @@ function harness(initial = {}, platform = 'android', engineOptions) {
       gesture[name]=fn=>{gesture.handlers[name]=fn;return gesture;};
     return gesture;
   }
-  const native = { ScrollView:'RN.ScrollView', Platform:{OS:platform}, I18nManager:{isRTL:initial.rtl??false},
+  const native = { ScrollView:'RN.ScrollView', Platform:{OS:platform}, I18nManager:{isRTL:initial.rtl??false}, findNodeHandle:()=>424,
     StyleSheet:{flatten:style=>Object.assign({},...[style].flat(Infinity).filter(Boolean))},
     AccessibilityInfo:{isReduceMotionEnabled:()=>({then(resolve,reject){queries.push({resolve,reject});if(!initial.pendingReducedMotion)resolve(initial.initialReducedMotion??false);}}),
       addEventListener:(name,fn)=>{listeners.set(name,fn);return {remove:()=>listeners.delete(name)};}},
@@ -132,11 +133,12 @@ function harness(initial = {}, platform = 'android', engineOptions) {
   };
   const worklets={scheduleOnUI:(fn,...args)=>{jobs.push(()=>fn(...args));if(!deferred)flush();}};
   const modules={};
-  function load(code) { const exports={};runInNewContext(code,{exports,performance:{now:()=>now},console:{warn:(...args)=>calls.warnings.push(args)},
+  function load(code) { const exports={};runInNewContext(code,{exports,process:{env:{EXPO_PUBLIC_SCROLL_SPRING_DIAGNOSTICS:initial.probeDiagnostics?'1':'0'}},performance:{now:()=>now},console:{warn:(...args)=>calls.warnings.push(args),log:(...args)=>calls.probes.push(args)},
     require(id){if(id==='react')return hooks;if(id==='react/jsx-runtime')return {jsx,jsxs:jsx};if(id==='react-native')return native;
       if(id==='react-native-reanimated')return reanimated;if(id==='react-native-worklets')return worklets;
       if(id==='react-native-gesture-handler')return {Gesture:{Native:nativeGesture,Pan:()=>{calls.pan++;throw Error('Pan prohibited');}},GestureDetector:'GestureDetector'};
       if(id.includes('scroll-spring-policy'))return modules.policy;if(id==='./spring-scroll-gesture')return modules.gesture;if(id==='./scroll-spring-controller')return modules.controller;
+      if(id==='./scroll-spring-probe')return modules.probe;
       throw Error(`Unexpected dependency ${id}`);
     }});return exports; }
   function flush(){while(jobs.length)jobs.shift()();}
@@ -165,11 +167,27 @@ function harness(initial = {}, platform = 'android', engineOptions) {
     end(success=true){h.touch('onTouchesUp',0,0,0);h.gesture().handlers.onFinalize?.({},success);},
     motion(offset,time){now=time;h.offset.value=offset;},
   };
-  modules.policy=load(policyCode);modules.gesture=load(gestureCode);modules.controller=load(controllerCode);modules.component=load(componentCode);
+  modules.policy=load(policyCode);modules.probe=load(probeCode);modules.gesture=load(gestureCode);modules.controller=load(controllerCode);modules.component=load(componentCode);
   h.exports=modules.component;h.render();return h;
 }
 function makeNode(){const inner={updates:{transform:[]}};return {inner,scrollTo(){},scrollToEnd(){},getInnerViewRef(){return inner;},getNativeScrollRef(){return this;},measure(){},flashScrollIndicators(){}};}
 function drag(h){h.attach();h.geometry();h.start();h.setTime(10);h.touch('onTouchesMove',20);h.setTime(20);h.touch('onTouchesMove',50);}
+
+test('private diagnostics connect gesture release, presenter and lifecycle without logging text',()=>{
+  const h=harness({probeDiagnostics:true});drag(h);h.end();h.listeners.get('app')('background');
+  const events=h.calls.probes.map(args=>{assert.equal(args[0],'CAPTION_SPRING_DIAG');return JSON.parse(args[1]);});
+  for(const event of ['bind','down','start','move','up','finalize','spring-start','present','foreground']) {
+    assert.ok(events.some(entry=>entry.event===event),event);
+  }
+  assert.ok(events.some(entry=>entry.event==='foreground'&&entry.foreground===false));
+  for(const entry of events)for(const [key,value]of Object.entries(entry)) {
+    if(key!=='event')assert.ok(typeof value==='number'||typeof value==='boolean'||value===null,key);
+  }
+});
+
+test('ordinary app scrolling emits no private diagnostics',()=>{
+  const h=harness();drag(h);h.end();h.listeners.get('app')('background');assert.deepEqual(h.calls.probes,[]);
+});
 
 test('installed setter skips zero-target assignment but UI modify forces zero-origin initialization',()=>{
   const engine=installedEngine(),offset=engine.mutable(0),seen=[];
