@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { type GestureResponderEvent, Modal, PanResponder, Pressable, Text, useWindowDimensions, View } from 'react-native';
+import { type GestureResponderEvent, PanResponder, Pressable, Text, useWindowDimensions, View } from 'react-native';
+import { SpringScrollModal as Modal } from '@/components/spring-scroll-modal';
 
 import { AdaptiveDialog } from './adaptive-dialog';
 

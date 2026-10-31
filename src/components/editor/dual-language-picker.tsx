@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View, useWindowDimensions } from 'react-native';
+import { SpringScrollModal as Modal } from '@/components/spring-scroll-modal';
+import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { dualLanguageChoiceCopy } from '@/components/editor/dual-language-choice-copy';
 

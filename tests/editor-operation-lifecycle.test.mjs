@@ -85,6 +85,7 @@ const nativeView = Symbol('view');
 const fragment = Symbol('fragment');
 const jsx = (type, props) => ({ type, props });
 const componentSources = {
+  '@/components/spring-scroll-modal': readFileSync(new URL('../src/components/spring-scroll-modal.tsx', import.meta.url), 'utf8'),
   '@/components/editor/adaptive-dialog': readFileSync(new URL('../src/components/editor/adaptive-dialog.tsx', import.meta.url), 'utf8'),
   '@/components/editor/keyboard-viewport': readFileSync(new URL('../src/components/editor/keyboard-viewport.tsx', import.meta.url), 'utf8'),
   '@/components/operation-overlay': readFileSync(new URL('../src/components/operation-overlay.tsx', import.meta.url), 'utf8'),
@@ -121,6 +122,8 @@ function renderSource(source, extra = {}) {
         if (typeof cleanup === 'function') cleanups.push(cleanup);
       },
     };
+    if (name === '@/components/spring-scroll-view') return { SpringScrollView: 'scroll-view', renderSpringScrollView: props => jsx('scroll-view', props) };
+    if (name === 'react-native-gesture-handler') return { GestureHandlerRootView: 'gesture-root' };
     if (name === 'react-native') return native;
     if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
     if (name === '@/lib/ui-theme') return { chrome };
