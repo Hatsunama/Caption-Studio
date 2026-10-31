@@ -129,10 +129,11 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     }, true);
   }
 
-  function reset() {
+  function reset(generation: number) {
     'worklet';
     state.modify(s => {
       'worklet';
+      if (!s.alive || s.epoch !== generation) return s;
       resetOwned(s);
       return s;
     });
@@ -266,7 +267,9 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     state.modify(s => {
       'worklet';
       if (generation < s.epoch) return s;
-      if (s.contentReady) setNativeProps(contentRef, { transform: [] });
+      // A queued React detach can run after Fabric removed this host. Animated
+      // refs retain their wrapper on null; cleanup must never write through it.
+      // Reattachment/replay publishes zero on its current, live content binding.
       s.contentReady = false;
       s.epoch = generation; s.alive = false; s.safe = false; resetOwned(s);
       presentationVersion.value++;
@@ -284,10 +287,11 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     });
   }
 
-  function updateOptions(enabled: boolean, canOwn: boolean, horizontal: boolean) {
+  function updateOptions(generation: number, enabled: boolean, canOwn: boolean, horizontal: boolean) {
     'worklet';
     state.modify(s => {
       'worklet';
+      if (!s.alive || s.epoch !== generation) return s;
       const axisChanged = s.horizontal !== horizontal;
       s.enabled = enabled; s.canOwn = canOwn; s.horizontal = horizontal;
       if (!enabled || !canOwn || axisChanged) resetOwned(s);
@@ -320,10 +324,11 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     });
   }
 
-  function updateGeometry(viewport: number | null, content: number | null) {
+  function updateGeometry(generation: number, viewport: number | null, content: number | null) {
     'worklet';
     state.modify(s => {
       'worklet';
+      if (!s.alive || s.epoch !== generation) return s;
       if ((viewport != null && viewport !== s.viewport) || (content != null && content !== s.content)) {
         resetOwned(s);
         if (viewport != null) s.viewport = viewport;
@@ -336,7 +341,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
   function command(generation: number, name: string, args: (number | boolean)[]) {
     'worklet';
     if (!state.value.alive || state.value.epoch !== generation) return;
-    reset();
+    reset(generation);
     dispatchSpringScrollCommand(animatedRef, name, args);
   }
 

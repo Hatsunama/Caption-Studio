@@ -45,6 +45,10 @@ function harness(initial = {}, platform = 'android', engineOptions) {
   let cursor = 0, tree, props = initial, now = 0, collecting, running = false, deferred = false;
   let slots = [];
   const primarySlots = slots, effects = [], reactions = [], jobs = [], listeners = new Map(), queries = [];
+  // Explicit native removal is separate from React ref detach: an animated ref
+  // retains its wrapper on null in the pinned engine. This is a host-existence
+  // model, not a simulation of Fabric or proof about a physical device.
+  const removedHosts = new WeakSet();
   const calls = { commands: [], springs: [], starts: [], cancels: [], warnings: [], props: [], pan: 0, native: 0 };
   const engine = engineOptions ? installedEngine() : undefined;
   let engineModifyDepth = 0;
@@ -129,7 +133,7 @@ function harness(initial = {}, platform = 'android', engineOptions) {
       return animation;
     },
     dispatchCommand:(ref,name,args)=>calls.commands.push({node:ref(),name,args:plain(args)}),
-    setNativeProps:(ref,updates)=>{assert.ok(!('style' in updates),'Reanimated 4.5.1 accepts flattened native props');assert.ok(ref(),'content host must be bound');ref().updates=plain(updates);calls.props.push({node:ref(),updates:plain(updates)});},
+    setNativeProps:(ref,updates)=>{assert.ok(!('style' in updates),'Reanimated 4.5.1 accepts flattened native props');assert.ok(ref(),'content host must be bound');assert.ok(!removedHosts.has(ref()),'setNativeProps must not target a removed native host');ref().updates=plain(updates);calls.props.push({node:ref(),updates:plain(updates)});},
     scrollTo:(ref,x,y,animated)=>calls.commands.push({node:ref(),name:'scrollTo',args:[x,y,animated]}),
   };
   const worklets={scheduleOnUI:(fn,...args)=>{jobs.push(()=>fn(...args));if(!deferred)flush();}};
@@ -143,6 +147,7 @@ function harness(initial = {}, platform = 'android', engineOptions) {
     }});return exports; }
   function flush(){while(jobs.length)jobs.shift()();}
   const h={calls,queries,mutable,nativeGesture,listeners,flush,jobs,
+    removeNativeHost(node=h.node){assert.ok(node?.inner);removedHosts.add(node.inner);},
     setTime(value){now=value;},defer(value=true){deferred=value;},
     render(next=props){slots=primarySlots;props=next;cursor=0;tree=modules.component.SpringScrollView(props);while(typeof tree.type==='function')tree=tree.type(tree.props);
       while(effects.length)effects.shift()();return tree;},
@@ -157,8 +162,8 @@ function harness(initial = {}, platform = 'android', engineOptions) {
     provided(){return h.scroll().props.children;},
     gesture(){return tree.props.gesture;},
     attach(node=makeNode()){h.node=node;h.scroll().props.ref?.(node);return node;},
-    presentation(){return h.node?.inner?.updates?.transform?.[0]??{[props.horizontal?'translateX':'translateY']:0};},
-    unmount(){h.scroll().props.ref?.(null);for(const slot of slots)slot?.cleanup?.();},
+    presentation(){return (h.node?.inner&&!removedHosts.has(h.node.inner)?h.node.inner.updates?.transform?.[0]:undefined)??{[props.horizontal?'translateX':'translateY']:0};},
+    unmount(){h.scroll().props.ref?.(null);for(const slot of slots)slot?.cleanup?.();if(h.node?.inner)removedHosts.add(h.node.inner);},
     replay(){for(const slot of slots)if(slot?.setup){slot.cleanup?.();slot.cleanup=slot.setup();}},
     geometry(viewport=200,content=600){h.scroll().props.onLayout?.({nativeEvent:{layout:{width:viewport,height:viewport}}});h.scroll().props.onContentSizeChange?.(content,content);},
     touch(name,axis=0,cross=0,count=1){const point={id:1,x:axis,y:axis,absoluteX:props.horizontal?axis:cross,absoluteY:props.horizontal?cross:axis};
@@ -292,6 +297,88 @@ test('public commands invalidate atomically before dispatch, retain node/default
 test('queued command generation cannot target a replacement ref after detach',()=>{
   const h=harness();const first=h.attach();h.defer();first.scrollTo({y:88});const stale=h.jobs.shift();h.scroll().props.ref(null);h.attach();h.flush();stale();assert.equal(h.calls.commands.length,0);
 });
+
+for(const transition of ['ref-null','unmount']) {
+  test(`lifecycle delayed ${transition} never writes a removed native content host`,()=>{
+    const h=harness();drag(h);h.end();
+    const old=h.node, writes=h.calls.props.length;
+    assert.ok(old.inner.updates.transform[0].translateY>0,'begin with actual recoil presentation');
+    h.defer();
+    if(transition==='ref-null')h.scroll().props.ref(null);else h.unmount();
+    assert.ok(h.jobs.length>0,'deactivation must still be queued when native removal occurs');
+    h.removeNativeHost(old);
+    assert.doesNotThrow(()=>h.flush(),'queued detach must tolerate native removal before UI execution');
+    assert.equal(h.calls.props.length,writes,'removed host receives no presentation or cleanup writes');
+    assert.equal(h.calls.commands.length,0);
+  });
+}
+
+test('lifecycle repeated measurements retain one content binding without redundant native writes',()=>{
+  let layouts=0,sizes=0;
+  const h=harness({onLayout:()=>layouts++,onContentSizeChange:()=>sizes++});
+  h.attach();h.geometry();
+  const writes=h.calls.props.length;
+  h.geometry();h.geometry();
+  assert.equal(layouts,3);assert.equal(sizes,3,'forward every consumer callback');
+  assert.equal(h.calls.props.length,writes,'unchanged host/generation needs no readiness republish');
+});
+
+test('lifecycle unmount clears shared ownership without needing an absent host to render zero',()=>{
+  const h=harness(),shared=h.mutable(0);h.render({springOffset:shared});drag(h);h.end();
+  assert.ok(shared.value>0);
+  const writes=h.calls.props.length;h.defer();h.unmount();h.flush();
+  assert.equal(shared.value,0,'release the shared spring, not only the test-visible host');
+  assert.equal(h.calls.props.length,writes,'unmounted host receives no cleanup write');
+});
+
+for(const transition of ['replay','same-host','replacement']) {
+  test(`lifecycle delayed ${transition} clears presentation on the current live host`,()=>{
+    const h=harness();drag(h);h.end();const old=h.node;
+    assert.ok(h.presentation().translateY>0);
+    h.defer();const writes=h.calls.props.length;
+    if(transition==='replay')h.replay();
+    else {
+      h.scroll().props.ref(null);
+      if(transition==='replacement')h.removeNativeHost(old);
+      h.attach(transition==='same-host'?old:makeNode());
+    }
+    const current=h.node;h.flush();
+    const updates=h.calls.props.slice(writes);
+    assert.ok(updates.some(call=>call.node===current.inner),'current live host must receive presentation cleanup');
+    assert.ok(updates.every(call=>call.node===current.inner),'cleanup must target the current live host');
+    assert.equal(Object.values(h.presentation())[0]??0,0,'live host cannot retain old recoil');
+    h.defer(false);h.geometry();h.start();h.setTime(40);h.touch('onTouchesMove',60);h.end();
+    assert.ok(h.presentation().translateY>0,'new generation must still present recoil');
+    assert.equal(h.calls.springs.length,2);
+  });
+}
+
+for(const transition of ['replay','same-host','replacement']) {
+  test(`lifecycle stale queued callbacks cannot write after newer ${transition} activation`,()=>{
+    const h=harness();drag(h);h.end();const old=h.node;
+    h.defer();
+    // Capture real scheduled contentReady, geometry and command jobs while the
+    // old generation is still current, then execute them after the new one.
+    h.geometry();old.scrollTo({y:88});
+    if(transition==='replay')h.replay();else h.scroll().props.ref(null);
+    const stale=h.jobs.splice(0);assert.ok(stale.length>0);
+    if(transition==='replay'){
+      // Replay already queued both cleanup and activation. A second replay
+      // establishes a strictly newer generation before the captured jobs run.
+      h.replay();
+    }else{
+      if(transition==='replacement')h.removeNativeHost(old);
+      h.attach(transition==='same-host'?old:makeNode());
+    }
+    h.flush();h.defer(false);h.geometry();h.start();h.setTime(40);h.touch('onTouchesMove',60);h.end();
+    const current=h.node,held=plain(h.presentation()),writes=h.calls.props.length;
+    assert.ok(held.translateY>0);
+    for(const job of stale)job();
+    assert.equal(h.calls.props.length,writes,'old lifecycle callbacks cannot write the new presentation');
+    assert.deepEqual(plain(h.presentation()),held,'old callbacks cannot reset current recoil');
+    assert.equal(h.node,current);assert.equal(h.calls.commands.length,0,'old command must not target the new generation');
+  });
+}
 test('nonwritable public methods retain native functionality and disable recoil',()=>{
   const h=harness();const node=makeNode();Object.defineProperty(node,'scrollTo',{writable:false});h.attach(node);h.geometry();h.start();h.setTime(20);h.touch('onTouchesMove',90);h.end();assert.equal(h.calls.springs.length,0);
 });

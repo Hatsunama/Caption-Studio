@@ -88,7 +88,7 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
   useAnimatedReaction(() => nativeOffset.value, controller.onNativeOffset, [nativeOffset, controller]);
 
   const lifecycle = useRef<{ generation: number; node: NativeScrollView | null; content: HostInstance | null;
-    restore?: () => void; refCleanup?: () => void }>({ generation: 0, node: null, content: null });
+    contentGeneration?: number; restore?: () => void; refCleanup?: () => void }>({ generation: 0, node: null, content: null });
   const bindContent = useCallback(() => {
     const life = lifecycle.current;
     // RN 0.86.3 exposes this method in its public imperative interface and host
@@ -96,7 +96,9 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     const node = life.node as (NativeScrollView & { getInnerViewRef?: () => HostInstance | null }) | null;
     const content = node?.getInnerViewRef?.();
     if (!content) return;
+    if (life.content === content && life.contentGeneration === life.generation) return;
     life.content = content;
+    life.contentGeneration = life.generation;
     contentRef(content);
     scheduleOnUI(controller.contentReady, life.generation);
   }, [lifecycle, contentRef, controller]);
@@ -133,9 +135,9 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     };
   }, [lifecycle, animatedRef, controller, bindContent]);
   useLayoutEffect(() => {
-    scheduleOnUI(controller.updateOptions, props.scrollEnabled !== false, springOwner, horizontal);
+    scheduleOnUI(controller.updateOptions, lifecycle.current.generation, props.scrollEnabled !== false, springOwner, horizontal);
   }, [props.scrollEnabled, springOwner, horizontal, controller]);
-  useLayoutEffect(() => { scheduleOnUI(controller.reset); }, [props.contentOffset?.x, props.contentOffset?.y, controller]);
+  useLayoutEffect(() => { scheduleOnUI(controller.reset, lifecycle.current.generation); }, [props.contentOffset?.x, props.contentOffset?.y, controller]);
   useEffect(() => {
     let live = true, revision = 0;
     const update = (reduced: boolean) => {
@@ -161,12 +163,12 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
       onLayout={event => {
         bindContent();
         const layout = event.nativeEvent.layout;
-        scheduleOnUI(controller.updateGeometry, horizontal ? layout.width : layout.height, null);
+        scheduleOnUI(controller.updateGeometry, lifecycle.current.generation, horizontal ? layout.width : layout.height, null);
         onLayout?.(event);
       }}
       onContentSizeChange={(width, height) => {
         bindContent();
-        scheduleOnUI(controller.updateGeometry, null, horizontal ? width : height);
+        scheduleOnUI(controller.updateGeometry, lifecycle.current.generation, null, horizontal ? width : height);
         onContentSizeChange?.(width, height);
       }}>
       <SpringScrollGestureContext.Provider value={descendantGestures}>{children}</SpringScrollGestureContext.Provider>
