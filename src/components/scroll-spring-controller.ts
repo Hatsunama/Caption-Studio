@@ -44,8 +44,8 @@ export type ScrollSpringControllerOptions = {
   offset: SharedValue<number>;
   id: number;
   nativeOffset: SharedValue<number>;
-  animatedRef: AnimatedRef<ScrollView>;
-  contentRef: AnimatedRef<HostInstance>;
+  getAnimatedRef: () => AnimatedRef<ScrollView>;
+  getContentRef: () => AnimatedRef<HostInstance>;
   presentationVersion: SharedValue<number>;
   gesture: NativeGesture;
 };
@@ -66,7 +66,7 @@ function applyNativeCallbacks(target: NativeHandlers, source: NativeHandlers) {
 
 /** Configures Native callback definitions on JS; all mutable runtime work is UI-only. */
 export function createScrollSpringController(options: ScrollSpringControllerOptions) {
-  const { state, owner, offset, id, nativeOffset, animatedRef, contentRef, presentationVersion, gesture } = options;
+  const { state, owner, offset, id, nativeOffset, getAnimatedRef, getContentRef, presentationVersion, gesture } = options;
 
   // Private helpers receive the state owned by the current modify boundary.
   // They never reenter state.modify, including synchronous animation completion.
@@ -346,7 +346,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     'worklet';
     if (!state.value.alive || state.value.epoch !== generation) return;
     reset(generation);
-    dispatchSpringScrollCommand(animatedRef, name, args);
+    dispatchSpringScrollCommand(getAnimatedRef(), name, args);
   }
 
   function onNativeOffset(value: number, previous: number | null) {
@@ -379,7 +379,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     if (!s.alive || !s.contentReady) return;
     const value = s.motionReady && !s.reduced && s.foreground && s.enabled ? presented : 0;
     // Reanimated forwards flattened props, unlike RN instance.setNativeProps.
-    setNativeProps(contentRef, { transform: [s.horizontal ? { translateX: value } : { translateY: value }] });
+    setNativeProps(getContentRef(), { transform: [s.horizontal ? { translateX: value } : { translateY: value }] });
   }
 
   return { gesture, mountBinding, unmountBinding, reset, activate, deactivate, contentReady,

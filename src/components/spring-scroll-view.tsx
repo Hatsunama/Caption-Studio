@@ -77,11 +77,15 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     lastOffset: 0, lastOffsetAt: 0, fling: false, horizontal,
     axis: createScrollSpringAxisState(),
   });
+  // Capture the animated refs without reading or passing them to the factory
+  // during render. Only UI commands/presentation resolve these connections.
+  const getAnimatedRef = useCallback(() => { 'worklet'; return animatedRef; }, [animatedRef]);
+  const getContentRef = useCallback(() => { 'worklet'; return contentRef; }, [contentRef]);
   // The imperative platform controller owns native callbacks and mutable UI state.
   // React only connects refs, native layout and external lifecycle notifications.
   const controller = useMemo(() => createScrollSpringController({
-    state, owner, offset, id, nativeOffset, animatedRef, contentRef, presentationVersion, gesture: ownedNative,
-  }), [state, owner, offset, id, nativeOffset, animatedRef, contentRef, presentationVersion, ownedNative]);
+    state, owner, offset, id, nativeOffset, getAnimatedRef, getContentRef, presentationVersion, gesture: ownedNative,
+  }), [state, owner, offset, id, nativeOffset, getAnimatedRef, getContentRef, presentationVersion, ownedNative]);
   useLayoutEffect(() => {
     controller.mountBinding();
     return controller.unmountBinding;
