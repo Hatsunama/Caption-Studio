@@ -39,7 +39,9 @@ function fixture({ disabled = false, axis, holdMilliseconds = 0 } = {}) {
       SpringScrollView: 'ScrollView', SpringScrollGestureContext: { value: [] },
     };
     if (name === 'react-native') return { Platform: { OS: 'android' }, View: 'View', ScrollView: 'ScrollView' };
-    if (name === 'react-native-gesture-handler') return { Gesture: { Pan: () => pan, Native: () => ({}) }, GestureDetector: 'GestureDetector', State: { FAILED: 1, CANCELLED: 3 } };
+    if (name === 'react-native-gesture-handler') return { Gesture: { Pan: () => pan, Native: () => ({
+      disallowInterruption() { return this; }, shouldCancelWhenOutside() { return this; },
+    }) }, GestureDetector: 'GestureDetector', State: { FAILED: 1, CANCELLED: 3 } };
     if (name === 'react-native-reanimated') return { useSharedValue: (value) => ({ value }), setGestureState: (...args) => {
       assert.equal(thread, 'ui'); states.push(args);
     } };

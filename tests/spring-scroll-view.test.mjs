@@ -98,6 +98,8 @@ function harness(initial = {}, platform = 'android', engineOptions) {
   function nativeGesture() {
     calls.native++;
     const gesture={handlers:{isWorklet:[],handlerTag:-1}, config:{}};
+    for(const name of ['disallowInterruption','shouldCancelWhenOutside'])
+      gesture[name]=value=>{gesture.config[name]=value;return gesture;};
     for(const name of ['onTouchesDown','onTouchesMove','onTouchesUp','onTouchesCancelled','onStart','onEnd','onFinalize'])
       gesture[name]=fn=>{gesture.handlers[name]=fn;return gesture;};
     return gesture;
@@ -345,6 +347,25 @@ test('iOS/web and unsupported native constructs pass through layout, callbacks a
     const ref={current:null},style={},contentContainerStyle={},h=harness({ref,style,contentContainerStyle,...unsupported},platform),s=h.scroll();
     assert.equal(s.type,'RN.ScrollView');assert.equal(s.props.ref,ref);assert.equal(s.props.style,style);assert.equal(s.props.contentContainerStyle,unsupported.contentContainerStyle??contentContainerStyle);assert.equal(h.calls.springs.length,0);
   }
+});
+
+test('owned scroll recognizers use the pinned native ScrollView ownership preset on both axes',()=>{
+  for(const horizontal of [false,true]){
+    const h=harness({horizontal}),gesture=h.gesture();
+    assert.equal(gesture.config.disallowInterruption,true,'active inner scroll must retain its touch stream');
+    assert.equal(gesture.config.shouldCancelWhenOutside,false,'scrolling must continue when a drag leaves its bounds');
+    h.render({horizontal:!horizontal});h.replay();
+    assert.equal(h.gesture(),gesture,'do not recreate Native ownership during reflow or effect replay');
+  }
+});
+
+test('supplied Native config remains owned by its caller',()=>{
+  const factory=harness(),gesture=factory.nativeGesture();
+  gesture.disallowInterruption(false).shouldCancelWhenOutside(true);
+  const h=harness({nativeGesture:gesture});
+  h.render({nativeGesture:gesture,horizontal:true});h.replay();
+  assert.equal(h.gesture(),gesture);
+  assert.deepEqual(plain(gesture.config),{disallowInterruption:false,shouldCancelWhenOutside:true});
 });
 
 test('supplied Native is the single detector gesture and renderer has stable identity',()=>{

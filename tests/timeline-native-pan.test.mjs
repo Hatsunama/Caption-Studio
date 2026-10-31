@@ -111,7 +111,9 @@ for (const platform of ['android', 'ios', 'web']) {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === '@/components/spring-scroll-view') return { SpringScrollView: 'SpringScrollView' };
       if (name === 'react-native') return { Platform: { OS: platform }, View: 'View', ScrollView: 'ScrollView' };
-      if (name === 'react-native-gesture-handler') return { Gesture: { Native: () => ({ native: true }) }, GestureDetector: 'GestureDetector' };
+      if (name === 'react-native-gesture-handler') return { Gesture: { Native: () => ({ native: true,
+        disallowInterruption() { return this; }, shouldCancelWhenOutside() { return this; },
+      }) }, GestureDetector: 'GestureDetector' };
       if (name === 'react-native-reanimated') return { useSharedValue: (value) => ({ value }), setGestureState() {} };
       if (name === 'react-native-worklets') return { scheduleOnRN: (fn, ...args) => fn(...args), scheduleOnUI: (fn, ...args) => fn(...args) };
       if (name === './timeline-native-pan') return { createTimelineNativePan, createTimelineNativePanDelivery, initialTimelineNativePanState };

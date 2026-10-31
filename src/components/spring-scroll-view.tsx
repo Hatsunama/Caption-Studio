@@ -44,7 +44,11 @@ export function renderSpringScrollView(props: ScrollViewProps) {
 function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, springOwner = true,
   children, contentContainerStyle, onLayout, onContentSizeChange, ...props }: SpringScrollViewProps) {
   const ancestors = useContext(SpringScrollGestureContext);
-  const [ownedNative] = useState(() => nativeGesture ?? Gesture.Native());
+  // Match RNGH 2.32's ScrollView preset: the child that starts scrolling keeps
+  // the stream, and dragging beyond its bounds does not cancel that scroll.
+  // Explicit caller-owned handlers retain their existing configuration.
+  const [ownedNative] = useState(() => nativeGesture ?? Gesture.Native()
+    .disallowInterruption(true).shouldCancelWhenOutside(false));
   const descendantGestures = useMemo(() => [...ancestors, ownedNative], [ancestors, ownedNative]);
   const horizontal = props.horizontal === true;
   const initialReduced = useReducedMotion();
