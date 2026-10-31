@@ -103,3 +103,29 @@ Changed files (17):
 - `docs/cloud-signing-retirement.md` (new)
 - `docs/local-signing-recovery.md`
 - `docs/play-aab-release-gate.md`
+
+## Runner JDK cache follow-up (2026-10-30)
+
+Unsigned run 41154200235 stopped before compilation at the Java truststore guard.
+The diagnostic run 41154944241 identified the rejected component as
+`/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.21-9/x64`; the setup log showed
+that Java 17 had been reused from the runner tool cache. The strict link rejection
+was correct, and the build-tool error now identifies its offending component.
+
+All 14 Java setup steps across the six active Java workflows now request the same
+pinned JDK 17/21 archives with `force-download: true` and
+`verify-signature: true`. JDK archive caching is explicitly disabled with
+`cache-jdk: false`; existing Gradle dependency caches remain enabled where already
+configured. The action replaces the cache entry from the downloaded archive. We
+keep the existing containment, no-link, certificate filtering, backup/rollback and
+Java/Gradle override guards intact instead of accepting the linked runtime.
+
+These options were checked against the exact pinned action's
+[action inputs](https://github.com/actions/setup-java/blob/b843ebf9b913146b38da2eaa7aeddf76074ae1ad/action.yml),
+[installer](https://github.com/actions/setup-java/blob/b843ebf9b913146b38da2eaa7aeddf76074ae1ad/src/distributions/base-installer.ts)
+and [cache placement](https://github.com/actions/setup-java/blob/b843ebf9b913146b38da2eaa7aeddf76074ae1ad/src/util.ts).
+Fresh vendor downloads add network work; no performance improvement is claimed.
+Hosted execution must still prove that the fresh runtimes pass the unchanged
+truststore guards, followed by the full required checks. The complete unsigned
+build/local original-key signing test remains an acceptance requirement after the
+repair reaches trusted main. Published 1.4.135 artifacts remain unchanged.

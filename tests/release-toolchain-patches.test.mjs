@@ -82,6 +82,20 @@ test('each Java setup audits both known JDKs before the next consuming step', ()
   }
 });
 
+for (const [name, source] of workflows) {
+  const steps = source.split(/(?=^      - )/m).filter(step => /^ {6}- uses: actions\/setup-java@|^ {8}uses: actions\/setup-java@/m.test(step));
+  for (const [index, step] of steps.entries()) {
+    test(`${name} Java setup ${index + 1} downloads a fresh signature-verified JDK`, () => {
+      const inputs = step.match(/^ {8}with:\r?\n((?: {10}[^\r\n]*(?:\r?\n|$))*)/m)?.[1];
+      assert.ok(inputs, 'Java setup must have its own with block');
+      for (const input of ['force-download', 'verify-signature']) {
+        assert.match(inputs, new RegExp(`^ {10}${input}: true[ \\t]*\\r?$`, 'm'), `${input} must be true in this Java setup's inputs`);
+      }
+      assert.match(inputs, /^ {10}cache-jdk: false[ \t]*\r?$/m, 'cache-jdk must be false in this Java setup\'s inputs');
+    });
+  }
+}
+
 test('release gates retain Expo doctor rather than suppressing compatibility checks', () => {
   for (const [name, source] of workflows.filter(([, text]) => text.includes('expo-doctor@'))) {
     assert.doesNotMatch(source, /expo-doctor@1\.20\.4/, name);
