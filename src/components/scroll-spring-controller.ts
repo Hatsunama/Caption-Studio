@@ -5,6 +5,10 @@ import { beginScrollSpringDrag, releaseScrollSpringDrag, resetScrollSpringAxis,
   updateScrollSpringDrag, type ScrollSpringAxisState } from '../lib/scroll-spring-policy';
 import { dispatchSpringScrollCommand } from './spring-scroll-gesture';
 
+// The UI worklet runtime supplies this monotonic clock. Native-only consumers
+// must not need Expo or DOM ambient types to describe that existing contract.
+declare const performance: { now(): number };
+
 export type ScrollSpringRuntimeState = {
   alive: boolean;
   epoch: number;
