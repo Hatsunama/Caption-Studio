@@ -66,6 +66,41 @@ test('owned cleanup rejects redirected junctions and wrong names without deletin
   assert.equal(fs.existsSync(target), false);
 });
 
+test('guardedPath diagnostics identify the rejected link component and preserve external files', async t => {
+  const dir = temp(t), external = temp(t);
+  const { guardedPath } = await api();
+  const source = path.join(external, 'source'), sentinel = path.join(external, 'sentinel');
+  const sourceBytes = Buffer.from('disposable source bytes\0\r\n');
+  const sentinelBytes = Buffer.from('external sentinel must survive\r\n');
+  fs.writeFileSync(source, sourceBytes); fs.writeFileSync(sentinel, sentinelBytes);
+  const alias = path.join(dir, 'alias'), output = path.join(alias, 'output');
+  fs.symlinkSync(external, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  try {
+    assert.ok(fs.lstatSync(alias).isSymbolicLink());
+    const errors = [];
+    for (const [candidate, options] of [[path.join(alias, 'source'), {}], [output, { missing: true }]]) {
+      assert.throws(() => guardedPath(candidate, options), error => {
+        assert.match(error.message, /symbolic|reparse/i);
+        errors.push({ candidate, error });
+        return true;
+      });
+    }
+    assert.deepEqual(fs.readFileSync(source), sourceBytes);
+    assert.deepEqual(fs.readFileSync(sentinel), sentinelBytes);
+    assert.equal(fs.existsSync(output), false);
+    assert.deepEqual(fs.readdirSync(external).sort(), ['sentinel', 'source']);
+    assert.ok(fs.lstatSync(alias).isSymbolicLink());
+    for (const { candidate, error } of errors) {
+      assert.ok(error.message.includes(alias),
+        `Expected rejected link component ${alias} in diagnostic: ${error.message}`);
+      assert.equal(error.message.includes(candidate), false, 'Diagnostic must identify the link, not the final filename');
+      assert.equal(error.message.includes(external), false, 'Diagnostic must identify the link, not its resolved target');
+    }
+  } finally {
+    fs.unlinkSync(alias);
+  }
+});
+
 test('actual keytool refuses blocked-only and empty stores before publishing a copy', async t => {
   const dir = temp(t), source = makeStore(dir);
   const { hardenCopy } = await api();

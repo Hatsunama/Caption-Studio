@@ -35,7 +35,10 @@ export function guardedPath(value, { missing = false, directory = false } = {}, 
       if (e.code === 'ENOENT' && missing && i === components.length - 1) return absolute;
       throw new Error('Required path is missing or inaccessible');
     }
-    requireThat(!st.isSymbolicLink(), 'Refusing symbolic link or reparse path');
+    if (st.isSymbolicLink()) {
+      // Public build-tool paths identify runner-image changes without following links.
+      throw new Error(`Refusing symbolic link or reparse path at ${cursor}`);
+    }
     if (i < components.length - 1 || directory) requireThat(st.isDirectory(), 'Expected directory');
     else requireThat(st.isFile() && st.nlink === 1, 'Expected regular, unshared file');
   }
