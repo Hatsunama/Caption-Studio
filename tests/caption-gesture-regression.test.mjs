@@ -36,6 +36,10 @@ function harness() {
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === 'react-native-reanimated') return { useSharedValue: (value) => react.useRef({ value }).current };
+      if (name === '@/components/spring-scroll-view') return {
+        SpringScrollView: 'ScrollView', SpringScrollGestureContext: { value: [] },
+      };
       if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PanResponder: { create: (handlers) => ({ panHandlers: handlers }) } };
       if (name === 'expo-image') return { Image: 'Image' };
       if (name === './timeline-native-gesture') return {

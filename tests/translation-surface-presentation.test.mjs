@@ -11,6 +11,7 @@ const compile = path => ts.transpileModule(readFileSync(new URL(path, import.met
 }).outputText;
 const code = compile('../src/components/editor/dual-caption-editor.tsx');
 const backgroundCode = compile('../src/components/refract-background.tsx');
+const modalCode = compile('../src/components/spring-scroll-modal.tsx');
 const themeCode = compile('../src/lib/ui-theme.ts');
 const draftsCode = compile('../src/lib/dual-caption-drafts.ts');
 const queueCode = compile('../src/components/editor/caption-save-recovery.ts');
@@ -92,9 +93,18 @@ function mount(overrides = {}, options = {}) {
     'react/jsx-runtime': runtime, 'react-native': native,
     expo: { requireNativeView(name) { assert.equal(name, 'CaptionRefract'); return 'CaptionRefract'; } },
   });
+  // Inspect the actual native Modal and its descendants, including Android's root.
+  const modal = evaluate(modalCode, {
+    'react/jsx-runtime': runtime, 'react-native': native,
+    'react-native-gesture-handler': { GestureHandlerRootView: 'GestureRoot' },
+  });
+  const springScroll = { SpringScrollView: native.ScrollView,
+    renderSpringScrollView: (props) => jsx(native.ScrollView, props) };
   const reveal = { focus() {}, blur() {}, onScroll() {}, onScrollBeginDrag() {}, onViewportLayout() {} };
   const editor = evaluate(code, {
     react, 'react/jsx-runtime': runtime, 'react-native': native,
+    '@/components/spring-scroll-view': springScroll,
+    '@/components/spring-scroll-modal': modal,
     'react-native-safe-area-context': { useSafeAreaInsets: () => options.insets ?? { top: 24, bottom: 20, left: 0, right: 0 } },
     '@/components/refract-background': background,
     '@/lib/caption-timeline-anchor': timelineHelpers,

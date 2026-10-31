@@ -35,6 +35,9 @@ function fixture({ disabled = false, axis, holdMilliseconds = 0 } = {}) {
   runInNewContext(compile(wrapperSource), { exports, require(name) {
     if (name === 'react') return hooks;
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+    if (name === '@/components/spring-scroll-view') return {
+      SpringScrollView: 'ScrollView', SpringScrollGestureContext: { value: [] },
+    };
     if (name === 'react-native') return { Platform: { OS: 'android' }, View: 'View', ScrollView: 'ScrollView' };
     if (name === 'react-native-gesture-handler') return { Gesture: { Pan: () => pan, Native: () => ({}) }, GestureDetector: 'GestureDetector', State: { FAILED: 1, CANCELLED: 3 } };
     if (name === 'react-native-reanimated') return { useSharedValue: (value) => ({ value }), setGestureState: (...args) => {
@@ -81,7 +84,7 @@ function fixture({ disabled = false, axis, holdMilliseconds = 0 } = {}) {
   const down = () => invoke('onTouchesDown', touch(), manager);
   const start = () => { down(); invoke('onTouchesMove', touch(0, 9), manager); invoke('onStart', event(0, 9)); };
   const end = (dy = 40, success = true) => { invoke('onEnd', event(0, dy), success); invoke('onFinalize'); };
-  return { config, calls, states, scrolls, geometry, track, invoke, event, touch, manager, flushRN, flushUI, down, start, end,
+  return { wrapper: exports, config, calls, states, scrolls, geometry, track, invoke, event, touch, manager, flushRN, flushUI, down, start, end,
     unmount: () => cleanups.forEach((cleanup) => cleanup()) };
 }
 
@@ -107,6 +110,19 @@ test('native label scroll is attached without changing its ref or scroll contrac
   assert.equal(labels.length, 1);
   assert.equal(labels[0].tagName.getText(ast), 'TimelineNativeScrollView');
   assert.ok(labels[0].attributes.properties.some((p) => p.name?.text === 'nativeGesture' && p.initializer.expression.getText(ast) === 'nativeScrollGestures[2]'));
+});
+
+test('native scroll wrapper delegates once to the spring adapter with refs and handlers intact', () => {
+  const f = fixture();
+  const props = { ref: { current: null }, nativeGesture: f.scrolls[2], springOffset: { value: 0 },
+    testID: 'timeline-track-labels', scrollEnabled: true, nestedScrollEnabled: true,
+    onScroll() {}, onLayout() {}, onContentSizeChange() {}, children: { type: 'View' } };
+  const tree = f.wrapper.TimelineNativeScrollView(props);
+  assert.equal(tree.type, 'ScrollView', 'the spring adapter owns the native scroll boundary');
+  assert.deepEqual(Object.keys(tree.props).sort(), Object.keys(props).sort());
+  for (const key of Object.keys(props)) assert.equal(tree.props[key], props[key], key);
+  f.unmount();
+  f.flushUI();
 });
 
 for (const reason of ['failure', 'touch-cancel', 'second-finger', 'invalid-release', 'finalize']) test(`${reason}: cancels once, releases ownership and recovers`, () => {
