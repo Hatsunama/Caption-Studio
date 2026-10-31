@@ -1,3 +1,4 @@
+import { SpringScrollView } from '@/components/spring-scroll-view';
 import { createContext, useContext, useEffect, useState, type ComponentPropsWithRef } from 'react';
 import { Platform, ScrollView, View, type PanResponderInstance, type ViewProps } from 'react-native';
 import { Gesture, GestureDetector, State } from 'react-native-gesture-handler';
@@ -23,11 +24,11 @@ export function createTimelineNativeScrollGestures(): NativeScrolls {
   return Platform.OS === 'android' ? [Gesture.Native(), Gesture.Native(), Gesture.Native()] : [];
 }
 
-export function TimelineNativeScrollView({ nativeGesture, ...props }: ComponentPropsWithRef<typeof ScrollView> & {
+export function TimelineNativeScrollView(props: ComponentPropsWithRef<typeof ScrollView> & {
   nativeGesture?: ReturnType<typeof Gesture.Native>;
+  springOffset?: SharedValue<number>;
 }) {
-  const view = <ScrollView {...props} />;
-  return nativeGesture ? <GestureDetector gesture={nativeGesture}>{view}</GestureDetector> : view;
+  return <SpringScrollView {...props} />;
 }
 
 export function TimelineNativeGestureView({ panHandlers, nativeCallbacks, nativeDisabled, ...props }: ViewProps & {

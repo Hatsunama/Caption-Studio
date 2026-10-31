@@ -21,13 +21,13 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  Modal,
   Pressable,
-  ScrollView,
   Text,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { SpringScrollModal as Modal } from '@/components/spring-scroll-modal';
+import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 
 import { AnimationBrowser } from '@/components/editor/animation-browser';
 import { setTimelineTrackOrder } from '@/lib/timeline-tracks';

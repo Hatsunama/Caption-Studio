@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
+import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fontChoicePatch, type FontChoice, type FontColors } from '@/lib/font-style-choice';
 import { chrome } from '@/lib/ui-theme';

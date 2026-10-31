@@ -120,6 +120,8 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
       if (name === '@/components/refract-background') return {
         RefractBackground: ({ active, ...props }) => jsx('View', { ...props, pointerEvents: 'none' }),
       };
+      if (name === '@/components/spring-scroll-modal') return { SpringScrollModal: 'Modal' };
+      if (name === '@/components/spring-scroll-view') return { SpringScrollView: 'ScrollView', renderSpringScrollView: props => ({ type: 'ScrollView', props }) };
       if (name === 'react-native') return {
         ...Object.fromEntries(['ActivityIndicator', 'FlatList', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View', 'KeyboardAvoidingView'].map((type) => [type, type])),
         useWindowDimensions: () => options.window ?? { width: 390, height: 844 },
@@ -334,6 +336,8 @@ export function mountFont(name, exportName, props, options = {}) {
     require: (id) => {
       if (id === 'react') return react;
       if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, options.bottomInsetCovered) }), jsxs: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, options.bottomInsetCovered) }) };
+      if (id === '@/components/spring-scroll-modal') return { SpringScrollModal: 'Modal' };
+      if (id === '@/components/spring-scroll-view') return { SpringScrollView: 'ScrollView', renderSpringScrollView: props => ({ type: 'ScrollView', props }) };
       if (id === 'react-native') return native;
       if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
 if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };

@@ -109,6 +109,7 @@ for (const platform of ['android', 'ios', 'web']) {
       if (name === 'react') return { createContext: (value) => ({ value }), useContext: (context) => context.value,
         useState: (initialize) => [initialize()], useEffect() {} };
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === '@/components/spring-scroll-view') return { SpringScrollView: 'SpringScrollView' };
       if (name === 'react-native') return { Platform: { OS: platform }, View: 'View', ScrollView: 'ScrollView' };
       if (name === 'react-native-gesture-handler') return { Gesture: { Native: () => ({ native: true }) }, GestureDetector: 'GestureDetector' };
       if (name === 'react-native-reanimated') return { useSharedValue: (value) => ({ value }), setGestureState() {} };
@@ -121,15 +122,17 @@ for (const platform of ['android', 'ios', 'web']) {
     const style = { flex: 1 }, child = { fixture: true };
     const tree = exports.TimelineNativeScrollView({ ref, style, onScroll, scrollEnabled: true,
       accessibilityLabel: 'Timeline', nativeGesture: scrolls[0], children: child });
-    const view = platform === 'android' ? tree.props.children : tree;
-    assert.equal(view.type, 'ScrollView');
+    // Native recognizer ownership now belongs to the shared adapter; its
+    // actual RN forwarding and cancellation are tested in spring-scroll-view.
+    const view = tree;
+    assert.equal(view.type, 'SpringScrollView');
     assert.equal(view.props.ref, ref);
     assert.equal(view.props.style, style);
     assert.equal(view.props.onScroll, onScroll);
     assert.equal(view.props.scrollEnabled, true);
     assert.equal(view.props.accessibilityLabel, 'Timeline');
     assert.equal(view.props.children, child);
-    assert.equal('nativeGesture' in view.props, false);
-    assert.equal(tree.type, platform === 'android' ? 'GestureDetector' : 'ScrollView');
+    assert.equal(view.props.nativeGesture, scrolls[0]);
+    assert.equal(tree.type, 'SpringScrollView');
   });
 }

@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { SpringScrollModal as Modal } from '@/components/spring-scroll-modal';
+import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chrome } from '@/lib/ui-theme';

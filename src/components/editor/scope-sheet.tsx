@@ -1,4 +1,5 @@
-import { Modal, Pressable, Text } from 'react-native';
+import { Pressable, Text } from 'react-native';
+import { SpringScrollModal as Modal } from '@/components/spring-scroll-modal';
 
 import { AdaptiveDialog } from './adaptive-dialog';
 

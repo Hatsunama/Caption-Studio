@@ -1,5 +1,7 @@
+import { useSharedValue } from 'react-native-reanimated';
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
+import { PanResponder, Pressable, Text, View } from 'react-native';
+import { SpringScrollView as ScrollView, SpringScrollGestureContext } from '@/components/spring-scroll-view';
 import { Image } from 'expo-image';
 import { createTimelineNativeScrollGestures, TimelineNativeGestureContext, TimelineNativeGeometryContext, TimelineNativeGestureView, TimelineNativeScrollView } from './timeline-native-gesture';
 
@@ -94,6 +96,7 @@ export function LayerTimeline(props: {
   const verticalRef = useRef<ScrollView>(null);
   const labelScrollRef = useRef<ScrollView>(null);
   const verticalOffsetRef = useRef(0);
+  const verticalSpringOffset = useSharedValue(0);
   const [trackDrag, setTrackDrag] = useState<{ id: string; order: string[] }>();
   const trackDragOrigin = useRef<{ id: string; order: string[]; preview: string[]; top: number; scroll: number; heights: Map<string, number>; dy: number; pageY?: number } | undefined>(undefined);
   const trackViewport = useRef<{ top: number; height: number } | undefined>(undefined);
@@ -128,6 +131,9 @@ export function LayerTimeline(props: {
   const [pixelsPerSecond, setPixelsPerSecond] = useState(() => Math.max(16, minimumScale));
   const [gestureGeometry] = useState(() => createTimelineGestureGeometry({ viewportWidth, scale: pixelsPerSecond }));
   const [nativeScrollGestures] = useState(createTimelineNativeScrollGestures);
+  const ancestorScrollGestures = useContext(SpringScrollGestureContext);
+  const itemScrollGestures = useMemo(() => [...nativeScrollGestures, ...ancestorScrollGestures],
+    [nativeScrollGestures, ancestorScrollGestures]);
   const effectiveScale = clampTimelineScale(pixelsPerSecond, minimumScale);
   const viewportContentWidth = Math.max(1, viewportWidth - LABEL_WIDTH);
   const baseTrackWidth = timelineWidth(duration, effectiveScale, viewportContentWidth);
@@ -610,7 +616,7 @@ export function LayerTimeline(props: {
     return () => clearInterval(timer);
   }, [trackDrag?.id, moveTrack, syncVerticalScroll]);
   return (
-    <TimelineNativeGestureContext.Provider value={nativeScrollGestures}>
+    <TimelineNativeGestureContext.Provider value={itemScrollGestures}>
     <TimelineGestureGeometryContext.Provider value={gestureGeometry}>
     <View
       onLayout={(event) => {
@@ -679,13 +685,13 @@ export function LayerTimeline(props: {
         onMomentumScrollEnd={finishScrub}>
         <View style={{ width: LABEL_WIDTH + trackWidth + trailingPadding, height: '100%', marginLeft: leadingPadding }}>
           <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
-          <TimelineNativeScrollView nativeGesture={nativeScrollGestures[1]} key={props.projectId} ref={verticalRef} style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}
+          <TimelineNativeScrollView nativeGesture={nativeScrollGestures[1]} springOffset={verticalSpringOffset} key={props.projectId} ref={verticalRef} style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}
             scrollEventThrottle={16} onScroll={(event) => syncVerticalScroll(event.nativeEvent.contentOffset.y, 'items')}>
             {shownTracks.map((id) => <Fragment key={id}>{rows.get(id)}</Fragment>)}
           </TimelineNativeScrollView>
         </View>
       </TimelineNativeScrollView>
-      <TimelineNativeScrollView nativeGesture={nativeScrollGestures[2]} ref={labelScrollRef} testID="timeline-track-labels" nestedScrollEnabled scrollEnabled={!gestureLock}
+      <TimelineNativeScrollView nativeGesture={nativeScrollGestures[2]} springOffset={verticalSpringOffset} ref={labelScrollRef} testID="timeline-track-labels" nestedScrollEnabled scrollEnabled={!gestureLock}
         scrollEventThrottle={16} onScroll={(event) => syncVerticalScroll(event.nativeEvent.contentOffset.y, 'labels')}
         contentContainerStyle={{ paddingVertical: 1 }} style={{ position: 'absolute', left: 0, width: LABEL_WIDTH, top: 36 + RULER_HEIGHT, bottom: 0, backgroundColor: '#1C1C1E' }}>
         {shownTracks.map((id) => {

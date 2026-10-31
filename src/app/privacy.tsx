@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, Text, View } from 'react-native';
+import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 
 import { chrome } from '@/lib/ui-theme';
 import {

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
-import { ScrollView, type StyleProp, type ViewStyle } from 'react-native';
+import { type StyleProp, type ViewStyle } from 'react-native';
+import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 
 const offsets = new Map<string, number>();
 const PersistedScrollScope = createContext('application');
