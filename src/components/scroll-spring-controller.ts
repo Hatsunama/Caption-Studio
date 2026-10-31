@@ -4,7 +4,6 @@ import { cancelAnimation, setNativeProps, withSpring, type AnimatedRef, type Sha
 import { beginScrollSpringDrag, releaseScrollSpringDrag, resetScrollSpringAxis,
   updateScrollSpringDrag, type ScrollSpringAxisState } from '../lib/scroll-spring-policy';
 import { dispatchSpringScrollCommand } from './spring-scroll-gesture';
-import { SCROLL_SPRING_PROBE_ENABLED, traceScrollSpringProbe } from './scroll-spring-probe';
 
 export type ScrollSpringRuntimeState = {
   alive: boolean;
@@ -65,21 +64,10 @@ function applyNativeCallbacks(target: NativeHandlers, source: NativeHandlers) {
 export function createScrollSpringController(options: ScrollSpringControllerOptions) {
   const { state, owner, offset, id, nativeOffset, animatedRef, contentRef, presentationVersion, gesture } = options;
 
-  function trace(event: string, s: ScrollSpringRuntimeState, extra = 0) {
-    'worklet';
-    if (!SCROLL_SPRING_PROBE_ENABLED) return;
-    traceScrollSpringProbe(event, id, { epoch: s.epoch, alive: s.alive, ready: s.contentReady,
-      enabled: s.enabled, canOwn: s.canOwn, nativeActive: s.nativeActive, active: s.active,
-      pending: s.pending, released: s.released, owner: owner.value, offset: offset.value,
-      viewport: s.viewport, content: s.content, touches: s.touches, motionReady: s.motionReady,
-      reduced: s.reduced, foreground: s.foreground, extra });
-  }
-
   // Private helpers receive the state owned by the current modify boundary.
   // They never reenter state.modify, including synchronous animation completion.
   function resetOwned(s: ScrollSpringRuntimeState) {
     'worklet';
-    trace('reset', s);
     s.nativeActive = false; s.active = false; s.owned = false; s.pending = false; s.fling = false;
     resetScrollSpringAxis(s.axis);
     if (owner.value === id) {
@@ -115,7 +103,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
 
   function spring(s: ScrollSpringRuntimeState, velocity: number, fromMomentum = false) {
     'worklet';
-    trace('spring-before', s, velocity);
     if (!allowed(s) || owner.value !== id) return;
     if (offset.value === 0 && !fromMomentum) return;
     const cap = Math.min(96, s.viewport / 4);
@@ -124,14 +111,12 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     const boundedVelocity = Number.isFinite(velocity) ? Math.max(-maxVelocity, Math.min(maxVelocity, velocity)) : 0;
     const generation = s.epoch;
     s.fling = false;
-    trace('spring-start', s, boundedVelocity);
     // Force initialization even at zero: valueSetter otherwise completes a
     // same-target spring before onStart can consume its momentum velocity.
     offset.modify(() => {
       'worklet';
       return withSpring(0, { mass: 1, stiffness: 200, damping: 24, velocity: boundedVelocity }, finished => {
         'worklet';
-        trace('spring-complete', state.value, finished ? 1 : 0);
         // Completion may run inside this state transaction. Read current state
         // without modifying it; owner is authoritative even if owned stays true
         // until the next touch/reset clears that local bookkeeping flag.
@@ -161,7 +146,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     original.onTouchesDown?.(event, manager);
     state.modify(s => {
       'worklet';
-      trace('down', s, event.numberOfTouches);
       if (event.numberOfTouches !== 1) { s.blocked = true; resetOwned(s); return s; }
       const touch = event.allTouches[0];
       if (!touch) return s;
@@ -180,7 +164,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     original.onStart?.(event);
     state.modify(s => {
       'worklet';
-      trace('start', s);
       s.nativeActive = true; acquire(s);
       return s;
     });
@@ -201,7 +184,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
         nativeActive: s.nativeActive, scrollEnabled: s.enabled, touchCount: event.numberOfTouches,
         dominantAxis: s.horizontal ? dx >= dy : dy >= dx, reducedMotion: s.reduced,
       });
-      trace('move', s);
       return s;
     });
   }).onTouchesUp((event, manager) => {
@@ -209,7 +191,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     original.onTouchesUp?.(event, manager);
     state.modify(s => {
       'worklet';
-      trace('up', s, event.numberOfTouches);
       // A successful zero-touch Up must preserve release position and velocity.
       s.touches = event.numberOfTouches;
       return s;
@@ -219,7 +200,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     original.onTouchesCancelled?.(event, manager);
     state.modify(s => {
       'worklet';
-      trace('cancel', s);
       s.nativeActive = false;
       if (s.active || s.pending) {
         if (owner.value === id && offset.value !== 0 && allowed(s)) {
@@ -234,7 +214,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     original.onFinalize?.(event, success);
     state.modify(s => {
       'worklet';
-      trace('finalize', s, success ? 1 : 0);
       s.nativeActive = false;
       if (s.released) return s;
       const pending = s.pending;
@@ -277,7 +256,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
       'worklet';
       if (generation < s.epoch) return s;
       s.epoch = generation; s.alive = true; s.safe = safe;
-      trace('activate', s);
       presentationVersion.value++;
       return s;
     });
@@ -288,7 +266,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     state.modify(s => {
       'worklet';
       if (generation < s.epoch) return s;
-      trace('deactivate', s);
       if (s.contentReady) setNativeProps(contentRef, { transform: [] });
       s.contentReady = false;
       s.epoch = generation; s.alive = false; s.safe = false; resetOwned(s);
@@ -303,7 +280,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
       'worklet';
       if (s.epoch !== generation || !s.alive) return s;
       s.contentReady = true; presentationVersion.value++;
-      trace('content-ready', s);
       return s;
     });
   }
@@ -314,7 +290,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
       'worklet';
       const axisChanged = s.horizontal !== horizontal;
       s.enabled = enabled; s.canOwn = canOwn; s.horizontal = horizontal;
-      trace('options', s);
       if (!enabled || !canOwn || axisChanged) resetOwned(s);
       presentationVersion.value++;
       return s;
@@ -327,7 +302,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
       'worklet';
       if (!s.alive || s.epoch !== generation) return s;
       s.motionReady = true; s.reduced = value;
-      trace('reduced', s);
       if (value) resetOwned(s);
       presentationVersion.value++;
       return s;
@@ -340,7 +314,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
       'worklet';
       if (!s.alive || s.epoch !== generation) return s;
       s.foreground = value;
-      trace('foreground', s);
       if (!value) resetOwned(s);
       presentationVersion.value++;
       return s;
@@ -352,7 +325,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     state.modify(s => {
       'worklet';
       if ((viewport != null && viewport !== s.viewport) || (content != null && content !== s.content)) {
-        trace('geometry', s);
         resetOwned(s);
         if (viewport != null) s.viewport = viewport;
         if (content != null) s.content = content;
@@ -373,7 +345,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     state.modify(s => {
       'worklet';
       if (!s.owned || !allowed(s) || owner.value !== id) return s;
-      trace('native-offset', s, value);
       const now = performance.now();
       const dt = now - s.lastOffsetAt;
       if (s.fling && !s.active) {
@@ -396,7 +367,6 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     'worklet';
     const s = state.value;
     const presented = offset.value;
-    trace('present', s);
     if (!s.alive || !s.contentReady) return;
     const value = s.motionReady && !s.reduced && s.foreground && s.enabled ? presented : 0;
     // Reanimated forwards flattened props, unlike RN instance.setNativeProps.

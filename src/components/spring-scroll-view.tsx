@@ -8,7 +8,6 @@ import { scheduleOnUI } from 'react-native-worklets';
 import { createScrollSpringAxisState } from '../lib/scroll-spring-policy';
 import { interceptSpringScrollCommands } from './spring-scroll-gesture';
 import { createScrollSpringController, type ScrollSpringRuntimeState } from './scroll-spring-controller';
-import { SCROLL_SPRING_PROBE_ENABLED, traceScrollSpringProbe } from './scroll-spring-probe';
 
 export const SpringScrollGestureContext = createContext<NativeGesture[]>([]);
 export type SpringScrollViewProps = ScrollViewProps & {
@@ -95,10 +94,8 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     if (!content) return;
     life.content = content;
     contentRef(content);
-    if (SCROLL_SPRING_PROBE_ENABLED) traceScrollSpringProbe('bind', id,
-      { epoch: life.generation, contentTag: contentRef.getTag?.() ?? null });
     scheduleOnUI(controller.contentReady, life.generation);
-  }, [lifecycle, contentRef, controller, id]);
+  }, [lifecycle, contentRef, controller]);
   const commitRef = useCallback((node: NativeScrollView | null) => {
     const life = lifecycle.current;
     life.restore?.(); life.restore = undefined;
@@ -106,8 +103,6 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     else if (life.node && typeof publicRef === 'function') publicRef(null);
     life.node = node;
     const generation = ++life.generation;
-    if (SCROLL_SPRING_PROBE_ENABLED) traceScrollSpringProbe('public-ref', id,
-      { epoch: generation, extra: node ? 1 : 0 });
     if (node) {
       animatedRef(node);
       life.restore = interceptSpringScrollCommands(node, animatedRef, () => lifecycle.current.generation, controller.command);
@@ -122,7 +117,7 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
       life.content = null;
       if (publicRef && typeof publicRef !== 'function') publicRef.current = null;
     }
-  }, [lifecycle, publicRef, animatedRef, controller, bindContent, id]);
+  }, [lifecycle, publicRef, animatedRef, controller, bindContent]);
   useLayoutEffect(() => {
     const life = lifecycle.current;
     if (life.node && !life.restore) life.restore = interceptSpringScrollCommands(life.node, animatedRef, () => lifecycle.current.generation, controller.command);
@@ -150,12 +145,10 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
       if (live && revision === queryRevision) update(value);
     }, () => { if (live && revision === queryRevision) update(true); });
     const app = AppState.addEventListener('change', value => {
-      if (SCROLL_SPRING_PROBE_ENABLED) traceScrollSpringProbe('app-state', id,
-        { epoch: lifecycle.current.generation, foreground: value === 'active' });
       if (live) scheduleOnUI(controller.setForeground, lifecycle.current.generation, value === 'active');
     });
     return () => { live = false; revision++; listener.remove(); app.remove(); };
-  }, [controller, lifecycle, id]);
+  }, [controller, lifecycle]);
   useAnimatedReaction(() => `${offset.value}:${presentationVersion.value}`, controller.present,
     [controller, offset, presentationVersion]);
 
