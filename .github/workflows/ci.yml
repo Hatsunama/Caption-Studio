@@ -42,11 +42,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '21.0.13+9'
+          force-download: true
+          verify-signature: true
+          cache-jdk: false
           check-latest: true
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '17.0.21+9'
+          force-download: true
+          verify-signature: true
+          cache-jdk: false
           check-latest: true
           cache: gradle
       - name: Harden and verify Java trust stores

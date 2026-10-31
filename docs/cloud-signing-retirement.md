@@ -103,3 +103,77 @@ Changed files (17):
 - `docs/cloud-signing-retirement.md` (new)
 - `docs/local-signing-recovery.md`
 - `docs/play-aab-release-gate.md`
+
+## Runner JDK cache follow-up (2026-10-30)
+
+Unsigned run 41154200235 stopped before compilation at the Java truststore guard.
+The diagnostic run 41154944241 identified the rejected component as
+`/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.21-9/x64`; the setup log showed
+that Java 17 had been reused from the runner tool cache. The strict link rejection
+was correct, and the build-tool error now identifies its offending component.
+
+All 14 Java setup steps across the six active Java workflows now request the same
+pinned JDK 17/21 archives with `force-download: true` and
+`verify-signature: true`. JDK archive caching is explicitly disabled with
+`cache-jdk: false`; existing Gradle dependency caches remain enabled where already
+configured. The action replaces the cache entry from the downloaded archive. We
+keep the existing containment, no-link, certificate filtering, backup/rollback and
+Java/Gradle override guards intact instead of accepting the linked runtime.
+
+These options were checked against the exact pinned action's
+[action inputs](https://github.com/actions/setup-java/blob/b843ebf9b913146b38da2eaa7aeddf76074ae1ad/action.yml),
+[installer](https://github.com/actions/setup-java/blob/b843ebf9b913146b38da2eaa7aeddf76074ae1ad/src/distributions/base-installer.ts)
+and [cache placement](https://github.com/actions/setup-java/blob/b843ebf9b913146b38da2eaa7aeddf76074ae1ad/src/util.ts).
+Fresh vendor downloads add network work; no performance improvement is claimed.
+Hosted execution must still prove that the fresh runtimes pass the unchanged
+truststore guards, followed by the full required checks. The complete unsigned
+build/local original-key signing test remains an acceptance requirement after the
+repair reaches trusted main. Published 1.4.135 artifacts remain unchanged.
+
+Hosted run 41155669060 passed the truststore guard with these inputs, and its
+separate native-audio run 41155668990 passed. The next gate exposed a newly
+reviewed URI-decoder advisory in the existing lock, rather than another JDK error.
+
+## URI-decoder gate follow-up (2026-10-30)
+
+The production audit reported
+[GHSA-qr28-fpjm-wq7f](https://github.com/advisories/GHSA-qr28-fpjm-wq7f)
+(published October 23, updated October 29): `decode-uri-component` through 0.5.0
+repeatedly scans malformed input for distinct encoded runs. The upstream 0.5.1
+patch decodes runs in one pass without rescanning newly decoded output.
+
+Only the decoder lock entry's version, official registry URL and SHA-512 integrity
+change. The existing `query-string` 9.5.1 consumer permits this patch through
+`^0.5.0`; its callers are `expo-router` 57.0.29 and React Navigation core 7.21.13.
+Their versions, APIs and manifest requirements remain unchanged, as do Expo 57 and
+the current model. The patch retains the same MIT license, declarations, Node
+engine requirement and absence of runtime dependencies. Its registry tarball was
+integrity-checked and its source inspected before execution.
+
+Before the lock edit, the new behavioral tests failed on the actual 0.5.0 package
+and actual `query-string` consumer: a bounded 1,795-character malformed input
+caused 300,425 replacement-scan characters, and newly exposed escapes were decoded
+again. With 0.5.1, the same input scans 1,795 characters; the test uses a fixed
+8-times-input bound instead of a timing threshold. The malformed escape repair
+is intentionally observable: `%2541x%41x%zz` becomes `%41xAx%zz`, with no recursive
+decoding. Valid Unicode, emoji, CJK, combining marks, literal punctuation, query
+arrays, duplicate values and parse/stringify round trips retain their results.
+No application UI, persisted schema, model or published artifact is edited.
+
+Windows targeted checks passed 35/35 after the lock change. The tests exercise
+the installed consumer by default; local runs used separately integrity-checked
+copies of the exact locked packages because the full local dependency tree is
+absent. Hosted clean `npm ci`, audit, full tests, typecheck, lint and native checks
+remain mandatory. The lock guard retains its original digest, normalizing only
+the three separately asserted decoder fields so unrelated graph changes still fail.
+
+The audit also reported lower-severity advisories in `deepmerge`, `glob` and
+`minimatch`. They are not silently waived or reported fixed: the reviewed
+[deepmerge advisory](https://github.com/advisories/GHSA-gcqx-w48m-w2h4) has no
+published fix; the reviewed
+[glob](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4) and
+[minimatch](https://github.com/advisories/GHSA-g3hv-75wg-m249) fixes require different
+major versions from the locked graph. Broad overrides or the audit tool's suggested
+Expo 51 downgrade are outside this build-verification repair. The existing audit
+threshold remains unchanged. A future release still requires its own exact-artifact
+device verification; these tooling checks do not establish store readiness.
