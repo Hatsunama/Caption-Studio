@@ -1,9 +1,10 @@
 import { useSharedValue } from 'react-native-reanimated';
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { type ScrollView as NativeScrollView, PanResponder, Pressable, Text, View } from 'react-native';
+import { type ScrollView as NativeScrollView, PanResponder, PixelRatio, Pressable, Text, View } from 'react-native';
 import { SpringScrollView as ScrollView, SpringScrollGestureContext } from '@/components/spring-scroll-view';
 import { Image } from 'expo-image';
 import { createTimelineNativeScrollGestures, TimelineNativeGestureContext, TimelineNativeGeometryContext, TimelineNativeGestureView, TimelineNativeScrollView } from './timeline-native-gesture';
+import { createTimelineLinkedScroll, timelineScrollMetadata } from './timeline-linked-scroll';
 
 import { chrome } from '@/lib/ui-theme';
 import { orderedTimelineTrackIds, visualTimelineGroups, visualTimelineTrackId, moveTimelineTrack } from '@/lib/timeline-tracks';
@@ -230,32 +231,33 @@ export function LayerTimeline(props: {
     : (() => { const layer = displayLayers.find((item) => item.id === props.selectedLayerId); return layer ? visualTimelineTrackId(layer) : undefined; })();
   const selectedRowTop = shownTracks.slice(0, Math.max(0, shownTracks.indexOf(selectedTrackId ?? '')))
     .reduce((top, id) => top + rowHeight(id), 0);
-  const syncVerticalScroll = useCallback((y: number, source: 'items' | 'labels' | 'reveal') => {
-    const next = Math.max(0, y);
-    if (source !== 'reveal' && Math.abs(next - verticalOffsetRef.current) < 0.5) return;
-    verticalOffsetRef.current = next;
-    if (source !== 'items') verticalRef.current?.scrollTo({ y: next, animated: false });
-    if (source !== 'labels') labelScrollRef.current?.scrollTo({ y: next, animated: false });
-  }, []);
+  const linkedScroll = useMemo(() => createTimelineLinkedScroll({
+    round: (y) => PixelRatio.roundToNearestPixel(y),
+    offset: (y) => { verticalOffsetRef.current = y; },
+    scroll: (side, y) => {
+      const node = (side === 'items' ? verticalRef : labelScrollRef).current;
+      if (!node) return false;
+      node.scrollTo({ y, animated: false });
+      return true;
+    },
+  }), []);
+  const syncVerticalScroll = useCallback((y: number, source: 'items' | 'labels' | 'reveal',
+    geometry?: { viewport?: number; content?: number; timestamp?: number; target?: number }) => {
+    linkedScroll.sync(y, source, geometry);
+  }, [linkedScroll]);
   useEffect(() => {
-    verticalOffsetRef.current = 0;
-    verticalRef.current?.scrollTo({ y: 0, animated: false });
-    labelScrollRef.current?.scrollTo({ y: 0, animated: false });
-  }, [props.projectId, props.revealRequest]);
+    syncVerticalScroll(0, 'reveal');
+  }, [props.projectId, props.revealRequest, syncVerticalScroll]);
   const revealCue = useCallback((_startMs: number) => {
-    verticalOffsetRef.current = selectedRowTop;
-    verticalRef.current?.scrollTo({ y: selectedRowTop, animated: false });
-    labelScrollRef.current?.scrollTo({ y: selectedRowTop, animated: false });
-  }, [selectedRowTop]);
+    syncVerticalScroll(selectedRowTop, 'reveal');
+  }, [selectedRowTop, syncVerticalScroll]);
   const lastRevealRef = useRef<{ id: string; trackWidth: number; viewportWidth: number } | undefined>(undefined);
   const hasSelectedCue = selectedCue !== undefined;
   useEffect(() => {
     if (hasSelectedCue) {
-      verticalOffsetRef.current = selectedRowTop;
-      verticalRef.current?.scrollTo({ y: selectedRowTop, animated: false });
-      labelScrollRef.current?.scrollTo({ y: selectedRowTop, animated: false });
+      syncVerticalScroll(selectedRowTop, 'reveal');
     }
-  }, [hasSelectedCue, selectedRowTop]);
+  }, [hasSelectedCue, selectedRowTop, syncVerticalScroll]);
 
   useEffect(() => () => {
     if (zoomTimer.current) clearTimeout(zoomTimer.current);
@@ -686,13 +688,33 @@ export function LayerTimeline(props: {
         <View style={{ width: LABEL_WIDTH + trackWidth + trailingPadding, height: '100%', marginLeft: leadingPadding }}>
           <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
           <TimelineNativeScrollView nativeGesture={nativeScrollGestures[1]} springOffset={verticalSpringOffset} key={props.projectId} ref={verticalRef} style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}
-            scrollEventThrottle={16} onScroll={(event) => syncVerticalScroll(event.nativeEvent.contentOffset.y, 'items')}>
+            onLayout={(event) => linkedScroll.layout('items', { viewport: event.nativeEvent.layout.height, target: timelineScrollMetadata(event.nativeEvent).target })}
+            onContentSizeChange={(_width, height) => linkedScroll.layout('items', { content: height })}
+            onScrollBeginDrag={(event) => {
+              const { timestamp, target } = timelineScrollMetadata(event.nativeEvent);
+              linkedScroll.begin('items', event.nativeEvent.contentOffset.y, timestamp, target);
+            }}
+            onScrollEndDrag={(event) => linkedScroll.end('items', timelineScrollMetadata(event.nativeEvent).target)} onTouchCancel={() => linkedScroll.end('items')}
+            scrollEventThrottle={16} onScroll={(event) => syncVerticalScroll(event.nativeEvent.contentOffset.y, 'items', {
+              viewport: event.nativeEvent.layoutMeasurement?.height, content: event.nativeEvent.contentSize?.height,
+              ...timelineScrollMetadata(event.nativeEvent),
+            })}>
             {shownTracks.map((id) => <Fragment key={id}>{rows.get(id)}</Fragment>)}
           </TimelineNativeScrollView>
         </View>
       </TimelineNativeScrollView>
       <TimelineNativeScrollView nativeGesture={nativeScrollGestures[2]} springOffset={verticalSpringOffset} ref={labelScrollRef} testID="timeline-track-labels" nestedScrollEnabled scrollEnabled={!gestureLock}
-        scrollEventThrottle={16} onScroll={(event) => syncVerticalScroll(event.nativeEvent.contentOffset.y, 'labels')}
+        onLayout={(event) => linkedScroll.layout('labels', { viewport: event.nativeEvent.layout.height, target: timelineScrollMetadata(event.nativeEvent).target })}
+        onContentSizeChange={(_width, height) => linkedScroll.layout('labels', { content: height })}
+        onScrollBeginDrag={(event) => {
+          const { timestamp, target } = timelineScrollMetadata(event.nativeEvent);
+          linkedScroll.begin('labels', event.nativeEvent.contentOffset.y, timestamp, target);
+        }}
+        onScrollEndDrag={(event) => linkedScroll.end('labels', timelineScrollMetadata(event.nativeEvent).target)} onTouchCancel={() => linkedScroll.end('labels')}
+        scrollEventThrottle={16} onScroll={(event) => syncVerticalScroll(event.nativeEvent.contentOffset.y, 'labels', {
+          viewport: event.nativeEvent.layoutMeasurement?.height, content: event.nativeEvent.contentSize?.height,
+          ...timelineScrollMetadata(event.nativeEvent),
+        })}
         contentContainerStyle={{ paddingVertical: 1 }} style={{ position: 'absolute', left: 0, width: LABEL_WIDTH, top: 36 + RULER_HEIGHT, bottom: 0, backgroundColor: '#1C1C1E' }}>
         {shownTracks.map((id) => {
           const row = rows.get(id);

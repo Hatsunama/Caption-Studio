@@ -42,6 +42,7 @@ function harness() {
       };
       if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PanResponder: { create: (handlers) => ({ panHandlers: handlers }) } };
       if (name === 'expo-image') return { Image: 'Image' };
+      if (name === './timeline-linked-scroll') return requireLocal('../src/components/editor/timeline-linked-scroll.ts');
       if (name === './timeline-native-gesture') return {
         createTimelineNativeScrollGestures: () => [], TimelineNativeGestureContext: { Provider: 'Provider' },
         TimelineNativeGeometryContext: react.createContext(undefined),
