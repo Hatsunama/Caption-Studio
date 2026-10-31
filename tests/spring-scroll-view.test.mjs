@@ -12,6 +12,7 @@ const compile = (url) => ts.transpileModule(readFileSync(url, 'utf8'), {
 }).outputText;
 const componentCode = compile(new URL('spring-scroll-view.tsx', root));
 const gestureCode = compile(new URL('spring-scroll-gesture.ts', root));
+const controllerCode = compile(new URL('scroll-spring-controller.ts', root));
 const policyCode = compile(new URL('../lib/scroll-spring-policy.ts', root));
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -31,7 +32,11 @@ function harness(initial = {}, platform = 'android') {
   }
   const mutable = (value) => {
     let current = value;
-    return { get value() { return current; }, set value(next) {
+    return { modify(updater) {
+      const next = updater ? updater(current) : current;
+      assert.notEqual(next, undefined, 'UI state modify must retain its state');
+      current = next; react();
+    }, get value() { return current; }, set value(next) {
       if (next?.animation) { calls.springs.push(next); return; }
       current = next; react();
     } };
@@ -79,7 +84,7 @@ function harness(initial = {}, platform = 'android') {
     require(id){if(id==='react')return hooks;if(id==='react/jsx-runtime')return {jsx,jsxs:jsx};if(id==='react-native')return native;
       if(id==='react-native-reanimated')return reanimated;if(id==='react-native-worklets')return worklets;
       if(id==='react-native-gesture-handler')return {Gesture:{Native:nativeGesture,Pan:()=>{calls.pan++;throw Error('Pan prohibited');}},GestureDetector:'GestureDetector'};
-      if(id.includes('scroll-spring-policy'))return modules.policy;if(id==='./spring-scroll-gesture')return modules.gesture;
+      if(id.includes('scroll-spring-policy'))return modules.policy;if(id==='./spring-scroll-gesture')return modules.gesture;if(id==='./scroll-spring-controller')return modules.controller;
       throw Error(`Unexpected dependency ${id}`);
     }});return exports; }
   function flush(){while(jobs.length)jobs.shift()();}
@@ -108,7 +113,7 @@ function harness(initial = {}, platform = 'android') {
     end(success=true){h.touch('onTouchesUp',0,0,0);h.gesture().handlers.onFinalize?.({},success);},
     motion(offset,time){now=time;h.offset.value=offset;},
   };
-  modules.policy=load(policyCode);modules.gesture=load(gestureCode);modules.component=load(componentCode);
+  modules.policy=load(policyCode);modules.gesture=load(gestureCode);modules.controller=load(controllerCode);modules.component=load(componentCode);
   h.exports=modules.component;h.render();return h;
 }
 function makeNode(){const inner={updates:{transform:[]}};return {inner,scrollTo(){},scrollToEnd(){},getInnerViewRef(){return inner;},getNativeScrollRef(){return this;},measure(){},flashScrollIndicators(){}};}
@@ -439,4 +444,13 @@ test('queued saved-method commands cannot cross replay, same-host reattach, or r
     h.flush();stale();assert.equal(h.calls.commands.length,0);
     h.defer(false);h.node.scrollTo({y:99});assert.equal(h.calls.commands.length,1);assert.equal(h.calls.commands[0].node,h.node);
   }
+});
+
+test('changing scroll axis retains the Native identity and moves presentation onto the new axis',()=>{
+  const h=harness();drag(h);h.end();const native=h.gesture();
+  h.render({horizontal:true});h.geometry();
+  assert.equal(h.gesture(),native);assert.deepEqual(plain(h.presentation()),{translateX:0});
+  h.start();h.setTime(40);h.touch('onTouchesMove',60);h.end();
+  assert.ok(h.presentation().translateX>0);assert.equal(h.presentation().translateY,undefined);
+  assert.equal(h.calls.springs.length,2);
 });

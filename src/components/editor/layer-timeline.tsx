@@ -1,6 +1,6 @@
 import { useSharedValue } from 'react-native-reanimated';
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { PanResponder, Pressable, Text, View } from 'react-native';
+import { type ScrollView as NativeScrollView, PanResponder, Pressable, Text, View } from 'react-native';
 import { SpringScrollView as ScrollView, SpringScrollGestureContext } from '@/components/spring-scroll-view';
 import { Image } from 'expo-image';
 import { createTimelineNativeScrollGestures, TimelineNativeGestureContext, TimelineNativeGeometryContext, TimelineNativeGestureView, TimelineNativeScrollView } from './timeline-native-gesture';
@@ -92,9 +92,9 @@ export function LayerTimeline(props: {
 }) {
   const displayLayers = useMemo(() => props.voiceoverMode ? [] : props.layers, [props.layers, props.voiceoverMode]);
   const displayAudioClips = useMemo(() => props.voiceoverMode ? [] : props.audioClips, [props.audioClips, props.voiceoverMode]);
-  const horizontalRef = useRef<ScrollView>(null);
-  const verticalRef = useRef<ScrollView>(null);
-  const labelScrollRef = useRef<ScrollView>(null);
+  const horizontalRef = useRef<NativeScrollView>(null);
+  const verticalRef = useRef<NativeScrollView>(null);
+  const labelScrollRef = useRef<NativeScrollView>(null);
   const verticalOffsetRef = useRef(0);
   const verticalSpringOffset = useSharedValue(0);
   const [trackDrag, setTrackDrag] = useState<{ id: string; order: string[] }>();

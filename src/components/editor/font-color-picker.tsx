@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
+import { type ScrollView as NativeScrollView, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
 import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fontChoicePatch, type FontChoice, type FontColors } from '@/lib/font-style-choice';
@@ -40,7 +40,7 @@ export function FontColorPicker(props: {
   const height = (rootSize?.height ?? window.height) - insets.top - bottomInset;
   const compact = height < 500 || width > height * 1.2;
   const shortWide = width >= 600 && height < 260;
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<NativeScrollView>(null);
   const scrollToOffset = useCallback((y: number) => scrollRef.current?.scrollTo({ y, animated: false }), []);
   const [viewportRef, reveal] = useFocusedInputReveal(scrollToOffset);
   const [bodyWidth, setBodyWidth] = useState(224);

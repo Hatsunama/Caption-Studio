@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { type ScrollView as NativeScrollView, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SpringScrollModal as Modal } from '@/components/spring-scroll-modal';
 import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,7 +26,7 @@ export function WatermarkSheet(props: Props) {
   const [rootSize, setRootSize] = useState({ width: window.width, height: window.height });
   const rootHeight = rootSize.height;
   const shortWide = rootSize.width - insets.left - insets.right >= 600 && rootHeight - insets.top - insets.bottom < 260;
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<NativeScrollView>(null);
   const inputRef = useRef<TextInput>(null);
   const focused = useRef(false);
   const scrollToOffset = useCallback((y: number) => scrollRef.current?.scrollTo({ y, animated: false }), []);

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
-import { Pressable, TextInput, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native';
+import { type ScrollView as NativeScrollView, Pressable, TextInput, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native';
 import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -60,7 +60,7 @@ export function AdaptiveDialog(props: {
   const insets = useSafeAreaInsets();
   const [frame, setFrame] = useState({ width: 0, height: 0 });
   const [bodyHeight, setBodyHeight] = useState(0);
-  const scrollRef = useRef<ScrollView | null>(null);
+  const scrollRef = useRef<NativeScrollView | null>(null);
   const scrollToOffset = useCallback((offset: number) => {
     scrollRef.current?.scrollTo({ y: offset, animated: true });
   }, []);

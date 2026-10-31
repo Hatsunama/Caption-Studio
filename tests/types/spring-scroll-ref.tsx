@@ -3,7 +3,7 @@ import { FlatList, type ScrollView as NativeScrollView } from 'react-native';
 import { SpringScrollView as ScrollView, renderSpringScrollView } from '../../src/components/spring-scroll-view';
 
 export function SpringScrollRefContract() {
-  const ref = useRef<ScrollView>(null);
+  const ref = useRef<NativeScrollView>(null);
   useEffect(() => {
     const native: NativeScrollView | null = ref.current;
     native?.scrollTo({ x: 1, y: 2, animated: false });
