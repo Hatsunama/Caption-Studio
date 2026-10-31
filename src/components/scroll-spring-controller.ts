@@ -65,7 +65,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
   const { state, owner, offset, id, nativeOffset, animatedRef, contentRef, presentationVersion, gesture } = options;
 
   // Private helpers receive the state owned by the current modify boundary.
-  // They never call modify themselves, including when composing transitions.
+  // They never reenter state.modify, including synchronous animation completion.
   function resetOwned(s: ScrollSpringRuntimeState) {
     'worklet';
     s.nativeActive = false; s.active = false; s.owned = false; s.pending = false; s.fling = false;
@@ -111,18 +111,22 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     const boundedVelocity = Number.isFinite(velocity) ? Math.max(-maxVelocity, Math.min(maxVelocity, velocity)) : 0;
     const generation = s.epoch;
     s.fling = false;
-    offset.value = withSpring(0, { mass: 1, stiffness: 200, damping: 24, velocity: boundedVelocity }, finished => {
+    // Force initialization even at zero: valueSetter otherwise completes a
+    // same-target spring before onStart can consume its momentum velocity.
+    offset.modify(() => {
       'worklet';
-      // Animation completion is a later UI transaction, never a nested modify.
-      if (!finished) return;
-      state.modify(current => {
+      return withSpring(0, { mass: 1, stiffness: 200, damping: 24, velocity: boundedVelocity }, finished => {
         'worklet';
+        // Completion may run inside this state transaction. Read current state
+        // without modifying it; owner is authoritative even if owned stays true
+        // until the next touch/reset clears that local bookkeeping flag.
+        if (!finished) return;
+        const current = state.value;
         if (current.epoch === generation && owner.value === id && !current.active) {
-          offset.value = 0; owner.value = 0; current.owned = false;
+          offset.value = 0; owner.value = 0;
         }
-        return current;
       });
-    });
+    }, true);
   }
 
   function reset() {

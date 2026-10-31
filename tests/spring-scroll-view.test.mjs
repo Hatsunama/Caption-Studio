@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import ts from 'typescript';
 
@@ -16,25 +17,67 @@ const controllerCode = compile(new URL('scroll-spring-controller.ts', root));
 const policyCode = compile(new URL('../lib/scroll-spring-policy.ts', root));
 const plain = value => JSON.parse(JSON.stringify(value));
 
-function harness(initial = {}, platform = 'android') {
+// Compile the installed engine, including the actual UI mutable's modify path.
+// Only spring construction is a probe: these tests establish setter behavior,
+// initialization and completion safety, not physical spring trajectories.
+const reanimatedSource = process.env.SPRING_REANIMATED_SOURCE
+  ? pathToFileURL(process.env.SPRING_REANIMATED_SOURCE)
+  : new URL('../node_modules/react-native-reanimated/src/valueSetter.ts', import.meta.url);
+const setterCode = compile(reanimatedSource);
+const mutablesCode = compile(new URL('mutables.ts', reanimatedSource));
+function installedEngine() {
+  const frames = [], setter = {}, mutables = {};
+  const environment = { global: { _getAnimationTimestamp: () => 1 },
+    requestAnimationFrame: callback => frames.push(callback), __DEV__: false };
+  runInNewContext(setterCode, { ...environment, exports: setter });
+  runInNewContext(mutablesCode, { ...environment, exports: mutables, require(id) {
+    if (id === './valueSetter') return setter;
+    if (id === './featureFlags') return { getStaticFeatureFlag: () => false };
+    if (id === './common') return { IS_JEST: false, SHOULD_BE_USE_WEB: false };
+    if (id === './reactUtils') return {};
+    if (id === 'react-native-worklets') return {};
+    throw Error(`Unexpected engine dependency ${id}`);
+  } });
+  return { mutable: mutables.makeMutableUI, frames };
+}
+
+function harness(initial = {}, platform = 'android', engineOptions) {
   let cursor = 0, tree, props = initial, now = 0, collecting, running = false, deferred = false;
   let slots = [];
   const primarySlots = slots, effects = [], reactions = [], jobs = [], listeners = new Map(), queries = [];
-  const calls = { commands: [], springs: [], cancels: [], warnings: [], props: [], pan: 0, native: 0 };
+  const calls = { commands: [], springs: [], starts: [], cancels: [], warnings: [], props: [], pan: 0, native: 0 };
+  const engine = engineOptions ? installedEngine() : undefined;
+  let engineModifyDepth = 0;
   const equal = (a,b) => a && b && a.length === b.length && a.every((v,i) => Object.is(v,b[i]));
   const memo = (fn,deps) => { const i = cursor++; if (!slots[i] || !equal(slots[i].deps,deps)) slots[i] = { value: fn(), deps }; return slots[i].value; };
   function react() {
-    if (running) return;
+    // UI mappers run after the current transaction; completion callbacks still
+    // run synchronously inside valueSetter and must pass the reentry guard.
+    if (running || engineModifyDepth) return;
     running = true;
     try { for (const r of reactions) { collecting = r; const value = r.prepare(); collecting = undefined;
       if (!Object.is(value,r.previous)) { const previous = r.previous; r.previous = value; r.run(value,previous); }
     } } finally { collecting = undefined; running = false; }
   }
   const mutable = (value) => {
+    if (engine) {
+      const shared = engine.mutable(value), modify = shared.modify;
+      let modifying = false;
+      shared.modify = (updater, forceUpdate = true) => {
+        assert.equal(modifying, false, 'shared value modify must not reenter its own transaction');
+        modifying = true;engineModifyDepth++;
+        try { return modify(updater, forceUpdate); } finally {
+          modifying = false;engineModifyDepth--;if(!engineModifyDepth)react();
+        }
+      };
+      shared.addListener(1, react);
+      return shared;
+    }
     let current = value;
-    return { modify(updater) {
+    return { modify(updater, forceUpdate = true) {
       const next = updater ? updater(current) : current;
       assert.notEqual(next, undefined, 'UI state modify must retain its state');
+      if (next?.animation) { assert.equal(forceUpdate, true); calls.springs.push(next); return; }
       current = next; react();
     }, get value() { return current; }, set value(next) {
       if (next?.animation) { calls.springs.push(next); return; }
@@ -72,8 +115,17 @@ function harness(initial = {}, platform = 'android') {
     useScrollOffset:(ref,offset)=>{memo(()=>null,[]);h.offset=offset;return offset;},
     useAnimatedStyle:fn=>({_animated:fn}),
     useAnimatedReaction(prepare,run) { const r=memo(()=>{const entry={prepare,run,previous:undefined}; reactions.push(entry);return entry;},[]);r.prepare=prepare;r.run=run; },
-    cancelAnimation:value=>calls.cancels.push(value),
-    withSpring:(to,config,callback)=>({animation:true,to,config,callback}),
+    cancelAnimation:value=>{calls.cancels.push(value);if(engine)value.value=value.value;},
+    withSpring:(to,config,callback)=>{
+      const animation={animation:true,to,config,callback};
+      if (!engine) return animation;
+      Object.assign(animation, { current:to,
+        onStart(self,current,timestamp,previous) { calls.starts.push({current,velocity:config.velocity,timestamp,previous});self.current=current; },
+        onFrame() { return engineOptions.immediate === true; },
+      });
+      calls.springs.push(animation);
+      return animation;
+    },
     dispatchCommand:(ref,name,args)=>calls.commands.push({node:ref(),name,args:plain(args)}),
     setNativeProps:(ref,updates)=>{assert.ok(!('style' in updates),'Reanimated 4.5.1 accepts flattened native props');assert.ok(ref(),'content host must be bound');ref().updates=plain(updates);calls.props.push({node:ref(),updates:plain(updates)});},
     scrollTo:(ref,x,y,animated)=>calls.commands.push({node:ref(),name:'scrollTo',args:[x,y,animated]}),
@@ -118,6 +170,90 @@ function harness(initial = {}, platform = 'android') {
 }
 function makeNode(){const inner={updates:{transform:[]}};return {inner,scrollTo(){},scrollToEnd(){},getInnerViewRef(){return inner;},getNativeScrollRef(){return this;},measure(){},flashScrollIndicators(){}};}
 function drag(h){h.attach();h.geometry();h.start();h.setTime(10);h.touch('onTouchesMove',20);h.setTime(20);h.touch('onTouchesMove',50);}
+
+test('installed setter skips zero-target assignment but UI modify forces zero-origin initialization',()=>{
+  const engine=installedEngine(),offset=engine.mutable(0),seen=[];
+  const animation=()=>({current:0,onStart(self,current){seen.push(['start',current]);},
+    onFrame(){return false;},callback:finished=>seen.push(['complete',finished])});
+  offset.value=animation();
+  assert.deepEqual(seen,[['complete',true]],'equal-target assignment completes synchronously before onStart');
+  seen.length=0;offset.modify(()=>animation(),true);
+  assert.deepEqual(seen,[['start',0]]);assert.equal(offset.value,0);assert.equal(engine.frames.length,1);
+});
+
+function interiorFling(h, end) {
+  h.attach();h.geometry();h.motion(200,1);h.start();h.motion(end===0?150:250,10);h.end();
+  assert.equal(h.calls.springs.length,0,'interior native release needs no decoration');
+  h.motion(end===0?50:350,25);h.motion(end,40);
+}
+
+for(const horizontal of [false,true])for(const end of [0,400]) {
+  test(`installed setter initializes zero-origin momentum: ${horizontal?'horizontal':'vertical'} edge ${end}`,()=>{
+    const h=harness({horizontal},'android',{});
+    interiorFling(h,end);
+    assert.equal(h.calls.springs.length,1);
+    assert.equal(h.calls.starts.length,1,'momentum spring must reach the actual engine initializer');
+    assert.equal(h.calls.starts[0].current,0,'no seeded displacement');
+    assert.equal(h.calls.starts[0].velocity,(end===0?1:-1)*Math.min(3200,Math.sqrt(200*50*50),50*1000/15));
+    assert.equal(Math.sign(h.calls.starts[0].velocity),end===0?1:-1);
+    assert.ok(Math.abs(h.calls.starts[0].velocity)<=3200);
+    assert.equal(Object.values(h.presentation())[0],0,'initializer probe does not simulate physical motion');
+    assert.equal(h.calls.commands.length,0);
+  });
+  test(`synchronous engine completion does not reenter state.modify: ${horizontal?'horizontal':'vertical'} edge ${end}`,()=>{
+    const h=harness({horizontal},'android',{immediate:true});
+    interiorFling(h,end);
+    assert.equal(h.calls.starts.length,1);assert.equal(Object.values(h.presentation())[0],0);
+    h.motion(end===0?30:370,50);h.motion(end,60);
+    assert.equal(h.calls.springs.length,1,'completed owner cannot decorate later native travel');
+    h.start();h.setTime(80);h.touch('onTouchesMove',end===0?50:-50);h.end();
+    assert.equal(h.calls.springs.length,2,'next gesture can acquire after immediate completion');
+  });
+}
+
+test('installed setter leaves untouched and programmatic travel unanimated on both axes and ends',()=>{
+  for(const horizontal of [false,true])for(const end of [0,400]){
+    const h=harness({horizontal},'android',{});h.attach();h.geometry();h.motion(200,1);h.motion(end,10);
+    h.motion(200,20);h.start();h.motion(end===0?150:250,30);h.end();
+    h.node.scrollTo(horizontal?{x:end}:{y:end});h.motion(end===0?50:350,40);h.motion(end,50);
+    assert.equal(h.calls.springs.length,0);assert.equal(h.calls.starts.length,0);
+  }
+});
+
+test('immediate displaced release completion permits reacquisition without nested state.modify',()=>{
+  const h=harness({},'android',{immediate:true});drag(h);h.end();
+  assert.equal(h.calls.starts.length,1);assert.ok(h.calls.starts[0].current>0);
+  assert.equal(Object.values(h.presentation())[0],0);
+  h.start();h.setTime(40);h.touch('onTouchesMove',60);h.end();assert.equal(h.calls.starts.length,2);
+});
+
+test('installed-engine completion respects current epoch, active drag, reset and shared owner',()=>{
+  for(const transition of ['epoch','active','command','peer']){
+    const h=harness({},'android',{}),shared=h.mutable(0);h.render({springOffset:shared});drag(h);h.end();
+    const complete=h.calls.springs[0].callback;
+    if(transition==='epoch'){
+      h.replay();h.start();h.setTime(40);h.touch('onTouchesMove',60);h.end();
+    }else if(transition==='active')h.start();
+    else if(transition==='command'){h.node.scrollTo({y:100});shared.value=13;}
+    else{
+      const peer=h.peer({springOffset:shared});peer.attach();
+      peer.scroll.props.onLayout({nativeEvent:{layout:{width:200,height:200}}});peer.scroll.props.onContentSizeChange(600,600);
+      peer.gesture.handlers.onTouchesDown({numberOfTouches:1,allTouches:[{absoluteX:0,absoluteY:0}]});peer.gesture.handlers.onStart({});
+      shared.value=13;
+    }
+    const held=shared.value;assert.ok(held>0);complete(false);assert.equal(shared.value,held);
+    complete(true);assert.equal(shared.value,held,`${transition} must reject stale completion`);
+  }
+});
+
+test('completed owner bookkeeping cannot reset presentation acquired by a peer',()=>{
+  const h=harness({},'android',{immediate:true}),shared=h.mutable(0);h.render({springOffset:shared});drag(h);h.end();
+  assert.equal(shared.value,0);
+  const peer=h.peer({springOffset:shared});peer.attach();
+  peer.scroll.props.onLayout({nativeEvent:{layout:{width:200,height:200}}});peer.scroll.props.onContentSizeChange(600,600);
+  peer.gesture.handlers.onTouchesDown({numberOfTouches:1,allTouches:[{absoluteX:0,absoluteY:0}]});peer.gesture.handlers.onStart({});shared.value=13;
+  h.node.scrollTo({y:100});assert.equal(shared.value,13);h.unmount();assert.equal(shared.value,13);peer.unmount();assert.equal(shared.value,0);
+});
 
 test('real public ref, native callbacks, native scrolling, axis and one Native recognizer',()=>{
   for(const horizontal of [false,true]){
