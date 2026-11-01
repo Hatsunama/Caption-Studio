@@ -1345,7 +1345,8 @@ test('caption editing opens the full timestamped script and keeps text-layer edi
   const split = splitCaptionScriptBlock([{ id: 'primary', text: 'hello', startMs: 0, endMs: 1000, wordIds: [] }], 'primary', 2, [], 'right');
   assert.deepEqual(split.focusedSelection, { start: 0, end: 0 });
   const joined = mergeCaptionScriptBlock(split.captions, 'right');
-  assert.deepEqual(joined.focusedSelection, { start: 3, end: 3 });
+  assert.equal(joined.captions[0].text, 'hello');
+  assert.deepEqual(joined.focusedSelection, { start: 2, end: 2 });
   const timedSplit = splitCaptionScriptBlockAtTime([{ id: 'primary', text: 'hello world', startMs: 0, endMs: 1000, wordIds: [] }], 'primary', 500, [], 'right');
   assert.deepEqual(timedSplit.focusedSelection, { start: 0, end: 0 });
   assert.match(scriptEditor, /updateCaptionScriptText\(draftCaptionsRef\.current, caption\.id, text\)/);

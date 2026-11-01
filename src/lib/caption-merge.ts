@@ -189,16 +189,38 @@ export function applyCaptionMergeDraft(project: CaptionProject, draft: CaptionBl
     let consumed = captionMergeFragments(existing).length;
     const fragments = caption.mergeProvenance.fragments;
     if (fragments.length <= consumed) return caption;
+    const lineage = new Set(fragments.slice(0, consumed).map(fragment => fragment.captionId));
+    lineage.add(caption.id);
     while (consumed < fragments.length) {
-      const member = staged.captions.find(item => item.id === fragments[consumed].captionId);
-      if (!member || retained.has(member.id)) throw new Error('Caption join identities conflict with the draft. Originals were preserved.');
-      const count = captionMergeFragments(member).length;
+      const fragment = fragments[consumed];
+      const member = staged.captions.find(item => item.id === fragment.captionId);
+      if (!member) {
+        // A child created and rejoined within this draft has never owned a
+        // committed caption or translation. Its explicit split lineage permits
+        // the join without inventing a recoverable committed identity.
+        const origin = fragment.primary?.splitOrigin;
+        if (!origin || !lineage.has(origin.parentId) || fragment.primary?.id !== fragment.captionId
+          || retained.has(fragment.captionId) || project.captions.some(item => item.id === fragment.captionId)) {
+          throw new Error('Caption join identities conflict with the draft. Originals were preserved.');
+        }
+        lineage.add(fragment.captionId);
+        consumed += 1;
+        continue;
+      }
+      if (retained.has(member.id)) throw new Error('Caption join identities conflict with the draft. Originals were preserved.');
+      const originals = captionMergeFragments(member);
+      if (originals.some((original, index) => fragments[consumed + index]?.captionId !== original.captionId)) {
+        throw new Error('Caption join identities conflict with the draft. Originals were preserved.');
+      }
       const next = mergeProjectCaptionPairLocally(staged, caption.id, member.id, false);
       if (!next) throw new Error('Caption join must combine adjacent visible captions. Originals were preserved.');
       staged = next;
-      consumed += count;
+      for (const original of originals) lineage.add(original.captionId);
+      consumed += originals.length;
     }
-    return { ...caption, mergeProvenance: staged.captions.find(item => item.id === caption.id)!.mergeProvenance };
+    const history = staged.captions.find(item => item.id === caption.id)!.mergeProvenance;
+    return { ...caption, mergeProvenance: history && caption.mergeProvenance.aliasesRetired
+      ? { ...history, aliasesRetired: true } : history };
   });
   if (staged !== project) {
     // Match script-save retention and use its existing track synchronization

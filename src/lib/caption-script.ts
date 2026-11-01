@@ -200,6 +200,7 @@ export function splitCaptionScriptBlock(
     ...caption,
     mergeProvenance: undefined,
     id: newCaptionId,
+    splitOrigin: { parentId: caption.id, separator: caption.text.slice(beforeText.length, caption.text.length - afterText.length) },
     text: afterText,
     textMode: 'manual',
     timingMode: caption.sourceAnchor ? 'source' : 'timeline',
@@ -284,10 +285,12 @@ export function mergeCaptionScriptBlock(
         wordIds,
       }
     : undefined;
-  const text = normalizeText(captionLayoutText([previous.text.trim(), current.text.trim()]));
-  // The right text begins after the actual normalized separator (which can be
-  // absent for punctuation/CJK), rather than at the original left text length.
-  const seam = safeCaptionTextOffset(text, text.length - normalizeText(current.text).length);
+  const sibling = current.splitOrigin?.parentId === previous.id;
+  const text = sibling
+    ? previous.text + current.splitOrigin!.separator + current.text
+    : normalizeText(captionLayoutText([previous.text.trim(), current.text.trim()]));
+  // Use the actual seam; a split inside a word has no separator.
+  const seam = safeCaptionTextOffset(text, text.length - (sibling ? current.text : normalizeText(current.text)).length);
   const merged: CaptionBlock = {
     ...previous,
     mergeProvenance: joinedCaptionProvenance(previous, current),

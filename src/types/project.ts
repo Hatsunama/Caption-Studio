@@ -174,6 +174,8 @@ export type CaptionBlock = {
   startMs: number;
   endMs: number;
   wordIds: Identifier[];
+  /** The immediately preceding sibling and whitespace from a manual split. */
+  splitOrigin?: { parentId: Identifier; separator: string };
   textMode?: 'automatic' | 'manual';
   timingMode?: 'source' | 'timeline';
   timelineVisible?: boolean;

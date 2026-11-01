@@ -1170,7 +1170,7 @@ test('Android split caret cache preserves immediate Backspace-at-start Join afte
     // The real key callback reads selectionRef, independently of native state.
     h.act(() => h.input(1).onKeyPress(keyEvent('Backspace')));
     assert.equal(h.list().data.length, 5, 'Backspace must join the newly split right tail at its initial caret');
-    assert.equal(h.input(0).value, 'He llo 👩🏽‍💻✨');
+    assert.equal(h.input(0).value, 'Hello 👩🏽‍💻✨');
     assert.deepEqual(h.calls.saves, []);
   } finally { h.unmount(); }
 });
@@ -1310,7 +1310,7 @@ test('structural focus waits for a virtualized input ref and then settles its ac
     assert.equal(h.input(1).selection, undefined);
     h.act(() => h.input(1).onKeyPress(keyEvent('Backspace')));
     assert.equal(h.list().data.length, 5);
-    assert.equal(h.input(0).value, 'He llo 👩🏽‍💻✨');
+    assert.equal(h.input(0).value, 'Hello 👩🏽‍💻✨');
   } finally { h.unmount(); }
 });
 
@@ -1956,7 +1956,7 @@ test('split and merge navigation and scrolling use current draft identities and 
   h.action(2, 'Join previous');
   assert.equal(h.list().data.length, cues.length);
   assert.ok(!h.list().data.some(({ id }) => id === split.id));
-  assert.equal(h.input(1).value, 'cap tion 1');
+  assert.equal(h.input(1).value, 'caption 1');
 });
 
 test('failed virtualized navigation is bounded and never seeks transport', () => {
