@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { createEnglishChineseCaptionTrack } from '../src/lib/caption-tracks.ts';
-import { splitCaptionScriptBlock, mergeCaptionScriptBlock } from '../src/lib/caption-script.ts';
+import { splitCaptionScriptBlock, mergeCaptionScriptBlock, decodeCaptionDraft } from '../src/lib/caption-script.ts';
 import { replaceVisibleCaptionScript } from '../src/lib/project-editor.ts';
 import { serializeProjectSnapshot, decodeVersionTwoProject, decodeCaption } from '../src/lib/project-schema.ts';
 for (const [name,text,cursor] of [['word-boundary','Return JSON',6],['midword','ReturnJSON',2],['two-spaces','Return  JSON',7],['line-break','Return\nJSON',7]]) test(`${name}: unsaved split -> rejoin -> Save must accept the resulting draft`,()=>{
@@ -94,4 +94,14 @@ test('a transient split child and a committed neighbor join in one draft without
 test('split seam metadata cannot add arbitrary words during a later Join',()=>{
   const cue=projectWith('Return').captions[0];
   assert.throws(()=>decodeCaption({...cue,splitOrigin:{parentId:'left',separator:' injected '}},0),/split separator/);
+});
+test('script journal recovery retains a pending split seam before Join and Save',()=>{
+  const original=projectWith('ReturnJSON');
+  const split=splitCaptionScriptBlock(original.captions,'parent',2,[],'child');
+  const recovered=decodeCaptionDraft(JSON.parse(JSON.stringify(split.captions)));
+  assert.ok(recovered);
+  assert.deepEqual(recovered.find(c=>c.id==='child').splitOrigin,{parentId:'parent',separator:''});
+  const joined=mergeCaptionScriptBlock(recovered,'child');
+  const saved=decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(replaceVisibleCaptionScript(original,joined.captions))));
+  assert.equal(saved.captions[0].text,'ReturnJSON');
 });
