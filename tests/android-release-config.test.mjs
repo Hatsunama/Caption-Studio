@@ -15,6 +15,7 @@ const postinstallScripts = [
   'patch-react-native-gradle.js',
   'repair-reanimated-native-props.js',
   'repair-native-scroll-input.js',
+  'repair-pressable-accessibility.js',
   'reanimated-native-props-map.js',
   'verify-android-release-config.js',
 ];
