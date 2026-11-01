@@ -16,9 +16,10 @@ test('the actual postinstall connects native input and delivery repairs before c
       if (id === './configure-android-release') return { configureAndroidRelease: root => calls.push(['release', root]) };
       if (id === './repair-reanimated-native-props') return { repairReanimatedNativeProps: root => calls.push(['delivery', root]) };
       if (id === './repair-native-scroll-input') return { repairNativeScrollInput: root => calls.push(['input', root]) };
+      if (id === './repair-pressable-accessibility') return { repairPressableAccessibility: root => calls.push(['pressable', root]) };
       throw Error(`Unexpected postinstall dependency ${id}`);
     },
   });
   const root = path.join(path.dirname(filename), '..');
-  assert.deepEqual(calls, [['input', root], ['delivery', root], ['android', root], ['release', root]]);
+  assert.deepEqual(calls, [['pressable', root], ['input', root], ['delivery', root], ['android', root], ['release', root]]);
 });
