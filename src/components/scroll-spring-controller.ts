@@ -1,6 +1,6 @@
 import type { HostInstance, ScrollView } from 'react-native';
 import type { NativeGesture } from 'react-native-gesture-handler';
-import { cancelAnimation, setNativeProps, withSpring, type AnimatedRef, type SharedValue } from 'react-native-reanimated';
+import { cancelAnimation, ReduceMotion, setNativeProps, withSpring, type AnimatedRef, type SharedValue } from 'react-native-reanimated';
 import { beginScrollSpringDrag, releaseScrollSpringDrag, resetScrollSpringAxis,
   updateScrollSpringDrag, type ScrollSpringAxisState } from '../lib/scroll-spring-policy';
 import { dispatchSpringScrollCommand } from './spring-scroll-gesture';
@@ -119,7 +119,9 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     // same-target spring before onStart can consume its momentum velocity.
     offset.modify(() => {
       'worklet';
-      return withSpring(0, { mass: 1, stiffness: 200, damping: 24, velocity: boundedVelocity }, finished => {
+      // allowed() uses live accessibility state; the engine's System default
+      // can still reflect reduced motion cached at startup after a live change.
+      return withSpring(0, { mass: 1, stiffness: 200, damping: 24, velocity: boundedVelocity, reduceMotion: ReduceMotion.Never }, finished => {
         'worklet';
         // Completion may run inside this state transaction. Read current state
         // without modifying it; owner is authoritative even if owned stays true

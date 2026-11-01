@@ -26,6 +26,33 @@ const reanimatedSource = process.env.SPRING_REANIMATED_SOURCE
   : new URL('../node_modules/react-native-reanimated/src/valueSetter.ts', import.meta.url);
 const setterCode = compile(reanimatedSource);
 const mutablesCode = compile(new URL('mutables.ts', reanimatedSource));
+const engineTypes = {};
+runInNewContext(compile(new URL('commonTypes.ts', reanimatedSource)), { exports: engineTypes });
+const { ReduceMotion } = engineTypes;
+
+// Execute the pinned policy declarations, without loading util.ts's unrelated
+// color/matrix/worklet graph. AST selection retains the original function bodies
+// and captured UI binding; no reduce-motion policy is reimplemented here.
+const utilSource = ts.createSourceFile('util.ts', readFileSync(new URL('animation/util.ts', reanimatedSource), 'utf8'), ts.ScriptTarget.ES2022, true);
+const motionDeclarations = utilSource.statements.filter(node =>
+  (ts.isFunctionDeclaration(node) && ['getReduceMotionFromConfig', 'getReduceMotionForAnimation'].includes(node.name?.text)) ||
+  (ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => declaration.name.getText(utilSource) === 'isReduceMotionOnUI')));
+assert.equal(motionDeclarations.length, 3, 'pinned policy functions and captured UI binding must exist');
+const motionCode = ts.transpileModule(motionDeclarations.map(node => ts.createPrinter().printNode(ts.EmitHint.Unspecified, node, utilSource)).join('\n'), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText;
+const reducedMotionCode = compile(new URL('ReducedMotion.ts', reanimatedSource));
+function installedMotionPolicy(startupReduced) {
+  const manager = {}, policy = {};
+  const environment = { global: { _REANIMATED_IS_REDUCED_MOTION: startupReduced } };
+  runInNewContext(reducedMotionCode, { ...environment, exports: manager, require(id) {
+    if (id === './common') return { IS_WEB: false };
+    if (id === './mutables') return { makeMutable: installedEngine().mutable };
+    throw Error(`Unexpected motion manager dependency ${id}`);
+  } });
+  runInNewContext(motionCode, { exports: policy, ReduceMotion, ReducedMotionManager: manager.ReducedMotionManager });
+  return { ...policy, manager: manager.ReducedMotionManager, environment };
+}
 function installedEngine() {
   const frames = [], setter = {}, mutables = {};
   const environment = { global: { _getAnimationTimestamp: () => 1 },
@@ -143,7 +170,7 @@ function harness(initial = {}, platform = 'android', engineOptions) {
   // spring-scroll-content.test.mjs executes the full pinned factory/class/GC.
   const animated = { View:'Animated.View', ScrollView:'Animated.ScrollView',
     createAnimatedComponent:Component=>props=>jsx(Component,props) };
-  const reanimated = {default:animated, __esModule:true, makeMutable:mutable,
+  const reanimated = {default:animated, __esModule:true, makeMutable:mutable, ReduceMotion,
     useSharedValue:value=>memo(()=>mutable(value),[]), useReducedMotion:()=>initial.initialReducedMotion ?? false,
     useAnimatedRef:()=>memo(()=>{const f=value=>{if(value)f.current=value;return f.current;};f.current=null;return f;},[]),
     useScrollOffset:(ref,offset)=>{memo(()=>null,[]);h.offset=offset;return offset;},
@@ -473,6 +500,55 @@ test('initial/live reduced motion and stale async results across replay/unmount'
   const initial=harness({initialReducedMotion:true});drag(initial);initial.end();assert.equal(initial.calls.springs.length,0);
   const h=harness();drag(h);h.listeners.get('reduceMotionChanged')(true);h.queries[0].resolve(false);await Promise.resolve();h.end();assert.equal(h.calls.springs.length,0);
   h.replay();h.unmount();const cancels=h.calls.cancels.length;h.queries.at(-1).resolve(false);await Promise.resolve();assert.equal(h.calls.cancels.length,cancels);
+});
+
+test('live motion enable releases against pinned policy despite cached startup reduced motion',()=>{
+  const policy=installedMotionPolicy(true),h=harness({initialReducedMotion:true});
+  drag(h);h.end();assert.equal(h.calls.springs.length,0,'startup reduction prevents spring construction');
+  h.listeners.get('reduceMotionChanged')(false);
+  // The native setting can change while the engine manager stays at startup.
+  policy.environment.global._REANIMATED_IS_REDUCED_MOTION=false;
+  assert.equal(policy.manager.uiValue.value,true);
+  assert.equal(policy.getReduceMotionFromConfig(),true,'omitted config still resolves cached startup reduction');
+  assert.equal(policy.getReduceMotionFromConfig(ReduceMotion.System),true);
+  assert.equal(policy.getReduceMotionForAnimation(ReduceMotion.Always),true);
+  h.start();h.setTime(40);h.touch('onTouchesMove',50);h.end();
+  assert.ok(h.presentation().translateY>0,'live allowance permits the physical pull');
+  assert.equal(h.calls.springs.length,1);
+  const config=h.calls.springs[0].config;
+  // withSpring resolves an explicit field with getReduceMotionForAnimation;
+  // its decorator falls back to getReduceMotionFromConfig when undefined.
+  const reduced=policy.getReduceMotionForAnimation(config.reduceMotion) ?? policy.getReduceMotionFromConfig();
+  assert.equal(reduced,false,'captured release config must animate despite the stale startup cache');
+  assert.deepEqual(plain(config),{mass:1,stiffness:200,damping:24,velocity:config.velocity,reduceMotion:ReduceMotion.Never});
+  assert.ok(Number.isFinite(config.velocity) && Math.abs(config.velocity)<=3200);
+  assert.equal(policy.manager.uiValue.value,true,'per-animation policy must leave global defaults untouched');
+});
+
+test('live reduction cancels an active release and prevents subsequent springs with either startup cache',()=>{
+  for(const startupReduced of [false,true]){
+    const h=harness({initialReducedMotion:startupReduced},'android',{});
+    h.attach();h.geometry();h.listeners.get('reduceMotionChanged')(false);
+    h.start();h.setTime(20);h.touch('onTouchesMove',50);h.end();
+    assert.equal(h.calls.springs.length,1);
+    const animation=h.calls.springs[0],cancels=h.calls.cancels.length;
+    h.listeners.get('reduceMotionChanged')(true);
+    assert.ok(h.calls.cancels.length>cancels);assert.equal(animation.cancelled,true);
+    assert.equal(h.presentation().translateY,0);
+    h.start();h.setTime(40);h.touch('onTouchesMove',90);h.end();
+    assert.equal(h.calls.springs.length,1,'explicit animation policy must never bypass the live guard');
+  }
+});
+
+test('failed initial motion query stays fail-closed until a fresh live allowance',()=>{
+  const h=harness({pendingReducedMotion:true});drag(h);h.end();
+  assert.equal(h.calls.springs.length,0,'unknown motion state prevents release');
+  h.queries[0].reject(Error('accessibility query failed'));
+  h.start();h.setTime(40);h.touch('onTouchesMove',50);h.end();
+  assert.equal(h.calls.springs.length,0);assert.equal(h.presentation().translateY,0);
+  h.listeners.get('reduceMotionChanged')(false);
+  h.start();h.setTime(60);h.touch('onTouchesMove',50);h.end();
+  assert.equal(h.calls.springs.length,1,'fresh live allowance can recover from a failed query');
 });
 test('contentOffset change revokes a previously owned fling',()=>{
   const h=harness();h.attach();h.geometry();h.start();h.motion(200,10);h.end();h.render({contentOffset:{x:0,y:350}});h.motion(400,30);assert.equal(h.calls.springs.length,0);
@@ -847,4 +923,17 @@ test('native scroll sampling retains the pinned Animated.ScrollView default and 
   assert.equal(harness().scroll().props.scrollEventThrottle,1);
   for(const value of [0,16,undefined])
     assert.equal(harness({scrollEventThrottle:value}).scroll().props.scrollEventThrottle,value);
+});
+
+
+test('app-specific motion preference can disable spring ownership without disabling native scrolling',()=>{
+  const policy=installedMotionPolicy(true),h=harness({initialReducedMotion:true,springOwner:false});
+  const node=h.attach();h.geometry();h.listeners.get('reduceMotionChanged')(false);
+  h.start();h.setTime(20);h.touch('onTouchesMove',60);h.end();
+  assert.equal(h.calls.springs.length,0);assert.equal(h.presentation().translateY,0);
+  assert.notEqual(h.scroll().props.scrollEnabled,false);
+  node.scrollTo({y:50,animated:false});assert.equal(h.calls.commands.length,1);
+  assert.equal(policy.manager.uiValue.value,true,'component-specific allowance never mutates other animations');
+  h.render({initialReducedMotion:true,springOwner:true});h.geometry();
+  h.start();h.setTime(40);h.touch('onTouchesMove',60);h.end();assert.equal(h.calls.springs.length,1);
 });

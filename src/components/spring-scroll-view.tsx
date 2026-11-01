@@ -15,6 +15,7 @@ export type SpringScrollViewProps = ScrollViewProps & {
   ref?: Ref<NativeScrollView>;
   nativeGesture?: NativeGesture;
   springOffset?: SharedValue<number>;
+  /** Allow this viewport to acquire spring feedback. Disable for app-specific motion preferences. */
   springOwner?: boolean;
 };
 const owners = new WeakMap<SharedValue<number>, SharedValue<number>>();
