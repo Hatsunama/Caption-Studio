@@ -201,6 +201,8 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === '@/components/spring-scroll-modal') return { SpringScrollModal: 'Modal' };
+      if (name === '@/components/spring-scroll-view') return { SpringScrollView: 'ScrollView', renderSpringScrollView: props => ({ type: 'ScrollView', props }) };
       if (name === 'react-native') return native;
       if (name === '@/lib/caption-script') return scriptMutations;
       if (name === '@/lib/caption-timeline-anchor') return requireModule('../src/lib/caption-timeline-anchor.ts');

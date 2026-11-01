@@ -1,3 +1,4 @@
+import { renderSpringScrollView } from '@/components/spring-scroll-view';
 import { useCallback, useEffect, useState } from 'react';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -124,6 +125,7 @@ export default function ProjectsScreen() {
   return <View style={{ flex: 1, backgroundColor: '#0A0B0E' }}>
     <RefractBackground active={isFocused} style={StyleSheet.absoluteFill} />
     <FlatList
+          renderScrollComponent={renderSpringScrollView}
       contentInsetAdjustmentBehavior="automatic"
       style={{ flex: 1, backgroundColor: 'transparent' }}
       contentContainerStyle={{ padding: 20, gap: 18, paddingBottom: 48 }}

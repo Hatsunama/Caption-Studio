@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
+import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 
 export default function ThankYouScreen() {
   const router = useRouter();

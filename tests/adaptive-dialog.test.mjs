@@ -34,7 +34,9 @@ function mount(props, insets, platform = 'android', bottomInsetCovered = false) 
   runInNewContext(compiled, { exports, require(id) {
     if (id === 'react') return react;
     if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, bottomInsetCovered) }), jsxs: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, bottomInsetCovered) }) };
-    if (id === 'react-native') return { Platform: { OS: platform }, ...Object.fromEntries(['KeyboardAvoidingView', 'Pressable', 'ScrollView', 'View', 'TextInput'].map(key => [key, key])) };
+    if (id === '@/components/spring-scroll-modal') return { SpringScrollModal: 'Modal' };
+      if (id === '@/components/spring-scroll-view') return { SpringScrollView: 'ScrollView', renderSpringScrollView: props => ({ type: 'ScrollView', props }) };
+      if (id === 'react-native') return { Platform: { OS: platform }, ...Object.fromEntries(['KeyboardAvoidingView', 'Pressable', 'ScrollView', 'View', 'TextInput'].map(key => [key, key])) };
     if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: scrollToOffset => [{ current: null }, {
       focus(input) { calls.push(['focus', input]); },
       blur(input) { calls.push(['blur', input]); },

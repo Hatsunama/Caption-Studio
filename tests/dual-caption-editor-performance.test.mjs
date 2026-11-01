@@ -89,12 +89,16 @@ function mount(overrides = {}, options = {}) {
     },
   };
   const jsx = (type, props, key) => ({ type, props: keyboardViewportHostProps(type, props ?? {}, options.bottomInsetCovered), key });
+  // Keep one render boundary per mount; forward refs and native callbacks intact.
+  const springScroll = { SpringScrollView: 'ScrollView', renderSpringScrollView: (props) => jsx('ScrollView', props) };
   const exports = {};
   runInNewContext(`${outputText}\nexports.Store = typeof DualCaptionDraftStore === 'undefined' ? undefined : DualCaptionDraftStore;`, {
     exports,
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === '@/components/spring-scroll-view') return springScroll;
+      if (name === '@/components/spring-scroll-modal') return { SpringScrollModal: 'Modal' };
       if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
 if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
       if (name === '@/components/refract-background') return { RefractBackground: 'RefractBackground' };

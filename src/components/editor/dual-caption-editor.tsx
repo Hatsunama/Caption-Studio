@@ -4,9 +4,7 @@ import {
   Alert,
   AppState,
   FlatList,
-  Modal,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
@@ -16,6 +14,8 @@ import {
   type NativeSyntheticEvent,
   type ViewToken,
 } from 'react-native';
+import { SpringScrollModal as Modal } from '@/components/spring-scroll-modal';
+import { SpringScrollView as ScrollView, renderSpringScrollView } from '@/components/spring-scroll-view';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusedInputReveal, type FocusedInputReveal } from '@/hooks/use-focused-input-reveal';
 import { KeyboardViewport } from '@/components/editor/keyboard-viewport';
@@ -625,6 +625,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
         <View collapsable={false} ref={viewportRef} onLayout={onListViewportLayout} style={{ flex: 1, minHeight: 0 }}>
         <DualCellLayoutContext.Provider value={onCellLayout}>
         <FlatList
+          renderScrollComponent={renderSpringScrollView}
           CellRendererComponent={DualCaptionCell}
           ref={listRef}
           onScroll={reveal.onScroll}

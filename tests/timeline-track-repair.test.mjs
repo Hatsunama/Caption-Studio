@@ -47,8 +47,13 @@ function harness() {
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
-      if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PanResponder: { create: (panHandlers) => ({ panHandlers }) } };
+      if (name === 'react-native-reanimated') return { useSharedValue: (value) => react.useRef({ value }).current };
+      if (name === '@/components/spring-scroll-view') return {
+        SpringScrollView: 'ScrollView', SpringScrollGestureContext: { value: [] },
+      };
+      if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PixelRatio: { roundToNearestPixel: Math.round }, PanResponder: { create: (panHandlers) => ({ panHandlers }) } };
       if (name === 'expo-image') return { Image: 'Image' };
+      if (name === './timeline-linked-scroll') return requireLocal('../src/components/editor/timeline-linked-scroll.ts');
       if (name === './timeline-native-gesture') return {
         createTimelineNativeScrollGestures: () => [], TimelineNativeGestureContext: { Provider: 'Provider' },
         TimelineNativeGeometryContext: react.createContext(undefined),

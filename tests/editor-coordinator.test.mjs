@@ -424,6 +424,8 @@ function mount(initialProject = fixture()) {
         useAudioRecorder: () => ({ uri: null, prepareToRecordAsync: async () => undefined, record() {}, stop: async () => undefined }),
       };
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
+      if (name === '@/components/spring-scroll-view') return { SpringScrollView: native.ScrollView };
+      if (name === '@/components/spring-scroll-modal') return { SpringScrollModal: native.Modal };
       if (name.startsWith('@/components/')) return new Proxy({}, { get: (_object, key) => key });
       if (name.startsWith('@/hooks/')) return hooks;
       if (name.startsWith('@/services/')) return services;

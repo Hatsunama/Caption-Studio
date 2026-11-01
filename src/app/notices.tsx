@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 
 import { LEGAL_NOTICE_DOCUMENTS, type LegalNoticeDocument } from '@/services/legal-notices';
 import { chrome } from '@/lib/ui-theme';

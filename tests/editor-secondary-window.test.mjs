@@ -33,11 +33,15 @@ function mount(name, exportName, props, options = {}) {
   const native = Object.fromEntries(['Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View', 'KeyboardAvoidingView', 'ActivityIndicator'].map(name => [name, name]));
   native.Platform = { OS: options.platform ?? 'android' };
   native.useWindowDimensions = () => options.window ?? { width: 390, height: 844, fontScale: 1 };
+  const springScroll = { SpringScrollView: native.ScrollView,
+    renderSpringScrollView: (props) => ({ type: native.ScrollView, props }) };
   const exports = {};
   runInNewContext(sources[name], { exports, Error, require(id) {
     if (id === 'react') return react;
     if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, options.bottomInsetCovered) }), jsxs: (type, props) => ({ type, props: keyboardViewportHostProps(type, props, options.bottomInsetCovered) }) };
     if (id === 'react-native') return native;
+    if (id === '@/components/spring-scroll-view') return springScroll;
+    if (id === '@/components/spring-scroll-modal') return { SpringScrollModal: native.Modal };
     if (id === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
 if (id === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
     if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 30, right: 18 } };

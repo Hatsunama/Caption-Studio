@@ -1,3 +1,4 @@
+import { SpringScrollView } from '@/components/spring-scroll-view';
 import { createContext, useContext, useEffect, useState, type ComponentPropsWithRef } from 'react';
 import { Platform, ScrollView, View, type PanResponderInstance, type ViewProps } from 'react-native';
 import { Gesture, GestureDetector, State } from 'react-native-gesture-handler';
@@ -20,14 +21,19 @@ function invalidateNativePan(state: SharedValue<TimelineNativePanState>, epoch: 
 }
 
 export function createTimelineNativeScrollGestures(): NativeScrolls {
-  return Platform.OS === 'android' ? [Gesture.Native(), Gesture.Native(), Gesture.Native()] : [];
+  // These three handlers belong to the timeline, rather than an adapter caller.
+  // Use the standard RNGH ScrollView preset so a new outer scroll cannot take
+  // an active inner stream. Item pans still block these handlers until intent
+  // resolves; no simultaneous edit/scroll relationship is introduced.
+  return Platform.OS === 'android' ? Array.from({ length: 3 }, () => Gesture.Native()
+    .disallowInterruption(true).shouldCancelWhenOutside(false)) : [];
 }
 
-export function TimelineNativeScrollView({ nativeGesture, ...props }: ComponentPropsWithRef<typeof ScrollView> & {
+export function TimelineNativeScrollView(props: ComponentPropsWithRef<typeof ScrollView> & {
   nativeGesture?: ReturnType<typeof Gesture.Native>;
+  springOffset?: SharedValue<number>;
 }) {
-  const view = <ScrollView {...props} />;
-  return nativeGesture ? <GestureDetector gesture={nativeGesture}>{view}</GestureDetector> : view;
+  return <SpringScrollView {...props} />;
 }
 
 export function TimelineNativeGestureView({ panHandlers, nativeCallbacks, nativeDisabled, ...props }: ViewProps & {

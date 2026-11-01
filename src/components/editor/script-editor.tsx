@@ -1,3 +1,4 @@
+import { renderSpringScrollView } from '@/components/spring-scroll-view';
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -802,6 +803,7 @@ export function ScriptEditor(props: {
         <View style={{ flex: 1, minHeight: 0 }}>
           <CaptionCellLayoutContext.Provider value={reportCellLayout}>
           <FlatList
+          renderScrollComponent={renderSpringScrollView}
             ref={listRef}
             data={draftCaptions}
             keyExtractor={(caption) => caption.id}

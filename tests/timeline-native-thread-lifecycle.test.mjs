@@ -153,6 +153,9 @@ function mountedWrapper() {
     if (name === 'react') return { createContext: (value) => ({ value }), useContext: (context) => context.value,
       useState: (initialize) => [initialize()], useEffect: (setup) => effects.push(setup) };
     if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }) };
+    if (name === '@/components/spring-scroll-view') return {
+      SpringScrollView: 'ScrollView', SpringScrollGestureContext: { value: [] },
+    };
     if (name === 'react-native') return { Platform: { OS: 'android' }, View: 'View', ScrollView: 'ScrollView' };
     if (name === 'react-native-gesture-handler') return { Gesture: { Pan: () => pan }, GestureDetector: 'GestureDetector', State: { FAILED: 1, CANCELLED: 3 } };
     if (name === 'react-native-reanimated') return { useSharedValue: (value) => ({ value }), setGestureState: (...args) => {

@@ -1,7 +1,13 @@
 const path = require('node:path');
 const { patchAndroidDependencies } = require('./patch-android-dependencies');
 const { configureAndroidRelease } = require('./configure-android-release');
+const { repairReanimatedNativeProps } = require('./repair-reanimated-native-props');
+const { repairNativeScrollInput } = require('./repair-native-scroll-input');
+const { repairPressableAccessibility } = require('./repair-pressable-accessibility');
 
 const projectRoot = path.join(path.dirname(module.filename), '..');
+repairPressableAccessibility(projectRoot);
+repairNativeScrollInput(projectRoot);
+repairReanimatedNativeProps(projectRoot);
 patchAndroidDependencies(projectRoot);
 configureAndroidRelease(projectRoot);

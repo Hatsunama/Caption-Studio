@@ -1,5 +1,7 @@
+import { renderSpringScrollView } from '@/components/spring-scroll-view';
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Modal, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { FlatList, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { SpringScrollModal as Modal } from '@/components/spring-scroll-modal';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chrome } from '@/lib/ui-theme';
@@ -117,6 +119,7 @@ export function FontBrowser(props: {
         </View>
 
         <FlatList
+          renderScrollComponent={renderSpringScrollView}
           style={{ flex: 1, minHeight: 0, minWidth: 0 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"

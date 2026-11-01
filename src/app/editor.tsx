@@ -17,17 +17,17 @@ import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { AudioModule, RecordingPresets, useAudioRecorder } from 'expo-audio';
 import { useVoiceoverRecorderState } from '@/hooks/use-voiceover-recorder-state';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
+import { type ScrollView as NativeScrollView,
   ActivityIndicator,
   Alert,
   Animated,
-  Modal,
   Pressable,
-  ScrollView,
   Text,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { SpringScrollModal as Modal } from '@/components/spring-scroll-modal';
+import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 
 import { AnimationBrowser } from '@/components/editor/animation-browser';
 import { setTimelineTrackOrder } from '@/lib/timeline-tracks';
@@ -274,7 +274,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const [scriptDraftCaptions, setScriptDraftCaptions] = useState<CaptionBlock[] | null>(null);
   const [scriptKeyboardOpen, setScriptKeyboardOpen] = useState(false);
   const [scriptEditingCaptionId, setScriptEditingCaptionId] = useState<string>();
-  const editorScrollRef = useRef<ScrollView>(null);
+  const editorScrollRef = useRef<NativeScrollView>(null);
   const scriptBackRequestRef = useRef<(() => void) | undefined>(undefined);
   const dualCaptionBackRequestRef = useRef<(() => void) | undefined>(undefined);
   const textLayerBackRequestRef = useRef<(() => void) | undefined>(undefined);

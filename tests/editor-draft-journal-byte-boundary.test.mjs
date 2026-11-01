@@ -290,12 +290,15 @@ async function mountEditor(kind, options = {}) {
   };
   const reveal = { viewportRef: { current: null }, focus() {}, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   const jsx = (type, props) => ({ type, props: keyboardViewportHostProps(type, props) });
+  const springScroll = { SpringScrollView: 'ScrollView', renderSpringScrollView: (props) => jsx('ScrollView', props) };
   const exports = {};
   runInNewContext(editorSources[kind], { exports, Error,
     setTimeout: (fn) => { timers.set(++nextTimer, fn); return nextTimer; }, clearTimeout: (id) => timers.delete(id),
     require(name) {
       if (name === 'react') return react;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === '@/components/spring-scroll-view') return springScroll;
+      if (name === '@/components/spring-scroll-modal') return { SpringScrollModal: 'Modal' };
       if (name === '@/hooks/use-focused-input-reveal') return { useFocusedInputReveal: () => [reveal.viewportRef, reveal] };
       if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport: 'KeyboardViewport' };
       if (name === '@/components/refract-background') return {

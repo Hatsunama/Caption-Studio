@@ -156,7 +156,9 @@ function mount(t, initialProject = fixture()) {
       useAudioRecorder: () => ({ uri: null, prepareToRecordAsync: async () => undefined, record() {}, stop: async () => undefined }),
     };
     if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ bottom: 0 }) };
-    if (name.startsWith('@/components/')) return new Proxy({}, { get: (_object, key) => key });
+    if (name === '@/components/spring-scroll-view') return { SpringScrollView: native.ScrollView };
+      if (name === '@/components/spring-scroll-modal') return { SpringScrollModal: native.Modal };
+      if (name.startsWith('@/components/')) return new Proxy({}, { get: (_object, key) => key });
     if (name.startsWith('@/services/')) return services;
     if (name === '@/lib/ui-theme') return { chrome: { radius: { md: 8, pill: 16 } } };
     if (name === '@/lib/font-catalog') return {};
