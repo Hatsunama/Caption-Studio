@@ -376,6 +376,12 @@ export function decodeCaption(value: unknown, index: number): CaptionBlock {
     startMs,
     endMs,
     wordIds,
+    ...(caption.splitOrigin === undefined ? {} : { splitOrigin: (() => {
+      const origin = record(caption.splitOrigin, `caption ${index + 1} split origin`);
+      const separator = boundedString(origin.separator, `caption ${index + 1} split separator`, 100_000);
+      if (/\S|\r|\n/u.test(separator)) throw new Error(`caption ${index + 1} split separator is invalid`);
+      return { parentId: identifierValue(origin.parentId, `caption ${index + 1} split parent`), separator };
+    })() }),
     ...(caption.mergeProvenance === undefined ? {} : { mergeProvenance: decodeCaptionMergeProvenance(caption.mergeProvenance) }),
     textMode: optionalEnum(caption.textMode, ['automatic', 'manual'] as const, `caption ${index + 1} text mode`),
     ...(timingMode === undefined ? {} : { timingMode }),
