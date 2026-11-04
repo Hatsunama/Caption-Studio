@@ -32,6 +32,10 @@ export async function assertExportSourcesAvailable(plan: TimelineRenderPlan, pro
       .map((clip) => ({ ...clip, kind: 'audio' as const })),
     ...plan.layers.flatMap((layer) => layer.kind === 'image' && layer.visible
       ? [{ id: layer.id, uri: layer.uri, kind: 'image' as const }] : []),
+    ...plan.layers.flatMap((layer) => layer.kind === 'video' && layer.visible
+      ? [{ id: layer.id, uri: layer.uri, kind: 'video' as const,
+          sourceStartMs: layer.sourceStartMs,
+          sourceEndMs: layer.sourceStartMs + (layer.endMs - layer.startMs) * layer.playbackRate }] : []),
   ];
   for (const source of sources) {
     let mediaInfo: Awaited<ReturnType<SourceProbe['media']>> | undefined;

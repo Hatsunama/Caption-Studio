@@ -77,6 +77,7 @@ internal class TimelineVideoExporter(private val context: Context) {
       plan.clips.forEach { policy.requireInput(it.uri) }
       plan.audioClips.forEach { policy.requireInput(it.uri) }
       plan.layers.filterIsInstance<ImageRenderLayer>().forEach { policy.requireInput(it.uri) }
+      plan.layers.filterIsInstance<VideoRenderLayer>().forEach { policy.requireInput(it.uri) }
       plan.layers.filterIsInstance<TextRenderLayer>().forEach { it.style.fontUri?.let(policy::requireInput) }
       plan.captions.forEach { caption ->
         caption.style.fontUri?.let(policy::requireInput)
@@ -694,6 +695,7 @@ internal class TimelineBitmapOverlay(
           }
           is TextRenderLayer -> textPainter.drawTextLayer(canvas, layer, timeMs, plan.width, plan.height)
           is ImageRenderLayer -> drawImageLayer(canvas, layer, timeMs)
+          is VideoRenderLayer -> drawVideoLayer(canvas, layer, timeMs)
         }
       }
     }
@@ -885,17 +887,39 @@ internal class TimelineBitmapOverlay(
   private fun drawImageLayer(canvas: Canvas, layer: ImageRenderLayer, timeMs: Long) {
     if (timeMs !in layer.startMs until layer.endMs) return
     val bitmap = imageCache.getOrLoad(layer.uri) { decodeImage(layer.uri) }
-    val width = layer.boxWidth * plan.width
-    val height = layer.boxHeight * plan.height
+    drawContainedBitmap(canvas, bitmap, layer.positionX, layer.positionY, layer.boxWidth, layer.boxHeight,
+      layer.rotation, layer.scale, layer.scaleX, layer.scaleY, layer.opacity)
+  }
+
+  private fun drawVideoLayer(canvas: Canvas, layer: VideoRenderLayer, timeMs: Long) {
+    if (timeMs !in layer.startMs until layer.endMs) return
+    val sourceTimeMs = layer.sourceTimeAt(timeMs)
+    val frame = retriever(layer.uri).frame(sourceTimeMs, decodeWidth, decodeHeight)
+      ?: throw IllegalArgumentException("Video layer ${layer.id} could not decode a frame at $sourceTimeMs ms")
+    try {
+      drawContainedBitmap(canvas, frame, layer.positionX, layer.positionY, layer.boxWidth, layer.boxHeight,
+        layer.rotation, layer.scale, layer.scaleX, layer.scaleY, layer.opacity)
+    } finally {
+      frame.recycle()
+    }
+  }
+
+  private fun drawContainedBitmap(
+    canvas: Canvas, bitmap: Bitmap, positionX: Float, positionY: Float,
+    boxWidth: Float, boxHeight: Float, rotation: Float, scale: Float,
+    scaleX: Float, scaleY: Float, opacity: Float,
+  ) {
+    val width = boxWidth * plan.width
+    val height = boxHeight * plan.height
     val containedScale = min(width / bitmap.width, height / bitmap.height)
     val matrix = Matrix().apply {
       postTranslate(-bitmap.width / 2f, -bitmap.height / 2f)
-      postScale(containedScale * layer.scale * layer.scaleX, containedScale * layer.scale * layer.scaleY)
-      postRotate(layer.rotation)
-      postTranslate(layer.positionX * plan.width, layer.positionY * plan.height)
+      postScale(containedScale * scale * scaleX, containedScale * scale * scaleY)
+      postRotate(rotation)
+      postTranslate(positionX * plan.width, positionY * plan.height)
     }
     canvas.drawBitmap(bitmap, matrix, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-      alpha = (layer.opacity * 255).toInt()
+      alpha = (opacity * 255).toInt()
     })
   }
 

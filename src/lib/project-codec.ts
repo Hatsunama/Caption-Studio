@@ -68,7 +68,7 @@ function hydrateProject(project: CaptionProject): CaptionProject {
               box: { ...DEFAULT_CAPTION_STYLE.box, ...layer.style?.box },
             },
           }
-        : layer.kind === 'image'
+        : layer.kind === 'image' || layer.kind === 'video'
           ? { ...layer, scale: layer.scale ?? 1, scaleX: layer.scaleX ?? 1, scaleY: layer.scaleY ?? 1, timelineVisible: layer.timelineVisible ?? true }
           : layer,
     ),

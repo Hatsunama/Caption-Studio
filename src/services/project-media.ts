@@ -8,6 +8,7 @@ import { requireFreeSpace } from '@/services/storage-policy';
 import type { ProjectVideoSource } from '@/types/project';
 
 const MAX_STORED_IMAGE_BYTES = 50 * 1024 * 1024;
+export const MAX_STORED_OVERLAY_VIDEO_BYTES = 512 * 1024 * 1024;
 export const MAX_STORED_AUDIO_BYTES = 256 * 1024 * 1024;
 const AUDIO_COPY_CHUNK_BYTES = 1024 * 1024;
 const PROJECT_POSTER_VERSION = 3;
@@ -282,6 +283,43 @@ export async function storeProjectImage(options: {
     if (!committed && destinationUri) {
       await FileSystem.deleteAsync(destinationUri, { idempotent: true }).catch(() => undefined);
     }
+  }
+}
+
+export async function storeProjectOverlayVideo(options: {
+  projectId: string;
+  layerId: string;
+  sourceUri: string;
+  fileName: string;
+  sizeBytes: number;
+}) {
+  if (!FileSystem.documentDirectory) throw new Error('Permanent app storage is unavailable on this device.');
+  if (!Number.isSafeInteger(options.sizeBytes) || options.sizeBytes <= 0 || options.sizeBytes > MAX_STORED_OVERLAY_VIDEO_BYTES) {
+    throw new Error('Choose a video with a known size of 512 MB or less.');
+  }
+  await requireFreeSpace(options.sizeBytes + 32 * 1024 * 1024, 'save this overlay video');
+  const directory = `${FileSystem.documentDirectory}projects/${safePathSegment(options.projectId)}/overlays/`;
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const extension = /\.(mp4|m4v|mov|webm|mkv|3gp)$/i.exec(options.fileName)?.[1]?.toLowerCase() ?? 'mp4';
+  const stagingUri = `${directory}.staging-${safePathSegment(options.layerId)}-${nonce}.${extension}`;
+  const destinationUri = `${directory}${safePathSegment(options.layerId)}-${nonce}.${extension}`;
+  let committed = false;
+  try {
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+    await FileSystem.copyAsync({ from: options.sourceUri, to: stagingUri });
+    const staged = await FileSystem.getInfoAsync(stagingUri);
+    if (!staged.exists || staged.isDirectory || staged.size <= 0 || staged.size > MAX_STORED_OVERLAY_VIDEO_BYTES) {
+      throw new Error('The overlay video could not be saved within the 512 MB limit.');
+    }
+    assertSupportedVideo(await CaptionMedia.getMediaInfo(stagingUri), options.fileName);
+    const existing = await FileSystem.getInfoAsync(destinationUri);
+    if (existing.exists) throw new Error('Caption Studio could not allocate a unique overlay video file. Try again.');
+    await FileSystem.moveAsync({ from: stagingUri, to: destinationUri });
+    committed = true;
+    return destinationUri;
+  } finally {
+    await FileSystem.deleteAsync(stagingUri, { idempotent: true }).catch(() => undefined);
+    if (!committed) await FileSystem.deleteAsync(destinationUri, { idempotent: true }).catch(() => undefined);
   }
 }
 

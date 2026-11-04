@@ -8,6 +8,60 @@ import org.junit.Test
 
 class TimelineRenderPlanTest {
   @Test
+  fun parsesVideoOverlayTimingAndGeometry() {
+    val value = validPlan().apply {
+      this["layers"] = listOf(mapOf<String, Any>(
+        "id" to "moving-overlay", "kind" to "video", "visible" to true,
+        "uri" to "content://overlay", "startMs" to 500, "endMs" to 2_500,
+        "sourceStartMs" to 120, "playbackRate" to 1.5, "includeAudio" to true,
+        "position" to mapOf("x" to 0.25, "y" to 0.75),
+        "box" to mapOf("width" to 0.4, "height" to 0.2),
+        "rotation" to 30, "scale" to 1.2, "scaleX" to 0.8,
+        "scaleY" to 1.1, "opacity" to 0.6,
+      ))
+    }
+
+    val layer = parseTimelineRenderPlan(value).layers.single() as VideoRenderLayer
+    assertEquals("content://overlay", layer.uri)
+    assertEquals(500L, layer.startMs)
+    assertEquals(2_500L, layer.endMs)
+    assertEquals(120L, layer.sourceStartMs)
+    assertEquals(1.5f, layer.playbackRate)
+    assertTrue(layer.includeAudio)
+    assertEquals(0.25f, layer.positionX)
+    assertEquals(0.75f, layer.positionY)
+    assertEquals(0.4f, layer.boxWidth)
+    assertEquals(0.2f, layer.boxHeight)
+    assertEquals(30f, layer.rotation)
+    assertEquals(1.2f, layer.scale)
+    assertEquals(0.8f, layer.scaleX)
+    assertEquals(1.1f, layer.scaleY)
+    assertEquals(0.6f, layer.opacity)
+    assertEquals(120L, layer.sourceTimeAt(500))
+    assertEquals(1_620L, layer.sourceTimeAt(1_500))
+  }
+
+  @Test
+  fun rejectsInvalidVideoOverlayTimingAndRate() {
+    fun planWith(layer: Map<String, Any>) = validPlan().apply { this["layers"] = listOf(layer) }
+    val layer = mapOf<String, Any>(
+      "id" to "overlay", "kind" to "video", "uri" to "content://overlay",
+      "startMs" to 500, "endMs" to 2_500,
+      "position" to mapOf("x" to 0.5, "y" to 0.5),
+      "box" to mapOf("width" to 0.4, "height" to 0.3),
+    )
+    assertInvalid("invalid timeline or source bounds") { planWith(layer + ("endMs" to 500)) }
+    assertInvalid("invalid timeline or source bounds") { planWith(layer + ("sourceStartMs" to -1)) }
+    assertInvalid("extends beyond") { planWith(layer + ("endMs" to 4_001)) }
+    assertInvalid("playback rate") { planWith(layer + ("playbackRate" to 0)) }
+    assertFalse((parseTimelineRenderPlan(planWith(layer)).layers.single() as VideoRenderLayer).includeAudio)
+    assertInvalid("field 'includeAudio' must be a boolean") { planWith(layer + ("includeAudio" to "yes")) }
+    assertInvalid("invalid box dimensions") {
+      planWith(layer + ("box" to mapOf("width" to 0, "height" to 0.3)))
+    }
+  }
+
+  @Test
   fun parsesCompletePlanAndAppliesDocumentedNormalization() {
     val value = validPlan().apply {
       this["frameRate"] = 120

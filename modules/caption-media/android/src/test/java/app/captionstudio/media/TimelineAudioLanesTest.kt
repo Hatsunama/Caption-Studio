@@ -66,8 +66,9 @@ class TimelineAudioLanesTest {
     clips: List<RenderVideoClip>,
     audioClips: List<RenderAudioClip> = emptyList(),
     durationMs: Long = clips.lastOrNull()?.timelineEndMs ?: 5_000L,
+    layers: List<RenderLayer> = emptyList(),
   ): Composition {
-    val plan = TimelineRenderPlan(durationMs, 64, 64, 30, "#000000", false, transform, clips, emptyList(), emptyList(), audioClips)
+    val plan = TimelineRenderPlan(durationMs, 64, 64, 30, "#000000", false, transform, clips, emptyList(), layers, audioClips)
     val durations = clips.associate { it.uri to 10_000L }
     val transitions = TimelineTransitionTimeline.create(clips, durations)
     val overlay = TimelineBitmapOverlay(context, plan, transitions)
@@ -98,6 +99,19 @@ class TimelineAudioLanesTest {
   }
 
   private fun laneCount(composition: Composition) = composition.sequences.count { C.TRACK_TYPE_AUDIO in it.trackTypes }
+
+  @Test fun videoOverlayAudioUsesOnlyTheDerivedAudioClip() {
+    val uri = "content://media/video/overlay"
+    val layer = VideoRenderLayer("overlay", true, uri, 0, 1_000, 100, 1f, true,
+      0.5f, 0.5f, 0.5f, 0.5f, 0f, 1f, 1f, 1f, 1f)
+    assertEquals(0, laneCount(exportComposition(emptyList(), layers = listOf(layer))))
+    val derived = RenderAudioClip("overlay-audio", uri, 0, 100, 1_100, 1f, 1f, false, 0, 0)
+    assertEquals(1, laneCount(exportComposition(emptyList(), listOf(derived), layers = listOf(layer))))
+    val audioPlan = TimelineAudioPlan(1_000, emptyList(), listOf(
+      TimelineAudioSegment("overlay-audio", uri, 0, 1_000, 100, 1_100, 1f, 1f, false),
+    ))
+    assertEquals(1, laneCount(captionComposition(audioPlan)))
+  }
 
   @Test fun caption52SequentialCutsUseOneLane() {
     assertEquals(1, laneCount(captionComposition(TimelineAudioPlan(77_000, List(52) { audio(it, it * 1_000L, (it + 1) * 1_000L) }, emptyList()))))

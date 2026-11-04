@@ -1,6 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 
 import CaptionMedia from 'caption-media';
+import { getProject } from '@/services/database';
 import { assertSupportedVideo } from '@/lib/media-validation';
 import { MINIMUM_CLIP_TIMELINE_MS } from '@/lib/video-timeline';
 import {
@@ -8,15 +9,101 @@ import {
   ensureProjectVideoPreview,
   generateProjectThumbnail,
   MAX_STORED_AUDIO_BYTES,
+  MAX_STORED_OVERLAY_VIDEO_BYTES,
   prepareExtractedAudioUri,
   storeProjectAudio,
   storeProjectImage,
+  storeProjectOverlayVideo,
 } from '@/services/project-media';
 import { releaseReadPermissions } from '@/services/media-permissions';
 import { requireFreeSpace } from '@/services/storage-policy';
 import type { ProjectAudioSource, ProjectVideoSource } from '@/types/project';
 
 const MIN_IMPORT_HEADROOM_BYTES = 32 * 1024 * 1024;
+
+export type SelectedOverlayVideo = {
+  uri: string;
+  name: string;
+  durationMs: number;
+  width: number;
+  height: number;
+  hasAudio: boolean;
+  /** Delete the uncommitted owned video if the user cancels or project save fails. */
+  cleanup: () => Promise<void>;
+};
+
+export async function cleanupUncommittedOverlayVideo(
+  projectId: string,
+  selected: SelectedOverlayVideo,
+  saveAttempted: boolean,
+) {
+  if (!saveAttempted) return selected.cleanup();
+  // A save may have reached disk before its editor session closed. Keep the
+  // owned file if the durable draft refers to it, or if disk cannot be read.
+  const saved = await getProject(projectId).catch(() => undefined);
+  if (saved !== undefined && (!saved || !saved.layers.some((layer) => layer.kind === 'video' && layer.uri === selected.uri))) {
+    await selected.cleanup();
+  }
+}
+
+export async function pickOverlayVideo(
+  projectId: string,
+  layerId: string,
+  onPreparing?: () => void,
+): Promise<SelectedOverlayVideo | null> {
+  const result = await CaptionMedia.pickVideoDocuments(false);
+  if (result.canceled) return null;
+  const asset = result.assets[0];
+  if (!asset) throw new Error('No video was returned by the Android picker.');
+  let ownedUri: string | undefined;
+  try {
+    onPreparing?.();
+    const sizeBytes = asset.size;
+    if (typeof sizeBytes !== 'number' || !Number.isSafeInteger(sizeBytes) || sizeBytes <= 0 || sizeBytes > MAX_STORED_OVERLAY_VIDEO_BYTES) {
+      throw new Error('Choose a video with a known size of 512 MB or less.');
+    }
+    const sourceInfo = await probeVideoForImport(asset.uri, asset.name);
+    if (sourceInfo.durationMs < MINIMUM_CLIP_TIMELINE_MS) {
+      throw new Error(`${asset.name} is shorter than ${MINIMUM_CLIP_TIMELINE_MS / 1000} seconds and cannot be edited reliably.`);
+    }
+    ownedUri = await storeProjectOverlayVideo({
+      projectId,
+      layerId,
+      sourceUri: asset.uri,
+      fileName: asset.name,
+      sizeBytes,
+    });
+    const storedInfo = await probeVideoForImport(ownedUri, asset.name);
+    if (storedInfo.durationMs < MINIMUM_CLIP_TIMELINE_MS) {
+      throw new Error(`${asset.name} could not be saved with usable video timing.`);
+    }
+    let cleaned = false;
+    let cleanupInFlight: Promise<void> | undefined;
+    const selected: SelectedOverlayVideo = {
+      uri: ownedUri,
+      name: asset.name,
+      durationMs: storedInfo.durationMs,
+      width: storedInfo.width,
+      height: storedInfo.height,
+      hasAudio: storedInfo.hasAudio,
+      cleanup: () => {
+        if (cleaned) return Promise.resolve();
+        if (!cleanupInFlight) {
+          cleanupInFlight = deleteProjectOwnedFiles(projectId, [selected.uri])
+            .then(() => { cleaned = true; })
+            .catch((error) => { cleanupInFlight = undefined; throw error; });
+        }
+        return cleanupInFlight;
+      },
+    };
+    return selected;
+  } catch (error) {
+    if (ownedUri) await deleteProjectOwnedFiles(projectId, [ownedUri]).catch(() => undefined);
+    throw error;
+  } finally {
+    await releaseReadPermissions([asset.uri]);
+  }
+}
 
 export type MediaImportProgress = {
   stage: 'loading' | 'saving';

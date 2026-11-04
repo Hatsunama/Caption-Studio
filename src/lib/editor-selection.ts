@@ -6,7 +6,7 @@ export type EditorSelection =
   | { kind: 'video' | 'audio'; id: string }
   | { kind: 'captions'; captionId?: string }
   | { kind: 'translation'; id: string; captionId?: string }
-  | { kind: 'text' | 'image'; id: string };
+  | { kind: 'text' | 'image' | 'video-overlay'; id: string };
 
 const SELECTION_TO_TOOL = {
   video: 'video',
@@ -15,6 +15,7 @@ const SELECTION_TO_TOOL = {
   translation: 'captions',
   text: 'stickers',
   image: 'stickers',
+  'video-overlay': 'stickers',
 } as const satisfies Record<EditorSelection['kind'], EditorTool>;
 
 export function shouldOpenEditorTool(current: EditorTool, next: EditorTool) {
@@ -28,7 +29,7 @@ export function editorSelectionState(selection: EditorSelection) {
     audioClipId: selection.kind === 'audio' ? selection.id : undefined,
     captionId: selection.kind === 'captions' || selection.kind === 'translation' ? selection.captionId : undefined,
     layerId: selection.kind === 'captions' ? 'captions'
-      : selection.kind === 'translation' || selection.kind === 'text' || selection.kind === 'image' ? selection.id : undefined,
+      : selection.kind === 'translation' || selection.kind === 'text' || selection.kind === 'image' || selection.kind === 'video-overlay' ? selection.id : undefined,
     translationTrackId: selection.kind === 'translation' ? selection.id : undefined,
   };
 }
@@ -45,5 +46,5 @@ export function editorLayerSelection(
   if (!layer) return undefined;
   return layer.kind === 'captions'
     ? { kind: 'captions', captionId }
-    : { kind: layer.kind, id: layer.id };
+    : { kind: layer.kind === 'video' ? 'video-overlay' : layer.kind, id: layer.id };
 }
