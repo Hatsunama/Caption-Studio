@@ -144,6 +144,31 @@ internal data class ImageRenderLayer(
   val scaleY: Float = 1f,
 ) : RenderLayer
 
+internal data class VideoRenderLayer(
+  override val id: String,
+  override val visible: Boolean,
+  val uri: String,
+  val startMs: Long,
+  val endMs: Long,
+  val sourceStartMs: Long,
+  val playbackRate: Float,
+  val includeAudio: Boolean,
+  val positionX: Float,
+  val positionY: Float,
+  val boxWidth: Float,
+  val boxHeight: Float,
+  val rotation: Float,
+  val opacity: Float,
+  val scale: Float,
+  val scaleX: Float,
+  val scaleY: Float,
+) : RenderLayer {
+  fun sourceTimeAt(timeMs: Long): Long {
+    val elapsedSourceMs = ((timeMs - startMs).toDouble() * playbackRate).toLong()
+    return sourceStartMs + elapsedSourceMs.coerceAtMost(Long.MAX_VALUE - sourceStartMs)
+  }
+}
+
 internal data class RenderAudioClip(
   val id: String,
   val uri: String,
@@ -184,6 +209,9 @@ internal fun parseTimelineRenderPlan(value: Map<String, Any>): TimelineRenderPla
     require(plan.clips.all { it.timelineEndMs <= plan.durationMs }) { "A video clip extends beyond the render duration" }
     require(plan.captions.all { it.startMs >= 0 && it.endMs > it.startMs && it.endMs <= plan.durationMs }) {
       "A caption has invalid timeline bounds"
+    }
+    require(plan.layers.filterIsInstance<VideoRenderLayer>().all { it.endMs <= plan.durationMs }) {
+      "A video layer extends beyond the render duration"
     }
     require(plan.audioClips.all { it.startMs >= 0 && it.startMs < plan.durationMs }) {
       "An audio clip starts outside the render duration"
@@ -345,6 +373,33 @@ private fun parseLayer(value: Map<String, Any>): RenderLayer {
       scaleX = value.positiveScale("scaleX"),
       scaleY = value.positiveScale("scaleY"),
     )
+    "video" -> VideoRenderLayer(
+      id = value.string("id"),
+      visible = value.booleanOr("visible", true),
+      uri = value.optionalNonBlankString("uri")
+        ?: throw IllegalArgumentException("A video layer requires a URI"),
+      startMs = value.number("startMs").toLong(),
+      endMs = value.number("endMs").toLong(),
+      sourceStartMs = value.numberOr("sourceStartMs", 0).toLong(),
+      playbackRate = value.numberOr("playbackRate", 1).toFloat().also {
+        require(it.isFinite() && it in 0.1f..8f) { "Video layer playback rate must be between 0.1 and 8" }
+      },
+      includeAudio = value.booleanOr("includeAudio", false),
+      positionX = value.map("position").numberOr("x", 0.5).toFloat(),
+      positionY = value.map("position").numberOr("y", 0.5).toFloat(),
+      boxWidth = value.map("box").numberOr("width", 0.3).toFloat(),
+      boxHeight = value.map("box").numberOr("height", 0.3).toFloat(),
+      rotation = value.numberOr("rotation", 0).toFloat(),
+      opacity = value.numberOr("opacity", 1).toFloat().coerceIn(0f, 1f),
+      scale = value.positiveScale("scale"),
+      scaleX = value.positiveScale("scaleX"),
+      scaleY = value.positiveScale("scaleY"),
+    ).also {
+      require(it.startMs >= 0 && it.endMs > it.startMs && it.sourceStartMs >= 0) {
+        "Video layer ${it.id} has invalid timeline or source bounds"
+      }
+      require(it.boxWidth > 0f && it.boxHeight > 0f) { "Video layer ${it.id} has invalid box dimensions" }
+    }
     else -> throw IllegalArgumentException("Unsupported render layer kind '$kind'")
   }
 }

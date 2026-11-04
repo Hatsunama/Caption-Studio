@@ -28,7 +28,7 @@ export function collectProjectOwnedUris(project: CaptionProject): string[] {
     ...project.audioSources
       .filter((source) => source.storageMode === 'copied')
       .map((source) => source.uri),
-    ...project.layers.map((layer) => layer.kind === 'image' ? layer.uri : undefined),
+    ...project.layers.map((layer) => layer.kind === 'image' || layer.kind === 'video' ? layer.uri : undefined),
     project.backgroundReplacement.source?.storageMode === 'copied'
       ? project.backgroundReplacement.source.uri
       : undefined,

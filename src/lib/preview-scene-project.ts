@@ -1,6 +1,6 @@
 import { resolveCaptionPairs, setTranslationCueStyle } from '@/lib/caption-tracks';
 import { sameLayerGeometry, type LayerGeometry } from '@/lib/layer-geometry';
-import { setImageLayer, setTextLayerStyle, setVideoClipTransform } from '@/lib/project-editor';
+import { setImageLayer, setTextLayerStyle, setVideoClipTransform, setVideoLayer } from '@/lib/project-editor';
 import { videoClipPreviewGeometry } from '@/lib/video-transform';
 import { applyStylePatch, resolveCaptionStyle } from '@/lib/style-resolver';
 import type { EditorSelection } from '@/lib/editor-selection';
@@ -33,10 +33,12 @@ export function applyPreviewSceneGeometry(project: CaptionProject, target: Previ
     if (!pair || !sameLayerGeometry(pair.style, target.geometry) || sameLayerGeometry(target.geometry, geometry)) return project;
     return setTranslationCueStyle(project, selection.id, pair.source.id, geometry, new Date().toISOString());
   }
-  if (selection.kind !== 'text' && selection.kind !== 'image') return project;
-  const layer = project.layers.find((candidate) => candidate.id === selection.id && candidate.kind === selection.kind);
+  if (selection.kind !== 'text' && selection.kind !== 'image' && selection.kind !== 'video-overlay') return project;
+  const layer = project.layers.find((candidate) => candidate.id === selection.id
+    && candidate.kind === (selection.kind === 'video-overlay' ? 'video' : selection.kind));
   if (!layer || layer.kind === 'captions') return project;
   const current = layer.kind === 'text' ? layer.style : layer;
   if (!sameLayerGeometry(current, target.geometry) || sameLayerGeometry(current, geometry)) return project;
-  return layer.kind === 'text' ? setTextLayerStyle(project, layer.id, geometry) : setImageLayer(project, layer.id, geometry);
+  return layer.kind === 'text' ? setTextLayerStyle(project, layer.id, geometry)
+    : layer.kind === 'video' ? setVideoLayer(project, layer.id, geometry) : setImageLayer(project, layer.id, geometry);
 }

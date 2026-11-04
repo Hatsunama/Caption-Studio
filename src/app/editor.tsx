@@ -46,6 +46,7 @@ import { FontBrowser } from '@/components/editor/font-browser';
 import { ExtractAudioSourceSheet } from '@/components/editor/extract-audio-source-sheet';
 import { WatermarkSheet } from '@/components/editor/watermark-sheet';
 import { ImageLayerOverlay } from '@/components/editor/image-layer-overlay';
+import { VideoLayerOverlay } from '@/components/editor/video-layer-overlay';
 import { LayerTimeline } from '@/components/editor/layer-timeline';
 import { MediaLoadingOverlay } from '@/components/media-loading-overlay';
 import { OperationOverlay } from '@/components/operation-overlay';
@@ -94,6 +95,7 @@ import { fontChoicePatch, type FontChoice, type FontColors } from '@/lib/font-st
 import { canApplyVideoTransition, VIDEO_TRANSITION_PRESETS } from '@/lib/video-transitions';
 import {
   addImageLayer as addImageLayerToProject,
+  addVideoLayer as addVideoLayerToProject,
   createTextLayer,
   createWatermarkLayer,
   deleteCaptionBlock,
@@ -109,6 +111,7 @@ import {
   setVideoClipGap,
   setVideoClipLeadingGap,
   setVideoClipTransform,
+  setVideoLayerPlaybackRate,
   setVideoTransition,
   moveVideoClip,
   reorderVideoClip,
@@ -125,7 +128,7 @@ import {
   totalClipDuration,
   visibleTimelineCaptions,
 } from '@/lib/video-timeline';
-import { pickAndStoreImage, type MediaImportProgress } from '@/services/media-import';
+import { cleanupUncommittedOverlayVideo, pickAndStoreImage, pickOverlayVideo, type MediaImportProgress } from '@/services/media-import';
 import {
   cancelProjectVideoExport,
   exportProjectVideo,
@@ -474,7 +477,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const pauseTransport = transport.pause;
   const cancelCaptionGeneration = useCallback(async () => {
     return runCaptionCancellationRequest(cancelProjectCaptionGeneration, setTranscriptionCancelling, setError);
-  }, []);
+  }, [setError]);
 
   useEffect(() => {
     if (!runtimePolicy.mediaAdmitted) pauseTransport();
@@ -665,6 +668,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const selectedLayer = project.layers.find((layer) => layer.id === selectedLayerId);
   const selectedTextLayer = selectedLayer?.kind === 'text' ? selectedLayer : undefined;
   const selectedImageLayer = selectedLayer?.kind === 'image' ? selectedLayer : undefined;
+  const selectedVideoLayer = selectedLayer?.kind === 'video' ? selectedLayer : undefined;
   const translationTrackSelected = selectedTranslationTrack?.id === selectedLayerId;
   const selectedTranslationPair = translationTrackSelected
     ? selectedTranslationPairs.find((pair) => pair.source.id === selectedCaptionId)
@@ -1426,6 +1430,62 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     }
   };
 
+  const addOverlayVideo = async () => {
+    if (!editorSession.editable()) return;
+    transport.pause();
+    const id = uniqueId('overlay-video');
+    let selected: Awaited<ReturnType<typeof pickOverlayVideo>> = null;
+    let committed = false;
+    let commitAttempted = false;
+    try {
+      selected = await pickOverlayVideo(project.id, id, () => {
+        if (workspaceMountedRef.current) setMediaProgress({ stage: 'saving', completed: 0, total: 1, detail: 'Saving overlay video' });
+      });
+      if (!selected) return;
+      if (workspaceMountedRef.current) setMediaProgress(undefined);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const includeAudio = await new Promise<boolean | null>((resolve) => {
+        Alert.alert('Add video overlay', selected!.hasAudio ? 'Include this video’s audio?' : 'This video has no audio track.', [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+          { text: 'Video only', onPress: () => resolve(false) },
+          ...(selected!.hasAudio ? [{ text: 'Include audio', onPress: () => resolve(true) }] : []),
+        ], { cancelable: false });
+      });
+      if (includeAudio === null) return;
+      commitAttempted = true;
+      const receipt = await commitEditorProject((before) => addVideoLayerToProject(before, {
+        id, name: selected!.name, uri: selected!.uri, currentMs,
+        durationMs: projectTimelineDuration(before), sourceDurationMs: selected!.durationMs,
+        includeAudio,
+      }).project);
+      committed = Boolean(receipt);
+      if (!receipt || !editorSession.isCurrent(receipt)) return;
+      ownedAssetLedgerRef.current = trackProjectOwnedAssets(ownedAssetLedgerRef.current, [selected.uri]);
+      selectEditorObject({ kind: 'video-overlay', id });
+    } catch (caught) {
+      if (workspaceMountedRef.current) {
+        setMediaProgress(undefined);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        Alert.alert('Could not add video', caught instanceof Error ? caught.message : 'The selected video could not be saved.');
+      }
+    } finally {
+      if (workspaceMountedRef.current) setMediaProgress(undefined);
+      if (selected && !committed) {
+        await cleanupUncommittedOverlayVideo(project.id, selected, commitAttempted).catch(() => undefined);
+      }
+    }
+  };
+
+  const changeSelectedOverlaySpeed = (rate: number) => {
+    if (!selectedVideoLayer || !editorSession.editable()) return;
+    const before = editorSession.current();
+    const next = setVideoLayerPlaybackRate(before, selectedVideoLayer.id, rate);
+    if (next === before) return;
+    pushUndo(before);
+    setProject(next);
+    persistProjectInBackground();
+  };
+
   const reorderTimelineTracks = (order: string[]) => {
     const before = editorSession.current();
     const next = setTimelineTrackOrder(before, order);
@@ -1454,7 +1514,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     try {
       const receipt = await commitEditorProject((before) =>
         duplicateVisualLayer(before, layerId, duplicateId)?.project ?? null);
-      if (receipt && editorSession.isCurrent(receipt)) selectEditorObject({ kind, id: duplicateId });
+      if (receipt && editorSession.isCurrent(receipt)) selectEditorObject({ kind: kind === 'video' ? 'video-overlay' : kind, id: duplicateId });
     } catch {
       // commitEditorProject reports the failed save without publishing the copy.
     }
@@ -1903,7 +1963,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     if (!visualLayerVisibleAtTime(layer, currentMs)) continue;
     previewSceneTargets.push({
       key: `layer:${layer.id}`,
-      selection: { kind: layer.kind, id: layer.id },
+      selection: { kind: layer.kind === 'video' ? 'video-overlay' : layer.kind, id: layer.id },
       geometry: layer.kind === 'text' ? layer.style : layer,
       order: previewOrder++,
       deletable: true,
@@ -1913,7 +1973,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     ? `caption:${selectedCaption.id}`
     : selectedTranslationPair
       ? `translation:${selectedTranslationPair.trackId}:${selectedTranslationPair.source.id}`
-      : selectedTextLayer || selectedImageLayer
+      : selectedTextLayer || selectedImageLayer || selectedVideoLayer
         ? `layer:${selectedLayerId}`
         : selectedClipId && currentClipEntry?.clip.id === selectedClipId
           ? `video:${selectedClipId}` : undefined;
@@ -1942,7 +2002,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     onDelete: (target) => {
       const selection = target.selection;
       if (selection.kind === 'captions' && selection.captionId) confirmDeleteCaption(selection.captionId);
-      else if ((selection.kind === 'text' || selection.kind === 'image') && selection.id) deleteLayer(selection.id);
+      else if ((selection.kind === 'text' || selection.kind === 'image' || selection.kind === 'video-overlay') && selection.id) deleteLayer(selection.id);
     },
     onInteractionStart: () => transport.pause(),
     onInteractionEnd: () => {},
@@ -2094,6 +2154,11 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                   />
               );
             }
+            if (layer.kind === 'video') return <VideoLayerOverlay
+              key={layer.id} layer={layer}
+              geometry={previewGeometryFor(`layer:${layer.id}`, layer)}
+              timelineMs={currentMs} isPlaying={isPlaying}
+            />;
             return (
               <ImageLayerOverlay
                 key={layer.id}
@@ -2279,7 +2344,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           } : undefined}
         />
         </View>
-        {selectedCaption || selectedTranslationPair || selectedAudioClip || selectedTextLayer || selectedImageLayer ? (
+        {selectedCaption || selectedTranslationPair || selectedAudioClip || selectedTextLayer || selectedImageLayer || selectedVideoLayer ? (
           <Text style={{ color: palette.muted, fontSize: 11 }}>Drag the selected block to move it. Drag either white edge to trim it.</Text>
         ) : null}
 
@@ -2393,6 +2458,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <Action label="Delete text layer" danger onPress={() => deleteLayer(selectedTextLayer.id)} />
                 <Action label="Add text layer" onPress={addTextLayer} />
                 <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
+                <Action label="Add video overlay" onPress={() => void addOverlayVideo()} />
               </PersistedHorizontalScroll>
             ) : selectedImageLayer ? (
               <PersistedHorizontalScroll id="tool:stickers:image" contentContainerStyle={{ gap: 8 }}>
@@ -2401,11 +2467,29 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <Action label="Delete sticker" danger onPress={() => deleteLayer(selectedImageLayer.id)} />
                 <Action label="Add text layer" onPress={addTextLayer} />
                 <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
+                <Action label="Add video overlay" onPress={() => void addOverlayVideo()} />
               </PersistedHorizontalScroll>
+            ) : selectedVideoLayer ? (
+              <>
+                <PersistedHorizontalScroll id="tool:stickers:video" contentContainerStyle={{ gap: 8 }}>
+                  <Action label="Split at playhead" onPress={splitSelectedVisualAtPlayhead} />
+                  <Action label="Duplicate" onPress={duplicateSelectedVisual} />
+                  <Action label="Delete video overlay" danger onPress={() => deleteLayer(selectedVideoLayer.id)} />
+                  <Action label="Add text layer" onPress={addTextLayer} />
+                  <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
+                  <Action label="Add video overlay" onPress={() => void addOverlayVideo()} />
+                </PersistedHorizontalScroll>
+                <PersistedHorizontalScroll id="tool:stickers:video-speed" contentContainerStyle={{ gap: 8 }}>
+                  {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map((rate) => (
+                    <Action key={rate} label={`${rate}× speed`} color={selectedVideoLayer.playbackRate === rate ? chrome.accent : undefined} onPress={() => changeSelectedOverlaySpeed(rate)} />
+                  ))}
+                </PersistedHorizontalScroll>
+              </>
             ) : (
               <PersistedHorizontalScroll id="tool:stickers:empty" contentContainerStyle={{ gap: 8 }}>
                 <Action label="Add text layer" onPress={addTextLayer} />
                 <Action label="Add sticker/image" onPress={() => void addImageLayer()} />
+                <Action label="Add video overlay" onPress={() => void addOverlayVideo()} />
               </PersistedHorizontalScroll>
             )}
             {selectedTextLayer ? (
@@ -2417,13 +2501,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           </View>
         ) : (
           <View style={{ gap: 12 }}>
-            <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>{selectedTextLayer ? 'SCREEN TEXT CONTROLS' : selectedImageLayer ? 'IMAGE SELECTED' : 'CAPTION CONTROLS'}</Text>
+            <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>{selectedTextLayer ? 'SCREEN TEXT CONTROLS' : selectedImageLayer ? 'IMAGE SELECTED' : selectedVideoLayer ? 'VIDEO OVERLAY SELECTED' : 'CAPTION CONTROLS'}</Text>
             {selectedTextLayer ? (
               <PersistedHorizontalScroll id="tool:captions:selected-text" contentContainerStyle={{ gap: 8 }}>
                 <Action label="Fonts" onPress={() => setFontBrowserOpen(true)} />
                 <Action label="Edit text" onPress={() => { setEditingLayerId(selectedTextLayer.id); setEditingText(selectedTextLayer.text); }} />
               </PersistedHorizontalScroll>
-            ) : selectedImageLayer ? (
+            ) : selectedImageLayer || selectedVideoLayer ? (
               <Text style={{ color: palette.muted, fontSize: 12 }}>Select a caption in the timeline to change caption styling.</Text>
             ) : translationTrackSelected && selectedTranslationTrack ? (
               <PersistedHorizontalScroll id="tool:captions:translation" contentContainerStyle={{ gap: 8 }}>
@@ -2472,7 +2556,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 />
               </PersistedHorizontalScroll>
             )}
-            {!selectedImageLayer ? <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: chrome.hairline, paddingTop: 12 }}>
+            {!selectedImageLayer && !selectedVideoLayer ? <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: chrome.hairline, paddingTop: 12 }}>
               <Text style={{ color: palette.text, fontSize: 13, fontWeight: '700' }}>{selectedTextLayer ? 'TEXT SPACING' : 'CAPTION ANIMATION'}</Text>
               <AnimationBrowser
                 selected={selectedAnimationId}

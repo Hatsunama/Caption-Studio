@@ -3,7 +3,7 @@ import { packTimelineLanes } from '@/lib/timeline-layout';
 import type { CaptionProject, VisualLayer } from '@/types/project';
 
 export function visualTimelineTrackId(layer: VisualLayer): string {
-  return layer.kind === 'captions' ? 'captions' : layer.kind === 'image' ? 'images' : layer.watermark ? 'watermarks' : 'text';
+  return layer.kind === 'captions' ? 'captions' : layer.kind === 'image' ? 'images' : layer.kind === 'video' ? 'videos' : layer.watermark ? 'watermarks' : 'text';
 }
 
 export function visualTimelineGroups(layers: readonly VisualLayer[]) {
@@ -41,7 +41,7 @@ export function decodeTimelineTrackOrder(value: unknown): string[] {
   const ids = new Set<string>();
   return value.map((id) => {
     if (typeof id !== 'string' || ids.has(id) ||
-      (!['video', 'audio', 'captions', 'text', 'images', 'watermarks'].includes(id) &&
+      (!['video', 'audio', 'captions', 'text', 'images', 'videos', 'watermarks'].includes(id) &&
         !(id.startsWith('translation:') && isProjectIdentifier(id.slice(12))))) {
       throw new Error('Timeline track order contains an invalid or duplicate track');
     }

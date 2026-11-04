@@ -34,6 +34,7 @@ import {
   type CaptionProject,
   type CaptionStylePatch,
   type ImageVisualLayer,
+  type VideoVisualLayer,
   type TextVisualLayer,
   type VideoClip,
   type VideoTransformPatch,
@@ -229,7 +230,10 @@ export function setLayerTiming(
   const entries = buildClipTimeline(project.clips);
   return updateProject(project, {
     layers: project.layers.map((layer) => layer.id === layerId && layer.kind !== 'captions'
-      ? attachLayerToTimeline({ ...layer, ...range }, entries, true)
+      ? attachLayerToTimeline(layer.kind === 'video' ? boundedVideoLayer({ ...layer, ...range,
+          ...(layer.kind === 'video' && edge === 'start'
+            ? { sourceStartMs: layer.sourceStartMs + (range.startMs - layer.startMs) * layer.playbackRate } : {}) })
+        : { ...layer, ...range }, entries, true)
       : layer),
   });
 }
@@ -242,6 +246,43 @@ export function setImageLayer(project: CaptionProject, layerId: string, patch: P
       return { ...merged, ...normalizeLayerGeometry(merged) };
     }),
   });
+}
+
+export function setVideoLayer(project: CaptionProject, layerId: string, patch: Partial<Omit<VideoVisualLayer, 'id' | 'kind'>>) {
+  return updateProject(project, {
+    layers: project.layers.map((layer) => {
+      if (layer.id !== layerId || layer.kind !== 'video') return layer;
+      const merged = { ...layer, ...patch };
+      return { ...boundedVideoLayer(merged), ...normalizeLayerGeometry(merged) };
+    }),
+  });
+}
+
+export function setVideoLayerPlaybackRate(project: CaptionProject, layerId: string, rate: number, sourceDurationMs?: number) {
+  if (!Number.isFinite(rate) || rate < 0.25 || rate > 4) throw new Error('Video overlay playback rate must be between 0.25 and 4.');
+  const layer = project.layers.find((candidate) => candidate.id === layerId && candidate.kind === 'video');
+  if (!layer || layer.kind !== 'video') return project;
+  const consumedSourceMs = (layer.endMs - layer.startMs) * layer.playbackRate;
+  const duration = sourceDurationMs ?? layer.sourceDurationMs;
+  const proposedEndMs = layer.startMs + Math.min(consumedSourceMs, duration - layer.sourceStartMs) / rate;
+  return setVideoLayer(project, layerId, {
+    playbackRate: rate, sourceDurationMs: duration,
+    endMs: Math.min(proposedEndMs, timelineArtifactEditLimit(project, proposedEndMs)),
+  });
+}
+
+function boundedVideoLayer(layer: VideoVisualLayer): VideoVisualLayer {
+  if (!Number.isFinite(layer.sourceDurationMs) || layer.sourceDurationMs <= 0
+    || !Number.isFinite(layer.sourceStartMs) || layer.sourceStartMs >= layer.sourceDurationMs
+    || !Number.isFinite(layer.playbackRate) || layer.playbackRate < 0.25 || layer.playbackRate > 4) {
+    throw new Error('Video overlay requires a valid source duration, source start and playback rate.');
+  }
+  const startMs = layer.sourceStartMs < 0
+    ? layer.startMs - layer.sourceStartMs / layer.playbackRate : layer.startMs;
+  const sourceStartMs = Math.max(0, layer.sourceStartMs);
+  const endMs = Math.min(layer.endMs, startMs + (layer.sourceDurationMs - sourceStartMs) / layer.playbackRate);
+  if (endMs - startMs < 80) throw new Error('Video overlay must have at least 80 ms of playable media.');
+  return { ...layer, startMs, endMs, sourceStartMs };
 }
 
 export function createTextLayer(project: CaptionProject, id: string, currentMs: number, durationMs: number) {
@@ -319,6 +360,28 @@ export function addImageLayer(project: CaptionProject, options: {
   return { project: updateProject(project, { layers: [...project.layers, layer] }), layer };
 }
 
+export function addVideoLayer(project: CaptionProject, options: {
+  id: string; name: string; uri: string; currentMs: number; durationMs: number;
+  sourceStartMs?: number; sourceDurationMs?: number; playbackRate?: number; includeAudio?: boolean;
+}) {
+  const extentMs = timelineArtifactEditLimit(project, options.durationMs);
+  const startMs = Number.isFinite(options.currentMs) ? Math.max(0,
+    project.clips.length ? Math.min(options.currentMs, Math.max(0, extentMs - 80)) : options.currentMs) : 0;
+  const defaultEndMs = project.clips.length
+    ? Math.min(extentMs, Number.isFinite(options.durationMs) && options.durationMs > startMs ? options.durationMs : extentMs, startMs + 3_000)
+    : Number.isFinite(options.durationMs) && startMs < options.durationMs
+      ? Math.min(options.durationMs, startMs + 3_000) : startMs + 3_000;
+  const range = editCanvasTimelineRange({ startMs, endMs: defaultEndMs }, 'end', startMs, defaultEndMs);
+  const layer = attachLayerToTimeline<VideoVisualLayer>(boundedVideoLayer({
+    id: options.id, kind: 'video', name: options.name.slice(0, 18) || 'Video', visible: true,
+    uri: options.uri, ...range, sourceStartMs: options.sourceStartMs ?? 0,
+    sourceDurationMs: options.sourceDurationMs ?? 0, playbackRate: options.playbackRate ?? 1,
+    includeAudio: options.includeAudio ?? false,
+    position: { x: 0.5, y: 0.5 }, box: { width: 0.34, height: 0.24 }, rotation: 0, opacity: 1,
+  }), buildClipTimeline(project.clips));
+  return { project: updateProject(project, { layers: [...project.layers, layer] }), layer };
+}
+
 export function moveVisualLayer(project: CaptionProject, layerId: string, direction: -1 | 1) {
   const index = project.layers.findIndex((layer) => layer.id === layerId);
   if (index < 0) return project;
@@ -371,6 +434,7 @@ export function splitVisualLayer(
   const entries = buildClipTimeline(project.clips);
   const left = attachLayerToTimeline({ ...layer, id: leftId, ...split.left }, entries, true);
   const right = attachLayerToTimeline({ ...layer, id: rightId, ...split.right }, entries, true);
+  if (right.kind === 'video') right.sourceStartMs += (split.right.startMs - layer.startMs) * right.playbackRate;
   const layers = [...project.layers];
   layers.splice(index, 1, left, right);
   return { project: updateProject(project, { layers }), left, right };
@@ -777,7 +841,7 @@ function anchorVisualLayers(layers: CaptionProject['layers'], clips: VideoClip[]
     : attachLayerToTimeline(layer, entries));
 }
 
-function attachLayerToTimeline<T extends TextVisualLayer | ImageVisualLayer>(
+function attachLayerToTimeline<T extends TextVisualLayer | ImageVisualLayer | VideoVisualLayer>(
   layer: T,
   entries: ReturnType<typeof buildClipTimeline>,
   replaceExisting = false,

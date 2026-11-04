@@ -24,6 +24,7 @@ import {
   type CaptionTrackCollection,
   type FontReference,
   type ImageVisualLayer,
+  type VideoVisualLayer,
   type LayerSourceAnchor,
   type ProjectAudioSource,
   type ProjectVideoSource,
@@ -658,7 +659,7 @@ function decodeLayers(value: unknown, projectStyle: CaptionStyle): VisualLayer[]
     : arrayValue(value, 'project visual layers', 5_000);
   const layers = rawLayers.map((rawLayer, index): VisualLayer => {
     const layer = record(rawLayer, `visual layer ${index + 1}`);
-    const kind = enumValue(layer.kind, ['captions', 'text', 'image'] as const, `visual layer ${index + 1} kind`);
+    const kind = enumValue(layer.kind, ['captions', 'text', 'image', 'video'] as const, `visual layer ${index + 1} kind`);
     if (kind === 'captions') {
       if (layer.id !== 'captions') throw new Error('The captions layer has an invalid identifier');
       return {
@@ -669,7 +670,7 @@ function decodeLayers(value: unknown, projectStyle: CaptionStyle): VisualLayer[]
       };
     }
     if (kind === 'text') return decodeTextLayer(layer, index, projectStyle);
-    return decodeImageLayer(layer, index);
+    return kind === 'video' ? decodeVideoLayer(layer, index) : decodeImageLayer(layer, index);
   });
   const ids = uniqueIds(layers, 'project visual layers');
   if (!ids.has('captions')) layers.unshift({ id: 'captions', kind: 'captions', name: 'Captions', visible: true });
@@ -718,6 +719,18 @@ function decodeImageLayer(layer: Record<string, unknown>, index: number): ImageV
     sourceAnchors: decodeSourceAnchors(layer.sourceAnchors, `image layer ${index + 1}`),
     timingMode: optionalEnum(layer.timingMode, ['source', 'timeline'] as const, `image layer ${index + 1} timing mode`),
     timelineVisible: layer.timelineVisible === undefined ? true : booleanValue(layer.timelineVisible, `image layer ${index + 1} timeline visibility`),
+  };
+}
+
+function decodeVideoLayer(layer: Record<string, unknown>, index: number): VideoVisualLayer {
+  const image = decodeImageLayer(layer, index);
+  return {
+    ...image,
+    kind: 'video',
+    sourceStartMs: finiteNumber(layer.sourceStartMs, `video layer ${index + 1} source start`, 0, Number.MAX_SAFE_INTEGER),
+    sourceDurationMs: finiteNumber(layer.sourceDurationMs, `video layer ${index + 1} source duration`, 1, Number.MAX_SAFE_INTEGER),
+    playbackRate: finiteNumber(layer.playbackRate, `video layer ${index + 1} playback rate`, 0.25, 4),
+    includeAudio: booleanValue(layer.includeAudio, `video layer ${index + 1} include audio`),
   };
 }
 

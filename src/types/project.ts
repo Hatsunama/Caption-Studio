@@ -283,7 +283,15 @@ export type ImageVisualLayer = NormalizedTransform & {
   timelineVisible?: boolean;
 };
 
-export type VisualLayer = CaptionsVisualLayer | TextVisualLayer | ImageVisualLayer;
+export type VideoVisualLayer = Omit<ImageVisualLayer, 'kind'> & {
+  kind: 'video';
+  sourceStartMs: number;
+  sourceDurationMs: number;
+  playbackRate: number;
+  includeAudio: boolean;
+};
+
+export type VisualLayer = CaptionsVisualLayer | TextVisualLayer | ImageVisualLayer | VideoVisualLayer;
 
 export type ProjectVideoSource = {
   id: Identifier;

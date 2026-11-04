@@ -64,6 +64,12 @@ export type TimelineRenderPlan = {
       scaleY: number;
       opacity: number;
     }
+    | {
+      id: string; kind: 'video'; visible: boolean; uri: string; startMs: number; endMs: number;
+      position: { x: number; y: number }; box: { width: number; height: number };
+      rotation: number; scale: number; scaleX: number; scaleY: number; opacity: number;
+      sourceStartMs: number; sourceDurationMs: number; playbackRate: number; includeAudio: boolean;
+    }
   )[];
   audioClips: {
     id: string;
@@ -186,9 +192,8 @@ export function buildTimelineRenderPlan(
       continue;
     }
     if (!layer.uri?.trim() || layer.opacity <= 0) continue;
-    layers.push({
+    const visual = {
       id: layer.id,
-      kind: layer.kind,
       visible: layer.visible,
       uri: layer.uri,
       ...interval,
@@ -199,7 +204,14 @@ export function buildTimelineRenderPlan(
       scaleX: resolveLayerGeometry(layer).scaleX,
       scaleY: resolveLayerGeometry(layer).scaleY,
       opacity: layer.opacity,
-    });
+    };
+    layers.push(layer.kind === 'video' ? {
+      ...visual, kind: 'video',
+        sourceStartMs: layer.sourceStartMs + (interval.startMs - layer.startMs) * layer.playbackRate,
+        playbackRate: layer.playbackRate,
+        includeAudio: layer.includeAudio,
+        sourceDurationMs: layer.sourceDurationMs,
+    } : { ...visual, kind: 'image' });
   }
 
   const plan: TimelineRenderPlan = {
@@ -234,7 +246,7 @@ export function buildTimelineRenderPlan(
     }),
     captions,
     layers,
-    audioClips: audibleClips.map((clip) => {
+    audioClips: [...audibleClips.map((clip) => {
       const source = audioSourceById.get(clip.sourceId);
       if (!source) throw new Error(`An audio source used by clip ${clip.id} is unavailable.`);
       return {
@@ -249,7 +261,12 @@ export function buildTimelineRenderPlan(
         fadeInMs: clip.fadeInMs,
         fadeOutMs: clip.fadeOutMs,
       };
-    }),
+    }), ...layers.flatMap((layer) => layer.kind === 'video' && layer.includeAudio
+      ? [{ id: `overlay-audio:${layer.id}`, uri: layer.uri, startMs: layer.startMs,
+          sourceStartMs: layer.sourceStartMs,
+          sourceEndMs: layer.sourceStartMs + (layer.endMs - layer.startMs) * layer.playbackRate,
+          playbackRate: layer.playbackRate, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0 }]
+      : [])],
   };
   // Sanitize once, at the native bridge boundary in toNativeRenderPlan.
   return plan;
