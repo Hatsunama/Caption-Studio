@@ -28,12 +28,11 @@ function zod() {
     assert.ok(localEntry && !isAbsolute(localEntry) && localEntry !== '..' && !localEntry.startsWith('..' + (process.platform === 'win32' ? '\\' : '/')),
       'isolated entry must belong to the selected package');
   } else {
-    // Follow Expo's actual CLI dependency, then resolve from that CLI entry.
-    // Never fall back to the root Zod when CLI dependencies are unavailable.
-    const expoRequire = createRequire(repoRequire.resolve('expo/package.json'));
-    const cliRequire = createRequire(expoRequire.resolve('@expo/cli'));
-    entry = cliRequire.resolve('zod');
-    manifest = JSON.parse(readFileSync(cliRequire.resolve('zod/package.json'), 'utf8'));
+    // Expo CLI now receives Zod from its optional MCP host. Follow the installed
+    // lint consumer that still declares Zod rather than an undeclared CLI import.
+    const consumerRequire = createRequire(repoRequire.resolve('eslint-plugin-react-hooks'));
+    entry = consumerRequire.resolve('zod');
+    manifest = JSON.parse(readFileSync(consumerRequire.resolve('zod/package.json'), 'utf8'));
   }
   assert.equal(manifest.name, 'zod', 'execute a real Zod package');
   const module = repoRequire(entry);
@@ -135,11 +134,13 @@ test('installed Expo CLI plugin and MCP schemas retain their input and output co
   const expoRequire = createRequire(repoRequire.resolve('expo/package.json'));
   const cliRoot = dirname(expoRequire.resolve('@expo/cli/package.json'));
   const server = join(cliRoot, 'build/src/start/server');
-  const { PluginSchema, DevToolsPluginOutputSchema } = repoRequire(join(server, 'DevToolsPlugin.schema.js'));
-  const { createMCPDevToolsExtensionSchema } = repoRequire(join(server, 'createMCPDevToolsExtensionSchema.js'));
-  const { DevToolsPluginCliExtensionResults } = repoRequire(join(server, 'DevToolsPluginCliExtensionResults.js'));
+  const cliRequire = createRequire(join(cliRoot, 'package.json'));
+  const { validate, ValidationError } = cliRequire('@expo/schema-utils');
+  const { PluginSchema, DevToolsPluginOutputSchema } = repoRequire(join(server, 'devtools/DevToolsPlugin.schema.js'));
+  const { createMCPDevToolsExtensionSchema } = repoRequire(join(server, 'mcp/createMCPDevToolsExtensionSchema.js'));
+  const { DevToolsPluginCliExtensionResults } = repoRequire(join(server, 'devtools/DevToolsPluginCliExtensionResults.js'));
   const plugin = {
-    packageName: 'synthetic-plugin', packageRoot: '/synthetic', extra: 'discard',
+    packageName: 'synthetic-plugin', packageRoot: '/synthetic',
     cliExtensions: {
       description: 'Synthetic test', entryPoint: 'index.js',
       commands: [{ name: 'run', title: 'Run', environments: ['cli', 'mcp'], parameters: [
@@ -147,30 +148,33 @@ test('installed Expo CLI plugin and MCP schemas retain their input and output co
       ] }],
     },
   };
-  const parsed = PluginSchema.parse(plugin);
-  assert.equal(parsed.extra, undefined);
-  assert.ok(Object.isFrozen(parsed.cliExtensions.commands[0].environments));
-  assert.equal(PluginSchema.safeParse({ ...plugin, packageName: '' }).success, false);
-  assert.equal(PluginSchema.safeParse({ ...plugin, cliExtensions: { ...plugin.cliExtensions, commands: [] } }).success, false);
-  const schema = createMCPDevToolsExtensionSchema(parsed);
+  const original = structuredClone(plugin);
+  assert.doesNotThrow(() => validate(PluginSchema, plugin));
+  assert.deepEqual(plugin, original, 'validation must not mutate the plugin descriptor');
+  assert.throws(() => validate(PluginSchema, { ...plugin, packageName: '' }), ValidationError);
+  assert.throws(() => validate(PluginSchema, { ...plugin, cliExtensions: { ...plugin.cliExtensions, commands: [] } }), ValidationError);
+  assert.throws(() => validate(PluginSchema, { ...plugin, cliExtensions: {
+    ...plugin.cliExtensions, commands: [{ ...plugin.cliExtensions.commands[0], environments: ['unknown'] }],
+  } }), ValidationError);
+  const schema = createMCPDevToolsExtensionSchema(plugin, zod());
   const input = { command: 'run', text: 'hello', count: 2, accept: true };
   assert.deepEqual(schema.parse(input), input);
   for (const invalid of [{ command: 'unknown' }, { command: 'run', count: '2' },
     { command: 'run', accept: 'true' }, { command: 'run', extra: true }]) {
     assert.equal(schema.safeParse(invalid).success, false);
   }
-  assert.throws(() => createMCPDevToolsExtensionSchema({ packageName: 'empty' }), /no commands/);
+  assert.throws(() => createMCPDevToolsExtensionSchema({ packageName: 'empty' }, zod()), /no commands/);
   const output = [{ type: 'text', text: 'Hello', level: 'info' },
     { type: 'image', url: 'https://example.invalid/image.png' },
     { type: 'audio', url: 'https://example.invalid/audio.mp3', text: 'voice' }];
-  assert.deepEqual(DevToolsPluginOutputSchema.parse(output), output);
-  assert.equal(DevToolsPluginOutputSchema.safeParse([{ type: 'image', url: 'not a URL' }]).success, false);
+  assert.doesNotThrow(() => validate(DevToolsPluginOutputSchema, output));
+  assert.throws(() => validate(DevToolsPluginOutputSchema, [{ type: 'image', url: 'not a URL' }]), ValidationError);
   const collector = new DevToolsPluginCliExtensionResults();
   assert.deepEqual(collector.parseOutputText(JSON.stringify(output)), output);
   assert.deepEqual(collector.parseOutputText('plain output'), [{ type: 'text', text: 'plain output', level: 'info' }]);
 });
 
-test('release lock graph has no Zod below the patched 4.6.6 floor, including Expo CLI', () => {
+test('release lock graph and every declared Zod consumer resolve the patched security floor', () => {
   const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
   assert.equal(lock.lockfileVersion, 3);
   const entries = Object.entries(lock.packages);
@@ -189,8 +193,12 @@ test('release lock graph has no Zod below the patched 4.6.6 floor, including Exp
   const cliEntries = entries.filter(([path]) => /(^|\/)node_modules\/@expo\/cli$/.test(path));
   assert.ok(cliEntries.length > 0, 'Expo CLI must exist in the resolved lock graph');
   for (const [cliPath, cli] of cliEntries) {
-    assert.equal(typeof cli.dependencies?.zod, 'string', cliPath + ' must declare its Zod dependency');
-    let current = cliPath;
+    assert.equal(typeof cli.dependencies?.['@expo/schema-utils'], 'string', cliPath + ' must declare its plugin validator');
+  }
+  const consumers = entries.filter(([, entry]) => entry.dependencies?.zod || entry.peerDependencies?.zod);
+  assert.ok(consumers.length > 0, 'check real Zod consumers, not only the root override');
+  for (const [consumerPath] of consumers) {
+    let current = consumerPath;
     let resolvedZod;
     while (current !== '.') {
       if (posix.basename(current) !== 'node_modules') {
@@ -200,7 +208,7 @@ test('release lock graph has no Zod below the patched 4.6.6 floor, including Exp
       current = posix.dirname(current);
     }
     resolvedZod ??= lock.packages['node_modules/zod'] ? 'node_modules/zod' : undefined;
-    assert.ok(resolvedZod, cliPath + ' must resolve a concrete Zod node');
-    assert.ok(zodEntries.some(([path]) => path === resolvedZod), cliPath + ' must resolve a checked Zod node');
+    assert.ok(resolvedZod, consumerPath + ' must resolve a concrete Zod node');
+    assert.ok(zodEntries.some(([path]) => path === resolvedZod), consumerPath + ' must resolve a checked Zod node');
   }
 });
