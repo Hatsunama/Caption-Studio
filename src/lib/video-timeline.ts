@@ -1,4 +1,4 @@
-import type { CaptionBlock, CaptionProject, VideoClip, VisualLayer, WordToken } from '@/types/project';
+import type { CaptionBlock, CaptionProject, VideoClip, VideoVisualLayer, VisualLayer, WordToken } from '@/types/project';
 import { applyTimelineSpliceToAudioClips, remapAudioAfterVideoEdit } from '@/lib/audio-timeline';
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { captionLayoutText } from '@/lib/caption-text-breaks';
@@ -422,6 +422,58 @@ export function rippleTimedContent(project: CaptionProject, cutStartMs: number, 
   };
 }
 
+/** Keep an overlay's picture and optional audio on the same source interval after its owner changes. */
+export function remapVideoLayerToClips(
+  layer: VideoVisualLayer,
+  clips: VideoClip[],
+  referenceClips: VideoClip[],
+): VideoVisualLayer {
+  if (layer.timingMode === 'timeline' || !layer.sourceAnchors?.length) return layer;
+  const entries = buildClipTimeline(clips);
+  const entryById = new Map(entries.map((entry) => [entry.clip.id, entry]));
+  const referenceById = new Map(referenceClips.map((clip) => [clip.id, clip]));
+  const survivingAnchors = layer.sourceAnchors.filter((anchor) => entryById.has(anchor.clipId));
+  const baseSourceStartMs = layer.sourceStartAtAnchorMs ?? layer.sourceStartMs;
+  let elapsedMs = 0;
+  let earliest: { timelineMs: number; elapsedMs: number } | undefined;
+  const visibleRanges: { startMs: number; endMs: number }[] = [];
+  for (const anchor of layer.sourceAnchors) {
+    const entry = entryById.get(anchor.clipId);
+    const rate = validPlaybackRate(entry?.clip.playbackRate ?? referenceById.get(anchor.clipId)?.playbackRate ?? 1);
+    if (entry) {
+      const sourceStartMs = Math.max(anchor.sourceStartMs, entry.clip.sourceStartMs);
+      const sourceEndMs = Math.min(anchor.sourceEndMs, entry.clip.sourceEndMs);
+      if (sourceEndMs > sourceStartMs) {
+        const startMs = timelineTimeAt(entry, sourceStartMs);
+        visibleRanges.push({ startMs, endMs: timelineTimeAt(entry, sourceEndMs) });
+        if (!earliest || startMs < earliest.timelineMs) {
+          earliest = { timelineMs: startMs, elapsedMs: elapsedMs + (sourceStartMs - anchor.sourceStartMs) / rate };
+        }
+      }
+    }
+    elapsedMs += (anchor.sourceEndMs - anchor.sourceStartMs) / rate;
+  }
+  if (!earliest) {
+    const firstSurvivor = layer.sourceAnchors.findIndex((anchor) => entryById.has(anchor.clipId));
+    const removedPrefixMs = firstSurvivor < 0 ? 0 : layer.sourceAnchors.slice(0, firstSurvivor)
+      .reduce((sum, anchor) => sum + (anchor.sourceEndMs - anchor.sourceStartMs)
+        / validPlaybackRate(referenceById.get(anchor.clipId)?.playbackRate ?? 1), 0);
+    const sourceStartAtAnchorMs = baseSourceStartMs + removedPrefixMs * layer.playbackRate;
+    return { ...layer, sourceAnchors: survivingAnchors, timelineVisible: false,
+      sourceStartMs: sourceStartAtAnchorMs, sourceStartAtAnchorMs };
+  }
+  const retainedPrefixMs = layer.sourceAnchors.slice(0, layer.sourceAnchors.findIndex((anchor) => entryById.has(anchor.clipId)))
+    .reduce((sum, anchor) => sum + (anchor.sourceEndMs - anchor.sourceStartMs)
+      / validPlaybackRate(referenceById.get(anchor.clipId)?.playbackRate ?? 1), 0);
+  const sourceStartMs = baseSourceStartMs + earliest.elapsedMs * layer.playbackRate;
+  const startMs = Math.min(...visibleRanges.map((range) => range.startMs));
+  const endMs = Math.min(Math.max(...visibleRanges.map((range) => range.endMs)),
+    startMs + Math.max(0, layer.sourceDurationMs - sourceStartMs) / layer.playbackRate);
+  return { ...layer, sourceAnchors: survivingAnchors, startMs, endMs,
+    timelineVisible: sourceStartMs < layer.sourceDurationMs && endMs - startMs >= 80,
+    sourceStartMs, sourceStartAtAnchorMs: baseSourceStartMs + retainedPrefixMs * layer.playbackRate };
+}
+
 export function setClipPlaybackRate(project: CaptionProject, clipId: string, playbackRate: number) {
   const entries = buildClipTimeline(project.clips);
   const entry = entries.find((candidate) => candidate.clip.id === clipId);
@@ -439,10 +491,19 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
   };
   const words = project.transcription.words.map((word) => ({ ...word, startMs: mapTime(word.startMs), endMs: mapTime(word.endMs) }));
   const captions = project.captions.map((caption) => ({ ...caption, startMs: mapTime(caption.startMs), endMs: mapTime(caption.endMs) }));
-  const layers = project.layers.map((layer) => layer.kind === 'captions'
-    ? layer
-    : { ...layer, startMs: mapTime(layer.startMs), endMs: mapTime(layer.endMs) });
   const nextClips = project.clips.map((clip) => clip.id === clipId ? replacement : clip);
+  const layers = project.layers.map((layer) => {
+    if (layer.kind === 'captions') return layer;
+    if (layer.kind === 'video' && layer.timingMode === 'source' && layer.sourceAnchors?.length) {
+      return remapVideoLayerToClips(layer, nextClips, project.clips);
+    }
+    const startMs = mapTime(layer.startMs);
+    const endMs = mapTime(layer.endMs);
+    return layer.kind === 'video'
+      ? { ...layer, startMs, endMs: Math.min(endMs,
+          startMs + (layer.sourceDurationMs - layer.sourceStartMs) / layer.playbackRate) }
+      : { ...layer, startMs, endMs };
+  });
   const audioClips = remapAudioAfterVideoEdit(project.audioClips, nextClips);
   return completeVideoTimelineEdit({
     ...project,
