@@ -724,10 +724,13 @@ function decodeImageLayer(layer: Record<string, unknown>, index: number): ImageV
 
 function decodeVideoLayer(layer: Record<string, unknown>, index: number): VideoVisualLayer {
   const image = decodeImageLayer(layer, index);
+  const sourceStartMs = finiteNumber(layer.sourceStartMs, `video layer ${index + 1} source start`, 0, Number.MAX_SAFE_INTEGER);
   return {
     ...image,
     kind: 'video',
-    sourceStartMs: finiteNumber(layer.sourceStartMs, `video layer ${index + 1} source start`, 0, Number.MAX_SAFE_INTEGER),
+    sourceStartMs,
+    sourceStartAtAnchorMs: layer.sourceStartAtAnchorMs === undefined ? sourceStartMs
+      : finiteNumber(layer.sourceStartAtAnchorMs, `video layer ${index + 1} anchored source start`, 0, Number.MAX_SAFE_INTEGER),
     sourceDurationMs: finiteNumber(layer.sourceDurationMs, `video layer ${index + 1} source duration`, 1, Number.MAX_SAFE_INTEGER),
     playbackRate: finiteNumber(layer.playbackRate, `video layer ${index + 1} playback rate`, 0.25, 4),
     includeAudio: booleanValue(layer.includeAudio, `video layer ${index + 1} include audio`),

@@ -1,5 +1,6 @@
 import { projectRenderDuration } from '@/lib/project-timeline';
 import { audibleAudioClipsWithin } from '@/lib/audio-timeline';
+import { audibleVideoOverlaysWithin } from '@/lib/audible-video-overlays';
 import { buildClipTimeline } from '@/lib/video-timeline';
 import type { CaptionProject } from '@/types/project';
 
@@ -65,6 +66,11 @@ export function buildTimelineAudioRenderPlan(project: CaptionProject): TimelineA
     version: TIMELINE_AUDIO_RENDER_PLAN_VERSION,
     durationMs,
     videoClips,
-    audioClips,
+    audioClips: [...audioClips, ...audibleVideoOverlaysWithin(project, durationMs).map((overlay) => ({
+      id: overlay.id, sourceUri: overlay.uri,
+      timelineStartMs: overlay.startMs, timelineEndMs: overlay.endMs,
+      sourceStartMs: overlay.sourceStartMs, sourceEndMs: overlay.sourceEndMs,
+      playbackRate: overlay.playbackRate, volume: 1, muted: false,
+    }))],
   };
 }

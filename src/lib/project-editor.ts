@@ -28,6 +28,7 @@ import {
   totalClipDuration,
   translationReorderMapping,
   translationSpliceMapping,
+  remapVideoLayerToClips,
 } from '@/lib/video-timeline';
 import {
   DEFAULT_CAPTION_STYLE,
@@ -229,12 +230,14 @@ export function setLayerTiming(
   if (range.startMs === selected.startMs && range.endMs === selected.endMs) return project;
   const entries = buildClipTimeline(project.clips);
   return updateProject(project, {
-    layers: project.layers.map((layer) => layer.id === layerId && layer.kind !== 'captions'
-      ? attachLayerToTimeline(layer.kind === 'video' ? boundedVideoLayer({ ...layer, ...range,
-          ...(layer.kind === 'video' && edge === 'start'
-            ? { sourceStartMs: layer.sourceStartMs + (range.startMs - layer.startMs) * layer.playbackRate } : {}) })
-        : { ...layer, ...range }, entries, true)
-      : layer),
+    layers: project.layers.map((layer) => {
+      if (layer.id !== layerId || layer.kind === 'captions') return layer;
+      if (layer.kind !== 'video') return attachLayerToTimeline({ ...layer, ...range }, entries, true);
+      const sourceStartMs = layer.sourceStartMs + (edge === 'start'
+        ? (range.startMs - layer.startMs) * layer.playbackRate : 0);
+      return attachLayerToTimeline(boundedVideoLayer({ ...layer, ...range, sourceStartMs,
+        sourceStartAtAnchorMs: sourceStartMs }), entries, true);
+    }),
   });
 }
 
@@ -252,8 +255,13 @@ export function setVideoLayer(project: CaptionProject, layerId: string, patch: P
   return updateProject(project, {
     layers: project.layers.map((layer) => {
       if (layer.id !== layerId || layer.kind !== 'video') return layer;
-      const merged = { ...layer, ...patch };
-      return { ...boundedVideoLayer(merged), ...normalizeLayerGeometry(merged) };
+      const merged = { ...layer, ...patch, ...(patch.sourceStartMs === undefined ? {}
+        : { sourceStartAtAnchorMs: patch.sourceStartMs }) };
+      const bounded = { ...boundedVideoLayer(merged), ...normalizeLayerGeometry(merged) };
+      if (patch.startMs === undefined && patch.endMs === undefined && patch.sourceStartMs === undefined
+        && patch.sourceDurationMs === undefined && patch.playbackRate === undefined) return bounded;
+      return attachLayerToTimeline({ ...bounded, sourceStartAtAnchorMs: bounded.sourceStartMs },
+        buildClipTimeline(project.clips), true);
     }),
   });
 }
@@ -375,6 +383,7 @@ export function addVideoLayer(project: CaptionProject, options: {
   const layer = attachLayerToTimeline<VideoVisualLayer>(boundedVideoLayer({
     id: options.id, kind: 'video', name: options.name.slice(0, 18) || 'Video', visible: true,
     uri: options.uri, ...range, sourceStartMs: options.sourceStartMs ?? 0,
+    sourceStartAtAnchorMs: options.sourceStartMs ?? 0,
     sourceDurationMs: options.sourceDurationMs ?? 0, playbackRate: options.playbackRate ?? 1,
     includeAudio: options.includeAudio ?? false,
     position: { x: 0.5, y: 0.5 }, box: { width: 0.34, height: 0.24 }, rotation: 0, opacity: 1,
@@ -434,7 +443,11 @@ export function splitVisualLayer(
   const entries = buildClipTimeline(project.clips);
   const left = attachLayerToTimeline({ ...layer, id: leftId, ...split.left }, entries, true);
   const right = attachLayerToTimeline({ ...layer, id: rightId, ...split.right }, entries, true);
-  if (right.kind === 'video') right.sourceStartMs += (split.right.startMs - layer.startMs) * right.playbackRate;
+  if (left.kind === 'video') left.sourceStartAtAnchorMs = left.sourceStartMs;
+  if (right.kind === 'video') {
+    right.sourceStartMs += (split.right.startMs - layer.startMs) * right.playbackRate;
+    right.sourceStartAtAnchorMs = right.sourceStartMs;
+  }
   const layers = [...project.layers];
   layers.splice(index, 1, left, right);
   return { project: updateProject(project, { layers }), left, right };
@@ -778,7 +791,7 @@ function rebuildAfterLayoutEdit(
     words,
   );
   const captions = [...remapped, ...unanchored].sort((left, right) => left.startMs - right.startMs);
-  const layers = remapVisualLayers(anchorVisualLayers(sourceLayers, project.clips), clips);
+  const layers = remapVisualLayers(anchorVisualLayers(sourceLayers, project.clips), clips, project.clips);
   return updateProject(project, {
     clips,
     transcription: { ...project.transcription, words },
@@ -900,13 +913,16 @@ function reanchorVisualLayersAfterSplit(
 function remapVisualLayers(
   layers: CaptionProject['layers'],
   clips: VideoClip[],
+  referenceClips: VideoClip[],
 ) {
-  const entryByClipId = new Map(buildClipTimeline(clips).map((entry) => [entry.clip.id, entry]));
+  const entries = buildClipTimeline(clips);
+  const entryByClipId = new Map(entries.map((entry) => [entry.clip.id, entry]));
   return layers.map((layer) => {
     if (layer.kind === 'captions' || layer.timingMode === 'timeline') return layer;
     // Empty anchors are also the tombstone of a deleted owner. Never splice
     // those hidden layers away or attach them to unrelated replacement footage.
     if (!layer.sourceAnchors?.length) return layer;
+    if (layer.kind === 'video') return remapVideoLayerToClips(layer, clips, referenceClips);
     const survivingAnchors = layer.sourceAnchors.filter((anchor) => entryByClipId.has(anchor.clipId));
     const visibleRanges = survivingAnchors.flatMap((anchor) => {
       const entry = entryByClipId.get(anchor.clipId);
@@ -920,12 +936,8 @@ function remapVisualLayers(
       }];
     });
     if (visibleRanges.length === 0) return { ...layer, sourceAnchors: survivingAnchors, timelineVisible: false };
-    return {
-      ...layer,
-      sourceAnchors: survivingAnchors,
+    return { ...layer, sourceAnchors: survivingAnchors,
       startMs: Math.min(...visibleRanges.map((range) => range.startMs)),
-      endMs: Math.max(...visibleRanges.map((range) => range.endMs)),
-      timelineVisible: true,
-    };
-  }).filter((layer): layer is CaptionProject['layers'][number] => Boolean(layer));
+      endMs: Math.max(...visibleRanges.map((range) => range.endMs)), timelineVisible: true };
+  });
 }
