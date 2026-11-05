@@ -445,8 +445,12 @@ export function remapVideoLayerToClips(
       const sourceEndMs = Math.min(anchor.sourceEndMs, entry.clip.sourceEndMs);
       if (sourceEndMs > sourceStartMs) {
         const startMs = timelineTimeAt(entry, sourceStartMs);
-        visibleRanges.push({ startMs, endMs: timelineTimeAt(entry, sourceEndMs) });
-        if (!earliest || startMs < earliest.timelineMs) {
+        const mediaStartMs = baseSourceStartMs
+          + (elapsedMs + (sourceStartMs - anchor.sourceStartMs) / rate) * layer.playbackRate;
+        const endMs = Math.min(timelineTimeAt(entry, sourceEndMs),
+          startMs + Math.max(0, (layer.mediaEndMs ?? layer.sourceDurationMs) - mediaStartMs) / layer.playbackRate);
+        if (endMs > startMs) visibleRanges.push({ startMs, endMs });
+        if (endMs > startMs && (!earliest || startMs < earliest.timelineMs)) {
           earliest = { timelineMs: startMs, elapsedMs: elapsedMs + (sourceStartMs - anchor.sourceStartMs) / rate };
         }
       }
@@ -467,10 +471,9 @@ export function remapVideoLayerToClips(
       / validPlaybackRate(referenceById.get(anchor.clipId)?.playbackRate ?? 1), 0);
   const sourceStartMs = baseSourceStartMs + earliest.elapsedMs * layer.playbackRate;
   const startMs = Math.min(...visibleRanges.map((range) => range.startMs));
-  const endMs = Math.min(Math.max(...visibleRanges.map((range) => range.endMs)),
-    startMs + Math.max(0, layer.sourceDurationMs - sourceStartMs) / layer.playbackRate);
+  const endMs = Math.max(...visibleRanges.map((range) => range.endMs));
   return { ...layer, sourceAnchors: survivingAnchors, startMs, endMs,
-    timelineVisible: sourceStartMs < layer.sourceDurationMs && endMs - startMs >= 80,
+    timelineVisible: sourceStartMs < (layer.mediaEndMs ?? layer.sourceDurationMs) && endMs - startMs >= 80,
     sourceStartMs, sourceStartAtAnchorMs: baseSourceStartMs + retainedPrefixMs * layer.playbackRate };
 }
 
@@ -496,7 +499,7 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
     if (layer.kind === 'captions') return layer;
     // A timeline-owned overlay has no footage owner; changing a clip's speed must not retime it.
     if (layer.kind === 'video' && layer.timingMode === 'timeline') return layer;
-    if (layer.kind === 'video' && layer.timingMode === 'source' && layer.sourceAnchors?.length) {
+    if (layer.kind === 'video' && layer.timingMode !== 'timeline' && layer.sourceAnchors?.length) {
       return remapVideoLayerToClips(layer, nextClips, project.clips);
     }
     const startMs = mapTime(layer.startMs);

@@ -45,6 +45,7 @@ import { editProjectTimelineRange, timelineArtifactEditLimit } from '@/lib/timel
 import { normalizeLayerGeometry } from '@/lib/layer-geometry';
 import { hasCanonicalSourceWords } from '@/lib/primary-caption-timing';
 import { applyCaptionMergeDraft } from '@/lib/caption-merge';
+import { videoOverlaySegments } from '@/lib/video-overlay-segments';
 
 export function setCaptionTexts(project: CaptionProject, changes: CaptionTextChanges) {
   const changed = applyCaptionTextChanges(project.captions, changes);
@@ -233,12 +234,61 @@ export function setLayerTiming(
     layers: project.layers.map((layer) => {
       if (layer.id !== layerId || layer.kind === 'captions') return layer;
       if (layer.kind !== 'video') return attachLayerToTimeline({ ...layer, ...range }, entries, true);
+      if (layer.timingMode !== 'timeline' && layer.sourceAnchors?.length) {
+        return edge === 'move'
+          ? moveSourceVideoLayer(layer, range, project.clips)
+          : trimSourceVideoLayer(layer, range, project.clips) ?? layer;
+      }
       const sourceStartMs = layer.sourceStartMs + (edge === 'start'
         ? (range.startMs - layer.startMs) * layer.playbackRate : 0);
       return attachLayerToTimeline(boundedVideoLayer({ ...layer, ...range, sourceStartMs,
         sourceStartAtAnchorMs: sourceStartMs }), entries, true);
     }),
   });
+}
+
+function trimSourceVideoLayer(
+  layer: VideoVisualLayer,
+  range: { startMs: number; endMs: number },
+  clips: VideoClip[],
+): VideoVisualLayer | null {
+  const entryById = new Map(buildClipTimeline(clips).map((entry) => [entry.clip.id, entry]));
+  let elapsedMs = 0;
+  let firstMediaMs: number | undefined;
+  const sourceAnchors = layer.sourceAnchors?.flatMap((anchor) => {
+    const entry = entryById.get(anchor.clipId);
+    const rate = entry?.clip.playbackRate ?? 1;
+    const anchorElapsedMs = (anchor.sourceEndMs - anchor.sourceStartMs) / rate;
+    if (!entry) { elapsedMs += anchorElapsedMs; return []; }
+    const sourceStartMs = Math.max(anchor.sourceStartMs, entry.clip.sourceStartMs,
+      sourceTimeAt(entry, Math.max(range.startMs, entry.startMs)));
+    const sourceEndMs = Math.min(anchor.sourceEndMs, entry.clip.sourceEndMs,
+      sourceTimeAt(entry, Math.min(range.endMs, entry.endMs)));
+    if (sourceEndMs > sourceStartMs && firstMediaMs === undefined) {
+      firstMediaMs = (layer.sourceStartAtAnchorMs ?? layer.sourceStartMs)
+        + (elapsedMs + (sourceStartMs - anchor.sourceStartMs) / rate) * layer.playbackRate;
+    }
+    elapsedMs += anchorElapsedMs;
+    return sourceEndMs > sourceStartMs ? [{ ...anchor, sourceStartMs, sourceEndMs }] : [];
+  });
+  if (!sourceAnchors?.length || firstMediaMs === undefined) return null;
+  return remapVideoLayerToClips({ ...layer, sourceAnchors,
+    sourceStartAtAnchorMs: firstMediaMs, sourceStartMs: firstMediaMs }, clips, clips);
+}
+
+function moveSourceVideoLayer(
+  layer: VideoVisualLayer,
+  range: { startMs: number; endMs: number },
+  clips: VideoClip[],
+): VideoVisualLayer {
+  const sourceAnchors = buildClipTimeline(clips)
+    .filter((entry) => range.startMs < entry.endMs && range.endMs > entry.startMs)
+    .map((entry) => ({ clipId: entry.clip.id,
+      sourceStartMs: sourceTimeAt(entry, Math.max(range.startMs, entry.startMs)),
+      sourceEndMs: sourceTimeAt(entry, Math.min(range.endMs, entry.endMs)) }));
+  if (!sourceAnchors.length) return layer;
+  return remapVideoLayerToClips({ ...layer, sourceAnchors,
+    sourceStartAtAnchorMs: layer.sourceStartMs }, clips, clips);
 }
 
 export function setImageLayer(project: CaptionProject, layerId: string, patch: Partial<ImageVisualLayer>) {
@@ -256,7 +306,7 @@ export function setVideoLayer(project: CaptionProject, layerId: string, patch: P
     layers: project.layers.map((layer) => {
       if (layer.id !== layerId || layer.kind !== 'video') return layer;
       const merged = { ...layer, ...patch, ...(patch.sourceStartMs === undefined ? {}
-        : { sourceStartAtAnchorMs: patch.sourceStartMs }) };
+        : { sourceStartAtAnchorMs: patch.sourceStartMs, mediaEndMs: patch.mediaEndMs }) };
       const bounded = { ...boundedVideoLayer(merged), ...normalizeLayerGeometry(merged) };
       if (patch.startMs === undefined && patch.endMs === undefined && patch.sourceStartMs === undefined
         && patch.sourceDurationMs === undefined && patch.playbackRate === undefined) return bounded;
@@ -270,6 +320,26 @@ export function setVideoLayerPlaybackRate(project: CaptionProject, layerId: stri
   if (!Number.isFinite(rate) || rate < 0.25 || rate > 4) throw new Error('Video overlay playback rate must be between 0.25 and 4.');
   const layer = project.layers.find((candidate) => candidate.id === layerId && candidate.kind === 'video');
   if (!layer || layer.kind !== 'video') return project;
+  if (layer.timingMode !== 'timeline' && layer.sourceAnchors?.length) {
+    const duration = sourceDurationMs ?? layer.sourceDurationMs;
+    const mediaEndMs = Math.min(layer.mediaEndMs ?? Math.max(layer.sourceStartMs,
+      ...videoOverlaySegments(layer, project.clips, Number.POSITIVE_INFINITY).map((segment) => segment.sourceEndMs)), duration);
+    const ownerById = new Map(buildClipTimeline(project.clips).map((entry) => [entry.clip.id, entry.clip]));
+    const sourceAnchors = layer.sourceAnchors.flatMap((anchor) => {
+      const owner = ownerById.get(anchor.clipId);
+      if (!owner) return [];
+      const sourceStartMs = Math.max(anchor.sourceStartMs, owner.sourceStartMs);
+      const sourceEndMs = Math.min(anchor.sourceEndMs, owner.sourceEndMs);
+      return sourceEndMs > sourceStartMs ? [{ ...anchor, sourceStartMs, sourceEndMs }] : [];
+    });
+    if (!sourceAnchors.length) return project;
+    return updateProject(project, {
+      layers: project.layers.map((candidate) => candidate.id === layerId
+        ? remapVideoLayerToClips({ ...layer, playbackRate: rate, sourceDurationMs: duration,
+            sourceAnchors, sourceStartAtAnchorMs: layer.sourceStartMs, mediaEndMs }, project.clips, project.clips)
+        : candidate),
+    });
+  }
   const consumedSourceMs = (layer.endMs - layer.startMs) * layer.playbackRate;
   const duration = sourceDurationMs ?? layer.sourceDurationMs;
   const proposedEndMs = layer.startMs + Math.min(consumedSourceMs, duration - layer.sourceStartMs) / rate;
@@ -282,6 +352,8 @@ export function setVideoLayerPlaybackRate(project: CaptionProject, layerId: stri
 function boundedVideoLayer(layer: VideoVisualLayer): VideoVisualLayer {
   if (!Number.isFinite(layer.sourceDurationMs) || layer.sourceDurationMs <= 0
     || !Number.isFinite(layer.sourceStartMs) || layer.sourceStartMs >= layer.sourceDurationMs
+    || (layer.mediaEndMs !== undefined && (!Number.isFinite(layer.mediaEndMs)
+      || layer.mediaEndMs < 0 || layer.mediaEndMs > layer.sourceDurationMs))
     || !Number.isFinite(layer.playbackRate) || layer.playbackRate < 0.25 || layer.playbackRate > 4) {
     throw new Error('Video overlay requires a valid source duration, source start and playback rate.');
   }
@@ -441,10 +513,16 @@ export function splitVisualLayer(
   const split = splitTimelineRange({ startMs: layer.startMs, endMs: layer.endMs }, timelineMs);
   if (!split) return null;
   const entries = buildClipTimeline(project.clips);
-  const left = attachLayerToTimeline({ ...layer, id: leftId, ...split.left }, entries, true);
-  const right = attachLayerToTimeline({ ...layer, id: rightId, ...split.right }, entries, true);
-  if (left.kind === 'video') left.sourceStartAtAnchorMs = left.sourceStartMs;
-  if (right.kind === 'video') {
+  const sourceVideo = layer.kind === 'video' && layer.timingMode !== 'timeline' && layer.sourceAnchors?.length;
+  const left = sourceVideo
+    ? trimSourceVideoLayer({ ...layer, id: leftId }, split.left, project.clips)
+    : attachLayerToTimeline({ ...layer, id: leftId, ...split.left }, entries, true);
+  const right = sourceVideo
+    ? trimSourceVideoLayer({ ...layer, id: rightId }, split.right, project.clips)
+    : attachLayerToTimeline({ ...layer, id: rightId, ...split.right }, entries, true);
+  if (!left || !right) return null;
+  if (!sourceVideo && left.kind === 'video') left.sourceStartAtAnchorMs = left.sourceStartMs;
+  if (!sourceVideo && right.kind === 'video') {
     right.sourceStartMs += (split.right.startMs - layer.startMs) * right.playbackRate;
     right.sourceStartAtAnchorMs = right.sourceStartMs;
   }
