@@ -12,19 +12,19 @@ const protectedRuntimeDependencies = {
   "caption-diagnostics": "file:modules/caption-diagnostics",
   "caption-media": "file:modules/caption-media",
   "caption-translation": "file:modules/caption-translation",
-  "expo": "57.0.31",
-  "expo-asset": "57.0.20",
+  "expo": "57.0.32",
+  "expo-asset": "57.0.21",
   "expo-audio": "~57.0.5",
-  "expo-constants": "57.0.22",
+  "expo-constants": "57.0.23",
   "expo-document-picker": "57.0.3",
   "expo-file-system": "~57.0.7",
   "expo-font": "~57.0.4",
   "expo-haptics": "~57.0.3",
   "expo-image": "~57.0.5",
   "expo-linking": "57.0.13",
-  "expo-router": "57.0.29",
-  "expo-sharing": "57.0.24",
-  "expo-splash-screen": "57.0.10",
+  "expo-router": "57.0.30",
+  "expo-sharing": "57.0.25",
+  "expo-splash-screen": "57.0.11",
   "expo-sqlite": "57.0.4",
   "expo-status-bar": "~57.0.1",
   "expo-system-ui": "~57.0.4",
@@ -52,6 +52,8 @@ test('security patch batch leaves every application dependency and the current m
 test('approved safe npm patch versions are actually locked with integrity', () => {
   assert.equal(manifest.packageManager, 'npm@10.9.9');
   assert.equal(manifest.overrides.zod, '4.6.7');
+  assert.deepEqual(manifest.overrides['@expo/fingerprint'], { glob: '14.0.3', minimatch: '11.0.4' });
+  assert.deepEqual(manifest.overrides['@typescript-eslint/typescript-estree'], { minimatch: '11.0.4' });
   assert.equal(manifest.devDependencies.tsx, '4.23.15');
   for (const [name, version] of [['zod', '4.6.7'], ['tsx', '4.23.15']]) {
     assert.equal(lock.packages['node_modules/' + name].version, version);
@@ -66,6 +68,13 @@ test('the query-string consumer resolves the reviewed URI decoder security patch
   assert.equal(decoder.version, '0.5.1');
   assert.equal(decoder.resolved, 'https://registry.npmjs.org/decode-uri-component/-/decode-uri-component-0.5.1.tgz');
   assert.equal(decoder.integrity, 'sha512-vWHQkXgg2cE3BB4rR0c+PYw9BCQzLoNIRMI7AunIkZst74tw/vpPp7VLoYtsR/cy1f55g3XDWUslfeCZjiZJyA==');
+});
+
+test('the Expo patch update preserves the original Material Symbols font', () => {
+  const symbols = lock.packages['node_modules/@expo-google-fonts/material-symbols'];
+  assert.equal(symbols.version, '0.4.50');
+  assert.equal(symbols.resolved, 'https://registry.npmjs.org/@expo-google-fonts/material-symbols/-/material-symbols-0.4.50.tgz');
+  assert.equal(symbols.integrity, 'sha512-XNSgSfd+1p6wqRAzzhrckGngHJQ1/z+oCMdI5FN+x/VnDeMMFGkXsuRNPYcZTYYff1GwVwx4u6Gqnb30aALysw==');
 });
 
 test('all configured Node jobs use the security patch and reviewed setup action', () => {
@@ -112,17 +121,21 @@ test('release gates retain Expo doctor rather than suppressing compatibility che
   }
 });
 
-test('unrelated locked packages retain every platform constraint and integrity field', async () => {
+test('the reviewed SDK 57 patch graph retains every platform constraint and integrity field', async () => {
   const { createHash } = await import('node:crypto');
   const unchanged = Object.fromEntries(Object.entries(lock.packages).filter(([name]) => name && !['node_modules/tsx', 'node_modules/zod'].includes(name)));
   // Normalize only the three independently asserted security-patch fields.
-  // Retain the original digest so every other package and decoder metadata field
-  // still has to match the pre-patch graph, including engines and licensing.
+  // Rebaseline after auditing the six SDK 57 pins and their transitive lock diff:
+  // Expo tooling, scoped fingerprint/parser security fixes, glob/PostCSS updates,
+  // nested dependency placement, and deepmerge removal. Material Symbols keeps
+  // its original version and integrity.
+  // Hash every other package and decoder metadata field, including engines and
+  // licensing, against this exact reviewed graph; add no further exclusions.
   unchanged['node_modules/decode-uri-component'] = {
     ...unchanged['node_modules/decode-uri-component'],
     version: '0.5.0',
     resolved: 'https://registry.npmjs.org/decode-uri-component/-/decode-uri-component-0.5.0.tgz',
     integrity: 'sha512-1BiQVoK8C9gUbQU6NzAtO/tkz2qOFpEObMWpcFvhx4fYnj4Oc5yzaJN/LD36ihkVUdXyh5ZekzX+yM+ty/SrPg=='
   };
-  assert.equal(createHash('sha256').update(JSON.stringify(unchanged)).digest('hex'), '564741db7f8cac482384d93f3cd7a240d8643ded6c3e3b81b33d86e9914aaa19');
+  assert.equal(createHash('sha256').update(JSON.stringify(unchanged)).digest('hex'), '82d99c4ca719932b72ce906f7111254ea4170e71dbe2041695c4114101d02bc3');
 });

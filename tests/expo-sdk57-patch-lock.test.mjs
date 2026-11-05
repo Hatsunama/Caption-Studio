@@ -7,6 +7,13 @@ const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta
 // Published SDK 57 patch floors from the 2026-10-21 Expo release.
 const patchFloors = { expo: 31, 'expo-router': 29, 'expo-sharing': 24 };
 const reviewedOverrides = {
+  "@expo/fingerprint": {
+    "glob": "14.0.3",
+    "minimatch": "11.0.4"
+  },
+  "@typescript-eslint/typescript-estree": {
+    "minimatch": "11.0.4"
+  },
   "@react-native/community-cli-plugin": {
     "metro": "0.84.5",
     "metro-config": "0.84.5"
