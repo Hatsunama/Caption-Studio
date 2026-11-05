@@ -14,12 +14,20 @@ function seekOverlayPlayer(player: VideoPlayer, seconds: number, playing: boolea
   if (Math.abs(player.currentTime - seconds) > (playing ? 0.25 : 0.04)) player.currentTime = seconds;
 }
 
-export function VideoLayerOverlay(props: {
+type VideoLayerOverlayProps = {
   layer: VideoVisualLayer;
   geometry?: LayerGeometryInput;
   timelineMs: number;
   isPlaying: boolean;
-}) {
+  suspended: boolean;
+};
+
+export function VideoLayerOverlay(props: VideoLayerOverlayProps) {
+  // Unmount the child so expo-video releases its decoder before translation loads.
+  return props.suspended ? null : <MountedVideoLayerOverlay {...props} />;
+}
+
+function MountedVideoLayerOverlay(props: VideoLayerOverlayProps) {
   const { layer, timelineMs, isPlaying } = props;
   const player = useVideoPlayer(layer.uri, (created) => configureOverlayPlayer(created, layer.includeAudio, layer.playbackRate));
   const state = overlayPlaybackState(layer, timelineMs, isPlaying);

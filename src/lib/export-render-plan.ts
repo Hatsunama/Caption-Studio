@@ -1,3 +1,4 @@
+import { audibleVideoOverlaysWithin } from '@/lib/audible-video-overlays';
 import { projectRenderDuration } from '@/lib/project-timeline';
 import { audibleAudioClipsWithin } from '@/lib/audio-timeline';
 import { resolveCaptionStyle } from '@/lib/style-resolver';
@@ -261,12 +262,11 @@ export function buildTimelineRenderPlan(
         fadeInMs: clip.fadeInMs,
         fadeOutMs: clip.fadeOutMs,
       };
-    }), ...layers.flatMap((layer) => layer.kind === 'video' && layer.includeAudio
-      ? [{ id: `overlay-audio:${layer.id}`, uri: layer.uri, startMs: layer.startMs,
-          sourceStartMs: layer.sourceStartMs,
-          sourceEndMs: layer.sourceStartMs + (layer.endMs - layer.startMs) * layer.playbackRate,
-          playbackRate: layer.playbackRate, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0 }]
-      : [])],
+    }), ...audibleVideoOverlaysWithin(project, durationMs).map((overlay) => ({
+      id: overlay.id, uri: overlay.uri, startMs: overlay.startMs,
+      sourceStartMs: overlay.sourceStartMs, sourceEndMs: overlay.sourceEndMs,
+      playbackRate: overlay.playbackRate, volume: 1, muted: false, fadeInMs: 0, fadeOutMs: 0,
+    }))],
   };
   // Sanitize once, at the native bridge boundary in toNativeRenderPlan.
   return plan;
