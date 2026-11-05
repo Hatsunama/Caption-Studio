@@ -288,6 +288,8 @@ export type VideoVisualLayer = Omit<ImageVisualLayer, 'kind'> & {
   sourceStartMs: number;
   /** Overlay media time at the start of its first source anchor. */
   sourceStartAtAnchorMs?: number;
+  /** Last selected media time; source anchors retain the owner range across speed edits. */
+  mediaEndMs?: number;
   sourceDurationMs: number;
   playbackRate: number;
   includeAudio: boolean;

@@ -47,6 +47,7 @@ import { ExtractAudioSourceSheet } from '@/components/editor/extract-audio-sourc
 import { WatermarkSheet } from '@/components/editor/watermark-sheet';
 import { ImageLayerOverlay } from '@/components/editor/image-layer-overlay';
 import { VideoLayerOverlay } from '@/components/editor/video-layer-overlay';
+import { overlayPlaybackState } from '@/lib/video-overlay-playback';
 import { LayerTimeline } from '@/components/editor/layer-timeline';
 import { MediaLoadingOverlay } from '@/components/media-loading-overlay';
 import { OperationOverlay } from '@/components/operation-overlay';
@@ -1960,7 +1961,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       });
       continue;
     }
-    if (!visualLayerVisibleAtTime(layer, currentMs)) continue;
+    if (layer.kind === 'video'
+      ? !overlayPlaybackState(layer, currentMs, isPlaying, project.clips).visible
+      : !visualLayerVisibleAtTime(layer, currentMs)) continue;
     previewSceneTargets.push({
       key: `layer:${layer.id}`,
       selection: { kind: layer.kind === 'video' ? 'video-overlay' : layer.kind, id: layer.id },
@@ -2138,7 +2141,9 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 </View>
               );
             }
-        if (!visualLayerVisibleAtTime(layer, currentMs)) return null;
+        if (layer.kind === 'video'
+          ? !overlayPlaybackState(layer, currentMs, isPlaying, project.clips).visible
+          : !visualLayerVisibleAtTime(layer, currentMs)) return null;
             if (layer.kind === 'text') {
               return (
                   <CaptionOverlay
@@ -2155,7 +2160,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               );
             }
             if (layer.kind === 'video') return <VideoLayerOverlay
-              key={layer.id} layer={layer}
+              key={layer.id} layer={layer} clips={project.clips}
               geometry={previewGeometryFor(`layer:${layer.id}`, layer)}
               timelineMs={currentMs} isPlaying={isPlaying}
               suspended={transport.previewResourcesSuspended || !runtimePolicy.videoSurfacesAdmitted}

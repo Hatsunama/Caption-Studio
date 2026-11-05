@@ -1,4 +1,5 @@
 import { audibleVideoOverlaysWithin } from '@/lib/audible-video-overlays';
+import { videoOverlaySegments } from '@/lib/video-overlay-segments';
 import { projectRenderDuration } from '@/lib/project-timeline';
 import { audibleAudioClipsWithin } from '@/lib/audio-timeline';
 import { resolveCaptionStyle } from '@/lib/style-resolver';
@@ -206,13 +207,13 @@ export function buildTimelineRenderPlan(
       scaleY: resolveLayerGeometry(layer).scaleY,
       opacity: layer.opacity,
     };
-    layers.push(layer.kind === 'video' ? {
-      ...visual, kind: 'video',
-        sourceStartMs: layer.sourceStartMs + (interval.startMs - layer.startMs) * layer.playbackRate,
-        playbackRate: layer.playbackRate,
-        includeAudio: layer.includeAudio,
+    if (layer.kind === 'video') {
+      layers.push(...videoOverlaySegments(layer, project.clips, durationMs).map((segment) => ({
+        ...visual, ...segment, kind: 'video' as const,
+        playbackRate: layer.playbackRate, includeAudio: layer.includeAudio,
         sourceDurationMs: layer.sourceDurationMs,
-    } : { ...visual, kind: 'image' });
+      })));
+    } else layers.push({ ...visual, kind: 'image' });
   }
 
   const plan: TimelineRenderPlan = {

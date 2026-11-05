@@ -3,7 +3,7 @@ import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 import { View } from 'react-native';
 import { resolveLayerGeometry, type LayerGeometryInput } from '@/lib/layer-geometry';
 import { overlayPlaybackState } from '@/lib/video-overlay-playback';
-import type { VideoVisualLayer } from '@/types/project';
+import type { VideoClip, VideoVisualLayer } from '@/types/project';
 
 function configureOverlayPlayer(player: VideoPlayer, includeAudio: boolean, playbackRate: number) {
   player.muted = !includeAudio;
@@ -16,6 +16,7 @@ function seekOverlayPlayer(player: VideoPlayer, seconds: number, playing: boolea
 
 type VideoLayerOverlayProps = {
   layer: VideoVisualLayer;
+  clips: VideoClip[];
   geometry?: LayerGeometryInput;
   timelineMs: number;
   isPlaying: boolean;
@@ -30,7 +31,7 @@ export function VideoLayerOverlay(props: VideoLayerOverlayProps) {
 function MountedVideoLayerOverlay(props: VideoLayerOverlayProps) {
   const { layer, timelineMs, isPlaying } = props;
   const player = useVideoPlayer(layer.uri, (created) => configureOverlayPlayer(created, layer.includeAudio, layer.playbackRate));
-  const state = overlayPlaybackState(layer, timelineMs, isPlaying);
+  const state = overlayPlaybackState(layer, timelineMs, isPlaying, props.clips);
   const geometry = resolveLayerGeometry(props.geometry ?? layer);
 
   useEffect(() => {
