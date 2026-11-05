@@ -286,6 +286,8 @@ export type ImageVisualLayer = NormalizedTransform & {
 export type VideoVisualLayer = Omit<ImageVisualLayer, 'kind'> & {
   kind: 'video';
   sourceStartMs: number;
+  /** Overlay media time at the start of its first source anchor. */
+  sourceStartAtAnchorMs?: number;
   sourceDurationMs: number;
   playbackRate: number;
   includeAudio: boolean;
