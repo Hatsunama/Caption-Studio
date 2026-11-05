@@ -494,6 +494,8 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
   const nextClips = project.clips.map((clip) => clip.id === clipId ? replacement : clip);
   const layers = project.layers.map((layer) => {
     if (layer.kind === 'captions') return layer;
+    // A timeline-owned overlay has no footage owner; changing a clip's speed must not retime it.
+    if (layer.kind === 'video' && layer.timingMode === 'timeline') return layer;
     if (layer.kind === 'video' && layer.timingMode === 'source' && layer.sourceAnchors?.length) {
       return remapVideoLayerToClips(layer, nextClips, project.clips);
     }

@@ -256,3 +256,20 @@ test('owner speed after head trim updates overlay seek position and remains reve
   assert.deepEqual(restoredTrim.layers.filter((candidate) => candidate.id === 'pip').map((candidate) =>
     [candidate.startMs, candidate.endMs, candidate.sourceStartMs]), [[0, 3000, 500]]);
 });
+
+
+test('timeline-owned video overlay stays at its independent time during owner speed edits', () => {
+  const base = createCaptionProject({ id: 'independent-speed', name: 'Independent speed', sources: [{ id: 'base',
+    uri: 'file:///base.mp4', storageMode: 'copied', displayName: 'base.mp4',
+    durationMs: 5000, width: 720, height: 1280, rotation: 0 }] });
+  const added = addVideoLayer(base, { id: 'pip', name: 'PiP', uri: 'file:///pip.mp4',
+    currentMs: 0, durationMs: 5000, sourceStartMs: 0, sourceDurationMs: 3000,
+    playbackRate: 1, includeAudio: true });
+  const independent = setVideoLayer(added.project, 'pip', { timingMode: 'timeline', sourceAnchors: undefined });
+  const sped = setClipPlaybackRate(independent, base.clips[0].id, 0.5);
+  const overlay = sped.layers.find((candidate) => candidate.id === 'pip');
+  assert.deepEqual([overlay.startMs, overlay.endMs, overlay.sourceStartMs], [0, 3000, 0]);
+  const restored = setClipPlaybackRate(sped, base.clips[0].id, 1);
+  assert.deepEqual(restored.layers.filter((candidate) => candidate.id === 'pip').map((candidate) =>
+    [candidate.startMs, candidate.endMs, candidate.sourceStartMs]), [[0, 3000, 0]]);
+});
