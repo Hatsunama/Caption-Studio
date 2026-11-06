@@ -286,9 +286,7 @@ export function LayerTimeline(props: {
       Math.abs(horizontalGeometry.viewport - viewportWidth) > pixel ||
       Math.abs(horizontalGeometry.content - scrollContentWidth) > pixel) return;
     const x = timelineScrollOffset(props.currentMs, duration, trackWidth);
-    scrollXRef.current = x;
-    setViewportScrollX(x);
-    setVisibleCenterX(x);
+    // Only onScroll can acknowledge the displayed offset and visible bounds.
     horizontalRef.current?.scrollTo({ x, animated: false });
   }, [duration, gestureLock, hasSelectedCue, horizontalGeometry, props.currentMs, props.projectId,
     reorderMode, scrollContentWidth, trackWidth, viewportWidth]);

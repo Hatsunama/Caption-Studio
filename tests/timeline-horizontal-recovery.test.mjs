@@ -28,6 +28,8 @@ function harness(initial = {}) {
   let slots = [];
   const primarySlots = slots, childSlots = [], modules = new Map(), jobs = [], commands = [], seeks = [], changes = [];
   let geometry;
+  let holdAcknowledgements = false;
+  const acknowledgements = [];
   const native = { viewport: 360, content: 638, x: 0, generation: 1 };
   let props = { projectId: 'saved', durationMs: 8000, currentMs: 8000,
     clips: [], sources: [], layers: [], captions: [], translationTracks: [], audioSources: [], audioClips: [],
@@ -74,7 +76,9 @@ function harness(initial = {}) {
       assert.equal(name, 'scrollTo'); assert.equal(args[2], false);
       commands.push(args[0]);
       native.x = Math.min(Math.max(0, args[0]), Math.max(0, native.content - native.viewport));
-      jobs.push(() => horizontal.props.onScroll({ nativeEvent: { contentOffset: { x: native.x } } }));
+      const x = native.x;
+      const acknowledge = () => horizontal.props.onScroll({ nativeEvent: { contentOffset: { x } } });
+      (holdAcknowledgements ? acknowledgements : jobs).push(acknowledge);
     } };
   const worklets = { scheduleOnUI: (fn, ...args) => jobs.push(() => fn(...args)),
     scheduleOnRN: (fn, ...args) => jobs.push(() => fn(...args)) };
@@ -136,9 +140,9 @@ function harness(initial = {}) {
     if (first) { native.content = expectedContent(); first = false; }
     while (effects.length) effects.shift()();
   }
-  function flush() {
+  function flush(runJobs = true) {
     for (let i = 0; i < 40; i++) {
-      while (jobs.length) jobs.shift()();
+      if (runJobs) while (jobs.length) jobs.shift()();
       if (!dirty) return;
       render();
     }
@@ -160,15 +164,18 @@ function harness(initial = {}) {
     get scrubStarts() { return scrubStarts; },
     get timingStarts() { return timingStarts; },
     get timingEnds() { return timingEnds; },
-    find(name) {
-      let found;
+    findAll(name) {
+      const found = [];
       function walk(element) {
         if (!element?.props) return;
-        if (element.type?.name === name) found = element.props;
+        if (element.type?.name === name) found.push(element.props);
         for (const child of [element.props.children].flat(Infinity)) walk(child);
       }
-      walk(tree); assert.ok(found, name); return found;
+      walk(tree); return found;
     },
+    find(name) { const found = this.findAll(name); assert.ok(found.length, name); return found.at(-1); },
+    holdAcknowledgements() { holdAcknowledgements = true; },
+    acknowledge() { jobs.push(...acknowledgements.splice(0)); flush(); },
     mountItemPan(owner) {
       TimelineNativeGeometryContext.value = geometry;
       function mount(fn) {
@@ -199,7 +206,7 @@ function harness(initial = {}) {
       outer.props.onLayout({ nativeEvent: { layout: { width } } }); render(); flush();
     },
     ready() { layout(); content(); flush(); },
-    update(next) { props = { ...props, ...next }; render(); flush(); },
+    update(next, runJobs = true) { props = { ...props, ...next }; render(); flush(runJobs); },
     rebind() { controller.deactivate(++native.generation); controller.activate(native.generation, true); native.x = 0; },
     rejectNextCommand() { jobs.push(() => controller.deactivate(++native.generation)); },
     activate() { controller.activate(native.generation, true); },
@@ -214,6 +221,63 @@ function aligned(h) {
   assert.equal(h.native.x, Math.min(1, Math.max(0, h.props.currentMs / h.props.durationMs)) * track);
   assert.deepEqual(h.seeks, [], 'passive geometry must never change transport time');
 }
+
+for (const reject of [false, true]) test(`displayed viewport waits for native acknowledgement${reject ? ' after generation rejection and retry' : ''}`, () => {
+  const h = harness({ durationMs: 120000, currentMs: 0,
+    selectedLayerId: 'captions', selectedCaptionId: 'late',
+    layers: [{ id: 'captions', kind: 'captions' }],
+    captions: [
+      { id: 'early', startMs: 1000, endMs: 2000, text: 'early cue' },
+      { id: 'late', startMs: 90000, endMs: 91000, text: 'selected late cue' },
+    ],
+    audioSources: [{ id: 'early', displayName: 'early audio' }, { id: 'late', displayName: 'late audio' }],
+    audioClips: [1000, 90000].map((startMs, i) => ({ id: `audio-${i}`, sourceId: i ? 'late' : 'early',
+      startMs, sourceStartMs: 0, sourceEndMs: 1000, playbackRate: 1 })),
+  });
+  try {
+    h.ready();
+    const snapshot = () => {
+      const ruler = h.find('TimelineRuler');
+      return {
+        range: [ruler.visibleStartMs, ruler.visibleEndMs],
+        bodies: h.findAll('TimedBlock').map(item => [item.label, Boolean(item.selected),
+          item.waveformVisibleStartMs, item.waveformVisibleEndMs]),
+      };
+    };
+    const before = snapshot(), count = h.commands.length;
+    assert.deepEqual(before.bodies.map(item => item[0]), ['early audio', 'early cue']);
+    h.holdAcknowledgements();
+    if (reject) h.rejectNextCommand();
+    h.update({ currentMs: 90000 }, false);
+    assert.equal(h.native.x, 0, 'the UI command has not run');
+    assert.equal(h.commands.length, count);
+    assert.deepEqual(snapshot(), before, 'rendered bounds and bodies cannot anticipate a queued command');
+    h.flush();
+    if (reject) {
+      assert.equal(h.commands.length, count, 'the real spring guard rejected the command');
+      assert.equal(h.native.x, 0);
+      assert.deepEqual(snapshot(), before, 'rejection cannot claim a displayed offset');
+      h.activate(); h.layout(); h.flush();
+    }
+    assert.equal(h.commands.length, count + 1, 'readiness retries exactly once when needed');
+    aligned(h);
+    assert.deepEqual(snapshot(), before, 'native dispatch without onScroll cannot advance rendered bounds');
+    h.acknowledge();
+    const after = snapshot();
+    const track = h.expectedContent() - h.native.viewport;
+    assert.deepEqual(after.range, [(h.native.x - 360) / track * 120000,
+      (h.native.x + 360) / track * 120000]);
+    assert.deepEqual(after.bodies.map(item => item[0]), ['late audio', 'selected late cue']);
+    assert.equal(after.bodies[1][1], true, 'selected cue remains selected when its actual viewport arrives');
+    assert.deepEqual(after.bodies[0].slice(2), after.range, 'waveform virtualization follows acknowledged bounds');
+    assert.equal(h.commands.length, count + 1, 'acknowledgement must not recenter');
+    assert.deepEqual(h.seeks, []);
+    assert.deepEqual(h.changes, []);
+    assert.equal(h.scrubStarts, 0);
+    assert.equal(h.timingStarts, 0);
+    assert.equal(h.timingEnds, 0);
+  } finally { h.close(); }
+});
 
 for (const [durationMs, currentMs] of [[8000, 8000], [19000, 12345], [120000, 89000]]) {
   test(`late native content recovers ${currentMs}/${durationMs} after resize`, () => {
