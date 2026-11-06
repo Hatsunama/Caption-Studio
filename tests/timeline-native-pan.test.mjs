@@ -5,19 +5,19 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { createTimelineNativePan, createTimelineNativePanDelivery, initialTimelineNativePanState } from '../src/components/editor/timeline-native-pan.ts';
 
-function fixture() {
+function fixture({ axis } = {}) {
   const handlers = {}, config = {}, calls = [];
   const pan = {};
   for (const name of ['manualActivation', 'runOnJS', 'maxPointers', 'blocksExternalGesture']) {
     pan[name] = (...args) => { config[name] = args; return pan; };
   }
-  for (const name of ['onTouchesDown', 'onTouchesMove', 'onTouchesCancelled', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) {
+  for (const name of ['onTouchesDown', 'onTouchesMove', 'onTouchesCancelled', 'onTouchesUp', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) {
     pan[name] = (callback) => { handlers[name] = callback; return pan; };
   }
   const state = { value: initialTimelineNativePanState() };
   const scrolls = [{ id: 'horizontal' }, { id: 'vertical' }];
   const callbacks = {
-    prepare: () => calls.push(['prepare']), holdMilliseconds: 350,
+    axis, prepare: () => calls.push(['prepare']), holdMilliseconds: 350,
     begin: (dx, dy) => calls.push(['begin', dx, dy]), move: (...args) => calls.push(['move', ...args]),
     finish: () => calls.push(['finish']), cancel: () => calls.push(['cancel']),
   };
@@ -138,3 +138,16 @@ for (const platform of ['android', 'ios', 'web']) {
     assert.equal(tree.type, 'SpringScrollView');
   });
 }
+
+
+test('vertical moves retain absolute pageY and finish once after the final sample', () => {
+  const f = fixture({ axis: 'vertical' });
+  f.handlers.onTouchesMove(f.touch(0, 9), f.manager);
+  f.handlers.onStart(f.event(0, 9));
+  f.handlers.onUpdate(f.event(0, 15));
+  f.handlers.onEnd(f.event(0, 20), true); f.handlers.onFinalize();
+  f.handlers.onEnd(f.event(0, 20), true); f.handlers.onFinalize();
+  // begin's existing test callback only records dx/dy; move records pageY too.
+  assert.deepEqual(f.calls, [['prepare'], ['activate'], ['begin', 0, 9],
+    ['move', 0, 15, 1, 215], ['move', 0, 20, 1, 220], ['finish']]);
+});

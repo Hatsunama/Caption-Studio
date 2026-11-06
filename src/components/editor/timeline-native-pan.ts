@@ -14,8 +14,8 @@ export type TimelineNativePanCallbacks = {
 export type TimelineNativePanState = {
   epoch: number;
   touchId: number;
-  phase: 'idle' | 'pending' | 'recognized' | 'active' | 'failed';
-  handlerTag: number;
+  phase: 'idle' | 'pending' | 'recognized' | 'active' | 'failed' | 'invalidated';
+  mounted: boolean;
   originX: number;
   originY: number;
   lastDx: number;
@@ -26,7 +26,7 @@ export type TimelineNativePanState = {
 };
 
 export function initialTimelineNativePanState(): TimelineNativePanState {
-  return { epoch: 0, touchId: 0, phase: 'idle', handlerTag: 0, originX: 0, originY: 0,
+  return { epoch: 0, touchId: 0, phase: 'idle', mounted: true, originX: 0, originY: 0,
     lastDx: 0, lastDy: 0, startedAt: 0, holdEligible: true, reorder: false };
 }
 
@@ -74,7 +74,11 @@ export function createTimelineNativePanDelivery(callbacks: TimelineNativePanCall
     }
   };
   return { dispatch, invalidate, epoch: () => epoch,
-    mount: () => { mounted = true; },
+    mount: () => {
+      if (mounted) return epoch;
+      mounted = true;
+      return invalidate();
+    },
     unmount: () => { mounted = false; return invalidate(); } };
 }
 
@@ -96,7 +100,7 @@ export function createTimelineNativePan(
   const cancel = () => {
     'worklet';
     const current = state.value;
-    if (current.phase === 'idle' || current.phase === 'failed') return;
+    if (current.phase === 'idle' || current.phase === 'failed' || current.phase === 'invalidated') return;
     state.value = { ...current, phase: 'failed' };
     schedule(deliver, 'cancel', current.epoch, current.touchId);
   };
@@ -104,13 +108,14 @@ export function createTimelineNativePan(
     .blocksExternalGesture(...scrollGestures)
     .onTouchesDown((event, manager) => {
       'worklet';
+      if (!state.value.mounted) return;
       const touch = event.allTouches[0];
       if (event.numberOfTouches !== 1 || !touch || !Number.isFinite(touch.absoluteX) || !Number.isFinite(touch.absoluteY)) {
         cancel(); manager.fail(); return;
       }
       cancel();
       const current = state.value;
-      state.value = { ...current, touchId: current.touchId + 1, phase: 'pending', handlerTag: event.handlerTag,
+      state.value = { ...current, touchId: current.touchId + 1, phase: 'pending',
         originX: touch.absoluteX, originY: touch.absoluteY, lastDx: 0, lastDy: 0,
         startedAt: Date.now(), holdEligible: true, reorder: false };
       schedule(deliver, 'prepare', current.epoch, current.touchId + 1);
@@ -118,6 +123,11 @@ export function createTimelineNativePan(
     .onTouchesMove((event, manager) => {
       'worklet';
       const current = state.value;
+      if (!current.mounted) return;
+      if (current.phase === 'invalidated') {
+        state.value = { ...current, phase: 'failed' };
+        manager.fail(); return;
+      }
       const touch = event.allTouches[0];
       if (event.numberOfTouches !== 1 || !touch) { cancel(); manager.fail(); return; }
       if (current.phase !== 'pending') return;
@@ -165,8 +175,16 @@ export function createTimelineNativePan(
       if (dx !== current.lastDx || dy !== current.lastDy) schedule(deliver, 'move', current.epoch, current.touchId, dx, dy, 1, false, axis === 'vertical' ? event.absoluteY : undefined);
       schedule(deliver, 'finish', current.epoch, current.touchId);
     })
+    .onTouchesUp((_event, manager) => {
+      'worklet';
+      const current = state.value;
+      if (!current.mounted || current.phase !== 'invalidated') return;
+      state.value = { ...current, phase: 'failed' };
+      manager.fail();
+    })
     .onTouchesCancelled((_event, manager) => {
       'worklet';
+      if (!state.value.mounted) return;
       cancel(); manager.fail();
     })
     .onFinalize(() => {

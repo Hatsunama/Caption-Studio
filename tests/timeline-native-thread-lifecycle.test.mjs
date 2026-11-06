@@ -13,7 +13,7 @@ function fixture({ holdMilliseconds = 0 } = {}) {
   for (const name of ['manualActivation', 'runOnJS', 'maxPointers', 'blocksExternalGesture']) {
     pan[name] = (...args) => { config[name] = args; return pan; };
   }
-  for (const name of ['onTouchesDown', 'onTouchesMove', 'onTouchesCancelled', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) {
+  for (const name of ['onTouchesDown', 'onTouchesMove', 'onTouchesCancelled', 'onTouchesUp', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) {
     pan[name] = (fn) => { handlers[name] = fn; return pan; };
   }
   const state = { value: native.initialTimelineNativePanState?.() ?? {} };
@@ -125,6 +125,10 @@ test('video hold intent is decided on UI without calling an RN ref', () => {
   f.state.value = { ...f.state.value, startedAt: Date.now() - 400 };
   f.start(0); f.flush();
   assert.deepEqual(f.calls.at(-1), ['begin', 0, 0, true]);
+  f.invoke('onUpdate', f.event(12, 20));
+  f.invoke('onEnd', f.event(18, 25), true); f.invoke('onFinalize'); f.flush();
+  assert.deepEqual(f.calls.slice(-3), [['move', 12, 20, 1], ['move', 18, 25, 1], ['finish']]);
+  assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
 });
 
 test('unmounted delivery ignores queued touches and supports strict-effect remount', () => {
@@ -138,12 +142,14 @@ test('unmounted delivery ignores queued touches and supports strict-effect remou
   assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
 });
 
-function mountedWrapper() {
-  const effects = [], ui = [], rn = [], handlers = {}, nativeStates = [], calls = [], exported = {};
+function mountedWrapper({ flushMount = true } = {}) {
+  const effects = [], ui = [], rn = [], handlers = {}, nativeStates = [], liveStates = [], calls = [], exported = {};
+  let liveTouch = false;
+  let originX = 100;
   let thread = 'rn';
   const pan = {};
   for (const name of ['manualActivation', 'runOnJS', 'maxPointers', 'blocksExternalGesture']) pan[name] = () => pan;
-  for (const name of ['onTouchesDown', 'onTouchesMove', 'onTouchesCancelled', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) pan[name] = (fn) => { handlers[name] = fn; return pan; };
+  for (const name of ['onTouchesDown', 'onTouchesMove', 'onTouchesCancelled', 'onTouchesUp', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) pan[name] = (fn) => { handlers[name] = fn; return pan; };
   const geometry = createTimelineGestureGeometry({ viewportWidth: 360, scale: 16 });
   const source = readFileSync(new URL('../src/components/editor/timeline-native-gesture.tsx', import.meta.url), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
@@ -160,6 +166,10 @@ function mountedWrapper() {
     if (name === 'react-native-gesture-handler') return { Gesture: { Pan: () => pan }, GestureDetector: 'GestureDetector', State: { FAILED: 1, CANCELLED: 3 } };
     if (name === 'react-native-reanimated') return { useSharedValue: (value) => ({ value }), setGestureState: (...args) => {
       assert.equal(thread, 'ui'); nativeStates.push(args);
+      // Model the recorded invalid native precondition at queue drain, not the
+      // unknown device timing that produced it. Missing registry is a no-op;
+      // ordinary reset preserves terminal state and prepare restores ownership.
+      throw new Error('Exception in HostFunction: java.lang.NullPointerException (modeled observed boundary)');
     } };
     if (name === 'react-native-worklets') return { scheduleOnRN, scheduleOnUI };
     if (name === './timeline-native-pan') return native;
@@ -175,17 +185,35 @@ function mountedWrapper() {
   const runUI = (fn) => { thread = 'ui'; try { fn(); } finally { thread = 'rn'; } };
   const flushUI = () => { while (ui.length) runUI(ui.shift()); };
   const flushRN = () => { while (rn.length) rn.shift()(); };
-  const event = (dx) => ({ handlerTag: 42, absoluteX: 100 + dx, absoluteY: 200, numberOfPointers: 1, translationX: 0, translationY: 0 });
-  const start = () => runUI(() => {
-    const manager = { activate() { assert.equal(thread, 'ui'); }, fail() { assert.equal(thread, 'ui'); } };
-    handlers.onTouchesDown({ ...event(0), numberOfTouches: 1, allTouches: [event(0)] }, manager);
-    handlers.onTouchesMove({ ...event(9), numberOfTouches: 1, allTouches: [event(9)] }, manager);
-    handlers.onStart(event(9));
+  const event = (dx) => ({ handlerTag: 42, absoluteX: originX + dx, absoluteY: 200, numberOfPointers: 1, translationX: 0, translationY: 0 });
+  const touch = (dx = 0) => ({ ...event(dx), numberOfTouches: 1, allTouches: [event(dx)] });
+  const invokeTouch = (name, dx = 0) => runUI(() => {
+    liveTouch = true;
+    const manager = {};
+    for (const kind of ['activate', 'fail']) manager[kind] = () => {
+      assert.equal(thread, 'ui');
+      assert.equal(liveTouch, true, 'manager is usable only inside its live touch callback');
+      liveStates.push(kind);
+    };
+    try { handlers[name](touch(dx), manager); } finally { liveTouch = false; }
   });
+  const down = () => invokeTouch('onTouchesDown');
+  const move = () => invokeTouch('onTouchesMove', 9);
+  const up = () => invokeTouch('onTouchesUp', 20);
+  const cancelled = () => invokeTouch('onTouchesCancelled');
+  const start = () => {
+    down(); move(); runUI(() => handlers.onStart(event(9)));
+  };
+  const update = () => runUI(() => handlers.onUpdate(event(15)));
   const finish = () => runUI(() => { handlers.onEnd(event(20), true); handlers.onFinalize(); });
   const unmount = () => { for (const cleanup of cleanups) cleanup(); cleanups = []; };
   const remount = () => { cleanups = effects.map((setup) => setup()).filter(Boolean); };
-  return { geometry, calls, nativeStates, flushUI, flushRN, start, finish, unmount, remount };
+  const flushLastUI = () => { if (ui.length) runUI(ui.pop()); };
+  if (flushMount) flushUI(); // Initial mounted generation is available to live touch callbacks.
+  return { geometry, calls, nativeStates, liveStates, flushUI, flushLastUI, flushRN,
+    down, move, up, cancelled, start, update, finish, unmount, remount,
+    queuedUI: () => ui.length, setOrigin: (x) => { originX = x; } };
+
 }
 
 test('mounted wrapper invalidates queued RN callbacks before UI cancellation catches up', () => {
@@ -194,7 +222,9 @@ test('mounted wrapper invalidates queued RN callbacks before UI cancellation cat
   f.flushRN();
   assert.deepEqual(f.calls, []);
   f.flushUI();
-  assert.deepEqual(f.nativeStates, [[42, 3]]);
+  assert.deepEqual(f.nativeStates, []);
+  f.move();
+  assert.equal(f.liveStates.at(-1), 'fail', 'invalidated stream yields through its live manager');
   f.finish(); f.flushRN();
   assert.deepEqual(f.calls, []);
   f.start(); f.finish(); f.flushRN();
@@ -204,11 +234,131 @@ test('mounted wrapper invalidates queued RN callbacks before UI cancellation cat
 
 test('mounted wrapper cancels active work once and releases subscriptions through remount', () => {
   const f = mountedWrapper(); f.start(); f.flushRN();
-  f.geometry.update({ scale: 32 }); f.flushUI(); f.finish(); f.flushRN();
+  f.geometry.update({ scale: 32 });
+  assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 1, 'RN editor cancellation is immediate');
+  f.flushUI(); f.move();
+  assert.equal(f.liveStates.at(-1), 'fail');
+  f.finish(); f.flushRN();
   assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 1);
   assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 0);
   f.unmount(); f.flushUI();
-  f.remount(); f.start(); f.finish(); f.flushRN();
+  f.remount(); f.flushUI(); f.start(); f.finish(); f.flushRN();
   assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
   f.unmount(); f.flushUI();
+});
+
+for (const stage of ['pending', 'queued-start', 'active']) {
+  test(`wrapper ${stage}: teardown drains safely at the observed invalid-native boundary`, () => {
+    const f = mountedWrapper();
+    if (stage === 'pending') f.down(); else f.start();
+    if (stage === 'active') f.flushRN();
+    f.unmount();
+    assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, stage === 'active' ? 1 : 0);
+    // Any raw native lifecycle command here throws the captured HostFunction
+    // failure. This exercises the actual wrapper cleanup, not a copied helper.
+    assert.doesNotThrow(() => f.flushUI());
+    const liveCount = f.liveStates.length;
+    f.move(); f.up(); f.cancelled(); f.down(); f.update(); f.finish(); f.flushRN();
+    assert.equal(f.liveStates.length, liveCount, 'callbacks after detach cannot command native state');
+    assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 0);
+    assert.equal(f.calls.filter(([kind]) => kind === 'begin').length, stage === 'active' ? 1 : 0);
+    assert.deepEqual(f.nativeStates, []);
+    f.remount(); f.flushUI(); f.start(); f.finish(); f.flushRN();
+    assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
+    f.unmount(); f.flushUI();
+  });
+}
+
+for (const stage of ['pending', 'queued-start', 'active']) {
+  for (const release of ['move', 'up']) test(`wrapper ${stage}: geometry cancellation yields on live ${release}`, () => {
+    const f = mountedWrapper();
+    if (stage === 'pending') f.down(); else f.start();
+    if (stage === 'active') f.flushRN();
+    f.geometry.update({ scale: 32 });
+    assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, stage === 'active' ? 1 : 0);
+    // Stale UI callbacks may still queue, but RN must already reject them.
+    f.update(); f.flushRN();
+    assert.equal(f.calls.filter(([kind]) => kind === 'move').length, 0);
+    assert.doesNotThrow(() => f.flushUI());
+    const count = f.liveStates.length;
+    f[release]();
+    assert.equal(f.liveStates.length, count + 1);
+    assert.equal(f.liveStates.at(-1), 'fail', 'release the scroll dependency in the live callback');
+    f.move(); f.up();
+    assert.equal(f.liveStates.length, count + 1, 'do not fail an already released stream again');
+    f.finish(); f.flushRN();
+    assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 0);
+    f.start(); f.finish(); f.flushRN();
+    assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
+    assert.deepEqual(f.nativeStates, []);
+    f.unmount(); f.flushUI();
+  });
+}
+
+test('strict replay: delayed old cleanup cannot cancel a newer mounted touch', () => {
+  const f = mountedWrapper(); f.start(); f.flushRN();
+  f.unmount(); f.remount();
+  f.flushLastUI(); // New mount reaches UI before the old queued cleanup.
+  f.start(); f.flushRN();
+  assert.equal(f.calls.filter(([kind]) => kind === 'begin').length, 2);
+  f.flushUI(); f.update(); f.finish(); f.flushRN();
+  assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 1);
+  assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
+  f.unmount(); f.flushUI();
+});
+
+test('out-of-order geometry tasks cannot rewind epoch or cancel a fresh touch', () => {
+  const f = mountedWrapper(); f.start(); f.flushRN();
+  f.geometry.update({ scale: 32 }); f.geometry.update({ scale: 64 });
+  f.flushLastUI(); f.start(); f.flushRN();
+  f.flushUI(); f.finish(); f.flushRN();
+  assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 1);
+  assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
+  f.unmount(); f.flushUI();
+});
+
+
+test('unmount before initial queued UI setup drains cannot revive detached ownership', () => {
+  const f = mountedWrapper({ flushMount: false });
+  f.start(); f.unmount(); f.flushLastUI(); f.flushUI(); f.flushRN();
+  const count = f.liveStates.length;
+  f.down(); f.move(); f.up(); f.cancelled(); f.finish(); f.flushRN();
+  assert.equal(f.liveStates.length, count);
+  assert.deepEqual(f.calls, []);
+  f.geometry.update({ scale: 32 });
+  assert.equal(f.queuedUI(), 0, 'detached geometry subscription is removed');
+  f.remount(); f.flushUI(); f.start(); f.finish(); f.flushRN();
+  assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
+  f.unmount(); f.flushUI();
+});
+
+test('fresh geometry epoch uses a new absolute coordinate origin and rejects old queued samples', () => {
+  const f = mountedWrapper(); f.start(); f.flushRN(); f.update();
+  f.geometry.update({ viewportWidth: 720 }); f.flushUI();
+  f.move(); f.finish();
+  f.setOrigin(500); f.start(); f.update(); f.finish(); f.flushRN();
+  assert.deepEqual(f.calls.filter(([kind]) => kind === 'begin'), [['begin', 9, 0, false], ['begin', 9, 0, false]]);
+  assert.deepEqual(f.calls.filter(([kind]) => kind === 'move'), [['move', 15, 0, 1], ['move', 20, 0, 1]]);
+  assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 1);
+  assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
+  f.unmount(); f.flushUI();
+});
+
+test('initial mount synchronization preserves a touch already accepted on UI', () => {
+  const f = mountedWrapper({ flushMount: false });
+  f.start(); f.flushRN();
+  assert.equal(f.calls.filter(([kind]) => kind === 'begin').length, 1);
+  f.flushUI(); f.update(); f.finish(); f.flushRN();
+  assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 0);
+  assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
+  f.unmount(); f.flushUI();
+});
+
+test('duplicate mount leaves an existing delivery and active edit intact', () => {
+  const f = fixture(); f.down(); f.start(); f.flush();
+  const epoch = f.delivery.epoch();
+  assert.equal(f.delivery.mount(), epoch);
+  assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 0);
+  f.invoke('onEnd', f.event(25), true); f.invoke('onFinalize'); f.flush();
+  assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
 });

@@ -1,8 +1,8 @@
 import { SpringScrollView } from '@/components/spring-scroll-view';
 import { createContext, useContext, useEffect, useState, type ComponentPropsWithRef } from 'react';
 import { Platform, ScrollView, View, type PanResponderInstance, type ViewProps } from 'react-native';
-import { Gesture, GestureDetector, State } from 'react-native-gesture-handler';
-import { setGestureState, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN, scheduleOnUI } from 'react-native-worklets';
 import { createTimelineNativePan, createTimelineNativePanDelivery, initialTimelineNativePanState,
   type TimelineNativePanCallbacks, type TimelineNativePanState } from './timeline-native-pan';
@@ -11,13 +11,14 @@ type NativeScrolls = ReturnType<typeof Gesture.Native>[];
 export const TimelineNativeGestureContext = createContext<NativeScrolls>([]);
 export const TimelineNativeGeometryContext = createContext<{ subscribe: (cancel: () => void) => () => void } | undefined>(undefined);
 
-function invalidateNativePan(state: SharedValue<TimelineNativePanState>, epoch: number) {
+function synchronizeNativePan(state: SharedValue<TimelineNativePanState>, epoch: number, mounted: boolean) {
   'worklet';
   const current = state.value;
-  state.value = { ...current, epoch, phase: 'failed' };
-  if (current.handlerTag > 0 && current.phase !== 'idle' && current.phase !== 'failed') {
-    setGestureState(current.handlerTag, current.phase === 'active' ? State.CANCELLED : State.FAILED);
-  }
+  // Cleanup may arrive after a newer mount/geometry task. Never rewind UI
+  // ownership or invalidate the newer touch. Teardown belongs to GestureDetector;
+  // a surviving invalidated stream yields only via its live callback manager.
+  if (epoch <= current.epoch) return;
+  state.value = { ...current, epoch, mounted, phase: 'invalidated' };
 }
 
 export function createTimelineNativeScrollGestures(): NativeScrolls {
@@ -51,15 +52,16 @@ export function TimelineNativeGestureView({ panHandlers, nativeCallbacks, native
     }) : undefined);
   if (nativePan && nativeDisabled !== undefined) nativePan.enabled(!nativeDisabled);
   useEffect(() => {
-    delivery.mount();
+    const epoch = delivery.mount();
+    if (nativePan) scheduleOnUI(synchronizeNativePan, state, epoch, true);
     return () => {
       const epoch = delivery.unmount();
-      if (nativePan) scheduleOnUI(invalidateNativePan, state, epoch);
+      if (nativePan) scheduleOnUI(synchronizeNativePan, state, epoch, false);
     };
   }, [delivery, nativePan, state]);
   useEffect(() => geometry?.subscribe(() => {
     const epoch = delivery.invalidate();
-    if (nativePan) scheduleOnUI(invalidateNativePan, state, epoch);
+    if (nativePan) scheduleOnUI(synchronizeNativePan, state, epoch, true);
   }), [delivery, geometry, nativePan, state]);
   if (!nativePan) return <View {...panHandlers} {...props} />;
   return <GestureDetector gesture={nativePan}><View {...props} /></GestureDetector>;
