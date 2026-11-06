@@ -21,7 +21,7 @@ function fixture({ disabled = false, axis, holdMilliseconds = 0 } = {}) {
   for (const name of ['enabled', 'manualActivation', 'runOnJS', 'maxPointers', 'blocksExternalGesture']) {
     pan[name] = (...args) => { config[name] = args; return pan; };
   }
-  for (const name of ['onTouchesDown', 'onTouchesMove', 'onTouchesCancelled', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) {
+  for (const name of ['onTouchesDown', 'onTouchesMove', 'onTouchesCancelled', 'onTouchesUp', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) {
     pan[name] = (fn) => { handlers[name] = fn; return pan; };
   }
   const geometry = createTimelineGestureGeometry({ viewportWidth: 360, scale: 16 });
@@ -86,6 +86,7 @@ function fixture({ disabled = false, axis, holdMilliseconds = 0 } = {}) {
   const down = () => invoke('onTouchesDown', touch(), manager);
   const start = () => { down(); invoke('onTouchesMove', touch(0, 9), manager); invoke('onStart', event(0, 9)); };
   const end = (dy = 40, success = true) => { invoke('onEnd', event(0, dy), success); invoke('onFinalize'); };
+  flushUI();
   return { wrapper: exports, config, calls, states, scrolls, geometry, track, invoke, event, touch, manager, flushRN, flushUI, down, start, end,
     unmount: () => cleanups.forEach((cleanup) => cleanup()) };
 }
@@ -143,9 +144,12 @@ for (const reason of ['failure', 'touch-cancel', 'second-finger', 'invalid-relea
 for (const stage of ['pending', 'queued-start', 'active']) test(`${stage}: geometry epoch rejects stale release and allows a fresh grab`, () => {
   const f = fixture(); if (stage === 'pending') f.down(); else f.start();
   if (stage === 'active') f.flushRN();
-  f.geometry.update({ viewportWidth: 600 }); f.flushRN(); f.flushUI(); f.end(); f.flushRN();
+  f.geometry.update({ viewportWidth: 600 }); f.flushRN(); f.flushUI();
+  f.invoke('onTouchesMove', f.touch(0, 20), f.manager);
+  assert.equal(f.calls.filter(([kind]) => kind === 'fail').length, 1, 'invalidated grab releases native ownership during its live touch');
+  f.end(); f.flushRN();
   assert.deepEqual(f.calls.filter(([kind]) => kind === 'finish'), stage === 'active' ? [['finish', true]] : []);
-  assert.deepEqual(f.states, [[42, stage === 'pending' ? 1 : 3]]);
+  assert.deepEqual(f.states, [], 'queued lifecycle work cannot issue raw native state commands');
   f.start(); f.end(); f.flushRN();
   assert.equal(f.calls.filter(([kind, cancelled]) => kind === 'finish' && !cancelled).length, 1);
 });
