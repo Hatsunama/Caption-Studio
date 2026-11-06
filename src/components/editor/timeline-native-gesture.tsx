@@ -59,10 +59,19 @@ export function TimelineNativeGestureView({ panHandlers, nativeCallbacks, native
       if (nativePan) scheduleOnUI(synchronizeNativePan, state, epoch, false);
     };
   }, [delivery, nativePan, state]);
-  useEffect(() => geometry?.subscribe(() => {
-    const epoch = delivery.invalidate();
-    if (nativePan) scheduleOnUI(synchronizeNativePan, state, epoch, true);
-  }), [delivery, geometry, nativePan, state]);
+  useEffect(() => {
+    let subscribed = true;
+    const unsubscribe = geometry?.subscribe(() => {
+      // A dispatch may have copied this listener before cleanup unsubscribed it.
+      if (!subscribed) return;
+      const epoch = delivery.invalidate();
+      if (nativePan) scheduleOnUI(synchronizeNativePan, state, epoch, true);
+    });
+    return () => {
+      subscribed = false;
+      unsubscribe?.();
+    };
+  }, [delivery, geometry, nativePan, state]);
   if (!nativePan) return <View {...panHandlers} {...props} />;
   return <GestureDetector gesture={nativePan}><View {...props} /></GestureDetector>;
 }

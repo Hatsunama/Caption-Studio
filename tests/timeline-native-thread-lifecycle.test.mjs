@@ -142,7 +142,7 @@ test('unmounted delivery ignores queued touches and supports strict-effect remou
   assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
 });
 
-function mountedWrapper({ flushMount = true } = {}) {
+function mountedWrapper({ flushMount = true, beforeGeometry } = {}) {
   const effects = [], ui = [], rn = [], handlers = {}, nativeStates = [], liveStates = [], calls = [], exported = {};
   let liveTouch = false;
   let originX = 100;
@@ -151,6 +151,7 @@ function mountedWrapper({ flushMount = true } = {}) {
   for (const name of ['manualActivation', 'runOnJS', 'maxPointers', 'blocksExternalGesture']) pan[name] = () => pan;
   for (const name of ['onTouchesDown', 'onTouchesMove', 'onTouchesCancelled', 'onTouchesUp', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) pan[name] = (fn) => { handlers[name] = fn; return pan; };
   const geometry = createTimelineGestureGeometry({ viewportWidth: 360, scale: 16 });
+  if (beforeGeometry) geometry.subscribe(beforeGeometry);
   const source = readFileSync(new URL('../src/components/editor/timeline-native-gesture.tsx', import.meta.url), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const scheduleOnRN = (fn, ...args) => { assert.equal(thread, 'ui'); rn.push(() => fn(...args)); };
@@ -361,4 +362,20 @@ test('duplicate mount leaves an existing delivery and active edit intact', () =>
   assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 0);
   f.invoke('onEnd', f.event(25), true); f.invoke('onFinalize'); f.flush();
   assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
+});
+
+test('a geometry snapshot cannot revive a subscriber unmounted earlier in the dispatch', () => {
+  let f;
+  f = mountedWrapper({ beforeGeometry: () => f.unmount() });
+  f.start(); f.flushRN();
+  f.geometry.update({ viewportWidth: 720 });
+  f.flushUI();
+  const liveCount = f.liveStates.length;
+  f.down(); f.move(); f.up(); f.cancelled(); f.finish(); f.flushRN();
+  assert.equal(f.liveStates.length, liveCount, 'the removed snapshot callback must not reopen native ownership');
+  assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 1);
+  assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 0);
+  f.remount(); f.flushUI(); f.start(); f.finish(); f.flushRN();
+  assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
+  f.unmount(); f.flushUI();
 });
