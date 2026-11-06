@@ -102,6 +102,7 @@ export function LayerTimeline(props: {
   const trackDragOrigin = useRef<{ id: string; order: string[]; preview: string[]; top: number; scroll: number; heights: Map<string, number>; dy: number; pageY?: number } | undefined>(undefined);
   const trackViewport = useRef<{ top: number; height: number } | undefined>(undefined);
   const [viewportWidth, setViewportWidth] = useState(360);
+  const [horizontalGeometry, setHorizontalGeometry] = useState({ viewport: 0, content: 0 });
   const [clipPreview, setClipPreview] = useState<VideoClip[]>();
   const [frontTrimPreview, setFrontTrimPreview] = useState<{
     clipId: string;
@@ -148,6 +149,7 @@ export function LayerTimeline(props: {
   const zoomTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrubEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrubbingRef = useRef(false);
+  const invalidatedScrollTouchRef = useRef(false);
   const selectionOwnsViewportRef = useRef(false);
   const scrollXRef = useRef(0);
   const [viewportScrollX, setViewportScrollX] = useState(0);
@@ -273,13 +275,21 @@ export function LayerTimeline(props: {
   }, []);
 
   useEffect(() => {
-    if (scrubbingRef.current || gestureLock || (hasSelectedCue && selectionOwnsViewportRef.current)) return;
+    if (scrubbingRef.current || gestureLock || gestureLockRef.current || reorderMode ||
+      (hasSelectedCue && selectionOwnsViewportRef.current)) return;
+    // React geometry alone cannot prove that Android has laid out the new
+    // nonzero content. A command can clamp there, or be dropped by a retired
+    // spring binding. Native callbacks arrive after bindContent and must retry
+    // even when their dimensions are unchanged. Ignore stale/partial geometry.
+    const pixel = 1 / PixelRatio.get();
+    if (horizontalGeometry.viewport <= 0 || horizontalGeometry.content <= 0 ||
+      Math.abs(horizontalGeometry.viewport - viewportWidth) > pixel ||
+      Math.abs(horizontalGeometry.content - scrollContentWidth) > pixel) return;
     const x = timelineScrollOffset(props.currentMs, duration, trackWidth);
-    scrollXRef.current = x;
-    setViewportScrollX(x);
-    setVisibleCenterX(x);
+    // Only onScroll can acknowledge the displayed offset and visible bounds.
     horizontalRef.current?.scrollTo({ x, animated: false });
-  }, [duration, gestureLock, hasSelectedCue, props.currentMs, trackWidth, viewportWidth]);
+  }, [duration, gestureLock, hasSelectedCue, horizontalGeometry, props.currentMs, props.projectId,
+    reorderMode, scrollContentWidth, trackWidth, viewportWidth]);
 
   useEffect(() => {
     if (!selectedCue) { lastRevealRef.current = undefined; return; }
@@ -359,7 +369,7 @@ export function LayerTimeline(props: {
 
   const updateZoom = (next: number) => {
     const clamped = clampTimelineScale(next, minimumScale);
-    gestureGeometry.update({ scale: clamped });
+    if (gestureGeometry.update({ scale: clamped })) invalidatedScrollTouchRef.current = true;
     setPixelsPerSecond(clamped);
     setZoomNotice(timelineZoomPercent(clamped, minimumScale));
     if (zoomTimer.current) clearTimeout(zoomTimer.current);
@@ -624,6 +634,7 @@ export function LayerTimeline(props: {
       onLayout={(event) => {
         const width = Math.max(1, event.nativeEvent.layout.width);
         if (gestureGeometry.update({ viewportWidth: width })) {
+          invalidatedScrollTouchRef.current = true;
           if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
           scrubEndTimer.current = null;
           scrubbingRef.current = false;
@@ -660,8 +671,21 @@ export function LayerTimeline(props: {
         scrollEventThrottle={32}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ width: scrollContentWidth }}
+        onLayout={(event) => {
+          const viewport = event.nativeEvent.layout.width;
+          if (Number.isFinite(viewport) && viewport > 0) setHorizontalGeometry((previous) => ({ ...previous, viewport }));
+        }}
+        onContentSizeChange={(content) => {
+          if (Number.isFinite(content) && content > 0) setHorizontalGeometry((previous) => ({ ...previous, content }));
+        }}
+        onTouchStart={(event) => {
+          if (event.nativeEvent.touches.length === 1) invalidatedScrollTouchRef.current = false;
+        }}
         onScrollBeginDrag={() => {
-          if (gestureLockRef.current) return;
+          // A cancelled item pan yields its external Native dependency through
+          // a live manager. That old coordinate stream cannot acquire scrub
+          // ownership after reflow; only a fresh touch may do so.
+          if (gestureLockRef.current || invalidatedScrollTouchRef.current) return;
           if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
           scrubbingRef.current = true;
           selectionOwnsViewportRef.current = false;

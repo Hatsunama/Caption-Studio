@@ -29,6 +29,7 @@ export function load(dependencies) {
 export function layout(gestureGeometry, setViewportWidth) {
   const scrubEndTimer = { current: null };
   const scrubbingRef = { current: true };
+  const invalidatedScrollTouchRef = { current: false };
   const selectionOwnsViewportRef = { current: true };
   const pinch = { current: { distance: 100 } };
   return ${layoutCallback};
