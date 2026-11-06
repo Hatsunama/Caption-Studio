@@ -379,3 +379,25 @@ test('a geometry snapshot cannot revive a subscriber unmounted earlier in the di
   assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
   f.unmount(); f.flushUI();
 });
+
+test('a removed geometry snapshot cannot cancel a fresh edit after effect replay', () => {
+  let f, replayed = false;
+  f = mountedWrapper({ beforeGeometry: () => {
+    if (replayed) return;
+    replayed = true;
+    f.unmount(); f.remount(); f.flushUI(); f.start(); f.flushRN();
+  } });
+  f.start(); f.flushRN();
+  f.geometry.update({ viewportWidth: 720 });
+  f.flushUI(); f.update(); f.finish(); f.flushRN();
+  assert.equal(f.calls.filter(([kind]) => kind === 'begin').length, 2);
+  assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 1, 'the removed listener cannot cancel the fresh edit');
+  assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
+  f.start(); f.flushRN();
+  f.geometry.update({ viewportWidth: 900 });
+  assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, 2, 'the new subscription still cancels on geometry change');
+  f.flushUI(); f.move(); f.finish(); f.flushRN();
+  assert.equal(f.liveStates.at(-1), 'fail');
+  assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
+  f.unmount(); f.flushUI();
+});
