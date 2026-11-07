@@ -130,6 +130,10 @@ jobs:
           mkdir -p "$HOME/.gradle/init.d"
           cp scripts/private-media3-version.gradle "$HOME/.gradle/init.d/caption-studio-private-media3.gradle"
 
+      - name: Verify the complete private Media3 component graph
+        working-directory: android
+        run: ./gradlew :verifyPrivateMedia3Resolution --no-daemon --stacktrace
+
       - name: Lint Android release code
         env:
           NODE_ENV: production
@@ -146,7 +150,7 @@ jobs:
         env:
           NODE_ENV: production
         working-directory: android
-        run: ./gradlew :app:assembleRelease :app:bundleRelease :verifyPrivateMedia3Resolution --no-daemon --stacktrace --warning-mode all
+        run: ./gradlew :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace --warning-mode all
 
       - name: Verify release identity, signing, alignment, and target SDK
         shell: bash

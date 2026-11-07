@@ -20,9 +20,13 @@ gradle.rootProject { root ->
     root.tasks.register('verifyPrivateMedia3Resolution') {
         doLast {
             def config = root.project(':app').configurations.getByName('releaseRuntimeClasspath')
-            def components = config.resolvedConfiguration.resolvedArtifacts.findAll {
-                it.moduleVersion.id.group == 'androidx.media3'
-            }.collect { it.moduleVersion.id.toString() }.unique().sort()
+            // Component graph only: requesting files here ambiguously selects AGP's
+            // secondary artifact variants (classes/assets/profiles/metadata).
+            def components = config.incoming.resolutionResult.allComponents.collect { component ->
+                def id = component.id
+                id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier &&
+                    id.group == 'androidx.media3' ? id.displayName : null
+            }.findAll { it != null }.unique().sort()
             if (components.isEmpty() || components.any { !it.endsWith(':' + comparisonVersion) }) {
                 throw new GradleException('Media3 runtime resolution is empty or mixed: ' + components)
             }
