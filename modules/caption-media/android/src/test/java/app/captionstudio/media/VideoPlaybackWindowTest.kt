@@ -35,6 +35,12 @@ class VideoPlaybackWindowTest {
     return reply
   }
 
+  @Test fun readyAloneMustNotResolveWithoutPresentedFrame() {
+    val reply = start(); drain()
+    fake.ready()
+    assertEquals(0, reply.calls)
+  }
+
   @Test fun clipCopiesMetadataAndBoundsPositionAndClearRestoresFullSource() {
     fake.position = 9000
     val metadata = fake.item.mediaMetadata
