@@ -58,44 +58,60 @@ export function VideoTransitionOverlay(props: Props) {
   const onUnavailable = useCallback(() => setFailedPreviewKey(frame?.key), [frame?.key]);
   if (!props.admitted) return null;
   const transitionReady = props.visible && props.transportReady;
+  const composite = transitionReady && frame?.mode === 'composite' && compositeState?.status === 'ready'
+    ? { frame, outgoingSlot: compositeState.outgoingSlot as 0 | 1, incomingSlot: compositeState.incomingSlot as 0 | 1 }
+    : undefined;
   return (
-    <View pointerEvents="none" style={fill}>
-      <TimelineVideoPair {...props} />
+    <View collapsable={false} pointerEvents="none" style={[fill, transitionReady && compositeState ? { backgroundColor: props.backgroundColor } : undefined]}>
+      <TimelineVideoPair {...props} composite={composite} concealed={Boolean(transitionReady && compositeState && !composite)} />
       {!props.visible ? <View style={[fill, { backgroundColor: props.backgroundColor }]} /> : null}
       {transitionReady && frame?.mode === 'cover'
         ? <CoverTransition frame={frame} width={props.width} height={props.height} /> : null}
       {transitionReady && frame?.mode === 'cover' && frame.unavailableReason
         ? <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame.unavailableReason} /> : null}
-      {transitionReady && compositeState
-        ? <View style={[fill, { backgroundColor: props.backgroundColor }]} /> : null}
       {transitionReady && compositeState?.status !== 'ready' && compositeState
         ? <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame?.unavailableReason ?? (compositeState.status === 'waiting' ? 'Waiting for video frames.' : 'A transition frame could not be rendered.')} /> : null}
-      {transitionReady && frame?.mode === 'composite' && compositeState?.status === 'ready'
+      {composite
         ? <SynchronizedComposite
-            key={`${frame.key}:${props.slots[compositeState.outgoingSlot].prepareToken}:${props.slots[compositeState.incomingSlot].prepareToken}`}
+            key={`${composite.frame.key}:${props.slots[composite.outgoingSlot].prepareToken}:${props.slots[composite.incomingSlot].prepareToken}`}
             {...props}
-            frame={frame}
-            outgoingSlot={compositeState.outgoingSlot as 0 | 1}
-            incomingSlot={compositeState.incomingSlot as 0 | 1}
+            {...composite}
             onUnavailable={onUnavailable}
           /> : null}
     </View>
   );
 }
 
-function TimelineVideoPair(props: Props) {
+type Composite = { frame: VideoTransitionPreviewFrame; outgoingSlot: 0 | 1; incomingSlot: 0 | 1 };
+
+function TimelineVideoPair(props: Props & { composite?: Composite; concealed: boolean }) {
+  const { composite } = props;
+  // These are the frames of the retained surfaces, not new transition surfaces
+  // that would need another native frame event just to reveal a paused image.
+  const rendered = composite ? {
+    outgoing: props.slots[composite.outgoingSlot].firstFrameReady,
+    incoming: props.slots[composite.incomingSlot].firstFrameReady,
+  } : { outgoing: true, incoming: true };
+  const ready = rendered.outgoing && rendered.incoming && !props.concealed;
   return (
-    <View pointerEvents="none" style={[fill, { overflow: 'hidden' }]}>
+    <View collapsable={false} pointerEvents="none" style={[fill, { overflow: 'hidden', opacity: ready ? 1 : 0 }]}>
       {props.players.map((player, index) => {
         const slot = index as 0 | 1;
+        const incoming = composite?.incomingSlot === slot;
+        const source = composite ? (incoming ? composite.frame.incoming : composite.frame.outgoing) : undefined;
+        const effect = composite ? compositeLayerStyle(composite.frame, incoming, props.width, props.height) : undefined;
         return (
           <VideoLayer
             key={`${slot}:${props.slots[slot].prepareToken}`}
             player={player}
-            transform={props.currentTransform}
+            transform={source?.transform ?? props.currentTransform}
             width={props.width}
             height={props.height}
-            effectStyle={{ zIndex: slot === props.activeSlot ? 1 : 0, backgroundColor: props.backgroundColor }}
+            opacity={effect?.opacity}
+            effectStyle={composite
+              ? [{ zIndex: incoming ? 1 : 0 }, effect?.style]
+              : { zIndex: slot === props.activeSlot ? 1 : 0, backgroundColor: props.backgroundColor }}
+            clip={effect?.clip}
             onFirstFrameRender={() => props.onFirstFrameRender(slot, props.slots[slot].prepareToken)}
           />
         );
@@ -110,11 +126,7 @@ function SynchronizedComposite(props: Props & {
   incomingSlot: 0 | 1;
   onUnavailable: () => void;
 }) {
-  const [rendered, setRendered] = useState({ outgoing: false, incoming: false });
-  const ready = rendered.outgoing && rendered.incoming;
   const { activeSlot, frame, isPlaying, onUnavailable, outgoingSlot, incomingSlot, transportReady, players, slots, setCompositeClock } = props;
-  const outgoingPlayer = players[outgoingSlot];
-  const incomingPlayer = players[incomingSlot];
   const latestPlayersRef = useRef(players);
   const latestActiveSlotRef = useRef(activeSlot);
 
@@ -153,29 +165,7 @@ function SynchronizedComposite(props: Props & {
     }
   }, [activeSlot, frame, incomingSlot, isPlaying, onUnavailable, outgoingSlot, players, setCompositeClock, slots, transportReady]);
 
-  return (
-    <View pointerEvents="none" style={[fill, { overflow: 'hidden' }]}>
-      {!ready ? <View style={[fill, { backgroundColor: props.backgroundColor }]} /> : null}
-      <View style={[fill, { opacity: ready ? 1 : 0 }]}>
-        <CompositeTransition
-          frame={props.frame}
-          outgoingPlayer={outgoingPlayer}
-          incomingPlayer={incomingPlayer}
-          width={props.width}
-          height={props.height}
-          onOutgoingFirstFrame={() => {
-            props.onFirstFrameRender(props.outgoingSlot, props.slots[props.outgoingSlot].prepareToken);
-            setRendered((current) => ({ ...current, outgoing: true }));
-          }}
-          onIncomingFirstFrame={() => {
-            props.onFirstFrameRender(props.incomingSlot, props.slots[props.incomingSlot].prepareToken);
-            setRendered((current) => ({ ...current, incoming: true }));
-          }}
-        />
-      </View>
-      {!ready ? <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail="Waiting for video frames." /> : null}
-    </View>
-  );
+  return null;
 }
 
 function synchronizeTransitionPlayer(
@@ -198,144 +188,65 @@ function synchronizeTransitionPlayer(
   }
 }
 
-function CompositeTransition(props: {
-  frame: VideoTransitionPreviewFrame;
-  outgoingPlayer: VideoPlayer;
-  incomingPlayer: VideoPlayer;
-  width: number;
-  height: number;
-  onOutgoingFirstFrame: () => void;
-  onIncomingFirstFrame: () => void;
-}) {
-  const { frame, outgoingPlayer, incomingPlayer, width, height, onOutgoingFirstFrame, onIncomingFirstFrame } = props;
-  const outgoing = frame.outgoing!;
-  const incoming = frame.incoming!;
-  const phase = frame.phase;
-  const type = frame.type;
+type LayerClip = { outer: ViewStyle; inner: ViewStyle };
+type LayerEffect = { opacity?: number; style?: ViewStyle; clip?: LayerClip };
 
+// Each recipe changes only the styles of the same persistent layer hierarchy.
+function compositeLayerStyle(
+  frame: VideoTransitionPreviewFrame,
+  incoming: boolean,
+  width: number,
+  height: number,
+): LayerEffect {
+  const { phase, type } = frame;
   if (type.startsWith('push-')) {
     const horizontal = type.endsWith('left') || type.endsWith('right');
     const sign = type.endsWith('left') || type.endsWith('up') ? -1 : 1;
     const distance = horizontal ? width : height;
-    return (
-      <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} effectStyle={{ transform: horizontal ? [{ translateX: sign * distance * phase }] : [{ translateY: sign * distance * phase }] }} />
-        <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} onFirstFrameRender={onIncomingFirstFrame} effectStyle={{ transform: horizontal ? [{ translateX: -sign * distance * (1 - phase) }] : [{ translateY: -sign * distance * (1 - phase) }] }} />
-      </>
-    );
+    const offset = incoming ? -sign * distance * (1 - phase) : sign * distance * phase;
+    return { style: { transform: horizontal ? [{ translateX: offset }] : [{ translateY: offset }] } };
   }
-
-
+  if (!incoming) return {};
   if (type === 'split-horizontal' || type === 'split-vertical') {
-    const horizontal = type === 'split-horizontal';
-    const rect = horizontal
+    const rect = type === 'split-horizontal'
       ? { left: 0, top: height * (1 - phase) / 2, width, height: height * phase }
       : { left: width * (1 - phase) / 2, top: 0, width: width * phase, height };
-    return (
-      <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
-        <ClippedVideoLayer player={incomingPlayer} transform={incoming.transform} rect={rect} width={width} height={height} onFirstFrameRender={onIncomingFirstFrame} />
-      </>
-    );
+    return { clip: {
+      outer: { position: 'absolute', overflow: 'hidden', ...rect },
+      inner: { position: 'absolute', left: -rect.left, top: -rect.top, width, height },
+    } };
   }
-
   if (type === 'iris-circle' || type === 'iris-diamond') {
-    return (
-      <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
-        <IrisVideoLayer
-          player={incomingPlayer}
-          transform={incoming.transform}
-          width={width}
-          height={height}
-          phase={phase}
-          shape={type === 'iris-circle' ? 'circle' : 'diamond'}
-          onFirstFrameRender={onIncomingFirstFrame}
-        />
-      </>
-    );
+    const circle = type === 'iris-circle';
+    const size = Math.max(1, (circle ? Math.hypot(width, height) : (width + height) / Math.SQRT2) * phase);
+    return {
+      // Zero-phase clips stay mounted for readiness, but reveal no image.
+      opacity: phase <= 0 ? 0 : 1,
+      clip: {
+        outer: {
+          position: 'absolute', left: (width - size) / 2, top: (height - size) / 2,
+          width: size, height: size, overflow: 'hidden', borderRadius: circle ? size / 2 : 0,
+          transform: [{ rotate: circle ? '0deg' : '45deg' }],
+        },
+        inner: {
+          position: 'absolute', left: (size - width) / 2, top: (size - height) / 2,
+          width, height, transform: [{ rotate: circle ? '0deg' : '-45deg' }],
+        },
+      },
+    };
   }
   if (type === 'zoom-in' || type === 'zoom-out' || type === 'spin') {
     const scale = type === 'zoom-out' ? 1.8 - phase * 0.8 : 0.35 + phase * 0.65;
-    const rotate = type === 'spin' ? `${(1 - phase) * 280}deg` : '0deg';
-    return (
-      <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
-        <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} opacity={phase} onFirstFrameRender={onIncomingFirstFrame} effectStyle={{ transform: [{ scale }, { rotate }] }} />
-      </>
-    );
+    const rotate = type === 'spin' ? `${(1 - phase) * 280}deg` as `${number}deg` : '0deg';
+    return { opacity: phase, style: { transform: [{ scale }, { rotate }] } };
   }
-
   if (type === 'fold-horizontal' || type === 'fold-vertical') {
-    return (
-      <>
-        <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
-        <VideoLayer
-          player={incomingPlayer}
-          transform={incoming.transform}
-          width={width}
-          height={height}
-          opacity={phase}
-          onFirstFrameRender={onIncomingFirstFrame}
-          effectStyle={{ transform: type === 'fold-horizontal' ? [{ scaleY: Math.max(0.015, phase) }] : [{ scaleX: Math.max(0.015, phase) }] }}
-        />
-      </>
-    );
+    return { opacity: phase, style: { transform: type === 'fold-horizontal'
+      ? [{ scaleY: Math.max(0.015, phase) }] : [{ scaleX: Math.max(0.015, phase) }] } };
   }
-
-  return (
-    <>
-      <VideoLayer player={outgoingPlayer} transform={outgoing.transform} width={width} height={height} onFirstFrameRender={onOutgoingFirstFrame} />
-      <VideoLayer player={incomingPlayer} transform={incoming.transform} width={width} height={height} opacity={phase} onFirstFrameRender={onIncomingFirstFrame} />
-      {type === 'fade-dark' ? <View style={[fill, { backgroundColor: '#000000', opacity: frame.peak * 140 / 255 }]} /> : null}
-    </>
-  );
+  return { opacity: phase };
 }
 
-function IrisVideoLayer(props: {
-  player: VideoPlayer;
-  transform: VideoTransform;
-  width: number;
-  height: number;
-  phase: number;
-  shape: 'circle' | 'diamond';
-  onFirstFrameRender: () => void;
-}) {
-  if (props.phase <= 0) return null;
-  const size = Math.max(
-    1,
-    (props.shape === 'circle'
-      ? Math.hypot(props.width, props.height)
-      : (props.width + props.height) / Math.SQRT2) * props.phase,
-  );
-  const rotation = props.shape === 'diamond' ? '45deg' : '0deg';
-  const inverseRotation = props.shape === 'diamond' ? '-45deg' : '0deg';
-  return (
-    <View
-      style={{
-        position: 'absolute',
-        left: (props.width - size) / 2,
-        top: (props.height - size) / 2,
-        width: size,
-        height: size,
-        overflow: 'hidden',
-        borderRadius: props.shape === 'circle' ? size / 2 : 0,
-        transform: [{ rotate: rotation }],
-      }}>
-      <View
-        style={{
-          position: 'absolute',
-          left: (size - props.width) / 2,
-          top: (size - props.height) / 2,
-          width: props.width,
-          height: props.height,
-          transform: [{ rotate: inverseRotation }],
-        }}>
-        <VideoLayer player={props.player} transform={props.transform} width={props.width} height={props.height} onFirstFrameRender={props.onFirstFrameRender} />
-      </View>
-    </View>
-  );
-}
 function VideoLayer(props: {
   player: VideoPlayer;
   transform: VideoTransform;
@@ -343,38 +254,26 @@ function VideoLayer(props: {
   height: number;
   opacity?: number;
   effectStyle?: StyleProp<ViewStyle>;
+  clip?: LayerClip;
   onFirstFrameRender: () => void;
 }) {
   return (
-    <View style={[fill, props.effectStyle, { opacity: props.opacity ?? 1 }]}>
-      <View style={[fill, { transform: transformStyle(props.transform, props.width, props.height) }]}>
-        <VideoView
-          style={{ flex: 1 }}
-          player={props.player}
-          nativeControls={false}
-          contentFit={props.transform.fit === 'fill' ? 'cover' : 'contain'}
-          surfaceType="textureView"
-          useExoShutter={false}
-          onFirstFrameRender={props.onFirstFrameRender}
-        />
-      </View>
-    </View>
-  );
-}
-
-function ClippedVideoLayer(props: {
-  player: VideoPlayer;
-  transform: VideoTransform;
-  rect: { left: number; top: number; width: number; height: number };
-  width: number;
-  height: number;
-  onFirstFrameRender: () => void;
-}) {
-  if (props.rect.width <= 0 || props.rect.height <= 0) return null;
-  return (
-    <View style={{ position: 'absolute', overflow: 'hidden', ...props.rect }}>
-      <View style={{ position: 'absolute', left: -props.rect.left, top: -props.rect.top, width: props.width, height: props.height }}>
-        <VideoLayer player={props.player} transform={props.transform} width={props.width} height={props.height} onFirstFrameRender={props.onFirstFrameRender} />
+    <View collapsable={false} style={[fill, props.effectStyle, { opacity: props.opacity ?? 1 }]}>
+      {/* Keep native ancestry stable as clipping starts/stops, including RN view flattening. */}
+      <View collapsable={false} style={props.clip?.outer ?? fill}>
+        <View collapsable={false} style={props.clip?.inner ?? fill}>
+          <View collapsable={false} style={[fill, { transform: transformStyle(props.transform, props.width, props.height) }]}>
+            <VideoView
+              style={{ flex: 1 }}
+              player={props.player}
+              nativeControls={false}
+              contentFit={props.transform.fit === 'fill' ? 'cover' : 'contain'}
+              surfaceType="textureView"
+              useExoShutter={false}
+              onFirstFrameRender={props.onFirstFrameRender}
+            />
+          </View>
+        </View>
       </View>
     </View>
   );

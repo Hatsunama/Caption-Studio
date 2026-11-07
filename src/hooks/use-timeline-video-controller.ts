@@ -33,6 +33,7 @@ export type TimelineVideoSlot = {
 };
 
 type SlotRuntime = TimelineVideoSlot & {
+  loadedPlaybackUri?: string;
   prepareToken: number;
   preparation?: AbortController;
   preparationTask?: Promise<SlotIndex>;
@@ -183,6 +184,23 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     if (mountedRef.current) setIsPlaying(false);
   }, [players]);
 
+  const retireSurfaceFrames = useCallback(() => {
+    slotRuntimeRef.current.forEach((runtime) => {
+      runtime.preparation?.abort();
+      // Retire callbacks and async continuations before publishing new surfaces.
+      runtime.prepareToken += 1;
+      runtime.preparation = undefined;
+      runtime.preparationTask = undefined;
+      runtime.firstFrameReady = false;
+      runtime.readiness = 'idle';
+      // Only a completed replacement is safe to reuse without loading its URI.
+      runtime.playbackUri = runtime.loadedPlaybackUri;
+    });
+    hasPresentedFrameRef.current = false;
+    if (mountedRef.current) setHasPresentedFrameState(false);
+    publishSlots();
+  }, [publishSlots]);
+
   const suspendForTranslation = useCallback(() => {
     if (translationSuspensionRef.current && !translationSuspensionRef.current.restored) {
       throw new Error('Preview resources are already suspended for translation.');
@@ -206,7 +224,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     translationSuspensionRef.current = suspension;
     generationRef.current += 1;
     desiredRef.current = undefined;
-    abortPreparationsExcept();
+    retireSurfaceFrames();
     stopTransport();
     setPreviewResourcesSuspended(true);
     setPhase('suspended');
@@ -225,7 +243,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         else setPhase('suspended');
       },
     };
-  }, [stopTransport]);
+  }, [retireSurfaceFrames, stopTransport]);
 
   useEffect(() => {
     const suspension = translationSuspensionRef.current;
@@ -244,7 +262,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
           suspension.resolveReady();
           return;
         }
-        slotRuntimeRef.current = [createSlotRuntime(), createSlotRuntime()];
+        slotRuntimeRef.current = slotRuntimeRef.current.map((runtime) => ({
+          ...createSlotRuntime(), prepareToken: runtime.prepareToken + 1,
+        })) as [SlotRuntime, SlotRuntime];
         activeClipIdRef.current = undefined;
         hasPresentedFrameRef.current = false;
         setHasPresentedFrameState(false);
@@ -274,7 +294,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const markFirstFrame = useCallback((slot: SlotIndex, token: number) => {
     const runtime = slotRuntimeRef.current[slot];
-    if (!mountedRef.current || token !== runtime.prepareToken
+    if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current
+      || token !== runtime.prepareToken
       || (runtime.readiness !== 'preparing' && runtime.readiness !== 'ready')) return;
     runtime.firstFrameReady = true;
     for (const resolve of runtime.frameWaiters) resolve();
@@ -347,6 +368,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.preparationError = undefined;
     const token = ++runtime.prepareToken;
     const sourceChanged = forceReload || runtime.playbackUri !== uri;
+    if (sourceChanged) runtime.loadedPlaybackUri = undefined;
 
     runtime.sourceId = source.id;
     runtime.playbackUri = uri;
@@ -363,6 +385,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         await loadPlayableVideoSource(player, uri, 15_000, preparation.signal);
       }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
+      runtime.loadedPlaybackUri = uri;
 
       const targetSeconds = sourceTimeAt(entry, timelineMs) / 1_000;
       player.pause();
@@ -393,6 +416,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         runtime.readiness = isAbortError(error) ? 'cancelled' : 'error';
         // A failed or cancelled replacement must not be reused by URI alone.
         runtime.playbackUri = undefined;
+        runtime.loadedPlaybackUri = undefined;
         player.pause();
         player.muted = true;
         publishSlots();
@@ -731,6 +755,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.readiness = 'error';
     runtime.firstFrameReady = false;
     runtime.playbackUri = undefined;
+    runtime.loadedPlaybackUri = undefined;
     playerForSlot(slot).pause();
     playerForSlot(slot).muted = true;
     publishSlots();
@@ -762,23 +787,23 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       desiredRef.current = undefined;
       generationRef.current += 1;
       boundaryClipIdRef.current = undefined;
-      abortPreparationsExcept();
+      retireSurfaceFrames();
       cancelGapClock();
       cancelScheduledPreload();
     };
-  }, []);
+  }, [retireSurfaceFrames]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!surfacesAdmitted || translationSuspensionRef.current) {
       generationRef.current += 1;
       desiredRef.current = undefined;
-      abortPreparationsExcept();
+      retireSurfaceFrames();
       stopTransport();
       setPhase('suspended');
     } else if (phaseRef.current === 'suspended') {
       requestTargetRef.current(currentMsRef.current);
     }
-  }, [surfacesAdmitted, stopTransport]);
+  }, [retireSurfaceFrames, surfacesAdmitted, stopTransport]);
 
   return {
     player: players[activeSlot],
