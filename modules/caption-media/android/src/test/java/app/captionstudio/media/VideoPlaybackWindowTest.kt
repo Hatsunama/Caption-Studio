@@ -8,7 +8,6 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.SinglePeriodTimeline
 import expo.modules.video.listeners.VideoPlayerListener
 import expo.modules.video.player.VideoPlayer
-import sun.misc.Unsafe
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -447,9 +446,14 @@ class VideoPlaybackWindowTest {
     var view: Any? = Any()
     var layoutValid = true
     // A typed event sender only: no player methods or resources are used by these callbacks.
-    val sdkSender = (Unsafe::class.java.getDeclaredField("theUnsafe").let {
-      it.isAccessible = true; it.get(null) as Unsafe
-    }).allocateInstance(VideoPlayer::class.java) as VideoPlayer
+    // Android's compile stubs omit this JVM test utility. Resolve it only in the
+    // Robolectric JVM; this shell is passed as an event identity and never called.
+    private val allocatorClass = Class.forName("sun.misc.Unsafe")
+    private val allocator = allocatorClass.getDeclaredField("theUnsafe").let {
+      it.isAccessible = true; it.get(null)
+    }
+    val sdkSender = allocatorClass.getMethod("allocateInstance", Class::class.java)
+      .invoke(allocator, VideoPlayer::class.java) as VideoPlayer
     private val hooks = object : VideoFrameReceipt.Hooks {
       override fun currentView(): Any? = view
       override fun layoutValid() = layoutValid
