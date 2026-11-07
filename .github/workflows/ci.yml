@@ -132,7 +132,7 @@ jobs:
 
       - name: Verify the complete private Media3 component graph
         working-directory: android
-        run: ./gradlew :verifyPrivateMedia3Resolution --no-daemon --stacktrace
+        run: ./gradlew :app:verifyPrivateMedia3Resolution --no-daemon --stacktrace
 
       - name: Lint Android release code
         env:

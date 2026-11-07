@@ -15,25 +15,31 @@ gradle.beforeProject { project ->
             }
         }
     }
-}
-gradle.rootProject { root ->
-    root.tasks.register('verifyPrivateMedia3Resolution') {
-        doLast {
-            def config = root.project(':app').configurations.getByName('releaseRuntimeClasspath')
-            // Component graph only: requesting files here ambiguously selects AGP's
-            // secondary artifact variants (classes/assets/profiles/metadata).
-            def components = config.incoming.resolutionResult.allComponents.collect { component ->
-                def id = component.id
-                id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier &&
-                    id.group == 'androidx.media3' ? id.displayName : null
-            }.findAll { it != null }.unique().sort()
-            if (components.isEmpty() || components.any { !it.endsWith(':' + comparisonVersion) }) {
-                throw new GradleException('Media3 runtime resolution is empty or mixed: ' + components)
+
+    if (project.path == ':app') {
+        // Capture the root report location during configuration; resolution belongs
+        // to the app task so Gradle 9.4 holds the runtime configuration owner's lock.
+        def reportFile = project.rootProject.layout.buildDirectory.file('reports/private-media3-resolution.txt')
+        project.tasks.register('verifyPrivateMedia3Resolution') {
+            def media3Components = project.configurations.named('releaseRuntimeClasspath').map { config ->
+                // Component graph only: files ambiguously select AGP's secondary
+                // artifact variants (classes/assets/profiles/metadata).
+                config.incoming.resolutionResult.allComponents.collect { component ->
+                    def id = component.id
+                    id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier &&
+                        id.group == 'androidx.media3' ? id.displayName : null
+                }.findAll { it != null }.unique().sort()
             }
-            def report = new File(root.buildDir, 'reports/private-media3-resolution.txt')
-            report.parentFile.mkdirs()
-            report.text = components.join('\n') + '\n'
-            println('PRIVATE Media3 resolution: ' + components.join(', '))
+            doLast {
+                def components = media3Components.get()
+                if (components.isEmpty() || components.any { !it.endsWith(':' + comparisonVersion) }) {
+                    throw new GradleException('Media3 runtime resolution is empty or mixed: ' + components)
+                }
+                def report = reportFile.get().asFile
+                report.parentFile.mkdirs()
+                report.text = components.join('\n') + '\n'
+                println('PRIVATE Media3 resolution: ' + components.join(', '))
+            }
         }
     }
 }
