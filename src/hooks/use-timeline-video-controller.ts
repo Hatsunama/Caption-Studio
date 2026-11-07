@@ -7,6 +7,7 @@ import { useEventListener } from 'expo';
 import { useVideoPlayer, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
+import { privateFramePtsTarget } from '@/components/editor/private-frame-pts-diagnostic';
 
 import {
   buildClipTimeline,
@@ -164,6 +165,17 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   };
 
   const playerForSlot = (slot: SlotIndex) => players[slot];
+
+  const diagnosticTarget = (target: number, source: ProjectVideoSource, slot: SlotIndex, stage: number) => {
+    const mapped = privateFramePtsTarget(target, source, playerForSlot(slot).duration, Platform.OS, playIntentRef.current);
+    if (mapped === 6.375 && mapped !== target) {
+      const runtime = slotRuntimeRef.current[slot];
+      // Numeric payload only; stage 1 = preparation, 2 = apply. No source identity.
+      try { console.info('CS_FRAME_PTS_JS', stage, target * 1000, mapped * 1000, slot, runtime.prepareToken, runtime.nativeViewEpoch); }
+      catch { /* An observational trace cannot interrupt the seek. */ }
+    }
+    return mapped;
+  };
 
   const cancelGapClock = () => {
     if (gapFrameRef.current != null) cancelAnimationFrame(gapFrameRef.current);
@@ -404,9 +416,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
 
-      const targetSeconds = effectiveNativeSeekTarget(
+      const targetSeconds = diagnosticTarget(effectiveNativeSeekTarget(
         sourceTimeAt(entry, timelineMs) / 1_000, source.durationMs / 1_000, player.duration, Platform.OS,
-      );
+      ), source, slot, 1);
       player.pause();
       player.muted = true;
       player.playbackRate = 1;
@@ -473,9 +485,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     media.playbackRate = entry.clip.playbackRate;
     media.muted = entry.clip.muted;
     media.volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
-    const timeSeconds = effectiveNativeSeekTarget(
+    const timeSeconds = diagnosticTarget(effectiveNativeSeekTarget(
       sourceTimeAt(entry, timelineMs) / 1_000, sourceForEntry(entry).durationMs / 1_000, media.duration, Platform.OS,
-    );
+    ), sourceForEntry(entry), slot, 2);
     if (shouldApplyTimelineSeek(media.currentTime, timeSeconds)) media.currentTime = timeSeconds;
   };
 

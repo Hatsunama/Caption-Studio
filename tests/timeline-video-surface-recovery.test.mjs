@@ -19,7 +19,7 @@ const clip = (id = 'a', sourceId = 'source') => ({ id, sourceId, sourceStartMs: 
 
 // Executes complete modules, with real timeline/policy/overlay consumers. Only
 // React scheduling and the native boundary are faked; frames never arrive by default.
-function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false } = {}) {
+function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false, sourceMetadata = {} } = {}) {
   const hosts = new Map(), cache = new Map(), timers = new Map(), calls = [], eofFrames = new Map();
   const publishedFrames = new Map();
   let host, cursor, dirty = true, transport, views = [], alive = true, timerId = 0, now = 0;
@@ -89,6 +89,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     }).outputText);
     const exports = {}; cache.set(path, exports);
     vm.runInNewContext(compiled.get(path), { exports, Error, AbortController, performance: { now: () => now },
+      console: { info: (...args) => calls.push(['trace', ...args]) },
       setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, at: now + delay }); return id; },
       clearTimeout: id => timers.delete(id), requestAnimationFrame: () => { throw new Error('unexpected gap clock'); }, cancelAnimationFrame() {},
       require(id) { if (id in mocks) return mocks[id];
@@ -104,7 +105,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   const { useEditorRuntimePolicy } = load('src/hooks/use-editor-runtime-policy.ts');
   const { VideoTransitionOverlay } = load('src/components/editor/video-transition-overlay.tsx');
   const { buildClipTimeline } = load('src/lib/video-timeline.ts');
-  const project = { clips, sources: missingSource ? [] : ['source', 'other'].map(id => ({ id, uri: `file:///${id}.mp4`, displayName: id, durationMs: 60000 })) };
+  const project = { clips, sources: missingSource ? [] : ['source', 'other'].map(id => ({ id, uri: `file:///${id}.mp4`, displayName: id, durationMs: 60000, ...sourceMetadata })) };
   function Root() {
     const policy = useEditorRuntimePolicy(blockingUi);
     transport = useTimelineVideoController(project, () => {}, policy.videoSurfacesAdmitted);
@@ -204,6 +205,40 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     get timerCount() { return timers.size; },
   };
 }
+
+for (const displayName of ['cs-166-samsung.mp4', 'cs-166-seeker.mp4']) test(`private known-PTS ${displayName} reaches both seek paths, restores Play, and rejects retired receipts`, async t => {
+  const h = harness({ clips: [{ ...clip(), sourceStartMs: 0, sourceEndMs: 8000 }],
+    sourceMetadata: { displayName, durationMs: 8000, width: 360, height: 640 },
+    nativeDuration: 8, nativeClock: true });
+  t.after(() => h.unmount()); await h.complete();
+  h.transport.seek(6385.416); await h.settle();
+  assert.equal(h.players[h.transport.activeSlot].currentTime, Math.fround(6.375), 'retained apply path uses known PTS');
+  h.transport.play(); await h.complete();
+  assert.ok(h.calls.some(call => call[0] === 'seek' && call[2] === 6.385416), 'explicit Play restores logical target despite small drift');
+  h.transport.pause(); await h.app('background'); await h.app('active'); await h.settle();
+  const slot = h.transport.slots.findIndex(s => s.readiness === 'preparing');
+  assert.ok(slot >= 0);
+  assert.equal(h.calls.filter(call => call[0] === 'seek').at(-1)[2], 6.375, 'preparation path uses same known PTS');
+  const retired = h.views.find(view => view.player === h.players[slot]).onFirstFrameRender;
+  h.players[slot].emit('timeUpdate', { currentTime: 6.385 }); await h.settle();
+  assert.equal(h.transport.slots[slot].firstFrameReady, false, 'original ACK cannot certify mapped seek');
+  await h.positionAck(slot); retired(); await h.settle();
+  assert.equal(h.transport.slots[slot].firstFrameReady, false, 'retired epoch stays rejected');
+  await h.frame(slot); assert.equal(h.transport.phase, 'ready');
+  assert.equal(h.transport.currentMs, 6385.416);
+  const traces = h.calls.filter(call => call[0] === 'trace');
+  assert.ok(traces.some(call => call[2] === 1));
+  assert.ok(traces.some(call => call[2] === 2));
+  for (const trace of traces) {
+    assert.equal(trace[1], 'CS_FRAME_PTS_JS');
+    assert.equal(trace.length, 8);
+    assert.ok(trace.slice(2).every(value => typeof value === 'number' && Number.isFinite(value)));
+    assert.equal(trace[4], 6375);
+  }
+  h.project.sources[0].displayName = 'ordinary.mp4';
+  h.transport.seek(6385.416); await h.settle();
+  assert.equal(h.calls.filter(call => call[0] === 'trace').length, traces.length, 'no trace outside the fixture gate');
+});
 
 test('load-time frame plus an unrelated position 115ms away cannot certify preparation', async t => {
   const h = harness({ holdReplacement: true }); t.after(() => h.unmount());

@@ -60,6 +60,9 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci
+      - name: Apply disposable private frame PTS diagnostic
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostic/paused-frame-pts-20261107'
+        run: node --max-old-space-size=512 scripts/private-frame-pts-diagnostic.mjs
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
       - name: Test JavaScript and TypeScript contracts
