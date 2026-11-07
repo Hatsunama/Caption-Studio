@@ -139,14 +139,19 @@ class TimelineNativeVideoGapTest {
       withCanvas(colored) { _, canvasItem ->
         val decoded = requireNotNull(BitmapFactory.decodeFile(canvasItem.localConfiguration!!.uri.path))
         try {
-          // Compare against actual export-owned PNG storage, not a duplicate
-          // of the gap-color helper. copyPixelsToBuffer exposes uploaded RGBA.
-          val storage = java.nio.ByteBuffer.allocate(decoded.byteCount)
-          decoded.copyPixelsToBuffer(storage)
-          val alpha = storage.get(3).toInt() and 255
-          val sampled = (0..2).map { storage.get(it).toInt() and 255 }
-          val rgb = sampled.map { kotlin.math.round(it * alpha / 255.0).toInt() }
-          assertEquals(Color.parseColor(expected), Color.rgb(rgb[0], rgb[1], rgb[2]))
+          // Compare against the actual export-owned PNG through the public
+          // color API. Raw Bitmap storage is RGBA or BGRA by native platform;
+          // its byte offsets do not define the GL upload's color channels.
+          val sampled = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+          try {
+            sampled.eraseColor(Color.BLACK)
+            android.graphics.Canvas(sampled).drawBitmap(decoded, 0f, 0f, null)
+            val pixel = sampled.getPixel(0, 0)
+            val alpha = Color.alpha(decoded.getPixel(0, 0))
+            val rgb = listOf(Color.red(pixel), Color.green(pixel), Color.blue(pixel))
+              .map { kotlin.math.round(it * alpha / 255.0).toInt() }
+            assertEquals(Color.parseColor(expected), Color.rgb(rgb[0], rgb[1], rgb[2]))
+          } finally { sampled.recycle() }
         } finally { decoded.recycle() }
       }
     }
