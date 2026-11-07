@@ -116,6 +116,12 @@ internal class TimelineVideoExporter(private val context: Context) {
         if (!isActive(task)) return@post
         try {
           val transformer = Transformer.Builder(context)
+            .apply {
+              // PRIVATE DISPOSABLE synthetic-fixture proof only; never enable for general edits.
+              if (PrivateDisposableBFrameReadAhead.matches(plan, task.sourceInfoByUri[plan.clips.firstOrNull()?.uri]?.durationMs)) {
+                setAssetLoaderFactory(PrivateDisposableBFrameReadAhead.defaultFactory(context))
+              }
+            }
             .setVideoMimeType(MimeTypes.VIDEO_H264)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .setMuxerFactory(InAppMp4Muxer.Factory { entries ->
@@ -265,7 +271,8 @@ internal class TimelineVideoExporter(private val context: Context) {
       .build()
     val sequences = clockedVideoSequences(
       baseVideo,
-      if (plan.clips.isNotEmpty()) buildNativeVideoSequence(plan, baseVideoItem) else null,
+      if (plan.clips.isNotEmpty()) buildNativeVideoSequence(plan, baseVideoItem,
+        task.sourceInfoByUri[plan.clips.first().uri]?.durationMs) else null,
     ).toMutableList()
     val audioState = mutableMapOf<String, Boolean>()
     val audioItems = buildOriginalAudioItems(plan, task) + plan.audioClips.mapNotNull { clip ->
@@ -285,7 +292,12 @@ internal class TimelineVideoExporter(private val context: Context) {
     )
   }
 
-  internal fun buildNativeVideoSequence(plan: TimelineRenderPlan, canvasMediaItem: MediaItem): EditedMediaItemSequence {
+  internal fun buildNativeVideoSequence(
+    plan: TimelineRenderPlan,
+    canvasMediaItem: MediaItem,
+    privateDisposableSourceDurationMs: Long? = null,
+  ): EditedMediaItemSequence {
+    val privateDisposableReadAhead = PrivateDisposableBFrameReadAhead.matches(plan, privateDisposableSourceDurationMs)
     val builder = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
     fun addCanvasGap(durationMs: Long) {
       // Keep image items for timing, but never enqueue their textures: the default
@@ -305,7 +317,7 @@ internal class TimelineVideoExporter(private val context: Context) {
       )
     }
     var cursorMs = 0L
-    plan.clips.forEach { clip ->
+    plan.clips.forEachIndexed { index, clip ->
       if (clip.timelineStartMs > cursorMs) addCanvasGap(clip.timelineStartMs - cursorMs)
       val layout = if (clip.transform.fit == "fill") {
         Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
@@ -322,7 +334,9 @@ internal class TimelineVideoExporter(private val context: Context) {
               listOf(Presentation.createForWidthAndHeight(plan.width, plan.height, layout)),
             ),
           )
-          .build(),
+          .build().let { item ->
+            if (privateDisposableReadAhead && index == 0) PrivateDisposableBFrameReadAhead.firstFootage(item) else item
+          },
       )
       cursorMs = clip.timelineEndMs
     }
