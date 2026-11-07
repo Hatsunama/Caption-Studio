@@ -33,7 +33,6 @@ export type TimelineVideoSlot = {
 };
 
 type SlotRuntime = TimelineVideoSlot & {
-  loadedPlaybackUri?: string;
   prepareToken: number;
   preparation?: AbortController;
   preparationTask?: Promise<SlotIndex>;
@@ -193,8 +192,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       runtime.preparationTask = undefined;
       runtime.firstFrameReady = false;
       runtime.readiness = 'idle';
-      // Preserve completed sources; idle preparation rechecks native decoder readiness.
-      runtime.playbackUri = runtime.loadedPlaybackUri;
+      // Retire this controller's URI cache with its surface ownership so the
+      // next preparation replaces the item before accepting a fresh frame.
+      runtime.playbackUri = undefined;
     });
     hasPresentedFrameRef.current = false;
     if (mountedRef.current) setHasPresentedFrameState(false);
@@ -325,7 +325,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     });
   };
 
-  const waitForDecodedPosition = (
+  const waitForPlaybackPosition = (
     player: VideoPlayer,
     targetSeconds: number,
     signal: AbortSignal,
@@ -367,9 +367,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.preparation = preparation;
     runtime.preparationError = undefined;
     const token = ++runtime.prepareToken;
-    const sourceChanged = forceReload || runtime.playbackUri !== uri
-      || (runtime.readiness === 'idle' && player.status !== 'readyToPlay');
-    if (sourceChanged) runtime.loadedPlaybackUri = undefined;
+    const sourceChanged = forceReload || runtime.playbackUri !== uri;
 
     runtime.sourceId = source.id;
     runtime.playbackUri = uri;
@@ -386,25 +384,16 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         await loadPlayableVideoSource(player, uri, 15_000, preparation.signal);
       }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
-      runtime.loadedPlaybackUri = uri;
 
       const targetSeconds = sourceTimeAt(entry, timelineMs) / 1_000;
       player.pause();
       player.muted = true;
       player.playbackRate = 1;
       player.currentTime = targetSeconds;
-      const ready = Promise.all([
+      await Promise.all([
         waitForFirstFrame(slot, preparation.signal),
-        waitForDecodedPosition(player, targetSeconds, preparation.signal),
+        waitForPlaybackPosition(player, targetSeconds, preparation.signal),
       ]);
-      try {
-        player.play();
-      } catch (error) {
-        preparation.abort();
-        await ready.catch(() => {});
-        throw error;
-      }
-      await ready;
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       player.pause();
       runtime.readiness = 'ready';
@@ -417,7 +406,6 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         runtime.readiness = isAbortError(error) ? 'cancelled' : 'error';
         // A failed or cancelled replacement must not be reused by URI alone.
         runtime.playbackUri = undefined;
-        runtime.loadedPlaybackUri = undefined;
         player.pause();
         player.muted = true;
         publishSlots();
@@ -756,7 +744,6 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.readiness = 'error';
     runtime.firstFrameReady = false;
     runtime.playbackUri = undefined;
-    runtime.loadedPlaybackUri = undefined;
     playerForSlot(slot).pause();
     playerForSlot(slot).muted = true;
     publishSlots();

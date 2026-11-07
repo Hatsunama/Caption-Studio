@@ -20,7 +20,7 @@ const clip = (id = 'a', sourceId = 'source') => ({ id, sourceId, sourceStartMs: 
 // Executes complete modules, with real timeline/policy/overlay consumers. Only
 // React scheduling and the native boundary are faked; frames never arrive by default.
 function harness({ clips = [clip()], missingSource = false, holdReplacement = false } = {}) {
-  const hosts = new Map(), cache = new Map(), timers = new Map(), calls = [];
+  const hosts = new Map(), cache = new Map(), timers = new Map(), calls = [], eofFrames = new Map();
   let host, cursor, dirty = true, transport, views = [], alive = true, timerId = 0, now = 0;
   let appStateListener, playerCursor = 0, blockingUi = false;
   const layout = [], passive = [];
@@ -46,12 +46,13 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   const players = [0, 1].map(slot => {
     const listeners = new Map();
     let time = 0;
-    return { status: 'idle', playing: false, muted: false, playbackRate: 1, volume: 1,
+    return { mediaItems: 0, status: 'idle', playing: false, muted: false, playbackRate: 1, volume: 1,
       get currentTime() { return time; }, set currentTime(value) { time = value; calls.push(['seek', slot, value]); },
       pause() { this.playing = false; calls.push(['pause', slot]); },
       play() { this.playing = true; calls.push(['play', slot, this.muted]); },
       async replaceAsync(uri) { calls.push(['replace', slot, uri]);
         if ((holdReplacement || this.holdReplacement) && uri) await new Promise(resolve => { this.finishReplacement = resolve; });
+        if (uri) { this.mediaItems++; time = 0; }
         this.status = uri ? this.replacementStatus ?? 'readyToPlay' : 'idle'; },
       addListener(event, fn) { const set = listeners.get(event) ?? new Set(); listeners.set(event, set); set.add(fn);
         return { remove: () => set.delete(fn) }; },
@@ -132,9 +133,43 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     async app(state) { appState.currentState = state; appStateListener(state); render(); await settle(); },
     async modal(value) { blockingUi = value; render(); await settle(); },
     async frame(slot) { views.find(view => view.player === players[slot])?.onFirstFrameRender(); await settle(); },
-    async decoded(slot) { players[slot].emit('timeUpdate', { currentTime: players[slot].currentTime }); await settle(); },
+    // Native clock events and seek frames can arrive with playback paused.
+    // If preparation starts playback, model the decoder running beyond target.
+    async pausedEvents() {
+      await settle();
+      for (const slot of [0, 1]) {
+        if (transport.slots[slot].readiness !== 'preparing') continue;
+        const player = players[slot], target = player.currentTime;
+        if (player.playing) player.currentTime += 0.115;
+        await this.positionAck(slot);
+        assert.notEqual(transport.slots[slot].readiness, 'ready', 'clock ack alone cannot replace a surface frame');
+        assert.equal(player.currentTime, target, 'paused preparation must not run the native clock beyond its target');
+        // Completing the frame can activate a composite's explicit source seek.
+        await this.frame(slot);
+        assert.equal(player.playing, false);
+      }
+      await settle();
+      assert.equal(calls.filter(call => call[0] === 'play').length, 0, 'no decoder playback or audio before user intent');
+    },
+    // diag998: a retained EOF item still acknowledges 7.999s and runs to
+    // 8.036s/EOS, without any frame callback. Replacement offers a new frame
+    // at zero, even before readiness. Clock delivery never depends on status.
+    async eofEvents(slot, previousMediaItem) {
+      const player = players[slot];
+      if (player.mediaItems > previousMediaItem && eofFrames.get(slot) !== player.mediaItems) {
+        eofFrames.set(slot, player.mediaItems); await this.frame(slot);
+      }
+      player.currentTime = 7.999; await this.positionAck(slot);
+      if (player.playing) {
+        player.currentTime = 8.036; await this.positionAck(slot);
+        player.playing = false; player.emit('playToEnd', {});
+        player.status = 'idle'; player.emit('statusChange', { status: 'idle' });
+        await settle();
+      }
+    },
+    async positionAck(slot) { players[slot].emit('timeUpdate', { currentTime: players[slot].currentTime }); await settle(); },
     async complete() { await settle(); for (let i = 0; i < 4; i++) {
-      for (const slot of [0, 1]) if (transport.slots[slot].readiness === 'preparing') { await this.frame(slot); await this.decoded(slot); }
+      for (const slot of [0, 1]) if (transport.slots[slot].readiness === 'preparing') { await this.frame(slot); await this.positionAck(slot); }
       await settle(); } },
     async advance(ms) { now += ms; for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.fn(); } await settle(); },
     async replayEffects() {
@@ -152,6 +187,68 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   };
 }
 
+for (const scenario of ['load', 'seek', 'Home', 'standby', 'composite']) {
+  test(`paused ${scenario} preparation accepts native clock and first frame without playing`, async t => {
+    const trimmed = { ...clip(), sourceStartMs: 0, sourceEndMs: 6385, availableSourceEndMs: 8000 };
+    const first = scenario === 'composite' ? { ...clip(), transitionAfter: { type: 'crossfade', durationMs: 1000 } } : trimmed;
+    const h = harness({ clips: ['standby', 'composite'].includes(scenario) ? [first, clip('b', 'other')] : [first] });
+    t.after(() => h.unmount());
+    if (first === trimmed) h.project.sources[0].durationMs = 8000;
+    await h.pausedEvents();
+    // Active completion can schedule standby preparation on the next turn.
+    await h.pausedEvents();
+    assert.equal(h.transport.phase, 'ready');
+    if (scenario === 'seek' || scenario === 'Home') {
+      h.transport.seek(6385); await h.settle();
+      await h.pausedEvents();
+      assert.equal(h.transport.player.currentTime, 6.385);
+    }
+    if (scenario === 'composite') {
+      h.transport.seek(29750); await h.settle(); await h.pausedEvents();
+    }
+    if (scenario === 'Home' || scenario === 'composite') {
+      const retired = h.views.map(view => view.onFirstFrameRender);
+      await h.app('background'); await h.app('active');
+      retired.forEach(callback => callback()); await h.settle();
+      assert.equal(h.transport.slots.some(slot => slot.firstFrameReady), false);
+      await h.pausedEvents(); await h.pausedEvents();
+    }
+    assert.equal(h.transport.phase, 'ready');
+    assert.equal(h.transport.isPlaying, false);
+    assert.equal(h.calls.some(call => call[0] === 'play'), false);
+    if (scenario === 'standby' || scenario === 'composite') {
+      assert.equal(h.transport.slots.filter(slot => slot.readiness === 'ready').length, 2);
+    }
+    if (scenario === 'Home') {
+      assert.equal(h.transport.currentMs, 6385); assert.equal(h.transport.player.currentTime, 6.385);
+    }
+    if (scenario === 'composite') {
+      assert.equal(h.players[0].currentTime, 30.75); assert.equal(h.players[1].currentTime, .75);
+    }
+    const replacements = h.calls.filter(call => call[0] === 'replace').length;
+    await h.advance(15000);
+    assert.equal(h.timerCount, 0);
+    assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements, 'preloading remains bounded');
+  });
+}
+
+test('explicit Play during paused preparation activates only the requested slot after both acknowledgements', async t => {
+  const h = harness({ clips: [clip(), clip('b', 'other')] }); t.after(() => h.unmount());
+  await h.pausedEvents(); await h.pausedEvents();
+  h.transport.seek(31800); await h.settle();
+  const slot = h.transport.activeSlot;
+  assert.equal(h.transport.slots[slot].preparedClipId, 'b');
+  await h.app('background'); await h.app('active');
+  h.transport.play(); await h.settle();
+  assert.equal(h.calls.some(call => call[0] === 'play'), false, 'intent waits for preparation');
+  await h.positionAck(slot); assert.equal(h.calls.some(call => call[0] === 'play'), false);
+  await h.frame(slot);
+  assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.isPlaying, true);
+  assert.equal(h.transport.activeSlot, slot); assert.equal(h.transport.slots[slot].preparedClipId, 'b');
+  assert.deepEqual(h.calls.filter(call => call[0] === 'play'), [['play', slot, false]]);
+  assert.equal(h.players[slot].playing, true); assert.equal(h.players[1 - slot].playing, false);
+});
+
 test('ordinary play and repeated same-clip scrubs keep a ready slot during transient native loading', async t => {
   const h = harness(); t.after(() => h.unmount()); await h.complete();
   const slot = h.transport.activeSlot, token = h.transport.slots[slot].prepareToken;
@@ -166,10 +263,10 @@ test('ordinary play and repeated same-clip scrubs keep a ready slot during trans
     assert.equal(h.transport.slots[slot].prepareToken, token);
     assert.equal(h.transport.currentMs, target); assert.equal(h.transport.isPlaying, true);
     assert.equal(h.players[slot].currentTime, (target + 1000) / 1000);
-    await h.decoded(slot); assert.equal(h.transport.currentMs, target);
+    await h.positionAck(slot); assert.equal(h.transport.currentMs, target);
     assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements);
   }
-  h.players[slot].currentTime = 13.25; await h.decoded(slot);
+  h.players[slot].currentTime = 13.25; await h.positionAck(slot);
   assert.equal(h.transport.currentMs, 12250, 'native clock still advances during transient loading');
   h.transport.pause(); await h.settle();
   assert.equal(h.transport.isPlaying, false); assert.equal(h.timerCount, 0);
@@ -191,7 +288,7 @@ test('ordinary same-URI clip seeks reprepare the loaded slot without replacing a
     assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements,
       'ordinary same-URI preparation must retain the loaded decoder during transient loading');
     assert.equal(h.transport.slots[slot].readiness, 'preparing');
-    await h.decoded(slot); assert.notEqual(h.transport.phase, 'ready', 'fresh view frame remains mandatory');
+    await h.positionAck(slot); assert.notEqual(h.transport.phase, 'ready', 'fresh view frame remains mandatory');
     await h.frame(slot);
     assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.activeSlot, slot);
     assert.equal(h.transport.slots[slot].readiness, 'ready');
@@ -200,9 +297,10 @@ test('ordinary same-URI clip seeks reprepare the loaded slot without replacing a
   }
   await h.advance(15000); assert.equal(h.transport.phase, 'ready'); assert.equal(h.timerCount, 0);
   assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements);
+  assert.equal(h.calls.some(call => call[0] === 'play'), false, 'same-URI repreparation remains paused');
 });
 
-test('Home detaches actual overlay; resume at 21.8s needs a fresh view frame AND decoded position without source reload', async t => {
+test('Home detaches actual overlay; resume at 21.8s reloads once and needs a fresh view frame AND playback position', async t => {
   const h = harness(); t.after(() => h.unmount()); await h.complete();
   h.transport.seek(21800); await h.complete();
   const retired = h.views.map(view => view.onFirstFrameRender), tokens = h.transport.slots.map(slot => slot.prepareToken);
@@ -217,12 +315,63 @@ test('Home detaches actual overlay; resume at 21.8s needs a fresh view frame AND
   const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
   assert.ok(slot >= 0); assert.ok(h.transport.slots[slot].prepareToken > tokens[slot]);
   assert.equal(h.players[slot].currentTime, 22.8);
-  retired.forEach(callback => callback()); await h.decoded(slot);
+  retired.forEach(callback => callback()); await h.positionAck(slot);
   assert.notEqual(h.transport.phase, 'ready');
   await h.frame(slot); assert.equal(h.transport.phase, 'ready');
   assert.equal(h.transport.currentMs, 21800); assert.equal(h.players[slot].playing, false);
-  assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements);
-  assert.ok(h.calls.filter(call => call[0] === 'play').every(call => call[2] === true));
+  assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements + 1);
+  assert.equal(h.calls.filter(call => call[0] === 'play').length, 0);
+});
+
+test('diag998 retained ready EOF item needs replacement on all three Home restores', async t => {
+  const endpoint = { ...clip(), sourceStartMs: 0, sourceEndMs: 8000, availableSourceEndMs: 8000 };
+  const h = harness({ clips: [endpoint] }); t.after(() => h.unmount());
+  h.project.sources[0].durationMs = 8000;
+  await h.complete(); h.transport.seek(8000); await h.complete();
+  const slot = h.transport.activeSlot, player = h.players[slot];
+  const initial = h.calls.filter(call => call[0] === 'replace').length;
+  for (let cycle = 0; cycle < 3; cycle++) {
+    const retired = h.views.map(view => view.onFirstFrameRender);
+    const token = h.transport.slots[slot].prepareToken, mediaItem = player.mediaItems;
+    await h.app('background'); assert.equal(h.views.length, 0);
+    player.status = 'readyToPlay'; player.currentTime = 7.999;
+    player.holdReplacement = true; player.replacementStatus = 'loading';
+    const plays = h.calls.filter(call => call[0] === 'play').length;
+    await h.app('active');
+    assert.ok(h.transport.slots[slot].prepareToken > token);
+    retired.forEach(callback => callback()); await h.positionAck(slot);
+    assert.equal(h.transport.slots[slot].firstFrameReady, false);
+    assert.notEqual(h.transport.phase, 'ready', 'retired callbacks and position ack cannot complete restore');
+    // On the old hook no replacement occurs: replay the observed ack/EOS,
+    // then require recovery. This fails with the recorded frame-timeout.
+    if (player.mediaItems === mediaItem && !player.finishReplacement) {
+      await h.eofEvents(slot, mediaItem); await h.advance(5000);
+      assert.equal(h.transport.phase, 'ready', h.transport.sourceFailure?.detail);
+    }
+    assert.equal(h.calls.filter(call => call[0] === 'play').length, plays,
+      'source replacement cannot start playback');
+    player.finishReplacement(); player.finishReplacement = undefined; await h.settle();
+    await h.eofEvents(slot, mediaItem); // new item frame at zero, clock ack while loading
+    assert.notEqual(h.transport.phase, 'ready', 'a frame and clock cannot bypass source readiness');
+    await h.advance(6000); assert.notEqual(h.transport.phase, 'error');
+    assert.equal(h.calls.filter(call => call[0] === 'play').length, plays);
+    player.status = 'readyToPlay'; player.emit('statusChange', { status: 'readyToPlay' }); await h.settle();
+    assert.equal(player.currentTime, 8, 'seek target remains exact');
+    assert.notEqual(h.transport.phase, 'ready', 'pre-seek clock ack cannot satisfy the new waiter');
+    await h.eofEvents(slot, mediaItem);
+    assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.sourceFailure, undefined);
+    assert.equal(h.transport.currentMs, 8000); assert.equal(h.transport.isPlaying, false);
+    assert.equal(h.players.some(value => value.playing), false);
+    assert.equal(player.currentTime, 8, 'activation preserves the paused endpoint');
+    assert.equal(h.calls.filter(call => call[0] === 'replace').length, initial + cycle + 1,
+      'exactly one replacement per needed active view');
+    assert.equal(h.calls.filter(call => call[0] === 'play').length, 0);
+    await h.advance(15000); h.render(); await h.settle();
+    assert.equal(h.transport.phase, 'ready'); assert.equal(h.timerCount, 0);
+    assert.equal(h.calls.filter(call => call[0] === 'replace').length, initial + cycle + 1, 'no reload storm');
+  }
+  h.unmount(); assert.equal(h.timerCount, 0);
+  assert.ok(h.players.every(value => value.listenerCount() === 0));
 });
 
 for (const status of ['idle', 'loading', 'error']) {
@@ -247,10 +396,10 @@ for (const status of ['idle', 'loading', 'error']) {
       const playCount = h.calls.filter(call => call[0] === 'play').length;
       await h.app('active');
       assert.equal(replacements().length, initialReplacements + cycle + 1,
-        'same URI must be replaced again when the native decoder is not readyToPlay');
+        'a retired URI must be replaced again regardless of native decoder status');
       assert.equal(replacements().at(-1)[2], 'file:///source.mp4');
       assert.ok(h.transport.slots[slot].prepareToken > token);
-      retired.forEach(callback => callback()); await h.decoded(slot);
+      retired.forEach(callback => callback()); await h.positionAck(slot);
       assert.equal(h.transport.slots[slot].firstFrameReady, false);
       assert.equal(h.transport.currentMs, 8000); assert.equal(h.transport.isPlaying, false);
       assert.equal(player.playing, false);
@@ -261,15 +410,15 @@ for (const status of ['idle', 'loading', 'error']) {
         'replacement completion must not start frame preparation before decoder readiness');
       player.status = 'readyToPlay'; player.emit('statusChange', { status: 'readyToPlay' }); await h.settle();
       assert.equal(player.currentTime, 8, 'domain endpoint remains exact');
-      if (cycle === 0) await h.frame(slot); else await h.decoded(slot);
-      assert.notEqual(h.transport.phase, 'ready', 'both a fresh surface frame and decoded position are required');
+      if (cycle === 0) await h.frame(slot); else await h.positionAck(slot);
+      assert.notEqual(h.transport.phase, 'ready', 'both a fresh surface frame and playback position are required');
       await h.advance(4999); assert.notEqual(h.transport.phase, 'error');
-      if (cycle === 0) await h.decoded(slot); else await h.frame(slot);
+      if (cycle === 0) await h.positionAck(slot); else await h.frame(slot);
       assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.sourceFailure, undefined);
       assert.equal(h.transport.currentMs, 8000); assert.equal(h.transport.isPlaying, false);
       assert.equal(h.players.some(value => value.playing), false);
       await h.advance(15000); assert.equal(h.transport.phase, 'ready'); assert.equal(h.timerCount, 0);
-      assert.ok(h.calls.filter(call => call[0] === 'play').every(call => call[2] === true), 'all preparation playback stays muted');
+      assert.equal(h.calls.filter(call => call[0] === 'play').length, 0, 'paused preparation never starts playback');
     }
   });
 }
@@ -277,15 +426,19 @@ for (const status of ['idle', 'loading', 'error']) {
 test('retired callbacks cannot revive either active or standby slot across repeated interruptions', async t => {
   const h = harness({ clips: [clip(), clip('b', 'other')] }); t.after(() => h.unmount()); await h.complete();
   assert.equal(h.transport.slots.filter(slot => slot.readiness === 'ready').length, 2);
-  const retired = h.views.map(view => view.onFirstFrameRender);
   for (let i = 0; i < 3; i++) {
+    const retired = h.views.map(view => view.onFirstFrameRender);
     await h.app('background'); await h.app('active');
     retired.forEach(callback => callback()); await h.settle();
     assert.equal(h.transport.slots.some(slot => slot.firstFrameReady), false);
     assert.notEqual(h.transport.phase, 'ready');
+    await h.complete(); assert.equal(h.transport.phase, 'ready');
+    assert.equal(h.transport.slots.filter(slot => slot.readiness === 'ready').length, 2);
+    assert.equal(h.calls.filter(call => call[0] === 'replace').length, 2 + (i + 1) * 2);
   }
   await h.complete(); assert.equal(h.transport.phase, 'ready');
-  assert.equal(h.calls.filter(call => call[0] === 'replace').length, 2);
+  assert.equal(h.calls.filter(call => call[0] === 'replace').length, 8,
+    'three restores replace each needed active/standby item exactly once');
 });
 
 test('resume timeout remains 5s; stale callbacks cannot hide failure, and explicit retry recovers', async t => {
@@ -294,7 +447,7 @@ test('resume timeout remains 5s; stale callbacks cannot hide failure, and explic
   const retired = h.views.map(view => view.onFirstFrameRender);
   await h.app('background'); await h.app('active');
   const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
-  retired.forEach(callback => callback()); await h.decoded(slot);
+  retired.forEach(callback => callback()); await h.positionAck(slot);
   await h.advance(4999); assert.notEqual(h.transport.phase, 'error');
   await h.advance(1); assert.equal(h.transport.phase, 'error');
   assert.match(h.transport.sourceFailure.detail, /did not render a frame/);
@@ -303,9 +456,10 @@ test('resume timeout remains 5s; stale callbacks cannot hide failure, and explic
   assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.sourceFailure, undefined);
   assert.equal(h.transport.currentMs, 21800); assert.equal(h.transport.isPlaying, false);
   assert.equal(h.timerCount, 0);
+  assert.equal(h.calls.some(call => call[0] === 'play'), false, 'timeout and explicit retry remain paused');
 });
 
-test('a view frame alone cannot complete resume without a decoded position event', async t => {
+test('a view frame alone cannot complete resume without a playback position event', async t => {
   const h = harness(); t.after(() => h.unmount()); await h.complete();
   await h.app('background'); await h.app('active');
   await h.frame(h.transport.activeSlot); assert.notEqual(h.transport.phase, 'ready');
@@ -313,7 +467,7 @@ test('a view frame alone cannot complete resume without a decoded position event
   assert.match(h.transport.sourceFailure.detail, /did not reach the requested frame/);
 });
 
-test('background cancels in-flight frame preparation, stays silent, and reuses a completed replacement', async t => {
+test('background cancels in-flight frame preparation, stays silent, and replaces the retired item once', async t => {
   const h = harness(); t.after(() => h.unmount()); await h.settle();
   const retired = h.views.map(view => view.onFirstFrameRender);
   assert.equal(h.transport.slots[0].readiness, 'preparing');
@@ -323,7 +477,8 @@ test('background cancels in-flight frame preparation, stays silent, and reuses a
   retired.forEach(callback => callback()); h.transport.play(); await h.advance(15000);
   assert.equal(h.calls.length, count); assert.equal(h.transport.phase, 'suspended');
   await h.app('active'); await h.complete();
-  assert.equal(h.transport.phase, 'ready'); assert.equal(h.calls.filter(call => call[0] === 'replace').length, 1);
+  assert.equal(h.transport.phase, 'ready'); assert.equal(h.calls.filter(call => call[0] === 'replace').length, 2);
+  assert.equal(h.calls.some(call => call[0] === 'play'), false, 'aborted intent cannot leak into restore');
 });
 
 test('an interrupted source replacement is not cached as loaded; its late completion cannot activate transport', async t => {
@@ -334,6 +489,7 @@ test('an interrupted source replacement is not cached as loaded; its late comple
   await h.app('active'); assert.equal(h.calls.filter(call => call[0] === 'replace').length, 2);
   h.players[0].finishReplacement(); await h.complete();
   assert.equal(h.transport.phase, 'ready');
+  assert.equal(h.calls.some(call => call[0] === 'play'), false, 'late replacement and retry stay paused');
 });
 
 test('translation unload and background restore retire tokens permanently and restore the saved paused position', async t => {
@@ -348,7 +504,7 @@ test('translation unload and background restore retire tokens permanently and re
   const count = h.calls.filter(call => call[0] === 'replace').length;
   await h.app('active'); await h.settle();
   assert.ok(h.transport.slots[0].prepareToken > token);
-  retired.forEach(callback => callback()); await h.decoded(0);
+  retired.forEach(callback => callback()); await h.positionAck(0);
   assert.notEqual(h.transport.phase, 'ready');
   await h.frame(0); assert.equal(h.transport.phase, 'ready');
   assert.equal(h.transport.currentMs, 21800); assert.equal(h.transport.isPlaying, false);
@@ -372,7 +528,8 @@ test('composite consumers cannot reuse detached active/standby frames on foregro
   retired.forEach(callback => callback()); await h.settle(); assert.notEqual(h.transport.phase, 'ready');
   await h.complete(); assert.equal(h.transport.phase, 'ready'); assertComposite();
   assert.equal(h.transport.currentMs, 29750); assert.equal(h.transport.isPlaying, false);
-  assert.equal(h.calls.filter(call => call[0] === 'replace').length, 2);
+  assert.equal(h.calls.filter(call => call[0] === 'replace').length, 4,
+    'composite restore replaces each needed item once');
 });
 
 test('blocking UI preserves surface admission and the repeated-scrub ready cache', async t => {
