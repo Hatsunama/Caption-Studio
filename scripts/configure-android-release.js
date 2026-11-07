@@ -10,7 +10,7 @@ const {
   replaceLineRequired,
   replaceRange,
 } = require('./android-patch-utils');
-const { verifyAndroidReleaseConfig } = require('./verify-android-release-config');
+const { media3AlignmentBlock, verifyAndroidReleaseConfig } = require('./verify-android-release-config');
 
 const gradleDistributionSha256 = 'distributionSha256Sum=60ea723356d81263e8002fec0fcf9e2b0eee0c0850c7a3d7ab0a63f2ccc601f3';
 
@@ -80,6 +80,11 @@ function configureAndroidRelease(projectRoot = path.join(path.dirname(module.fil
   appendLineIfMissing(properties, 'android.enableShrinkResourcesInReleaseBuilds=true');
 
   modernizeGroovyAssignments(rootBuild);
+  const alignment = media3AlignmentBlock(projectRoot);
+  const rootSource = readRequired(rootBuild);
+  const alignmentPattern = /\/\/ BEGIN Caption Studio Media3 alignment[\s\S]*?\/\/ END Caption Studio Media3 alignment/g;
+  const withoutAlignment = rootSource.replace(alignmentPattern, '').trimEnd();
+  fs.writeFileSync(rootBuild, `${withoutAlignment}\n\n${alignment}\n`);
   configureSigning(appBuild);
   modernizeGroovyAssignments(appBuild);
   verifyAndroidReleaseConfig(projectRoot);

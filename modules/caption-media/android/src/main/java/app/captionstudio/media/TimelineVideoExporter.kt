@@ -116,6 +116,7 @@ internal class TimelineVideoExporter(private val context: Context) {
         if (!isActive(task)) return@post
         try {
           val transformer = Transformer.Builder(context)
+            .setAssetLoaderFactory(TimelineClippedVideoAssetLoaderFactory(context))
             .setVideoMimeType(MimeTypes.VIDEO_H264)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .setMuxerFactory(InAppMp4Muxer.Factory { entries ->
@@ -288,8 +289,8 @@ internal class TimelineVideoExporter(private val context: Context) {
   internal fun buildNativeVideoSequence(plan: TimelineRenderPlan, canvasMediaItem: MediaItem): EditedMediaItemSequence {
     val builder = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
     fun addCanvasGap(durationMs: Long) {
-      // Reuse the export-owned, plan-sized canvas instead of Media3's default video gap.
-      // Both duration fields must describe this gap, not the full canvas clock.
+      // Keep image items for timing, but never enqueue their textures: the default
+      // compositor can select a future placeholder for a pre-gap clock frame.
       builder.addItem(
         EditedMediaItem.Builder(canvasMediaItem.buildUpon().setImageDurationMs(durationMs).build())
           .setDurationUs(durationMs * 1_000L)
@@ -298,7 +299,7 @@ internal class TimelineVideoExporter(private val context: Context) {
           .setEffects(
             Effects(
               emptyList(),
-              listOf(Presentation.createForWidthAndHeight(plan.width, plan.height, Presentation.LAYOUT_SCALE_TO_FIT)),
+              listOf(TimelineVideoGapEffect()),
             ),
           )
           .build(),
@@ -682,6 +683,7 @@ internal class TimelineBitmapOverlay(
   private val retrievers = ClosingRetrieverCache(MAX_OPEN_RETRIEVERS)
   private val imageCache = BitmapMemoryCache(MAX_CACHED_IMAGE_BYTES)
   private val outputBuffer = ReusableOverlayBitmap(plan.width, plan.height)
+  private val gapColor = timelineVideoGapColor(plan.backgroundColor, plan.clips.isNotEmpty())
   private val textPainter = TimelineTextPainter(context).apply { prepare(plan.textStyles()) }
   private var released = false
 
@@ -694,6 +696,10 @@ internal class TimelineBitmapOverlay(
     check(!released) { "The timeline compositor has been released" }
     val timeMs = (presentationTimeUs / 1_000L).coerceIn(0L, plan.durationMs)
     return outputBuffer.render(Color.TRANSPARENT) { canvas ->
+      // This callback receives OUTPUT pts, unlike input-latched compositor settings.
+      if (plan.clips.none { timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs }) {
+        canvas.drawColor(gapColor)
+      }
       val transition = transitionTimeline.activeAt(timeMs)
       if (transition != null) {
         when (TimelineTransitionSpec.renderingPath(transition.outgoing.transitionType)) {
