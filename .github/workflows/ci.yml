@@ -126,19 +126,19 @@ jobs:
         env:
           NODE_ENV: production
         working-directory: android
-        run: ./gradlew :app:lintRelease --init-script ../scripts/first-party-android-lint.gradle --no-daemon --stacktrace --warning-mode all
+        run: ./gradlew :app:lintRelease --init-script ../scripts/first-party-android-lint.gradle  --init-script ../scripts/private-media3-version.gradle -PcaptionPrivateMedia3Version=1.11.0 --no-daemon --stacktrace --warning-mode all
 
       - name: Test Caption Studio Android release modules
         env:
           NODE_ENV: production
         working-directory: android
-        run: ./gradlew :app:testReleaseUnitTest :caption-diagnostics:testReleaseUnitTest :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest --no-daemon --stacktrace --warning-mode all
+        run: ./gradlew :app:testReleaseUnitTest :caption-diagnostics:testReleaseUnitTest :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest  --init-script ../scripts/private-media3-version.gradle -PcaptionPrivateMedia3Version=1.11.0 --no-daemon --stacktrace --warning-mode all
 
       - name: Build release artifacts
         env:
           NODE_ENV: production
         working-directory: android
-        run: ./gradlew :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace --warning-mode all
+        run: ./gradlew :app:assembleRelease :app:bundleRelease :verifyPrivateMedia3Resolution  --init-script ../scripts/private-media3-version.gradle -PcaptionPrivateMedia3Version=1.11.0 --no-daemon --stacktrace --warning-mode all
 
       - name: Verify release identity, signing, alignment, and target SDK
         shell: bash
@@ -188,6 +188,7 @@ jobs:
         with:
           name: native-release-test-reports-${{ github.sha }}
           path: |
+            android/build/reports/private-media3-resolution.txt
             android/app/build/reports/tests/testReleaseUnitTest/
             android/app/build/test-results/testReleaseUnitTest/
             modules/caption-diagnostics/android/build/reports/tests/testReleaseUnitTest/
@@ -206,5 +207,86 @@ jobs:
           path: |
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14
+
+  reordered-clipping-baseline:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostic/media3-clipping-111-20261107'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.23.4
+          cache: npm
+      - name: Install companion build JDK
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21.0.13+9'
+          force-download: true
+          verify-signature: true
+          cache-jdk: false
+          check-latest: true
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17.0.21+9'
+          force-download: true
+          verify-signature: true
+          cache-jdk: false
+          check-latest: true
+          cache: gradle
+      - name: Harden and verify Java trust stores
+        run: node scripts/harden-java-truststores.mjs --ci
+      - name: Install locked dependencies
+        run: |
+          set -o pipefail
+          mkdir -p evidence
+          npm ci 2>&1 | tee evidence/npm-ci.log
+      - name: Generate cloud Android project
+        env:
+          NODE_ENV: production
+        run: |
+          set -o pipefail
+          npx expo prebuild --platform android --clean --no-install 2>&1 | tee evidence/prebuild.log
+          node scripts/patch-react-native-gradle.js
+      - name: Reproduce exact old-library queue failure and check controls
+        env:
+          NODE_ENV: production
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          cd android
+          ./gradlew :caption-media:testReleaseUnitTest --tests app.captionstudio.media.TimelineReorderedClippingTest --init-script ../scripts/private-media3-version.gradle -PcaptionPrivateMedia3Version=1.10.1 --no-daemon --stacktrace --console=plain 2>&1 | tee ../evidence/private-queue-red.log
+          statuses=("${PIPESTATUS[@]}")
+          set -e
+          test "${statuses[1]}" -eq 0 || { echo 'Raw baseline log capture failed'; exit 1; }
+          test "${statuses[0]}" -ne 0 || { echo 'Expected baseline failure did not occur'; exit 1; }
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          p=Path('../modules/caption-media/android/build/test-results/testReleaseUnitTest/TEST-app.captionstudio.media.TimelineReorderedClippingTest.xml')
+          suite=ET.parse(p).getroot()
+          assert suite.attrib['tests']=='4' and suite.attrib['failures']=='1' and suite.attrib['errors']=='0' and suite.attrib['skipped']=='0',suite.attrib
+          failed=[c for c in suite.findall('testcase') if c.find('failure') is not None]
+          assert len(failed)==1 and failed[0].attrib['name']=='endClippingKeepsInRangeBFrameAfterFutureReference'
+          failure=failed[0].find('failure')
+          assert failure.attrib['type']=='java.lang.AssertionError',failure.attrib
+          assert 'actual queue timestamps: [0, 6333333]' in failure.attrib['message'],failure.attrib
+          print('EXPECTED RED: 1.10.1 loses the retained B-frame; all three real queue controls passed. This is not a native pixel test.')
+          PY
+      - name: Retain old-library raw failure and controls
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: private-queue-baseline-1101-${{ github.sha }}
+          path: |
+            evidence/
+            modules/caption-media/android/build/test-results/
           if-no-files-found: error
           retention-days: 14

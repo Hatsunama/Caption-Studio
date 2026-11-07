@@ -1,0 +1,35 @@
+// PRIVATE COMPARISON ONLY. Never merge or use for a store build.
+if (System.getenv('GITHUB_REF') != 'refs/heads/diagnostic/media3-clipping-111-20261107') {
+    throw new GradleException('Private Media3 comparison requires its isolated diagnostic branch')
+}
+def comparisonVersion = gradle.startParameter.projectProperties['captionPrivateMedia3Version']
+if (!(comparisonVersion in ['1.10.1', '1.11.0'])) {
+    throw new GradleException('Private comparison version must be explicit and reviewed')
+}
+gradle.beforeProject { project ->
+    project.configurations.configureEach {
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'androidx.media3') {
+                details.useVersion(comparisonVersion)
+                details.because('Private paired reordered-clipping comparison; not a release configuration')
+            }
+        }
+    }
+}
+gradle.rootProject { root ->
+    root.tasks.register('verifyPrivateMedia3Resolution') {
+        doLast {
+            def config = root.project(':app').configurations.getByName('releaseRuntimeClasspath')
+            def components = config.resolvedConfiguration.resolvedArtifacts.findAll {
+                it.moduleVersion.id.group == 'androidx.media3'
+            }.collect { it.moduleVersion.id.toString() }.unique().sort()
+            if (components.isEmpty() || components.any { !it.endsWith(':' + comparisonVersion) }) {
+                throw new GradleException('Media3 runtime resolution is empty or mixed: ' + components)
+            }
+            def report = new File(root.buildDir, 'reports/private-media3-resolution.txt')
+            report.parentFile.mkdirs()
+            report.text = components.join('\n') + '\n'
+            println('PRIVATE Media3 resolution: ' + components.join(', '))
+        }
+    }
+}

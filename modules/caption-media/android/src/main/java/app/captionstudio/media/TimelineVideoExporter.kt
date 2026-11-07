@@ -116,6 +116,7 @@ internal class TimelineVideoExporter(private val context: Context) {
         if (!isActive(task)) return@post
         try {
           val transformer = Transformer.Builder(context)
+            .setAssetLoaderFactory(TimelineClippedVideoAssetLoaderFactory(context))
             .setVideoMimeType(MimeTypes.VIDEO_H264)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .setMuxerFactory(InAppMp4Muxer.Factory { entries ->
