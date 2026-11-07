@@ -51,7 +51,10 @@ function harness() {
       if (name === '@/components/spring-scroll-view') return {
         SpringScrollView: 'ScrollView', SpringScrollGestureContext: { value: [] },
       };
-      if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PixelRatio: { get: () => 1, roundToNearestPixel: Math.round }, PanResponder: { create: (panHandlers) => ({ panHandlers }) } };
+      if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView',
+        Platform: { OS: 'android' },
+        AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) },
+        PixelRatio: { get: () => 1, roundToNearestPixel: Math.round }, PanResponder: { create: (panHandlers) => ({ panHandlers }) } };
       if (name === 'expo-image') return { Image: 'Image' };
       if (name === './timeline-linked-scroll') return requireLocal('../src/components/editor/timeline-linked-scroll.ts');
       if (name === './timeline-native-gesture') return {

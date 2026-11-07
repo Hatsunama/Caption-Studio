@@ -4,6 +4,7 @@ import {
   Alert,
   AppState,
   FlatList,
+  Platform,
   Pressable,
   Text,
   TextInput,
@@ -114,11 +115,6 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
   const [appForeground, setAppForeground] = useState(() => AppState.currentState === 'active');
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => setAppForeground(state === 'active'));
-    setAppForeground(AppState.currentState === 'active');
-    return () => subscription.remove();
-  }, []);
   const [rootSize, setRootSize] = useState<{ width: number; height: number }>();
   const [actionsOpen, setActionsOpen] = useState(false);
   const width = (rootSize?.width ?? window.width) - insets.left - insets.right;
@@ -129,6 +125,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const listRef = useRef<FlatList<CaptionPair>>(null);
   const [navigation] = useState(() => ({
     alive: false, intentional: false, momentumAllowed: false,
+    foreground: AppState.currentState === 'active',
     currentMs: props.currentMs ?? 0,
     onSeek: props.onSeekTimeline,
     pairs: props.pairs,
@@ -140,16 +137,19 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     timer: undefined as ReturnType<typeof setTimeout> | undefined,
     frame: undefined as { handle: number } | undefined,
   }));
-  const stopListNavigation = useCallback(() => {
-    navigation.intentional = false;
-    navigation.momentumAllowed = false;
-    navigation.pendingIndex = -1;
-    navigation.awaitingMeasurements = false;
+  const cancelListNavigationWork = useCallback(() => {
     clearTimeout(navigation.timer);
     navigation.timer = undefined;
     if (navigation.frame) cancelAnimationFrame(navigation.frame.handle);
     navigation.frame = undefined;
   }, [navigation]);
+  const stopListNavigation = useCallback(() => {
+    navigation.intentional = false;
+    navigation.momentumAllowed = false;
+    navigation.pendingIndex = -1;
+    navigation.awaitingMeasurements = false;
+    cancelListNavigationWork();
+  }, [cancelListNavigationWork, navigation]);
   useLayoutEffect(() => {
     navigation.alive = true;
     return () => { navigation.alive = false; stopListNavigation(); };
@@ -183,7 +183,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   const issuePendingListReveal = useCallback((allowUnmeasuredFrame = true) => {
     const index = navigation.pendingIndex;
     const sourceId = navigation.pairs[index]?.source.id;
-    if (!navigation.alive || navigation.intentional || index !== navigation.targetIndex || navigation.timer !== undefined
+    if (!navigation.alive || !navigation.foreground || navigation.intentional || index !== navigation.targetIndex || navigation.timer !== undefined
       || index < 0 || index >= navigation.pairs.length || !listRef.current) return;
     // Consume this readiness event before issuing a command: an unmeasured
     // failure retains the target for the next native event, without polling.
@@ -199,7 +199,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     frame.handle = requestAnimationFrame(() => {
       if (navigation.frame !== frame) return;
       navigation.frame = undefined;
-      if (!navigation.alive || navigation.intentional || navigation.pendingIndex !== index
+      if (!navigation.alive || !navigation.foreground || navigation.intentional || navigation.pendingIndex !== index
         || navigation.targetIndex !== index || navigation.pairs[index]?.source.id !== sourceId
         || !listRef.current) return;
       listRef.current.scrollToIndex({ index, animated: false, viewPosition: 0 });
@@ -244,8 +244,35 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     navigation.attempts = 0;
     retryPendingListReveal();
   }, [anchorIndex, navigation, props.currentMs, retryPendingListReveal, stopListNavigation]);
+  useEffect(() => {
+    let live = true;
+    const blur = () => {
+      if (!live || !navigation.alive || !navigation.intentional) return;
+      stopListNavigation();
+    };
+    const update = (state: typeof AppState.currentState) => {
+      if (!live) return;
+      const wasForeground = navigation.foreground;
+      navigation.foreground = state === 'active';
+      if (!navigation.foreground) {
+        navigation.intentional = false;
+        navigation.momentumAllowed = false;
+        cancelListNavigationWork();
+        // Suspend accepted reveal intent; user drag/focus still discard it via
+        // stopListNavigation. Native readiness may arrive only after resume.
+        navigation.awaitingMeasurements = navigation.pendingIndex >= 0;
+      } else if (!wasForeground) {
+        issuePendingListReveal();
+      }
+      setAppForeground(navigation.foreground);
+    };
+    const subscription = AppState.addEventListener('change', update);
+    const blurSubscription = Platform.OS === 'android' ? AppState.addEventListener('blur', blur) : undefined;
+    update(AppState.currentState);
+    return () => { live = false; subscription.remove(); blurSubscription?.remove(); };
+  }, [cancelListNavigationWork, issuePendingListReveal, navigation, stopListNavigation]);
   const onScrollToIndexFailed = useCallback((info: { index: number; averageItemLength: number }) => {
-    if (!navigation.alive || navigation.intentional || navigation.pendingIndex !== info.index
+    if (!navigation.alive || !navigation.foreground || navigation.intentional || navigation.pendingIndex !== info.index
       || navigation.targetIndex !== info.index || navigation.timer !== undefined) return;
     if (!Number.isFinite(info.averageItemLength) || info.averageItemLength <= 0) {
       navigation.awaitingMeasurements = true;
@@ -265,7 +292,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     listRef.current?.scrollToOffset({ offset: Math.max(0, info.averageItemLength * info.index), animated: false });
     navigation.timer = setTimeout(() => {
       navigation.timer = undefined;
-      if (!navigation.alive || navigation.intentional || navigation.pendingIndex !== info.index
+      if (!navigation.alive || !navigation.foreground || navigation.intentional || navigation.pendingIndex !== info.index
         || navigation.targetIndex !== info.index || navigation.pairs[info.index]?.source.id !== sourceId) return;
       issuePendingListReveal(false);
     }, 100);
@@ -299,7 +326,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
     navigation.onSeek(ms);
   }, [navigation]);
   const onScrollBeginDrag = useCallback(() => {
-    if (!navigation.alive) return;
+    if (!navigation.alive || !navigation.foreground) return;
     stopListNavigation();
     navigation.intentional = true;
     inputReveal.onScrollBeginDrag();

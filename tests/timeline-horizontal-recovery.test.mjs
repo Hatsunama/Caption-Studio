@@ -22,12 +22,17 @@ function code(file) {
 // Execute the whole LayerTimeline render, its real hooks/callbacks and the
 // production command interceptor/controller. Only host layout/clamping and the
 // hook scheduler are doubles: these schedules are contracts, not device traces.
-function harness(initial = {}, { fullBinding = false } = {}) {
+function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform = 'android' } = {}) {
   let cursor = 0, dirty = false, tree, effects = [], horizontal, outer, first = true;
   let scrubStarts = 0, timingStarts = 0, timingEnds = 0;
   let slots = [];
   const primarySlots = slots, childSlots = [], modules = new Map(), jobs = [], commands = [], seeks = [], changes = [];
   const springSlots = [], rnJobs = [];
+  const appStateListeners = new Map();
+  const appState = { currentState: 'active', addEventListener(event, listener) {
+    assert.ok(['change', 'blur'].includes(event)); appStateListeners.set(listener, event);
+    return { remove: () => appStateListeners.delete(listener) };
+  } };
   let springHost, committedRef;
   let geometry;
   let holdAcknowledgements = false;
@@ -60,7 +65,7 @@ function harness(initial = {}, { fullBinding = false } = {}) {
       const i = cursor++, store = slots;
       if (!store[i] || !same(store[i].deps, deps)) {
         const old = store[i]; store[i] = { deps };
-        effects.push(() => { old?.cleanup?.(); store[i].cleanup = fn(); });
+        effects.push(() => { old?.cleanup?.(); store[i].setup = fn; store[i].cleanup = fn(); });
       }
     },
   };
@@ -89,8 +94,10 @@ function harness(initial = {}, { fullBinding = false } = {}) {
       assert.equal(name, 'scrollTo'); assert.equal(args[2], false);
       commands.push(args[0]);
       native.x = Math.min(Math.max(0, args[0]), Math.max(0, native.content - native.viewport));
-      const x = native.x;
-      const acknowledge = () => (fullBinding ? springHost : horizontal).props.onScroll({ nativeEvent: { contentOffset: { x } } });
+      const x = native.x, viewport = native.viewport, content = native.content;
+      const acknowledge = () => (fullBinding ? springHost : horizontal).props.onScroll({ nativeEvent: {
+        contentOffset: { x }, layoutMeasurement: { width: viewport }, contentSize: { width: content },
+      } });
       (holdAcknowledgements ? acknowledgements : jobs).push(acknowledge);
     } };
   const worklets = { scheduleOnUI: (fn, ...args) => jobs.push(() => fn(...args)),
@@ -105,11 +112,11 @@ function harness(initial = {}, { fullBinding = false } = {}) {
         if (id === 'react/jsx-runtime') return { jsx, jsxs: jsx };
         if (id === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'NativeScrollView',
           StyleSheet: { flatten: style => Object.assign({}, ...[style].flat(Infinity).filter(Boolean)) },
-          AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) },
+          AppState: appState,
           AccessibilityInfo: { addEventListener: () => ({ remove() {} }),
             isReduceMotionEnabled: () => ({ then: resolve => resolve(false) }) },
-          Platform: { OS: 'android' }, PanResponder: { create: panHandlers => ({ panHandlers }) },
-          PixelRatio: { roundToNearestPixel: x => x, get: () => 1 } };
+          Platform: { OS: platform }, PanResponder: { create: panHandlers => ({ panHandlers }) },
+          PixelRatio: { roundToNearestPixel: x => x, get: () => pixelRatio } };
         if (id === 'react-native-reanimated') return reanimated;
         if (id === 'react-native-worklets') return worklets;
         if (id === 'react-native-gesture-handler') return { Gesture: { Native: gesture, Pan: gesture }, GestureDetector: 'GestureDetector' };
@@ -186,13 +193,28 @@ function harness(initial = {}, { fullBinding = false } = {}) {
     native.viewport = width;
     (fullBinding ? springHost : horizontal).props.onLayout?.({ nativeEvent: { layout: { width } } });
   }
-  function content(width = expectedContent()) {
-    native.content = width;
+  function content(width = expectedContent(), commitNative = true) {
+    if (commitNative) native.content = width;
     (fullBinding ? springHost : horizontal).props.onContentSizeChange?.(width, 200);
   }
   function expectedContent() { return horizontal.props.contentContainerStyle.width; }
   render(); flush();
   return { native, commands, seeks, changes, flush, layout, content, expectedContent,
+    captureAppStateListeners: (event = 'change') => [...appStateListeners].filter(([, type]) => type === event).map(([listener]) => listener),
+    get appStateListenerCount() { return appStateListeners.size; },
+    replayEffects() {
+      const mounted = primarySlots.filter(slot => slot?.setup);
+      for (const slot of mounted) slot.cleanup?.();
+      for (const slot of mounted) slot.cleanup = slot.setup();
+      flush();
+    },
+    blur() { assert.equal(appState.currentState, 'active');
+      for (const [listener, event] of [...appStateListeners]) if (event === 'blur') listener(); flush(); },
+    appState(state) {
+      appState.currentState = state;
+      for (const [listener, event] of [...appStateListeners]) if (event === 'change') listener(state);
+      flush();
+    },
     get horizontal() { return horizontal.props; }, get outer() { return outer.props; },
     get props() { return props; },
     get scrubStarts() { return scrubStarts; },
@@ -264,6 +286,150 @@ function aligned(h) {
   assert.equal(h.native.x, Math.min(1, Math.max(0, h.props.currentMs / h.props.durationMs)) * track);
   assert.deepEqual(h.seeks, [], 'passive geometry must never change transport time');
 }
+
+test('Samsung clamped ACK keeps the paused target pending across shadow content and late native layout', () => {
+  const h = harness({}, { fullBinding: true, pixelRatio: 3 });
+  try {
+    h.ready(); h.resize(336); h.layout();
+    h.native.content = 338 + 2 / 3;
+    const count = h.commands.length;
+    h.content(592, false); h.flush();
+    assert.equal(h.expectedContent(), 592);
+    assert.equal(h.commands[count], 256);
+    assert.ok(Math.abs(h.native.x - 2 / 3 * 4) < 1e-10);
+    assert.ok(h.commands.length > count + 1, 'clamped ACK must reconcile the still-current paused target');
+    const clamped = h.commands.length;
+    h.flush(); h.update({});
+    assert.equal(h.commands.length, clamped, 'an unchanged clamp must settle without polling or a command loop');
+    // No later native event is promised by the trace. This explicit layout is
+    // a conditional recovery opportunity, not proof Android will deliver it.
+    h.native.content = 592; h.flush(); h.update({});
+    assert.equal(h.commands.length, clamped, 'silent native readiness supplies no reconciliation signal');
+    h.layout(); h.flush(); aligned(h);
+    assert.equal(h.props.currentMs, 8000);
+    const settled = h.commands.length; h.flush();
+    assert.equal(h.commands.length, settled);
+    assert.equal(h.scrubStarts, 0); assert.deepEqual(h.changes, []);
+  } finally { h.close(); }
+});
+
+test('late native commit before clamped ACK reconciliation recovers without another JS layout or clock event', () => {
+  const h = harness({}, { fullBinding: true, pixelRatio: 3 });
+  try {
+    h.ready(); h.resize(336); h.layout(); h.holdAcknowledgements();
+    h.native.content = 338 + 2 / 3;
+    const count = h.commands.length;
+    h.content(592, false); h.flush();
+    assert.equal(h.commands.length, count + 1);
+    assert.ok(Math.abs(h.native.x - 2 / 3 * 4) < 1e-10);
+    h.native.content = 592;
+    h.acknowledge();
+    assert.equal(h.commands.length, count + 2, 'clamped raw ACK alone recomputes current clock follow');
+    aligned(h);
+    h.acknowledge();
+    assert.equal(h.commands.length, count + 2);
+    assert.equal(h.props.currentMs, 8000); assert.deepEqual(h.changes, []);
+    assert.equal(h.scrubStarts, 0);
+  } finally { h.close(); }
+});
+
+test('pending follow uses latest clock across repeated growing and shrinking native constraints', () => {
+  const h = harness({}, { fullBinding: true });
+  try {
+    h.ready();
+    for (const [width, clock] of [[800, 7000], [336, 8000], [900, 5000], [360, 8000]]) {
+      h.resize(width); h.layout();
+      h.native.content = width + 2;
+      const before = h.commands.length;
+      h.content(h.expectedContent(), false); h.flush();
+      assert.ok(h.commands.length > before + 1, 'clamped ACK must leave follow pending');
+      h.update({ currentMs: clock });
+      const target = (h.expectedContent() - width) * clock / 8000;
+      assert.equal(h.commands.at(-1), target, 'pending work recomputes the current target');
+      h.native.content = h.expectedContent(); h.layout(); h.flush(); aligned(h);
+    }
+    assert.deepEqual(h.changes, []); assert.equal(h.scrubStarts, 0);
+  } finally { h.close(); }
+});
+
+test('raw ACK beyond a shrinking model cannot masquerade as the current end target', () => {
+  const h = harness({}, { fullBinding: true });
+  try {
+    h.ready(); h.resize(336); h.layout(); h.holdAcknowledgements();
+    h.native.content = 1500; h.content(592, false); h.flush();
+    h.native.x = 500;
+    const count = h.commands.length;
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 500 } } }); h.flush();
+    assert.equal(h.commands.length, count + 1, 'raw 500 is not target 256 even though model clamps both to 256');
+    assert.equal(h.commands.at(-1), 256); assert.deepEqual(h.seeks, []);
+  } finally { h.close(); }
+});
+
+for (const owner of ['drag', 'selection']) test(`pending clamped follow yields to real ${owner} without extra seeks`, () => {
+  const h = harness({ selectedLayerId: 'captions', selectedCaptionId: 'cue',
+    layers: [{ id: 'captions', kind: 'captions' }],
+    captions: [{ id: 'cue', startMs: 3000, endMs: 4500, text: 'cue' }],
+  }, { fullBinding: true });
+  try {
+    h.ready(); h.resize(336); h.layout();
+    h.native.content = 338 + 2 / 3; h.content(592, false); h.flush();
+    if (owner === 'drag') {
+      h.horizontal.onTouchStart({ nativeEvent: { touches: [{}] } });
+      h.horizontal.onScrollBeginDrag();
+    } else {
+      h.find('TimedBlock').onChangeStart(); h.flush();
+      h.find('TimedBlock').onTouchLock(false); h.flush();
+    }
+    const count = h.commands.length;
+    h.native.content = 592; h.native.x = 55;
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    h.layout(); h.content(); h.bindingReady();
+    assert.equal(h.commands.length, count); assert.equal(h.native.x, 55);
+    assert.equal(h.seeks.length, owner === 'drag' ? 1 : 0);
+    assert.equal(h.scrubStarts, owner === 'drag' ? 1 : 0);
+    assert.deepEqual(h.changes, []);
+  } finally { h.close(); }
+});
+
+test('invalid outer measurement preserves model geometry while invalidating readiness and old touches', () => {
+  const h = harness();
+  try {
+    h.ready(); const content = h.expectedContent(), count = h.commands.length;
+    for (const width of [0, -1, NaN, Infinity]) {
+      h.outer.onLayout({ nativeEvent: { layout: { width } } }); h.flush();
+      assert.equal(h.expectedContent(), content, 'invalid width must not collapse or poison the model');
+      h.bindingReady(); h.content(); h.layout(); h.update({ currentMs: 7000 });
+      assert.equal(h.commands.length, count, 'cached valid child geometry cannot undo an invalid outer measurement');
+      h.horizontal.onScrollBeginDrag();
+      assert.equal(h.scrubStarts, 0, 'the invalidated old stream cannot acquire scrub');
+    }
+    h.outer.onLayout({ nativeEvent: { layout: { width: 360 } } }); h.flush();
+    h.ready(); aligned(h);
+  } finally { h.close(); }
+});
+
+test('pending follow accepts a raw native ACK within one physical pixel', () => {
+  const h = harness({}, { fullBinding: true, pixelRatio: 3 });
+  try {
+    h.ready(); h.resize(336); h.layout(); h.holdAcknowledgements(); h.content(); h.flush();
+    const count = h.commands.length;
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 256 - 0.3 } } }); h.flush();
+    assert.equal(h.commands.length, count);
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 255 } } }); h.flush();
+    assert.equal(h.commands.length, count, 'once displayed, unrelated ACKs must not acquire follow ownership');
+  } finally { h.close(); }
+});
+
+test('an unchanged zero ACK completes follow without acquiring later passive offsets', () => {
+  const h = harness({ currentMs: 0 }, { fullBinding: true });
+  try {
+    h.ready(); const count = h.commands.length;
+    h.native.x = 12;
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 12 } } }); h.flush();
+    assert.equal(h.commands.length, count, 'zero was actually acknowledged even without a state change');
+    assert.equal(h.native.x, 12); assert.deepEqual(h.seeks, []);
+  } finally { h.close(); }
+});
 
 test('full binding: paused reattachment follows only after UI acceptance reaches RN and native ACK reaches the ruler', () => {
   const h = harness({ durationMs: 120000, currentMs: 90000 }, { fullBinding: true });
@@ -546,6 +712,118 @@ for (const release of ['cancel', 'up']) test(`active audio geometry invalidation
   assert.equal(h.seeks.length, 1); assert.equal(h.scrubStarts, 1); h.close();
 });
 
+// These consumer event schedules omit the terminal callback deliberately; they
+// do not model or diagnose why the native stream was interrupted on a device.
+for (const interrupted of ['drag', 'momentum', 'missingEnd']) test(`focus-only blur abandons horizontal ${interrupted} without its terminal event so fresh clock follow reaches native`, () => {
+  const h = harness({ currentMs: 4000 }, { fullBinding: true });
+  try {
+    h.ready();
+    h.horizontal.onScrollBeginDrag();
+    h.native.x = 55;
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    assert.equal(h.seeks.length, 1, 'the live drag must seek before interruption');
+    h.update({ currentMs: h.seeks[0] });
+    if (interrupted === 'momentum') {
+      h.horizontal.onScrollEndDrag(); h.horizontal.onMomentumScrollBegin();
+    }
+    const seeks = [...h.seeks];
+    if (interrupted === 'missingEnd') h.horizontal.onScrollEndDrag();
+    h.blur();
+    const count = h.commands.length;
+    // LayerTimeline receives the parent's clock, not an isPlaying prop. A fresh
+    // playback tick must recover without resize, rebinding or fabricated UP.
+    h.update({ currentMs: 6000 });
+    const target = (h.expectedContent() - h.native.viewport) * 6000 / h.props.durationMs;
+    assert.ok(h.commands.length > count, 'fresh clock must dispatch horizontal follow after background abandoned the stream');
+    assert.equal(h.commands.at(-1), target);
+    assert.equal(h.native.x, target, 'follow must pass the real spring binding and generation guard');
+    assert.deepEqual(h.seeks, seeks, 'native follow acknowledgements must not reverse-seek');
+    h.horizontal.onTouchStart({ nativeEvent: { touches: [{}] } });
+    h.horizontal.onScrollBeginDrag();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 100 } } }); h.flush();
+    assert.equal(h.seeks.length, seeks.length + 1, 'a fresh drag can still seek');
+  } finally { h.close(); }
+});
+
+for (const interrupted of ['drag', 'momentum']) test(`background abandons horizontal ${interrupted} without its terminal event so fresh clock follow reaches native`, () => {
+  const h = harness({ currentMs: 4000 }, { fullBinding: true });
+  try {
+    h.ready();
+    h.horizontal.onScrollBeginDrag();
+    h.native.x = 55;
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    assert.equal(h.seeks.length, 1, 'the live drag must seek before interruption');
+    h.update({ currentMs: h.seeks[0] });
+    if (interrupted === 'momentum') {
+      h.horizontal.onScrollEndDrag(); h.horizontal.onMomentumScrollBegin();
+    }
+    const seeks = [...h.seeks];
+    h.appState('background'); h.appState('active');
+    const count = h.commands.length;
+    // LayerTimeline receives the parent's clock, not an isPlaying prop. A fresh
+    // playback tick must recover without resize, rebinding or fabricated UP.
+    h.update({ currentMs: 6000 });
+    const target = (h.expectedContent() - h.native.viewport) * 6000 / h.props.durationMs;
+    assert.ok(h.commands.length > count, 'fresh clock must dispatch horizontal follow after background abandoned the stream');
+    assert.equal(h.commands.at(-1), target);
+    assert.equal(h.native.x, target, 'follow must pass the real spring binding and generation guard');
+    assert.deepEqual(h.seeks, seeks, 'native follow acknowledgements must not reverse-seek');
+    h.horizontal.onTouchStart({ nativeEvent: { touches: [{}] } });
+    h.horizontal.onScrollBeginDrag();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 100 } } }); h.flush();
+    assert.equal(h.seeks.length, seeks.length + 1, 'a fresh drag can still seek');
+  } finally { h.close(); }
+});
+
+test('horizontal resume follows the latest unchanged clock after suppressing background commands and late ends', () => {
+  const h = harness({ currentMs: 4000 }, { fullBinding: true });
+  try {
+    h.ready(); h.horizontal.onScrollBeginDrag();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    h.horizontal.onScrollEndDrag();
+    h.appState('inactive');
+    const commands = h.commands.length, seeks = [...h.seeks];
+    h.update({ currentMs: 6000 }); h.ready();
+    h.horizontal.onScrollBeginDrag(); h.horizontal.onMomentumScrollBegin();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 90 } } });
+    h.horizontal.onMomentumScrollEnd(); h.flush();
+    assert.equal(h.commands.length, commands, 'no follow command may be issued in the background');
+    assert.deepEqual(h.seeks, seeks, 'late native events cannot finish or reacquire the abandoned scrub');
+    h.appState('active');
+    const target = (h.expectedContent() - h.native.viewport) * 6000 / h.props.durationMs;
+    assert.equal(h.commands.at(-1), target, 'resume recomputes the current target without another clock tick');
+    assert.equal(h.native.x, target, 'foreground precedes the command through the real spring controller');
+    assert.deepEqual(h.seeks, seeks);
+  } finally { h.close(); }
+});
+
+test('horizontal effect replay replaces its AppState subscription and ignores retired deliveries', () => {
+  const h = harness({ currentMs: 4000 });
+  h.ready();
+  const retired = h.captureAppStateListeners();
+  const retiredBlur = h.captureAppStateListeners('blur');
+  assert.equal(retiredBlur.length, 1);
+  assert.equal(retired.length, 1);
+  h.replayEffects();
+  assert.equal(h.appStateListenerCount, 2);
+  h.horizontal.onScrollBeginDrag();
+  for (const listener of retired) listener('background');
+  for (const listener of retiredBlur) listener();
+  h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 100 } } }); h.flush();
+  assert.equal(h.seeks.length, 1, 'a retired listener cannot abandon the current live drag');
+  h.appState('background'); h.appState('active');
+  h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 120 } } }); h.flush();
+  assert.equal(h.seeks.length, 1, 'the replacement subscription still abandons the drag');
+  const unmountedBlur = h.captureAppStateListeners('blur');
+  h.close();
+  assert.equal(h.appStateListenerCount, 0);
+  const commands = h.commands.length;
+  for (const listener of retired) listener('active');
+  for (const listener of retiredBlur) listener();
+  for (const listener of unmountedBlur) listener();
+  assert.equal(h.commands.length, commands);
+});
+
 test('JS touch cancellation from native takeover must not revoke a genuine scrub', () => {
   const h = harness({ currentMs: 4000 }); h.ready();
   h.horizontal.onTouchStart?.({ nativeEvent: { touches: [{}] } });
@@ -620,5 +898,42 @@ for (const translated of [false, true]) test(`${translated ? 'dual translated' :
     assert.equal(h.commands.length, rejected + 1); aligned(h);
     assert.equal(h.timingStarts, 1); assert.equal(h.timingEnds, 1);
     assert.deepEqual(h.changes, []);
+  } finally { h.close(); }
+});
+
+for (const platform of ['ios', 'web']) test(`${platform} horizontal subscribes only to AppState change`, () => {
+  const h = harness({}, { platform });
+  try { assert.equal(h.appStateListenerCount, 1); assert.equal(h.captureAppStateListeners('blur').length, 0); }
+  finally { h.close(); }
+});
+
+test('horizontal focus-only blur follows the unchanged current clock only for an active scrub', () => {
+  const h = harness({ currentMs: 4000 }, { fullBinding: true });
+  try {
+    h.ready();
+    const settled = h.commands.length;
+    h.blur(); assert.equal(h.commands.length, settled, 'idle blur does not acquire viewport');
+    h.horizontal.onScrollBeginDrag();
+    h.native.x = 55;
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    const seeks = [...h.seeks];
+    h.blur();
+    assert.equal(h.native.x, (h.expectedContent() - h.native.viewport) / 2);
+    h.horizontal.onScrollEndDrag(); h.horizontal.onMomentumScrollEnd(); h.flush();
+    assert.deepEqual(h.seeks, seeks, 'late ends cannot final-seek the old offset');
+  } finally { h.close(); }
+});
+
+test('horizontal focus-only blur preserves a completed user viewport', () => {
+  const h = harness({ currentMs: 4000 }, { fullBinding: true });
+  try {
+    h.ready(); h.horizontal.onScrollBeginDrag();
+    h.native.x = 55; h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    h.update({ currentMs: h.seeks.at(-1) });
+    h.horizontal.onScrollEndDrag(); h.horizontal.onMomentumScrollEnd(); h.flush();
+    const commands = h.commands.length, seeks = [...h.seeks];
+    h.blur();
+    assert.equal(h.commands.length, commands); assert.equal(h.native.x, 55);
+    assert.deepEqual(h.seeks, seeks);
   } finally { h.close(); }
 });

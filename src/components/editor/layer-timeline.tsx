@@ -1,6 +1,6 @@
 import { useSharedValue } from 'react-native-reanimated';
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { type ScrollView as NativeScrollView, PanResponder, PixelRatio, Pressable, Text, View } from 'react-native';
+import { type ScrollView as NativeScrollView, AppState, Platform, PanResponder, PixelRatio, Pressable, Text, View } from 'react-native';
 import { SpringScrollView as ScrollView, SpringScrollGestureContext } from '@/components/spring-scroll-view';
 import { Image } from 'expo-image';
 import { createTimelineNativeScrollGestures, TimelineNativeGestureContext, TimelineNativeGeometryContext, TimelineNativeGestureView, TimelineNativeScrollView } from './timeline-native-gesture';
@@ -102,6 +102,7 @@ export function LayerTimeline(props: {
   const trackDragOrigin = useRef<{ id: string; order: string[]; preview: string[]; top: number; scroll: number; heights: Map<string, number>; dy: number; pageY?: number } | undefined>(undefined);
   const trackViewport = useRef<{ top: number; height: number } | undefined>(undefined);
   const [viewportWidth, setViewportWidth] = useState(360);
+  const [outerGeometryValid, setOuterGeometryValid] = useState(true);
   const [horizontalGeometry, setHorizontalGeometry] = useState({ viewport: 0, content: 0 });
   const [clipPreview, setClipPreview] = useState<VideoClip[]>();
   const [frontTrimPreview, setFrontTrimPreview] = useState<{
@@ -149,10 +150,13 @@ export function LayerTimeline(props: {
   const zoomTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrubEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrubbingRef = useRef(false);
+  const appForegroundRef = useRef(AppState.currentState === 'active');
   const invalidatedScrollTouchRef = useRef(false);
   const selectionOwnsViewportRef = useRef(false);
   const scrollXRef = useRef(0);
   const [viewportScrollX, setViewportScrollX] = useState(0);
+  const [nativeScrollX, setNativeScrollX] = useState(0);
+  const followPendingRef = useRef<false | 'request' | 'ack'>(false);
   const [visibleCenterX, setVisibleCenterX] = useState(0);
   const lastScrubMsRef = useRef(-1);
   const pinch = useRef({ distance: 0, scale: effectiveScale });
@@ -266,6 +270,42 @@ export function LayerTimeline(props: {
     if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
   }, []);
 
+  useEffect(() => {
+    let live = true;
+    const abandonScrub = () => {
+      // An interrupted native stream may never deliver its terminal event.
+      // Abandon it without publishing a final seek from the cached offset.
+      if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+      scrubEndTimer.current = null;
+      scrubbingRef.current = false;
+    };
+    const blur = () => {
+      if (!live) return;
+      linkedScroll.end();
+      if (!scrubbingRef.current) return;
+      abandonScrub();
+      // Focus-only interruption leaves AppState active. Follow the current clock.
+      setHorizontalGeometry((previous) => ({ ...previous }));
+    };
+    const update = (state: typeof AppState.currentState) => {
+      if (!live) return;
+      const wasForeground = appForegroundRef.current;
+      appForegroundRef.current = state === 'active';
+      if (!appForegroundRef.current) {
+        linkedScroll.end();
+        abandonScrub();
+      } else if (!wasForeground) {
+        // Recompute follow from the current clock after native foreground work,
+        // including when the clock has not changed. Never replay a cached command.
+        setHorizontalGeometry((previous) => ({ ...previous }));
+      }
+    };
+    const subscription = AppState.addEventListener('change', update);
+    const blurSubscription = Platform.OS === 'android' ? AppState.addEventListener('blur', blur) : undefined;
+    update(AppState.currentState);
+    return () => { live = false; subscription.remove(); blurSubscription?.remove(); scrubbingRef.current = false; };
+  }, [linkedScroll]);
+
   useEffect(() => () => {
     gestureLockRef.current = false;
     setGestureLock(false);
@@ -275,8 +315,15 @@ export function LayerTimeline(props: {
   }, []);
 
   useEffect(() => {
-    if (scrubbingRef.current || gestureLock || gestureLockRef.current || reorderMode ||
-      (hasSelectedCue && selectionOwnsViewportRef.current)) return;
+    // Clock/model/readiness changes start a fresh follow. An offset receipt
+    // alone may only reconcile this work, never acquire viewport ownership.
+    followPendingRef.current = 'request';
+  }, [duration, gestureLock, hasSelectedCue, horizontalGeometry, outerGeometryValid, props.currentMs, props.projectId,
+    reorderMode, scrollContentWidth, trackWidth, viewportWidth]);
+
+  useEffect(() => {
+    if (!appForegroundRef.current || scrubbingRef.current || gestureLock || gestureLockRef.current || reorderMode ||
+      !outerGeometryValid || (hasSelectedCue && selectionOwnsViewportRef.current) || !followPendingRef.current) return;
     // React geometry alone cannot prove that Android has laid out the new
     // nonzero content. A command can clamp there, or be dropped by a retired
     // spring binding. Measurements and accepted binding readiness invalidate
@@ -286,9 +333,14 @@ export function LayerTimeline(props: {
       Math.abs(horizontalGeometry.viewport - viewportWidth) > pixel ||
       Math.abs(horizontalGeometry.content - scrollContentWidth) > pixel) return;
     const x = timelineScrollOffset(props.currentMs, duration, trackWidth);
+    // Dispatch and shadow content layout cannot acknowledge Android's actual
+    // child bounds. A changed raw ACK can reconcile a clamp; repeated identical
+    // receipts settle until another layout/readiness/clock event. Without such
+    // an event we cannot guarantee future physical readiness.
+    followPendingRef.current = 'ack';
     // Only onScroll can acknowledge the displayed offset and visible bounds.
     horizontalRef.current?.scrollTo({ x, animated: false });
-  }, [duration, gestureLock, hasSelectedCue, horizontalGeometry, props.currentMs, props.projectId,
+  }, [duration, gestureLock, hasSelectedCue, horizontalGeometry, nativeScrollX, outerGeometryValid, props.currentMs, props.projectId,
     reorderMode, scrollContentWidth, trackWidth, viewportWidth]);
 
   useEffect(() => {
@@ -344,6 +396,7 @@ export function LayerTimeline(props: {
   };
 
   const selectTimelineItem = (select: () => void, feedback = true) => {
+    followPendingRef.current = false;
     if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
     scrubEndTimer.current = null;
     scrubbingRef.current = false;
@@ -632,8 +685,12 @@ export function LayerTimeline(props: {
     <TimelineGestureGeometryContext.Provider value={gestureGeometry}>
     <View
       onLayout={(event) => {
-        const width = Math.max(1, event.nativeEvent.layout.width);
-        if (gestureGeometry.update({ viewportWidth: width })) {
+        const width = event.nativeEvent.layout.width;
+        const valid = Number.isFinite(width) && width > 0;
+        setOuterGeometryValid(valid);
+        // Invalid outer bounds cancel the coordinate stream, but must not
+        // shrink the last valid model to a one-point viewport.
+        if (gestureGeometry.update({ viewportWidth: valid ? width : 0 })) {
           invalidatedScrollTouchRef.current = true;
           if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
           scrubEndTimer.current = null;
@@ -641,7 +698,7 @@ export function LayerTimeline(props: {
           selectionOwnsViewportRef.current = false;
           pinch.current.distance = 0;
         }
-        setViewportWidth(width);
+        if (valid) setViewportWidth(width);
       }}
       onStartShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
       onMoveShouldSetResponderCapture={(event) => event.nativeEvent.touches.length === 2}
@@ -690,14 +747,22 @@ export function LayerTimeline(props: {
           // A cancelled item pan yields its external Native dependency through
           // a live manager. That old coordinate stream cannot acquire scrub
           // ownership after reflow; only a fresh touch may do so.
-          if (gestureLockRef.current || invalidatedScrollTouchRef.current) return;
+          if (!appForegroundRef.current || !outerGeometryValid || gestureLockRef.current || invalidatedScrollTouchRef.current) return;
+          followPendingRef.current = false;
           if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
           scrubbingRef.current = true;
           selectionOwnsViewportRef.current = false;
           props.onScrubStart();
         }}
         onScroll={(event) => {
-          const x = clamp(event.nativeEvent.contentOffset.x, 0, trackWidth);
+          const rawX = event.nativeEvent.contentOffset.x;
+          if (!Number.isFinite(rawX)) return;
+          if (followPendingRef.current === 'ack' &&
+            Math.abs(rawX - timelineScrollOffset(props.currentMs, duration, trackWidth)) <= 1 / PixelRatio.get()) {
+            followPendingRef.current = false;
+          }
+          setNativeScrollX(rawX);
+          const x = clamp(rawX, 0, trackWidth);
           scrollXRef.current = x;
           setViewportScrollX(x);
           if (Math.abs(x - visibleCenterX) >= Math.max(120, viewportWidth / 3)) setVisibleCenterX(x);

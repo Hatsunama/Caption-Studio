@@ -47,7 +47,7 @@ function attribute(node, name) {
   return only(node.attributes.properties.filter(p => p.name?.text === name), name).initializer.expression;
 }
 
-function fixture() {
+function fixture({ lifecycle = false } = {}) {
   const queue = [], commands = [], trace = [];
   const positions = { labels: 0, items: 0 };
   const verticalOffsetRef = { current: 0 };
@@ -84,6 +84,18 @@ function fixture() {
         && !column(ref).attributes.properties.some(p => p.name?.text === name)
         ? () => {} : evaluate(attribute(column(ref), name), globals)]));
   }
+  const appListeners = new Map();
+  const appState = { currentState: 'active', addEventListener(event, listener) {
+    appListeners.set(listener, event); return { remove: () => appListeners.delete(listener) };
+  } };
+  let lifecycleCleanup;
+  if (lifecycle) {
+    const effect = only(findAll(n => ts.isCallExpression(n) && n.expression.getText(tree) === 'useEffect'
+      && n.arguments[0]?.getText(tree).includes('AppState.addEventListener')), 'timeline AppState effect');
+    lifecycleCleanup = evaluate(effect.arguments[0], { ...globals, AppState: appState, Platform: { OS: 'android' },
+      scrubEndTimer: { current: null }, scrubbingRef: { current: false }, appForegroundRef: { current: true },
+      setHorizontalGeometry() {}, clearTimeout })();
+  }
   function deliver(target, y, kind, metadata = {}) {
     turn++;
     positions[target] = y;
@@ -92,6 +104,13 @@ function fixture() {
   }
   return {
     queue, commands, trace, positions, verticalOffsetRef, lifecycleHandlers,
+    interrupt(kind) {
+      const emit = (event, value) => { for (const [listener, type] of [...appListeners]) if (type === event) listener(value); };
+      if (kind === 'blur') emit('blur');
+      else { appState.currentState = 'background'; emit('change', 'background');
+        appState.currentState = 'active'; emit('change', 'active'); }
+    },
+    close() { lifecycleCleanup?.(); assert.equal(appListeners.size, 0); },
     input(target, y, metadata) { deliver(target, y, 'input', metadata); },
     reveal() { turn++; trace.push(`T${turn} reveal:40`); revealCue(0); },
     ack() {
@@ -499,3 +518,41 @@ test('clamped readiness recovery keeps old ACKs inert and restores the logical r
   h.api.sync(40, 'items'); h.api.sync(40, 'labels');
   assert.equal(h.commands.length, count, 'recovered reveal ACKs do not bounce');
 });
+
+
+for (const origin of ['items', 'labels']) for (const interruption of ['background', 'blur']) {
+  test(`${origin}: ${interruption} abandons a missing-end vertical owner while preserving current destination and pending ACKs`, () => {
+    const f = fixture({ lifecycle: true });
+    const peer = origin === 'items' ? 'labels' : 'items';
+    try {
+      f.lifecycleHandlers[origin].onScrollBeginDrag({ nativeEvent: { contentOffset: { y: 0 }, timestamp: 100 } });
+      f.input(origin, 10, { timestamp: 101 }); f.input(origin, 20, { timestamp: 102 });
+      const before = f.commands.length;
+      // Native cancellation need not be followed by JS end-drag or touch-cancel.
+      f.interrupt(interruption);
+      assert.equal(f.commands.length, before, 'interruption itself must not force either column');
+      assert.equal(f.verticalOffsetRef.current, 20);
+      f.lifecycleHandlers[origin].onScrollBindingReady();
+      assert.deepEqual(f.commands.slice(before).map(e => [e.target, e.y]), [[origin, 20]],
+        'a new binding may retry the preserved destination after abandonment');
+      while (f.queue.length) { f.ack(); assert.equal(f.verticalOffsetRef.current, 20, 'old mirror ACKs must remain inert'); }
+      assert.deepEqual(f.positions, { labels: 20, items: 20 });
+      f.input(peer, 5); f.drain();
+      assert.equal(f.verticalOffsetRef.current, 5, 'idle accessibility/native scroll can acquire ownership after interruption');
+      assert.deepEqual(f.positions, { labels: 5, items: 5 });
+    } finally { f.close(); }
+  });
+
+  test(`${origin}: ${interruption} preserves a completed manual viewport without forcing a reveal`, () => {
+    const f = fixture({ lifecycle: true });
+    try {
+      f.lifecycleHandlers[origin].onScrollBeginDrag({ nativeEvent: { contentOffset: { y: 0 } } });
+      f.input(origin, 20); f.lifecycleHandlers[origin].onScrollEndDrag({ nativeEvent: {} }); f.drain();
+      const before = f.commands.length;
+      f.interrupt(interruption); f.drain();
+      assert.equal(f.commands.length, before);
+      assert.equal(f.verticalOffsetRef.current, 20);
+      assert.deepEqual(f.positions, { labels: 20, items: 20 });
+    } finally { f.close(); }
+  });
+}
