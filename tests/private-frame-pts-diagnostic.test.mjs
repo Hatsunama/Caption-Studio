@@ -41,7 +41,25 @@ function copyInstalled(t) {
 }
 const snapshot = dir => files.map(file => fs.readFileSync(join(dir, file), 'utf8'));
 
-test('patches actual installed source copies, is idempotent, and only adds observational native code', t => {
+test('generated native source (not native proof): matching seeks report entry and install without ready metadata', t => {
+  const dir = copyInstalled(t);
+  patch(dir);
+  const player = snapshot(dir)[1];
+  const addition = player.slice(player.indexOf('  // PRIVATE DISPOSABLE:'), player.indexOf('  internal val firstFrameEventGenerator:'));
+  const seek = addition.slice(addition.indexOf('internal fun privateFramePtsDiagnostic'));
+  assert.match(seek, /privateFramePtsLog\("stage=1 requestedMs="/,
+    'old probe can return silently before providing any native entry evidence');
+  assert.doesNotMatch(seek, /if \([^\n]*(?:duration|format\?|format\.height)/,
+    'duration/format readiness must not prevent matching-seek listener installation');
+  assert.ok(seek.indexOf('stage=1 requestedMs=') < seek.indexOf('setVideoFrameMetadataListener('));
+  assert.match(seek, /durationMs=.*durationMs[\s\S]*width=.*format\?\.width[\s\S]*height=.*format\?\.height/);
+  assert.match(seek, /stage=2/); // installation succeeded
+  assert.match(seek, /stage=3/); // listener already installed
+  assert.match(seek, /stage=4/); // metadata snapshot failed
+  assert.match(seek, /stage=5/); // listener installation failed
+});
+
+test('generated source (not native proof) preserves originals, idempotence and bounded observational callbacks', t => {
   const dir = copyInstalled(t), before = snapshot(dir);
   assert.equal(patch(dir), true);
   const after = snapshot(dir);
@@ -52,16 +70,25 @@ test('patches actual installed source copies, is idempotent, and only adds obser
   assert.equal(player.match(/setVideoFrameMetadataListener\(/g).length, 1);
   const addition = player.slice(player.indexOf('  // PRIVATE DISPOSABLE:'), player.indexOf('  internal val firstFrameEventGenerator:'));
   assert.match(addition, /AtomicInteger\(0\)/);
-  assert.match(addition, /@Volatile private var privateFramePtsRequestedMs/);
-  assert.match(addition, /player.duration != 8000L \|\| format\?\.width != 360 \|\| format.height != 640/);
-  assert.match(addition, /seconds == 6\.375 \|\| seconds in 6\.380\.\.6\.390/);
-  const callback = addition.slice(addition.indexOf('VideoFrameMetadataListener {'));
+  assert.match(addition, /@Volatile private var privateFramePtsRequest: PrivateFramePtsRequest\? = null/);
+  assert.match(addition, /private data class PrivateFramePtsRequest\(val requestedMs: Double, val isPlayingAtSeek: Int\)/);
+  assert.match(addition, /private val privateFramePtsPlayerId = System.identityHashCode\(player\)/);
+  assert.match(addition, /privateFramePtsRequest = null\n    if \(!\(seconds == 6\.375 \|\| seconds in 6\.380\.\.6\.390\)\) return\n    if \(privateFramePtsCount.get\(\) >= 64\) return/);
+  assert.match(addition, /val isPlayingAtSeek = if \(player.isPlaying\) 1 else 0/);
+  const callbackStart = addition.indexOf('VideoFrameMetadataListener {');
+  const callback = addition.slice(callbackStart, addition.indexOf('\n      )', callbackStart));
   assert.doesNotMatch(callback, /player\.|uri|source|displayName|\.play\(|\.seekTo\(/i);
-  assert.match(callback, /getAndUpdate \{ if \(it < 32\) it \+ 1 else it \}/);
-  assert.match(callback, /if \(count < 32\) android.util.Log.i\("CS_FRAME_PTS", "requestedMs=" \+ requestedMs \+ " actualPresentationTimeUs=" \+ presentationTimeUs\)/);
+  assert.doesNotMatch(callback, /privateFramePtsRequest\s*=|privateFramePtsInstalled\s*=|frameFormat\.(?:width|height)\s*==/);
+  assert.match(callback, /val request = privateFramePtsRequest\n            if \(request != null && privateFramePtsCount.get\(\) < 64\)/);
+  assert.match(callback, /stage=7 requestedMs=.*request.requestedMs[\s\S]*actualPresentationTimeUs=.*presentationTimeUs[\s\S]*width=.*frameFormat.width[\s\S]*height=.*frameFormat.height[\s\S]*isPlayingAtSeek=.*request.isPlayingAtSeek[\s\S]*playerId=.*privateFramePtsPlayerId/);
   assert.match(callback, /catch \(_: Throwable\)/);
+  assert.match(callback, /stage=6 playerId=/);
+  assert.match(addition, /getAndUpdate \{ if \(it < 64\) it \+ 1 else it \}/);
+  assert.match(addition, /if \(count < 64\) \{\n      try \{\n        android.util.Log.w\("CS_FRAME_PTS", message\)/);
   assert.equal(addition.match(/Log\./g).length, 1);
-  assert.doesNotMatch(addition, /(?:Count|count)\.set\(|cs-166|file:\/\/|content:\/\//);
+  assert.doesNotMatch(addition, /(?:Count|count)\.set\(|cs-166|file:\/\/|content:\/\/|\.message|\.toString\(|\.play\(|\.seekTo\(/);
+  assert.match(addition, /privateFramePtsInstalled = true\n      privateFramePtsLog\("stage=2/);
+  assert.match(addition, /catch \(_: Throwable\) \{\n      privateFramePtsRequest = null[\s\S]*stage=5/);
   assert.equal(player.replace(addition, ''), before[1], 'all existing player code survives byte-for-byte');
   assert.equal(module.replace(/            try \{[\s\S]*?ref.privateFramePtsDiagnostic\(currentTime\)[\s\S]*?            \}\n/, ''), before[2]);
 });
@@ -105,7 +132,7 @@ test('staging and second-file commit failures restore both original sources', t 
 
 test('CLI refuses local/main/push execution and workflow gates only the exact private dispatch', () => {
   for (const env of [{ GITHUB_ACTIONS: 'false' }, { GITHUB_REF: 'refs/heads/main' }, { GITHUB_EVENT_NAME: 'push' }]) {
-    const result = spawnSync(process.execPath, ['--max-old-space-size=512', 'scripts/private-frame-pts-diagnostic.mjs'], {
+    const result = spawnSync(process.execPath, ['--max-old-space-size=128', 'scripts/private-frame-pts-diagnostic.mjs'], {
       cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: 'true',
         GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/diagnostic/paused-frame-pts-20261107', ...env },
     });

@@ -7,7 +7,7 @@ import { useEventListener } from 'expo';
 import { useVideoPlayer, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import { privateFramePtsTarget } from '@/components/editor/private-frame-pts-diagnostic';
+import { privateFramePtsTarget, privateStableViewExperiment } from '@/components/editor/private-frame-pts-diagnostic';
 
 import {
   buildClipTimeline,
@@ -416,9 +416,10 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
 
-      const targetSeconds = diagnosticTarget(effectiveNativeSeekTarget(
+      const requestedTargetSeconds = effectiveNativeSeekTarget(
         sourceTimeAt(entry, timelineMs) / 1_000, source.durationMs / 1_000, player.duration, Platform.OS,
-      ), source, slot, 1);
+      );
+      const targetSeconds = diagnosticTarget(requestedTargetSeconds, source, slot, 1);
       player.pause();
       player.muted = true;
       player.playbackRate = 1;
@@ -428,13 +429,22 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current
         || preparation.signal.aborted || token !== runtime.prepareToken
         || runtime.preparation !== preparation) throw abortError();
-      // Expo 57 suppresses repeated seek-first-frame receipts on a retained
-      // view. Rebind only preparation, after its position ACK, with a distinct
-      // identity so load-time and retired-view callbacks cannot certify it.
-      runtime.nativeViewEpoch += 1;
-      runtime.renderGate = 'awaitingFrame';
-      publishSlots();
-      await waitForFirstFrame(slot, preparation.signal, frameDeadline);
+      if (privateStableViewExperiment(source, requestedTargetSeconds, player.duration, Platform.OS, playIntentRef.current)) {
+        // UNSAFE READINESS BYPASS FOR DISPOSABLE CAUSAL PROBE, NEVER MERGE.
+        // Keep the view stable after actual position ACK to compare pixels.
+        // This supplies no native render receipt and proves no frame readiness.
+        runtime.firstFrameReady = true;
+        try { console.info('CS_FRAME_PTS_JS', 8, requestedTargetSeconds * 1000, targetSeconds * 1000, slot, runtime.prepareToken, runtime.nativeViewEpoch); }
+        catch { /* An observational trace cannot interrupt the probe. */ }
+      } else {
+        // Expo 57 suppresses repeated seek-first-frame receipts on a retained
+        // view. Rebind only preparation, after its position ACK, with a distinct
+        // identity so load-time and retired-view callbacks cannot certify it.
+        runtime.nativeViewEpoch += 1;
+        runtime.renderGate = 'awaitingFrame';
+        publishSlots();
+        await waitForFirstFrame(slot, preparation.signal, frameDeadline);
+      }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       player.pause();
       runtime.readiness = 'ready';

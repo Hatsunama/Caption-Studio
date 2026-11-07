@@ -20,31 +20,74 @@ const setterPatch = setterAnchor.replace('            ref.player.seekTo', `     
             ref.player.seekTo`);
 const playerPatch = `  // PRIVATE DISPOSABLE: about-to-render PTS, NOT proof of displayed pixels.
   private val privateFramePtsCount = java.util.concurrent.atomic.AtomicInteger(0)
-  @Volatile private var privateFramePtsRequestedMs = Double.NaN
+  private val privateFramePtsPlayerId = System.identityHashCode(player)
+  private data class PrivateFramePtsRequest(val requestedMs: Double, val isPlayingAtSeek: Int)
+  @Volatile private var privateFramePtsRequest: PrivateFramePtsRequest? = null
   private var privateFramePtsInstalled = false
+
+  // One shared, saturating budget for entry, installation/error and callback events.
+  private fun privateFramePtsLog(message: String) {
+    val count = privateFramePtsCount.getAndUpdate { if (it < 64) it + 1 else it }
+    if (count < 64) {
+      try {
+        android.util.Log.w("CS_FRAME_PTS", message)
+      } catch (_: Throwable) {
+        // Logging itself must never interrupt a seek or renderer callback.
+      }
+    }
+  }
 
   // Called only on the existing currentTime setter's main queue, before seekTo.
   internal fun privateFramePtsDiagnostic(seconds: Double) {
-    privateFramePtsRequestedMs = Double.NaN
-    val format = player.videoFormat
-    if (player.duration != 8000L || format?.width != 360 || format.height != 640 ||
-      !(seconds == 6.375 || seconds in 6.380..6.390)) return
-    privateFramePtsRequestedMs = seconds * 1000.0
-    if (privateFramePtsInstalled) return
-    player.setVideoFrameMetadataListener(
-      androidx.media3.exoplayer.video.VideoFrameMetadataListener { presentationTimeUs, _, frameFormat, _ ->
-        try {
-          val requestedMs = privateFramePtsRequestedMs
-          if (!requestedMs.isNaN() && frameFormat.width == 360 && frameFormat.height == 640) {
-            val count = privateFramePtsCount.getAndUpdate { if (it < 32) it + 1 else it }
-            if (count < 32) android.util.Log.i("CS_FRAME_PTS", "requestedMs=" + requestedMs + " actualPresentationTimeUs=" + presentationTimeUs)
+    // Every seek invalidates the previous request, including out-of-window seeks.
+    privateFramePtsRequest = null
+    if (!(seconds == 6.375 || seconds in 6.380..6.390)) return
+    if (privateFramePtsCount.get() >= 64) return
+    val requestedMs = seconds * 1000.0
+    try {
+      val durationMs = player.duration
+      val format = player.videoFormat
+      val isPlayingAtSeek = if (player.isPlaying) 1 else 0
+      // Metadata is observed, never a readiness gate or a format fallback.
+      // JS already gates the exact synthetic fixtures. Stage 1 precedes installation.
+      privateFramePtsLog("stage=1 requestedMs=" + requestedMs + " durationMs=" + durationMs +
+        " width=" + (format?.width ?: -1) + " height=" + (format?.height ?: -1) +
+        " isPlayingAtSeek=" + isPlayingAtSeek + " playerId=" + privateFramePtsPlayerId)
+      privateFramePtsRequest = PrivateFramePtsRequest(requestedMs, isPlayingAtSeek)
+    } catch (_: Throwable) {
+      // Stage 4: metadata inspection failed; no exception messages or media text.
+      privateFramePtsLog("stage=4 requestedMs=" + requestedMs + " playerId=" + privateFramePtsPlayerId)
+      return
+    }
+    if (privateFramePtsInstalled) {
+      privateFramePtsLog("stage=3 requestedMs=" + requestedMs + " playerId=" + privateFramePtsPlayerId)
+      return
+    }
+    try {
+      player.setVideoFrameMetadataListener(
+        androidx.media3.exoplayer.video.VideoFrameMetadataListener { presentationTimeUs, _, frameFormat, _ ->
+          try {
+            val request = privateFramePtsRequest
+            if (request != null && privateFramePtsCount.get() < 64) {
+              // Only the logging budget changes here. No player access or request mutation.
+              privateFramePtsLog("stage=7 requestedMs=" + request.requestedMs +
+                " actualPresentationTimeUs=" + presentationTimeUs + " width=" + frameFormat.width +
+                " height=" + frameFormat.height + " isPlayingAtSeek=" + request.isPlayingAtSeek +
+                " playerId=" + privateFramePtsPlayerId)
+            }
+          } catch (_: Throwable) {
+            // Stage 6: renderer observation failed, without affecting playback.
+            privateFramePtsLog("stage=6 playerId=" + privateFramePtsPlayerId)
           }
-        } catch (_: Throwable) {
-          // Renderer-thread observations cannot interrupt playback.
         }
-      }
-    )
-    privateFramePtsInstalled = true
+      )
+      privateFramePtsInstalled = true
+      privateFramePtsLog("stage=2 requestedMs=" + requestedMs + " playerId=" + privateFramePtsPlayerId)
+    } catch (_: Throwable) {
+      privateFramePtsRequest = null
+      // Stage 5: listener installation failed, distinct from metadata inspection.
+      privateFramePtsLog("stage=5 requestedMs=" + requestedMs + " playerId=" + privateFramePtsPlayerId)
+    }
   }
 
 ` + playerAnchor;

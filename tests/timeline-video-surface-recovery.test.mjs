@@ -206,6 +206,80 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   };
 }
 
+for (const device of ['samsung', 'seeker']) test(`private stable-view paired preparation ${device}: bypass only after actual mapped ACK`, async t => {
+  for (const stable of [true, false]) {
+    const displayName = `cs-${stable ? 'stable-frame' : '166'}-${device}.mp4`;
+    const h = harness({ clips: [{ ...clip(), sourceStartMs: 6385.416, sourceEndMs: 8000 }],
+      sourceMetadata: { displayName, durationMs: 8000, width: 360, height: 640 },
+      nativeDuration: 8, nativeClock: true });
+    t.after(() => h.unmount()); await h.settle();
+    const epoch = h.transport.slots[0].nativeViewEpoch;
+    const path = h.views.find(view => view.player === h.players[0]).nativePath;
+    assert.equal(h.calls.filter(call => call[0] === 'seek').at(-1)[2], 6.375);
+    await h.frame(0);
+    h.players[0].emit('timeUpdate', { currentTime: 6.385 }); await h.settle();
+    assert.equal(h.transport.slots[0].firstFrameReady, false, 'load frame and unmapped ACK cannot bypass');
+    assert.equal(h.transport.slots[0].readiness, 'preparing');
+    assert.equal(h.calls.filter(call => call[0] === 'trace' && call[2] === 8).length, 0);
+    await h.positionAck(0);
+    if (stable) {
+      assert.equal(h.transport.slots[0].nativeViewEpoch, epoch, 'stable fixture preserves view after ACK');
+      assert.equal(h.views.find(view => view.player === h.players[0]).nativePath, path);
+      assert.equal(h.transport.slots[0].firstFrameReady, true, 'UNSAFE private bypass, not a render receipt');
+      assert.equal(h.transport.phase, 'ready');
+      const trace = h.calls.find(call => call[0] === 'trace' && call[2] === 8);
+      assert.ok(trace, 'stage 8 explicitly records unsafe readiness bypass');
+      assert.equal(trace.length, 8);
+      assert.ok(trace.slice(2).every(value => typeof value === 'number' && Number.isFinite(value)));
+      assert.equal(trace[3], 6385.416); assert.equal(trace[4], 6375);
+      assert.equal(trace[7], epoch);
+    } else {
+      assert.equal(h.transport.slots[0].nativeViewEpoch, epoch + 1);
+      assert.notEqual(h.views.find(view => view.player === h.players[0]).nativePath, path);
+      assert.equal(h.transport.slots[0].firstFrameReady, false);
+      assert.equal(h.transport.slots[0].readiness, 'preparing', 'ordinary fixture still waits for fresh native frame');
+      assert.equal(h.calls.filter(call => call[0] === 'trace' && call[2] === 8).length, 0);
+      await h.frame(0); assert.equal(h.transport.phase, 'ready');
+    }
+    assert.ok(h.calls.filter(call => call[0] === 'seek').every(call => call[2] === 6.375), 'prepare and activation retain known literal PTS');
+    assert.equal(h.calls.filter(call => call[0] === 'play').length, 0);
+    assert.equal(h.timerCount, 0);
+    h.unmount();
+  }
+});
+
+for (const stop of ['background', 'translation', 'unmount']) test(`private stable-view ${stop} between ACK and continuation prevents bypass`, async t => {
+  const h = harness({ clips: [{ ...clip(), sourceStartMs: 6385.416, sourceEndMs: 8000 }],
+    sourceMetadata: { displayName: 'cs-stable-frame-samsung.mp4', durationMs: 8000, width: 360, height: 640 },
+    nativeDuration: 8 });
+  t.after(() => h.unmount()); await h.settle();
+  const retiredFrame = h.views[0].onFirstFrameRender;
+  h.players[0].emit('timeUpdate', { currentTime: 6.375 });
+  if (stop === 'background') await h.app('background');
+  else if (stop === 'translation') { h.transport.suspendForTranslation(); h.render(); }
+  else h.unmount();
+  await h.settle(); retiredFrame(); await h.settle();
+  assert.equal(h.calls.filter(call => call[0] === 'trace' && call[2] === 8).length, 0);
+  assert.equal(h.transport.slots[0].firstFrameReady, false);
+  assert.equal(h.timerCount, 0);
+  if (stop !== 'unmount') assert.equal(h.transport.phase, 'suspended');
+});
+
+test('private stable-view name with explicit Play still remounts and requires a frame receipt', async t => {
+  const h = harness({ clips: [{ ...clip(), sourceStartMs: 6385.416, sourceEndMs: 8000 }],
+    sourceMetadata: { displayName: 'cs-stable-frame-samsung.mp4', durationMs: 8000, width: 360, height: 640 },
+    nativeDuration: 8, holdReplacement: true });
+  t.after(() => h.unmount());
+  h.transport.play(); h.players[0].finishReplacement(); await h.settle();
+  const epoch = h.transport.slots[0].nativeViewEpoch;
+  assert.equal(h.calls.filter(call => call[0] === 'seek').at(-1)[2], 6.385416);
+  await h.positionAck(0);
+  assert.equal(h.transport.slots[0].nativeViewEpoch, epoch + 1);
+  assert.equal(h.transport.slots[0].firstFrameReady, false);
+  assert.equal(h.calls.filter(call => call[0] === 'trace' && call[2] === 8).length, 0);
+  await h.frame(0); assert.equal(h.transport.phase, 'ready');
+});
+
 for (const displayName of ['cs-166-samsung.mp4', 'cs-166-seeker.mp4']) test(`private known-PTS ${displayName} reaches both seek paths, restores Play, and rejects retired receipts`, async t => {
   const h = harness({ clips: [{ ...clip(), sourceStartMs: 0, sourceEndMs: 8000 }],
     sourceMetadata: { displayName, durationMs: 8000, width: 360, height: 640 },

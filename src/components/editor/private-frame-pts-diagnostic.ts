@@ -10,8 +10,24 @@ export function privateFramePtsTarget(
   playing: boolean,
 ) {
   return platform === 'android' && !playing
-    && (source.displayName === 'cs-166-samsung.mp4' || source.displayName === 'cs-166-seeker.mp4')
+    && (source.displayName === 'cs-166-samsung.mp4' || source.displayName === 'cs-166-seeker.mp4'
+      || source.displayName === 'cs-stable-frame-samsung.mp4' || source.displayName === 'cs-stable-frame-seeker.mp4')
     && source.durationMs === 8000 && source.width === 360 && source.height === 640
     && nativeDuration === 8 && targetSeconds >= 6.380 && targetSeconds <= 6.390
     ? 6.375 : targetSeconds;
+}
+
+// UNSAFE READINESS BYPASS FOR DISPOSABLE CAUSAL PROBE, NEVER MERGE.
+// Filename/profile gate only: no sample lookup or source-byte attestation.
+export function privateStableViewExperiment(
+  source: Pick<ProjectVideoSource, 'displayName' | 'durationMs' | 'width' | 'height'>,
+  targetSeconds: number,
+  nativeDuration: number,
+  platform: string,
+  playing: boolean,
+) {
+  return platform === 'android' && !playing
+    && (source.displayName === 'cs-stable-frame-samsung.mp4' || source.displayName === 'cs-stable-frame-seeker.mp4')
+    && source.durationMs === 8000 && source.width === 360 && source.height === 640
+    && nativeDuration === 8 && targetSeconds >= 6.380 && targetSeconds <= 6.390;
 }
