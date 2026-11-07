@@ -130,7 +130,7 @@ class TimelineNativeVideoGapTest {
     // Expected default SDR MP4 RGB: uploaded premultiplied PNG RGB, then
     // SRC_ALPHA blending in DefaultCompositorGlProgram (not a single flatten).
     listOf("#CC8844" to "#CC8844", "#FFCC8844" to "#CC8844", "#80CC8844" to "#332211",
-      "#00CC8844" to "#000000", "transparent" to "#000000").forEach { (input, expected) ->
+      "#00CC8844" to "#000000", "#00000000" to "#000000").forEach { (input, expected) ->
       val colored = plan.copy(backgroundColor = input)
       withOverlay(colored) { overlay ->
         assertEquals(Color.TRANSPARENT, overlay.getBitmap(499_999).getPixel(0, 0))
