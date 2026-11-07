@@ -5,7 +5,7 @@ import { audibleAudioClipsWithin } from '@/lib/audio-timeline';
 import { resolveCaptionStyle } from '@/lib/style-resolver';
 import { resolveLayerGeometry } from '@/lib/layer-geometry';
 import { exportCaptionPairs } from '@/lib/export-caption-pairs';
-import { buildClipTimeline } from '@/lib/video-timeline';
+import { buildClipTimeline, totalClipDuration } from '@/lib/video-timeline';
 import { effectiveVideoTransition } from '@/lib/video-transitions';
 import { resolveVideoTransform } from '@/lib/video-transform';
 import { selectExportFrameRate } from '@/lib/video-source-metadata';
@@ -98,7 +98,10 @@ export function buildTimelineRenderPlan(
 ): TimelineRenderPlan {
   const sourceById = new Map(project.sources.map((source) => [source.id, source]));
   const audioSourceById = new Map(project.audioSources.map((source) => [source.id, source]));
-  const durationMs = projectRenderDuration(project);
+  // Match Kotlin's Long ms once, before bounding every export consumer. A ceiled
+  // footage duration invents a tail gap; a raw one admits native-zero tail content.
+  // Keep deliberate gaps in the extent and preserve the separate canvas policy.
+  const durationMs = project.clips.length ? Math.trunc(totalClipDuration(project.clips)) : projectRenderDuration(project);
   if (durationMs <= 0) throw new Error('Add timed content before exporting.');
   const audibleClips = audibleAudioClipsWithin(project, durationMs);
   // Validate raw persisted trims before timeline helpers can normalize them.
