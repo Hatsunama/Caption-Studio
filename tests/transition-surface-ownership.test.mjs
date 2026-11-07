@@ -38,7 +38,8 @@ function harness(type, reverse = false) {
   };
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = { react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
-    'react-native': { View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' } };
+    'react-native': { View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' },
+    'expo-image': { Image: 'image' } };
   function load(file) {
     if (cache.has(file)) return cache.get(file);
     if (!compiled.has(file)) compiled.set(file, ts.transpileModule(readFileSync(file, 'utf8'), {

@@ -146,7 +146,7 @@ function videoHarness() {
   };
   const react = {
     useRef(value) { const i = cursor++; return cells[i] ??= { current: value }; },
-    useState(value) { const i = cursor++; if (!(i in cells)) cells[i] = value;
+    useState(value) { const i = cursor++; if (!(i in cells)) cells[i] = typeof value === 'function' ? value() : value;
       return [cells[i], (next) => { cells[i] = typeof next === 'function' ? next(cells[i]) : next; }]; },
     useMemo(fn, deps) { const i = cursor++; if (!same(cells[i]?.deps, deps)) cells[i] = { deps, value: fn() }; return cells[i].value; },
     useCallback(fn, deps) { return react.useMemo(() => fn, deps); },

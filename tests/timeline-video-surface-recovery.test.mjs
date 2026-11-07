@@ -64,6 +64,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   const mocks = {
     react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
     'react-native': { View: 'view', Text: 'text', AppState: appState },
+    'expo-image': { Image: 'image' },
     'expo-video': { VideoView: 'video', useVideoPlayer(_source, setup) {
       const player = players[playerCursor++]; const ref = react.useRef(false);
       if (!ref.current) { setup(player); ref.current = true; } return player; } },
