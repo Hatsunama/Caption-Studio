@@ -23,6 +23,16 @@ type SlotIndex = 0 | 1;
 type CompositeClock = { key: string; slot: SlotIndex; prepareToken: number };
 const FIRST_FRAME_TIMEOUT_MS = 5_000;
 
+// ISOLATED DIAGNOSTIC ONLY: scalar preparation targets; never release this logger.
+let tailPreviewDiagnosticBudget = 64;
+function traceTailPreview(stage: number, slot: number, token: number, player: VideoPlayer, ...values: number[]) {
+  try {
+    if (tailPreviewDiagnosticBudget-- <= 0) return;
+    const scalars = [stage, slot, token, player.currentTime * 1_000, player.duration * 1_000, ...values];
+    console.info('CS_TAIL_PREVIEW', ...scalars.map(value => Number.isFinite(value) ? value : -1));
+  } catch { /* Diagnostics cannot change native preparation or cancellation. */ }
+}
+
 export type TimelineVideoSlot = {
   sourceId?: string;
   playbackUri?: string;
@@ -368,6 +378,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.preparationError = undefined;
     const token = ++runtime.prepareToken;
     const sourceChanged = forceReload || runtime.playbackUri !== uri;
+    traceTailPreview(0, slot, token, player, timelineMs, entry.startMs, entry.endMs,
+      entry.clip.sourceStartMs, entry.clip.sourceEndMs, sourceTimeAt(entry, timelineMs), sourceChanged ? 1 : 0);
 
     runtime.sourceId = source.id;
     runtime.playbackUri = uri;
@@ -390,12 +402,14 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       player.muted = true;
       player.playbackRate = 1;
       player.currentTime = targetSeconds;
+      traceTailPreview(1, slot, token, player, timelineMs, targetSeconds * 1_000);
       await Promise.all([
         waitForFirstFrame(slot, preparation.signal),
         waitForPlaybackPosition(player, targetSeconds, preparation.signal),
       ]);
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       player.pause();
+      traceTailPreview(2, slot, token, player, timelineMs, targetSeconds * 1_000);
       runtime.readiness = 'ready';
       publishSlots();
       return slot;

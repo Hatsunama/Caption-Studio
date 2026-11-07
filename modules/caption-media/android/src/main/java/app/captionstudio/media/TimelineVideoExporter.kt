@@ -71,6 +71,8 @@ internal class TimelineVideoExporter(private val context: Context) {
   private var activeExport: ActiveExport? = null
 
   fun start(outputPath: String, plan: TimelineRenderPlan, promise: Promise) {
+    // DIAGNOSTIC ONLY: bounded scalar plan evidence; remove after the export-tail investigation.
+    logTimelineExportTailPlan(plan)
     val output = File(outputPath)
     val task = try {
       val policy = MediaInputPolicy(context)
@@ -625,19 +627,49 @@ internal fun clockedVideoSequences(
 
 internal data class TimelineExportProgress(val stage: String, val percent: Int?)
 
+private fun logExportTailRecord(message: String) {
+  try {
+    Log.i("CS_TAIL_DIAG", message)
+  } catch (_: RuntimeException) {
+    // ISOLATED DIAGNOSTIC ONLY: logging must not change export behavior.
+  }
+}
+
+// DIAGNOSTIC ONLY: fixed keys and numeric values; never serialize plans or media identifiers.
+internal fun logTimelineExportTailPlan(plan: TimelineRenderPlan) {
+  logExportTailRecord("event=0 durationMs=${plan.durationMs} frameRate=${plan.frameRate}" +
+    " clipCount=${plan.clips.size} layerCount=${plan.layers.size}" +
+    " originalAudioCandidateCount=${plan.clips.count { !it.muted && it.volume > 0f }}" +
+    " insertedAudioCount=${plan.audioClips.size}" +
+    " insertedAudioCandidateCount=${plan.audioClips.count { !it.muted && it.volume > 0f }}" +
+    " videoLayerAudioCandidateCount=${plan.layers.count { it is VideoRenderLayer && it.visible && it.includeAudio }}")
+  plan.clips.take(4).forEachIndexed { index, clip ->
+    logExportTailRecord("event=1 clipIndex=$index timelineStartMs=${clip.timelineStartMs}" +
+      " timelineEndMs=${clip.timelineEndMs} sourceStartMs=${clip.sourceStartMs} sourceEndMs=${clip.sourceEndMs}" +
+      " rate=${clip.playbackRate} transitionNone=${if (clip.transitionType == "none") 1 else 0}" +
+      " transitionDurationMs=${clip.transitionDurationMs}")
+  }
+}
+
 internal class TimelineVideoCompositorSettings(
   private val plan: TimelineRenderPlan,
 ) : VideoCompositorSettings {
+  // DIAGNOSTIC ONLY: independent, synchronized budgets prevent clock traffic starving footage.
+  private val tailTraceCounts = IntArray(3)
+
   override fun getOutputSize(inputSizes: List<Size>) = Size(plan.width, plan.height)
 
   override fun getOverlaySettings(inputId: Int, presentationTimeUs: Long): OverlaySettings {
     if (plan.clips.isNotEmpty() && inputId == CLOCK_SEQUENCE_INDEX) {
       return StaticOverlaySettings.Builder().setAlphaScale(0f).build()
+        .also { traceTail(inputId, presentationTimeUs, it.alphaScale) }
     }
     if (plan.clips.isEmpty() || inputId != VIDEO_SEQUENCE_INDEX) return StaticOverlaySettings.Builder().build()
+      .also { traceTail(inputId, presentationTimeUs, it.alphaScale) }
     val timeMs = (presentationTimeUs / 1_000L).coerceIn(0L, plan.durationMs)
     val clip = plan.clips.firstOrNull { timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs }
       ?: return StaticOverlaySettings.Builder().setAlphaScale(0f).build()
+        .also { traceTail(inputId, presentationTimeUs, it.alphaScale) }
     val transform = clip.transform
     return StaticOverlaySettings.Builder()
       .setAlphaScale(1f)
@@ -649,6 +681,26 @@ internal class TimelineVideoCompositorSettings(
       .setScale(transform.scale * transform.scaleX, transform.scale * transform.scaleY)
       .setRotationDegrees(-transform.rotation)
       .build()
+      .also { traceTail(inputId, presentationTimeUs, it.alphaScale) }
+  }
+
+  private fun traceTail(inputId: Int, presentationTimeUs: Long, alpha: Float) {
+    // DIAGNOSTIC ONLY: include nearby post-end input PTS; at most 16 records per input.
+    // Input texture timing/alpha cannot establish which texture was composited or its pixels.
+    val rawTimeMs = presentationTimeUs / 1_000L
+    if (inputId !in 0..2 || rawTimeMs < (plan.durationMs - 500L).coerceAtLeast(0L) ||
+      rawTimeMs > plan.durationMs + 500L) return
+    synchronized(tailTraceCounts) {
+      if (tailTraceCounts[inputId] >= 16) return
+      tailTraceCounts[inputId]++
+    }
+    val timeMs = rawTimeMs.coerceIn(0L, plan.durationMs)
+    val clipIndex = plan.clips.indexOfFirst { timeMs >= it.timelineStartMs && timeMs < it.timelineEndMs }
+    val clip = plan.clips.getOrNull(clipIndex)
+    logExportTailRecord("event=2 inputId=$inputId inputPTS=$presentationTimeUs timeMs=$timeMs" +
+      " clipIndex=$clipIndex timelineStartMs=${clip?.timelineStartMs ?: -1L}" +
+      " timelineEndMs=${clip?.timelineEndMs ?: -1L} sourceStartMs=${clip?.sourceStartMs ?: -1L}" +
+      " sourceEndMs=${clip?.sourceEndMs ?: -1L} alpha=$alpha")
   }
 
   private companion object {
