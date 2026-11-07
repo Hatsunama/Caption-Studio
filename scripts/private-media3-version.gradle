@@ -2,7 +2,7 @@
 if (System.getenv('GITHUB_REF') != 'refs/heads/diagnostic/media3-clipping-111-20261107') {
     throw new GradleException('Private Media3 comparison requires its isolated diagnostic branch')
 }
-def comparisonVersion = gradle.startParameter.projectProperties['captionPrivateMedia3Version']
+def comparisonVersion = System.getenv('CAPTION_PRIVATE_MEDIA3_VERSION')
 if (!(comparisonVersion in ['1.10.1', '1.11.0'])) {
     throw new GradleException('Private comparison version must be explicit and reviewed')
 }
