@@ -6,11 +6,66 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { privateFramePtsTarget as map } from '../src/components/editor/private-frame-pts-diagnostic.ts';
 import { patchPrivateFramePts as patch } from '../scripts/private-frame-pts-diagnostic.mjs';
+import * as diagnostic from '../scripts/private-frame-pts-diagnostic.mjs';
 
 const root = new URL('../', import.meta.url);
 const nativeBase = 'android/src/main/java/expo/modules/video/';
 const files = ['package.json', nativeBase + 'player/VideoPlayer.kt', nativeBase + 'VideoModule.kt'];
 const fixture = { displayName: 'cs-166-samsung.mp4', durationMs: 8000, width: 360, height: 640 };
+
+function manifestFixture(t, value) {
+  const dir = fs.mkdtempSync(join(tmpdir(), 'cs-private-source-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'package.json');
+  fs.writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
+  return path;
+}
+
+test('packaging configuration regression: private SDK source patch must opt expo-video out of prebuilt AAR', t => {
+  const path = manifestFixture(t, { name: 'fixture', dependencies: { 'expo-video': '~57.0.5' } });
+  assert.equal(typeof diagnostic.configurePrivateFramePts, 'function', 'old native-only patch never configured source compilation');
+  assert.equal(diagnostic.configurePrivateFramePts(path), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path, 'utf8')).expo.autolinking.android.buildFromSource, ['expo-video']);
+});
+
+test('source configuration preserves existing settings and is byte-idempotent', t => {
+  const before = { name: 'fixture', expo: { other: true, autolinking: {
+    buildFromSource: ['inherited-module'], ios: { exclude: ['ios-module'] },
+    android: { exclude: ['android-module'], buildFromSource: ['existing-module'] },
+  } } };
+  const path = manifestFixture(t, before);
+  assert.equal(diagnostic.configurePrivateFramePts(path), true);
+  const after = fs.readFileSync(path, 'utf8');
+  before.expo.autolinking.android.buildFromSource.push('expo-video');
+  assert.deepEqual(JSON.parse(after), before);
+  assert.equal(diagnostic.configurePrivateFramePts(path), false);
+  assert.equal(fs.readFileSync(path, 'utf8'), after);
+  const inherited = manifestFixture(t, { expo: { autolinking: { buildFromSource: ['inherited-module'] } } });
+  diagnostic.configurePrivateFramePts(inherited);
+  assert.deepEqual(JSON.parse(fs.readFileSync(inherited, 'utf8')).expo.autolinking.android.buildFromSource,
+    ['inherited-module', 'expo-video']);
+});
+
+test('invalid source config fails without overriding or writing any bytes', t => {
+  for (const value of [null, [], { expo: null }, { expo: [] }, { expo: 'bad' },
+    { expo: { autolinking: false } }, { expo: { autolinking: { android: [] } } },
+    { expo: { autolinking: { buildFromSource: 'bad' } } },
+    ...[null, 'expo-video', [42], {}].map(buildFromSource => ({ expo: { autolinking: { android: { buildFromSource } } } }))]) {
+    const path = manifestFixture(t, value), before = fs.readFileSync(path, 'utf8');
+    assert.throws(() => diagnostic.configurePrivateFramePts(path), /config/);
+    assert.equal(fs.readFileSync(path, 'utf8'), before);
+  }
+});
+
+test('single manifest staging/rename failures leave original bytes and no temporary files', t => {
+  for (const operation of ['writeFileSync', 'renameSync']) {
+    const path = manifestFixture(t, { name: 'fixture' }), before = fs.readFileSync(path, 'utf8');
+    const io = { ...fs, [operation]() { throw new Error('injected config IO failure'); } };
+    assert.throws(() => diagnostic.configurePrivateFramePts(path, io), /injected config IO failure/);
+    assert.equal(fs.readFileSync(path, 'utf8'), before);
+    assert.deepEqual(fs.readdirSync(join(path, '..')), ['package.json']);
+  }
+});
 
 test('known sample mapping is limited to two exact paused Android fixtures and original target window', () => {
   for (const displayName of [fixture.displayName, 'cs-166-seeker.mp4']) {
@@ -131,13 +186,31 @@ test('staging and second-file commit failures restore both original sources', t 
 });
 
 test('CLI refuses local/main/push execution and workflow gates only the exact private dispatch', () => {
-  for (const env of [{ GITHUB_ACTIONS: 'false' }, { GITHUB_REF: 'refs/heads/main' }, { GITHUB_EVENT_NAME: 'push' }]) {
-    const result = spawnSync(process.execPath, ['--max-old-space-size=128', 'scripts/private-frame-pts-diagnostic.mjs'], {
-      cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: 'true',
-        GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/diagnostic/paused-frame-pts-20261107', ...env },
-    });
-    assert.equal(result.status, 1); assert.match(result.stderr, /requires the private branch CI dispatch/);
+  for (const args of [[], ['--configure-source']]) {
+    for (const env of [{ GITHUB_ACTIONS: 'false' }, { GITHUB_REF: 'refs/heads/main' }, { GITHUB_EVENT_NAME: 'push' }]) {
+      const result = spawnSync(process.execPath, ['--max-old-space-size=128', 'scripts/private-frame-pts-diagnostic.mjs', ...args], {
+        cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: 'true',
+          GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/diagnostic/paused-frame-pts-20261107', ...env },
+      });
+      assert.equal(result.status, 1); assert.match(result.stderr, /requires the private branch CI dispatch/);
+    }
   }
   const workflow = fs.readFileSync(new URL('.github/workflows/ci.yml', root), 'utf8');
-  assert.match(workflow, /run: npm ci\n      - name: Apply disposable private frame PTS diagnostic\n        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs\/heads\/diagnostic\/paused-frame-pts-20261107'\n        run: node --max-old-space-size=512 scripts\/private-frame-pts-diagnostic.mjs\n      - name: Audit production dependencies/);
+  const gate = "        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostic/paused-frame-pts-20261107'";
+  const setup = [
+    '      - name: Apply disposable private frame PTS diagnostic', gate, '        run: |',
+    '          node --max-old-space-size=256 scripts/private-frame-pts-diagnostic.mjs --configure-source',
+    '          node --max-old-space-size=256 scripts/private-frame-pts-diagnostic.mjs',
+    '          python3 -B tests/private-frame-pts-apk.test.py',
+  ].join('\n');
+  assert.ok(workflow.includes('run: npm ci\n' + setup + '\n      - name: Audit production dependencies'));
+  assert.ok(workflow.indexOf(setup) < workflow.indexOf('npx expo prebuild'));
+  const verify = [
+    '      - name: Verify private PTS DEX marker packaging (not render proof)', gate,
+    '        run: python3 -B scripts/verify-private-frame-pts-apk.py android/app/build/outputs/apk/release/app-release.apk',
+  ].join('\n');
+  assert.ok(workflow.includes(verify));
+  assert.ok(workflow.indexOf(verify) > workflow.indexOf('./gradlew :app:assembleRelease'));
+  assert.ok(workflow.indexOf(verify) < workflow.indexOf('      - name: Retain native unit-test reports'));
+  assert.ok(workflow.indexOf(verify) < workflow.indexOf('      - name: Retain CI-signed release-validation APK and AAB'));
 });

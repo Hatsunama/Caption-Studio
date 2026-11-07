@@ -99,6 +99,41 @@ const specs = [
 const occurrences = (text, needle) => text.split(needle).length - 1;
 const digest = text => createHash('sha256').update(text).digest('hex');
 
+// CI-only package.json edit, atomic for this ONE file. This is intentionally
+// separate from the two-native-file transaction below; no three-file guarantee.
+export function configurePrivateFramePts(manifestPath, io = fs) {
+  const config = JSON.parse(io.readFileSync(manifestPath, 'utf8'));
+  const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (!object(config)) throw new Error('Invalid private PTS package config');
+  let parent = config;
+  for (const key of ['expo', 'autolinking', 'android']) {
+    if (Object.hasOwn(parent, key) && !object(parent[key])) {
+      throw new Error('Invalid private PTS autolinking config');
+    }
+    parent[key] ??= {};
+    parent = parent[key];
+  }
+  const linking = config.expo.autolinking;
+  for (const settings of [linking, parent]) {
+    if (Object.hasOwn(settings, 'buildFromSource') && (!Array.isArray(settings.buildFromSource)
+      || settings.buildFromSource.some(value => typeof value !== 'string'))) {
+      throw new Error('Invalid private PTS buildFromSource config');
+    }
+  }
+  // Android overrides the root list: carry inherited selections forward.
+  const selected = parent.buildFromSource ?? linking.buildFromSource ?? [];
+  if (selected.includes('expo-video')) return false;
+  parent.buildFromSource = [...selected, 'expo-video'];
+  const temporary = manifestPath + '.' + randomUUID() + '.tmp';
+  try {
+    io.writeFileSync(temporary, JSON.stringify(config, null, 2) + '\n', { flag: 'wx' });
+    io.renameSync(temporary, manifestPath);
+  } finally {
+    if (io.existsSync(temporary)) io.unlinkSync(temporary);
+  }
+  return true;
+}
+
 // Tests pass a temporary copy of the actual installed package, never node_modules.
 export function patchPrivateFramePts(packageRoot, io = fs) {
   if (JSON.parse(io.readFileSync(join(packageRoot, 'package.json'), 'utf8')).version !== '57.0.5') {
@@ -147,5 +182,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     || process.env.GITHUB_REF !== branchRef) {
     throw new Error('Private PTS diagnostic requires the private branch CI dispatch');
   }
-  patchPrivateFramePts(join(dirname(fileURLToPath(import.meta.url)), '../node_modules/expo-video'));
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  if (process.argv.length === 3 && process.argv[2] === '--configure-source') {
+    configurePrivateFramePts(join(root, 'package.json'));
+  } else if (process.argv.length === 2) {
+    patchPrivateFramePts(join(root, 'node_modules/expo-video'));
+  } else {
+    throw new Error('Unknown private PTS diagnostic arguments');
+  }
 }
