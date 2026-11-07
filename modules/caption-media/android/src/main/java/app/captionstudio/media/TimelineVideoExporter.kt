@@ -265,7 +265,7 @@ internal class TimelineVideoExporter(private val context: Context) {
       .build()
     val sequences = clockedVideoSequences(
       baseVideo,
-      if (plan.clips.isNotEmpty()) buildNativeVideoSequence(plan) else null,
+      if (plan.clips.isNotEmpty()) buildNativeVideoSequence(plan, baseVideoItem) else null,
     ).toMutableList()
     val audioState = mutableMapOf<String, Boolean>()
     val audioItems = buildOriginalAudioItems(plan, task) + plan.audioClips.mapNotNull { clip ->
@@ -285,11 +285,28 @@ internal class TimelineVideoExporter(private val context: Context) {
     )
   }
 
-  private fun buildNativeVideoSequence(plan: TimelineRenderPlan): EditedMediaItemSequence {
+  internal fun buildNativeVideoSequence(plan: TimelineRenderPlan, canvasMediaItem: MediaItem): EditedMediaItemSequence {
     val builder = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
+    fun addCanvasGap(durationMs: Long) {
+      // Reuse the export-owned, plan-sized canvas instead of Media3's default video gap.
+      // Both duration fields must describe this gap, not the full canvas clock.
+      builder.addItem(
+        EditedMediaItem.Builder(canvasMediaItem.buildUpon().setImageDurationMs(durationMs).build())
+          .setDurationUs(durationMs * 1_000L)
+          .setFrameRate(plan.frameRate)
+          .setRemoveAudio(true)
+          .setEffects(
+            Effects(
+              emptyList(),
+              listOf(Presentation.createForWidthAndHeight(plan.width, plan.height, Presentation.LAYOUT_SCALE_TO_FIT)),
+            ),
+          )
+          .build(),
+      )
+    }
     var cursorMs = 0L
     plan.clips.forEach { clip ->
-      if (clip.timelineStartMs > cursorMs) builder.addGap((clip.timelineStartMs - cursorMs) * 1_000L)
+      if (clip.timelineStartMs > cursorMs) addCanvasGap(clip.timelineStartMs - cursorMs)
       val layout = if (clip.transform.fit == "fill") {
         Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
       } else {
@@ -309,7 +326,7 @@ internal class TimelineVideoExporter(private val context: Context) {
       )
       cursorMs = clip.timelineEndMs
     }
-    if (cursorMs < plan.durationMs) builder.addGap((plan.durationMs - cursorMs) * 1_000L)
+    if (cursorMs < plan.durationMs) addCanvasGap(plan.durationMs - cursorMs)
     return builder.build()
   }
 
@@ -419,7 +436,7 @@ internal class TimelineVideoExporter(private val context: Context) {
     else retriever.setDataSource(context, uri)
   }
 
-  private fun createBaseFrame(file: File, plan: TimelineRenderPlan) {
+  internal fun createBaseFrame(file: File, plan: TimelineRenderPlan) {
     file.parentFile?.mkdirs()
     val bitmap = Bitmap.createBitmap(plan.width, plan.height, Bitmap.Config.ARGB_8888)
     try {

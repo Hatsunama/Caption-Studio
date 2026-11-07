@@ -2,9 +2,11 @@ import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project
 import { buildVideoTransitionPreviewWindows, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
 import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
 import { videoPlaybackUri } from '@/lib/video-playback-source';
+import { acknowledgesPlaybackPosition, effectiveNativeSeekTarget } from '@/lib/video-playback-position';
 import { useEventListener } from 'expo';
 import { useVideoPlayer, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 
 import {
   buildClipTimeline,
@@ -29,11 +31,13 @@ export type TimelineVideoSlot = {
   preparedClipId?: string;
   firstFrameReady: boolean;
   prepareToken: number;
+  nativeViewEpoch: number;
   readiness: 'idle' | 'preparing' | 'ready' | 'error' | 'cancelled';
 };
 
 type SlotRuntime = TimelineVideoSlot & {
   prepareToken: number;
+  renderGate: 'disarmed' | 'loading' | 'awaitingPosition' | 'awaitingFrame' | 'ready';
   preparation?: AbortController;
   preparationTask?: Promise<SlotIndex>;
   preparingTimelineMs?: number;
@@ -41,10 +45,12 @@ type SlotRuntime = TimelineVideoSlot & {
   frameWaiters: Set<() => void>;
 };
 
-function createSlotRuntime(): SlotRuntime {
+function createSlotRuntime(prepareToken: number, nativeViewEpoch: number): SlotRuntime {
   return {
     firstFrameReady: false,
-    prepareToken: 0,
+    prepareToken,
+    nativeViewEpoch,
+    renderGate: 'disarmed',
     readiness: 'idle',
     frameWaiters: new Set(),
   };
@@ -65,8 +71,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const [previewResourcesSuspended, setPreviewResourcesSuspended] = useState(false);
   const [activeSlot, setActiveSlotState] = useState<SlotIndex>(0);
   const [slots, setSlots] = useState<readonly [TimelineVideoSlot, TimelineVideoSlot]>([
-    { firstFrameReady: false, prepareToken: 0, readiness: 'idle' },
-    { firstFrameReady: false, prepareToken: 0, readiness: 'idle' },
+    { firstFrameReady: false, prepareToken: 0, nativeViewEpoch: 0, readiness: 'idle' },
+    { firstFrameReady: false, prepareToken: 0, nativeViewEpoch: 0, readiness: 'idle' },
   ]);
   const [hasPresentedFrame, setHasPresentedFrameState] = useState(false);
 
@@ -79,7 +85,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const activeSlotRef = useRef<SlotIndex>(0);
   const compositeClockRef = useRef<CompositeClock | undefined>(undefined);
   const activeClipIdRef = useRef<string | undefined>(undefined);
-  const slotRuntimeRef = useRef<[SlotRuntime, SlotRuntime]>([createSlotRuntime(), createSlotRuntime()]);
+  const slotRuntimeRef = useRef<[SlotRuntime, SlotRuntime]>([createSlotRuntime(0, 0), createSlotRuntime(0, 0)]);
   const desiredRef = useRef<Target | undefined>(undefined);
   const processingRef = useRef<Promise<void> | undefined>(undefined);
   const drainTargetsRef = useRef<() => Promise<void>>(async () => {});
@@ -120,6 +126,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         preparedClipId: first.preparedClipId,
         firstFrameReady: first.firstFrameReady,
         prepareToken: first.prepareToken,
+        nativeViewEpoch: first.nativeViewEpoch,
         readiness: first.readiness,
       },
       {
@@ -128,6 +135,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         preparedClipId: second.preparedClipId,
         firstFrameReady: second.firstFrameReady,
         prepareToken: second.prepareToken,
+        nativeViewEpoch: second.nativeViewEpoch,
         readiness: second.readiness,
       },
     ]);
@@ -188,6 +196,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       runtime.preparation?.abort();
       // Retire callbacks and async continuations before publishing new surfaces.
       runtime.prepareToken += 1;
+      runtime.nativeViewEpoch += 1;
+      runtime.renderGate = 'disarmed';
       runtime.preparation = undefined;
       runtime.preparationTask = undefined;
       runtime.firstFrameReady = false;
@@ -262,9 +272,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
           suspension.resolveReady();
           return;
         }
-        slotRuntimeRef.current = slotRuntimeRef.current.map((runtime) => ({
-          ...createSlotRuntime(), prepareToken: runtime.prepareToken + 1,
-        })) as [SlotRuntime, SlotRuntime];
+        slotRuntimeRef.current = slotRuntimeRef.current.map((runtime) =>
+          createSlotRuntime(runtime.prepareToken + 1, runtime.nativeViewEpoch + 1),
+        ) as [SlotRuntime, SlotRuntime];
         activeClipIdRef.current = undefined;
         hasPresentedFrameRef.current = false;
         setHasPresentedFrameState(false);
@@ -292,10 +302,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     setSourceFailure(videoSourceFailure(source, error));
   };
 
-  const markFirstFrame = useCallback((slot: SlotIndex, token: number) => {
+  const markFirstFrame = useCallback((slot: SlotIndex, nativeViewEpoch: number) => {
     const runtime = slotRuntimeRef.current[slot];
     if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current
-      || token !== runtime.prepareToken
+      || nativeViewEpoch !== runtime.nativeViewEpoch
+      || (runtime.renderGate !== 'awaitingFrame' && runtime.renderGate !== 'ready')
+      || (runtime.readiness === 'preparing' && runtime.preparation?.signal.aborted)
       || (runtime.readiness !== 'preparing' && runtime.readiness !== 'ready')) return;
     runtime.firstFrameReady = true;
     for (const resolve of runtime.frameWaiters) resolve();
@@ -303,7 +315,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     publishSlots();
   }, [publishSlots]);
 
-  const waitForFirstFrame = (slot: SlotIndex, signal: AbortSignal) => {
+  const waitForFirstFrame = (slot: SlotIndex, signal: AbortSignal, deadline: number) => {
     const runtime = slotRuntimeRef.current[slot];
     if (signal.aborted) return Promise.reject(abortError());
     if (runtime.firstFrameReady) return Promise.resolve();
@@ -319,7 +331,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       };
       const ready = () => finish();
       const abort = () => finish(abortError());
-      const timeout = setTimeout(() => finish(new Error('The video did not render a frame in time. Try loading it again.')), FIRST_FRAME_TIMEOUT_MS);
+      const timeout = setTimeout(() => finish(new Error('The video did not render a frame in time. Try loading it again.')),
+        Math.max(0, deadline - performance.now()));
       runtime.frameWaiters.add(ready);
       signal.addEventListener('abort', abort, { once: true });
     });
@@ -344,10 +357,13 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     };
     const abort = () => finish(abortError());
     subscription = player.addListener('timeUpdate', ({ currentTime }) => {
-      if (Math.abs(currentTime - targetSeconds) <= 0.25) finish();
+      if (acknowledgesPlaybackPosition(currentTime, targetSeconds, Platform.OS)) finish();
     });
     timeout = setTimeout(() => finish(new Error('The video did not reach the requested frame in time. Try loading it again.')), FIRST_FRAME_TIMEOUT_MS);
     signal.addEventListener('abort', abort, { once: true });
+    // Subscribe before assigning: even a synchronous native ACK must be retained.
+    try { player.currentTime = targetSeconds; }
+    catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
   });
 
   const prepareSlotOperation = async (
@@ -374,10 +390,13 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.preparedClipId = entry.clip.id;
     runtime.preparingTimelineMs = timelineMs;
     runtime.firstFrameReady = false;
+    runtime.renderGate = 'loading';
     runtime.readiness = 'preparing';
     publishSlots();
 
     try {
+      player.pause();
+      player.muted = true;
       if (sourceChanged) {
         runtime.firstFrameReady = false;
         publishSlots();
@@ -385,24 +404,36 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
 
-      const targetSeconds = sourceTimeAt(entry, timelineMs) / 1_000;
+      const targetSeconds = effectiveNativeSeekTarget(
+        sourceTimeAt(entry, timelineMs) / 1_000, source.durationMs / 1_000, player.duration, Platform.OS,
+      );
       player.pause();
       player.muted = true;
       player.playbackRate = 1;
-      player.currentTime = targetSeconds;
-      await Promise.all([
-        waitForFirstFrame(slot, preparation.signal),
-        waitForPlaybackPosition(player, targetSeconds, preparation.signal),
-      ]);
+      runtime.renderGate = 'awaitingPosition';
+      const frameDeadline = performance.now() + FIRST_FRAME_TIMEOUT_MS;
+      await waitForPlaybackPosition(player, targetSeconds, preparation.signal);
+      if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current
+        || preparation.signal.aborted || token !== runtime.prepareToken
+        || runtime.preparation !== preparation) throw abortError();
+      // Expo 57 suppresses repeated seek-first-frame receipts on a retained
+      // view. Rebind only preparation, after its position ACK, with a distinct
+      // identity so load-time and retired-view callbacks cannot certify it.
+      runtime.nativeViewEpoch += 1;
+      runtime.renderGate = 'awaitingFrame';
+      publishSlots();
+      await waitForFirstFrame(slot, preparation.signal, frameDeadline);
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       player.pause();
       runtime.readiness = 'ready';
+      runtime.renderGate = 'ready';
       publishSlots();
       return slot;
     } catch (caught) {
       const error = token === runtime.prepareToken ? runtime.preparationError ?? caught : abortError();
       if (token === runtime.prepareToken) {
         runtime.firstFrameReady = false;
+        runtime.renderGate = 'disarmed';
         runtime.readiness = isAbortError(error) ? 'cancelled' : 'error';
         // A failed or cancelled replacement must not be reused by URI alone.
         runtime.playbackUri = undefined;
@@ -442,7 +473,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     media.playbackRate = entry.clip.playbackRate;
     media.muted = entry.clip.muted;
     media.volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
-    const timeSeconds = sourceTimeAt(entry, timelineMs) / 1_000;
+    const timeSeconds = effectiveNativeSeekTarget(
+      sourceTimeAt(entry, timelineMs) / 1_000, sourceForEntry(entry).durationMs / 1_000, media.duration, Platform.OS,
+    );
     if (shouldApplyTimelineSeek(media.currentTime, timeSeconds)) media.currentTime = timeSeconds;
   };
 
@@ -742,6 +775,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     compositeClockRef.current = undefined;
     const ownsPlayback = slot === activeSlotRef.current && runtime.preparedClipId === activeClipIdRef.current;
     runtime.readiness = 'error';
+    runtime.renderGate = 'disarmed';
     runtime.firstFrameReady = false;
     runtime.playbackUri = undefined;
     playerForSlot(slot).pause();

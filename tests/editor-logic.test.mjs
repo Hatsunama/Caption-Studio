@@ -142,7 +142,11 @@ test('timeline export is native, local, multi-track, and version-aligned', () =>
   assert.match(exporter, /OverlayEffect/);
   assert.match(exporter, /MediaStore\.Video\.Media\.EXTERNAL_CONTENT_URI/);
   assert.match(exporter, /Environment\.getExternalStoragePublicDirectory/);
-  assert.match(exporter, /builder\.addGap/);
+  assert.doesNotMatch(exporter, /builder\.addGap/);
+  assert.match(exporter, /buildNativeVideoSequence\(plan, baseVideoItem\)/);
+  assert.match(exporter, /canvasMediaItem\.buildUpon\(\)\.setImageDurationMs\(durationMs\)/);
+  assert.match(exporter, /addCanvasGap\(clip\.timelineStartMs - cursorMs\)/);
+  assert.match(exporter, /addCanvasGap\(plan\.durationMs - cursorMs\)/);
   assert.match(exporter, /setSpeed\(ConstantSpeedProvider/);
   assert.match(exporter, /buildNativeVideoSequence/);
   assert.match(exporter, /TimelineVideoCompositorSettings/);

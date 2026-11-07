@@ -30,7 +30,7 @@ type Props = {
   activeSlot: 0 | 1;
   currentTransform: VideoTransform;
   currentClipId?: string;
-  onFirstFrameRender: (slot: 0 | 1, token: number) => void;
+  onFirstFrameRender: (slot: 0 | 1, nativeViewEpoch: number) => void;
   setCompositeClock: (clock?: { key: string; slot: 0 | 1; prepareToken: number }) => void;
 };
 
@@ -102,7 +102,7 @@ function TimelineVideoPair(props: Props & { composite?: Composite; concealed: bo
         const effect = composite ? compositeLayerStyle(composite.frame, incoming, props.width, props.height) : undefined;
         return (
           <VideoLayer
-            key={`${slot}:${props.slots[slot].prepareToken}`}
+            key={`${slot}:${props.slots[slot].nativeViewEpoch}`}
             player={player}
             transform={source?.transform ?? props.currentTransform}
             width={props.width}
@@ -112,7 +112,7 @@ function TimelineVideoPair(props: Props & { composite?: Composite; concealed: bo
               ? [{ zIndex: incoming ? 1 : 0 }, effect?.style]
               : { zIndex: slot === props.activeSlot ? 1 : 0, backgroundColor: props.backgroundColor }}
             clip={effect?.clip}
-            onFirstFrameRender={() => props.onFirstFrameRender(slot, props.slots[slot].prepareToken)}
+            onFirstFrameRender={() => props.onFirstFrameRender(slot, props.slots[slot].nativeViewEpoch)}
           />
         );
       })}

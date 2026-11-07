@@ -69,7 +69,7 @@ function harness(type, reverse = false) {
   const order = reverse ? ['in', 'out'] : ['out', 'in'];
   const props = { entries, sources, timelineMs: 3000, isPlaying: false, transportReady: true,
     width: 300, height: 200, backgroundColor: '#123456', admitted: true, visible: true, players,
-    slots: order.map((preparedClipId, i) => ({ preparedClipId, prepareToken: 10 + i, firstFrameReady: true, readiness: 'ready' })),
+    slots: order.map((preparedClipId, i) => ({ preparedClipId, prepareToken: 10 + i, nativeViewEpoch: 100 + i, firstFrameReady: true, readiness: 'ready' })),
     activeSlot: reverse ? 1 : 0, currentTransform: clips[0].transform, currentClipId: 'out',
     onFirstFrameRender(slot, token) { calls.push(['frame', slot, token]); },
     setCompositeClock(clock) { calls.push(['clock', clock]); } };
@@ -116,6 +116,20 @@ function harness(type, reverse = false) {
 const recipes = ['crossfade', 'push-left', 'push-right', 'push-up', 'push-down', 'split-horizontal', 'split-vertical',
   'iris-circle', 'iris-diamond', 'fold-horizontal', 'fold-vertical', 'zoom-in', 'zoom-out', 'spin',
   'fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'];
+
+test('native hosts and frame callbacks follow view epochs independently of async preparation tokens', t => {
+  const h = harness('crossfade'); t.after(() => h.unmount());
+  const initial = h.render().map(view => view.id);
+  const oldCallback = h.videos()[0].props.onFirstFrameRender;
+  h.props.slots = h.props.slots.map(slot => ({ ...slot, prepareToken: slot.prepareToken + 20 }));
+  h.render(); assert.deepEqual(h.videos().map(view => view.id), initial);
+  h.props.slots[0] = { ...h.props.slots[0], nativeViewEpoch: 102 };
+  h.render();
+  assert.notEqual(h.videos()[0].id, initial[0]); assert.equal(h.videos()[1].id, initial[1]);
+  assert.equal(h.videos().length, 2);
+  oldCallback(); h.videos()[0].props.onFirstFrameRender();
+  assert.deepEqual(h.calls.filter(call => call[0] === 'frame'), [['frame', 0, 100], ['frame', 0, 102]]);
+});
 
 for (const recipe of recipes) for (const reverse of [false, true]) {
   test(`${recipe}, reversed slots=${reverse}: actual rendered ownership and retained host identity`, t => {
@@ -166,7 +180,7 @@ test('paused first-frame readiness belongs to retained surfaces; no new frame ev
   assert.equal(concealed(), true);
   assert.ok(h.nodes('view').some(v => v.style.backgroundColor === '#123456'));
   h.frame();
-  assert.deepEqual(h.calls.filter(c => c[0] === 'frame').map(c => c.slice(1)), [[0, 10], [1, 11]]);
+  assert.deepEqual(h.calls.filter(c => c[0] === 'frame').map(c => c.slice(1)), [[0, 100], [1, 101]]);
   h.props.slots = h.props.slots.map(slot => ({ ...slot, firstFrameReady: true, readiness: 'ready' }));
   h.render(); h.phase(.5);
   assert.equal(concealed(), false, 'already rendered paused surfaces reveal without another native callback');
