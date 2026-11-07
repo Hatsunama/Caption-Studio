@@ -443,7 +443,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       if (nativePresentation) {
         const remainingMs = Math.floor(frameDeadline - performance.now());
         if (remainingMs < 1) throw new Error('The video playback window timed out.');
-        // PRIVATE prototype: full sources also reprepare after authoritative SDK
+        // Full sources also reprepare after authoritative SDK
         // initialization. Every installation needs its own presentation receipt;
         // cancellation cannot undo the installed item.
         runtime.appliedWindowEndMs = null;
