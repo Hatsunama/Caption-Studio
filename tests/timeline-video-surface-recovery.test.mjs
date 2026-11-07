@@ -19,7 +19,7 @@ const clip = (id = 'a', sourceId = 'source') => ({ id, sourceId, sourceStartMs: 
 
 // Executes complete modules, with real timeline/policy/overlay consumers. Only
 // React scheduling and the native boundary are faked; frames never arrive by default.
-function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false } = {}) {
+function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false, sourceDurationMs = 60000 } = {}) {
   const hosts = new Map(), cache = new Map(), timers = new Map(), calls = [], eofFrames = new Map();
   const publishedFrames = new Map();
   let host, cursor, dirty = true, transport, views = [], alive = true, timerId = 0, now = 0;
@@ -56,15 +56,16 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     const listeners = new Map();
     let time = 0;
     return { mediaItems: 0, status: 'idle', playing: false, muted: false, playbackRate: 1, volume: 1,
-      get duration() { return nativeDuration === undefined ? project.sources[0]?.durationMs / 1000 : nativeDuration; },
+      get duration() { if (this.windowEndMs != null) return Math.fround(this.windowEndMs / 1000); return nativeDuration === undefined ? project.sources[0]?.durationMs / 1000 : nativeDuration; },
       get currentTime() { return nativeClock ? Math.fround(Math.fround(time * 1000) / 1000) : time; },
       set currentTime(value) { time = nativeClock ? Math.min(Math.trunc(value * 1000), Math.round(this.duration * 1000)) / 1000 : value; calls.push(['seek', slot, value]);
         if (this.ackOnSeek) this.emit('timeUpdate', { currentTime: value }); },
       pause() { this.playing = false; calls.push(['pause', slot]); },
       play() { this.playing = true; calls.push(['play', slot, this.muted]); },
       async replaceAsync(uri) { calls.push(['replace', slot, uri]);
-        if ((holdReplacement || this.holdReplacement) && uri) await new Promise(resolve => { this.finishReplacement = resolve; });
+        if ((this.holdReplacement ?? holdReplacement) && uri) await new Promise(resolve => { this.finishReplacement = resolve; });
         if (uri) { this.mediaItems++; time = 0; }
+        this.loadedUri = uri; this.windowEndMs = undefined;
         this.status = uri ? this.replacementStatus ?? 'readyToPlay' : 'idle'; },
       addListener(event, fn) { const set = listeners.get(event) ?? new Set(); listeners.set(event, set); set.add(fn);
         return { remove: () => set.delete(fn) }; },
@@ -74,6 +75,23 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   });
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = {
+    'caption-media': { __esModule: true, default: {
+      async configureVideoPlaybackWindow(player, uri, requestId, endMs, timeoutMs) {
+        const slot = players.indexOf(player);
+        calls.push(['window', slot, uri, requestId, endMs, timeoutMs]);
+        assert.equal(player.loadedUri, uri, 'SDK source must be current before configuring its window');
+        assert.equal(player.status, 'readyToPlay'); assert.equal(player.playing, false); assert.equal(player.muted, true);
+        assert.ok(timeoutMs > 0 && timeoutMs <= 5000);
+        // Native setMediaSource installs the item before asynchronous READY.
+        // Cancellation retires its observer, without restoring the old item.
+        player.windowEndMs = endMs;
+        if (player.holdWindow) await new Promise((resolve, reject) => { player.finishWindow = resolve; player.failWindow = reject; });
+        if (player.cancelledWindow === requestId) throw Object.assign(new Error('cancelled'), { name: 'AbortError' });
+      },
+      async cancelVideoPlaybackWindow(player, requestId) {
+        calls.push(['cancelWindow', players.indexOf(player), requestId]); player.cancelledWindow = requestId;
+      },
+    } },
     react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
     'react-native': { View: 'view', Text: 'text', AppState: appState, Platform: { OS: platform } },
     'expo-video': { VideoView: 'video', useVideoPlayer(_source, setup) {
@@ -82,29 +100,33 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     expo: { useEventListener(player, event, callback) {
       react.useEffect(() => { const sub = player.addListener(event, callback); return () => sub.remove(); }, [player, event, callback]); } },
   };
+  // One app has one JavaScript realm. Keep each harness isolated, while module
+  // factories provide their own lexical scope without duplicating VM intrinsics.
+  const context = vm.createContext({ Error, AbortController, performance: { now: () => now },
+    setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, at: now + delay }); return id; },
+    clearTimeout: id => timers.delete(id), requestAnimationFrame: () => { throw new Error('unexpected gap clock'); }, cancelAnimationFrame() {},
+  });
   function load(path) {
     if (cache.has(path)) return cache.get(path);
     if (!compiled.has(path)) compiled.set(path, ts.transpileModule(readFileSync(new URL(path, root), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
     }).outputText);
     const exports = {}; cache.set(path, exports);
-    vm.runInNewContext(compiled.get(path), { exports, Error, AbortController, performance: { now: () => now },
-      setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, at: now + delay }); return id; },
-      clearTimeout: id => timers.delete(id), requestAnimationFrame: () => { throw new Error('unexpected gap clock'); }, cancelAnimationFrame() {},
-      require(id) { if (id in mocks) return mocks[id];
+    const factory = vm.runInContext(`(function(exports, require) {\n${compiled.get(path)}\n})`, context,
+      { filename: fileURLToPath(new URL(path, root)) });
+    factory(exports, function localRequire(id) { if (id in mocks) return mocks[id];
         if (id.startsWith('.')) { const relative = posix.normalize(posix.join(posix.dirname(path), id));
           return id.endsWith('.json') ? JSON.parse(readFileSync(new URL(relative, root), 'utf8')) : load(relative + '.ts'); }
         if (id.startsWith('@/')) { const stem = `src/${id.slice(2)}`;
           return load(stem + (stem.endsWith('video-transition-overlay') ? '.tsx' : '.ts')); }
-        return require(id); },
-    }, { filename: fileURLToPath(new URL(path, root)) });
+        return require(id); });
     return exports;
   }
   const { useTimelineVideoController } = load('src/hooks/use-timeline-video-controller.ts');
   const { useEditorRuntimePolicy } = load('src/hooks/use-editor-runtime-policy.ts');
   const { VideoTransitionOverlay } = load('src/components/editor/video-transition-overlay.tsx');
   const { buildClipTimeline } = load('src/lib/video-timeline.ts');
-  const project = { clips, sources: missingSource ? [] : ['source', 'other'].map(id => ({ id, uri: `file:///${id}.mp4`, displayName: id, durationMs: 60000 })) };
+  const project = { clips, sources: missingSource ? [] : ['source', 'other'].map(id => ({ id, uri: `file:///${id}.mp4`, displayName: id, durationMs: sourceDurationMs })) };
   function Root() {
     const policy = useEditorRuntimePolicy(blockingUi);
     transport = useTimelineVideoController(project, () => {}, policy.videoSurfacesAdmitted);
@@ -204,6 +226,23 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     get timerCount() { return timers.size; },
   };
 }
+
+test('independent app harnesses keep clocks, native calls and teardown isolated', async t => {
+  const first = harness(), second = harness();
+  t.after(() => { first.unmount(); second.unmount(); });
+  await first.complete(); await second.complete();
+  assert.equal(first.transport.phase, 'ready');
+  assert.equal(second.transport.phase, 'ready');
+  const untouched = second.calls.length;
+  first.transport.seek(2000); await first.settle();
+  assert.equal(first.transport.currentMs, 2000);
+  assert.equal(second.transport.currentMs, 0);
+  assert.equal(second.calls.length, untouched);
+  first.unmount();
+  await second.app('background'); await second.app('active'); await second.complete();
+  assert.equal(second.transport.phase, 'ready');
+  assert.equal(second.transport.currentMs, 0);
+});
 
 test('load-time frame plus an unrelated position 115ms away cannot certify preparation', async t => {
   const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
@@ -332,8 +371,8 @@ test('position and fresh-view receipts share the original five-second preparatio
 
 test('fractional paused target keeps its domain clock through Home and rejects the observed old 6.500s receipt', async t => {
   const endpoint = { ...clip(), sourceStartMs: 0, sourceEndMs: 7000, availableSourceEndMs: 8000 };
-  const h = harness({ clips: [endpoint] }); t.after(() => h.unmount());
-  h.project.sources[0].durationMs = 8000;
+  const h = harness({ sourceDurationMs: 8000, clips: [endpoint] }); t.after(() => h.unmount());
+
   await h.complete(); h.transport.seek(6385.416); await h.settle();
   assert.equal(h.transport.currentMs, 6385.416);
   const retired = h.views[0].onFirstFrameRender;
@@ -353,9 +392,8 @@ for (const scenario of ['load', 'seek', 'Home', 'standby', 'composite']) {
   test(`paused ${scenario} preparation accepts native clock and first frame without playing`, async t => {
     const trimmed = { ...clip(), sourceStartMs: 0, sourceEndMs: 6385, availableSourceEndMs: 8000 };
     const first = scenario === 'composite' ? { ...clip(), transitionAfter: { type: 'crossfade', durationMs: 1000 } } : trimmed;
-    const h = harness({ clips: ['standby', 'composite'].includes(scenario) ? [first, clip('b', 'other')] : [first] });
+    const h = harness({ sourceDurationMs: first === trimmed ? 8000 : 60000, clips: ['standby', 'composite'].includes(scenario) ? [first, clip('b', 'other')] : [first] });
     t.after(() => h.unmount());
-    if (first === trimmed) h.project.sources[0].durationMs = 8000;
     await h.pausedEvents();
     // Active completion can schedule standby preparation on the next turn.
     await h.pausedEvents();
@@ -363,7 +401,7 @@ for (const scenario of ['load', 'seek', 'Home', 'standby', 'composite']) {
     if (scenario === 'seek' || scenario === 'Home') {
       h.transport.seek(6385); await h.settle();
       await h.pausedEvents();
-      assert.equal(h.transport.player.currentTime, 6.385);
+      assert.equal(h.transport.player.currentTime, 6.384);
     }
     if (scenario === 'composite') {
       h.transport.seek(29750); await h.settle(); await h.pausedEvents();
@@ -382,7 +420,7 @@ for (const scenario of ['load', 'seek', 'Home', 'standby', 'composite']) {
       assert.equal(h.transport.slots.filter(slot => slot.readiness === 'ready').length, 2);
     }
     if (scenario === 'Home') {
-      assert.equal(h.transport.currentMs, 6385); assert.equal(h.transport.player.currentTime, 6.385);
+      assert.equal(h.transport.currentMs, 6385); assert.equal(h.transport.player.currentTime, 6.384);
     }
     if (scenario === 'composite') {
       assert.equal(h.players[0].currentTime, 30.75); assert.equal(h.players[1].currentTime, .75);
@@ -491,8 +529,8 @@ test('Home detaches actual overlay; resume at 21.8s reloads once and needs a fre
 
 test('diag998 retained ready EOF item needs replacement on all three Home restores', async t => {
   const endpoint = { ...clip(), sourceStartMs: 0, sourceEndMs: 8000, availableSourceEndMs: 8000 };
-  const h = harness({ clips: [endpoint] }); t.after(() => h.unmount());
-  h.project.sources[0].durationMs = 8000;
+  const h = harness({ sourceDurationMs: 8000, clips: [endpoint] }); t.after(() => h.unmount());
+
   await h.complete(); h.transport.seek(8000); await h.complete();
   const slot = h.transport.activeSlot, player = h.players[slot];
   const initial = h.calls.filter(call => call[0] === 'replace').length;
@@ -543,8 +581,8 @@ test('diag998 retained ready EOF item needs replacement on all three Home restor
 for (const status of ['idle', 'loading', 'error']) {
   test(`paused 8s endpoint with completed same-URI source in native ${status} rechecks readiness on repeated resume`, async t => {
     const endpoint = { ...clip(), sourceStartMs: 0, sourceEndMs: 8000, availableSourceEndMs: 8000 };
-    const h = harness({ clips: [endpoint] }); t.after(() => h.unmount());
-    h.project.sources[0].durationMs = 8000;
+    const h = harness({ sourceDurationMs: 8000, clips: [endpoint] }); t.after(() => h.unmount());
+
     await h.complete(); h.transport.seek(8000); await h.complete();
     assert.equal(h.transport.currentMs, 8000); assert.equal(h.transport.phase, 'ready');
     const slot = h.transport.activeSlot, player = h.players[slot];
@@ -750,8 +788,8 @@ for (const duration of [8, 7.999, 7.95, Math.fround(7.95)]) {
   for (const preview of [false, true]) {
     test(`whole-media EOF request normalizes loaded ${duration}s ${preview ? 'preview' : 'local'} and activation retains it`, async t => {
       const endpoint = { ...clip(), sourceStartMs: 0, sourceEndMs: 8000, availableSourceEndMs: 8000 };
-      const h = harness({ clips: [endpoint], nativeDuration: duration, nativeClock: true });
-      t.after(() => h.unmount()); h.project.sources[0].durationMs = 8000;
+      const h = harness({ sourceDurationMs: 8000, clips: [endpoint], nativeDuration: duration, nativeClock: true });
+      t.after(() => h.unmount());
       if (preview) h.project.sources[0].previewUri = 'file:///editing-preview.mp4';
       await h.complete(); h.transport.seek(8000); await h.settle(); await h.app('background'); await h.app('active');
       const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
@@ -778,8 +816,8 @@ for (const duration of [8, 7.999, 7.95, Math.fround(7.95)]) {
 
 for (const duration of [7.75, 6, 0, -1, NaN, Infinity]) {
   test(`invalid or truncated native duration ${duration} cannot certify whole-media EOF`, async t => {
-    const h = harness({ clips: [{ ...clip(), sourceStartMs: 0, sourceEndMs: 8000 }], nativeDuration: duration });
-    t.after(() => h.unmount()); h.project.sources[0].durationMs = 8000;
+    const h = harness({ sourceDurationMs: 8000, clips: [{ ...clip(), sourceStartMs: 0, sourceEndMs: 8000 }], nativeDuration: duration });
+    t.after(() => h.unmount());
     await h.complete(); h.transport.seek(8000); await h.settle(); await h.app('background'); await h.app('active');
     const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
     assert.equal(h.calls.filter(call => call[0] === 'seek').at(-1)[2], 8);
@@ -790,22 +828,31 @@ for (const duration of [7.75, 6, 0, -1, NaN, Infinity]) {
   });
 }
 
-test('trim endpoint at 6385ms never normalizes against loaded duration', async t => {
-  const h = harness({ clips: [{ ...clip(), sourceStartMs: 0, sourceEndMs: 6385 }], nativeDuration: 6.385 });
-  t.after(() => h.unmount()); h.project.sources[0].durationMs = 8000;
-  await h.complete(); h.transport.seek(6385); await h.settle(); await h.app('background'); await h.app('active');
-  const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
-  assert.equal(h.calls.filter(call => call[0] === 'seek').at(-1)[2], 6.385);
-  h.players[slot].emit('timeUpdate', { currentTime: 6.384 }); await h.settle(); await h.frame(slot);
-  assert.notEqual(h.transport.phase, 'ready'); await h.advance(5000);
-  assert.equal(h.transport.phase, 'error');
-});
+for (const endMs of [6385, 6385.9]) {
+  test(`capped trim endpoint ${endMs}ms keeps logical clock and seeks inside native EOF in prepare and activation`, async t => {
+    const h = harness({ sourceDurationMs: 8000, clips: [{ ...clip(), sourceStartMs: 0, sourceEndMs: endMs }], nativeDuration: 8, nativeClock: true });
+    t.after(() => h.unmount());
+    const logicalMs = Math.floor(endMs);
+    await h.complete(); h.transport.seek(logicalMs); await h.settle(); await h.app('background'); await h.app('active');
+    const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
+    assert.equal(h.calls.filter(call => call[0] === 'window').at(-1)[4], 6385);
+    assert.equal(h.calls.filter(call => call[0] === 'seek').at(-1)[2], 6.384);
+    assert.equal(h.transport.currentMs, logicalMs);
+    h.players[slot].emit('timeUpdate', { currentTime: 6.385 }); await h.settle(); await h.frame(slot);
+    assert.notEqual(h.transport.phase, 'ready');
+    await h.positionAck(slot); assert.notEqual(h.transport.phase, 'ready');
+    const count = h.calls.filter(call => call[0] === 'seek').length;
+    await h.frame(slot); assert.equal(h.transport.phase, 'ready');
+    assert.equal(h.transport.currentMs, logicalMs);
+    assert.equal(h.calls.filter(call => call[0] === 'seek').length, count, 'activation retains the effective EOF target');
+  });
+}
 
 for (const platform of ['ios', 'web']) {
   for (const delta of [-.25, .25]) {
     test(`${platform} hook retains legacy ${delta}s ACK window and raw seek target`, async t => {
-      const h = harness({ platform, nativeDuration: 7.95, clips: [{ ...clip(), sourceStartMs: 0, sourceEndMs: 8000 }] });
-      t.after(() => h.unmount()); h.project.sources[0].durationMs = 8000;
+      const h = harness({ sourceDurationMs: 8000, platform, nativeDuration: 7.95, clips: [{ ...clip(), sourceStartMs: 0, sourceEndMs: 8000 }] });
+      t.after(() => h.unmount());
       await h.complete(); h.transport.seek(8000); await h.settle(); await h.app('background'); await h.app('active');
       const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
       assert.equal(h.calls.filter(call => call[0] === 'seek').at(-1)[2], 8);
@@ -818,8 +865,8 @@ for (const platform of ['ios', 'web']) {
 
 for (const interruption of ['native failure', 'cancel', 'new target']) {
   test(`normalized EOF handshake preserves ${interruption} ownership`, async t => {
-    const h = harness({ clips: [{ ...clip(), sourceStartMs: 0, sourceEndMs: 8000 }], nativeDuration: Math.fround(7.95) });
-    t.after(() => h.unmount()); h.project.sources[0].durationMs = 8000;
+    const h = harness({ sourceDurationMs: 8000, clips: [{ ...clip(), sourceStartMs: 0, sourceEndMs: 8000 }], nativeDuration: Math.fround(7.95) });
+    t.after(() => h.unmount());
     await h.complete(); h.transport.seek(8000); await h.settle();
     await h.app('background'); await h.app('active');
     const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
@@ -842,5 +889,141 @@ for (const interruption of ['native failure', 'cancel', 'new target']) {
       assert.equal(h.transport.player.currentTime, 2);
     }
     assert.equal(h.timerCount, 0); assert.equal(h.players.some(player => player.playing), false);
+  });
+}
+
+
+test('SDK ready precedes cap, then position ACK and fresh view are still mandatory', async t => {
+  const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+  h.players[0].holdWindow = true;
+  await h.settle(); assert.equal(h.calls.some(c => c[0] === 'window'), false);
+  h.players[0].finishReplacement(); await h.settle();
+  assert.equal(h.calls.filter(c => c[0] === 'window').length, 1);
+  assert.equal(h.calls.some(c => c[0] === 'seek'), false);
+  await h.frame(0); assert.equal(h.transport.slots[0].firstFrameReady, false);
+  h.players[0].finishWindow(); await h.settle();
+  assert.equal(h.calls.filter(c => c[0] === 'seek').length, 1);
+  await h.positionAck(0); assert.notEqual(h.transport.phase, 'ready');
+  await h.frame(0); assert.equal(h.transport.phase, 'ready');
+});
+
+test('same URI trim change and untrim require new windows without SDK source reload', async t => {
+  const h = harness(); t.after(() => h.unmount()); await h.complete();
+  for (const end of [6385, 60000]) {
+    h.project.clips = [{ ...h.project.clips[0], sourceEndMs: end }];
+    h.transport.synchronizeProject(h.project); await h.complete();
+    assert.equal(h.transport.phase, 'ready');
+    assert.equal(h.calls.filter(c => c[0] === 'window').at(-1)[4], end === 60000 ? null : end);
+  }
+  assert.equal(h.calls.filter(c => c[0] === 'replace').length, 2, 'one initial load per used slot, then unclip retained URI');
+});
+
+
+test('native window, position and frame share five seconds after SDK readiness', async t => {
+  const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+  h.players[0].holdWindow = true;
+  await h.advance(6000); assert.notEqual(h.transport.phase, 'error', 'SDK load has its own existing timeout');
+  h.players[0].finishReplacement(); await h.settle();
+  await h.advance(4000); h.players[0].finishWindow(); await h.settle();
+  await h.positionAck(0); await h.advance(999); assert.notEqual(h.transport.phase, 'error');
+  await h.advance(1); assert.equal(h.transport.phase, 'error');
+  await h.frame(0); assert.equal(h.transport.phase, 'error');
+  assert.equal(h.timerCount, 0);
+});
+
+for (const reason of ['timeout', 'failure', 'background', 'translation', 'changed trim']) {
+  test(`native window ${reason} retires its cache and ignores late completion`, async t => {
+    const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+    const player = h.players[0]; player.holdWindow = true;
+    player.finishReplacement(); await h.settle();
+    const late = player.finishWindow, id = h.calls.find(c => c[0] === 'window')[3];
+    let suspension;
+    if (reason === 'timeout') await h.advance(5000);
+    if (reason === 'failure') { player.failWindow(new Error('window rejected')); await h.settle(); }
+    if (reason === 'background') await h.app('background');
+    if (reason === 'translation') { suspension = h.transport.suspendForTranslation(); await h.settle(); await suspension.ready; }
+    if (reason === 'changed trim') {
+      h.project.clips = [{ ...h.project.clips[0], sourceEndMs: 6385 }];
+      h.transport.synchronizeProject(h.project); await h.settle();
+    }
+    if (reason !== 'failure') assert.ok(h.calls.some(c => c[0] === 'cancelWindow' && c[2] === id));
+    late(); await h.settle(); await h.frame(0);
+    assert.notEqual(h.transport.phase, 'ready', 'late native READY cannot certify a view');
+    player.holdWindow = false; player.holdReplacement = false;
+    if (reason === 'background') await h.app('active');
+    else if (reason === 'translation') await suspension.restore();
+    else h.transport.retrySource();
+    // The constructor's deliberately held SDK replacement applies to retries too.
+    await h.settle(); player.finishReplacement?.(); await h.settle();
+    await h.complete();
+    assert.equal(h.transport.phase, 'ready');
+    const windows = h.calls.filter(c => c[0] === 'window');
+    assert.ok(windows.at(-1)[3] > id);
+    assert.ok(h.calls.filter(c => c[0] === 'replace' && c[2]).length >= 2, 'retired cache forces SDK reload');
+    assert.equal(h.calls.some(c => c[0] === 'play'), false);
+    assert.equal(h.timerCount, 0);
+  });
+}
+
+test('full contiguous source run reuses one decoder with no native window operation', async t => {
+  const a = { ...clip(), sourceStartMs: 0, sourceEndMs: 2000 };
+  const b = { ...clip('b'), sourceStartMs: 2000, sourceEndMs: 60000 };
+  const h = harness({ clips: [a, b] }); t.after(() => h.unmount()); await h.complete();
+  const token = h.transport.slots[0].prepareToken;
+  h.players[0].currentTime = 2; h.transport.seek(2000); await h.settle();
+  assert.equal(h.transport.phase, 'ready');
+  assert.equal(h.transport.slots[0].preparedClipId, 'b');
+  assert.equal(h.transport.slots[0].prepareToken, token);
+  assert.equal(h.calls.filter(c => c[0] === 'replace').length, 1);
+  assert.equal(h.calls.filter(c => c[0] === 'window').length, 0);
+});
+
+
+test('transition source handles extend the outgoing cap and preserve incoming pretrim clock', async t => {
+  const a = { ...clip(), transitionAfter: { type: 'crossfade', durationMs: 1000 } };
+  const h = harness({ clips: [a, clip('b', 'other')] }); t.after(() => h.unmount()); await h.complete();
+  assert.equal(h.calls.find(c => c[0] === 'window' && c[1] === 0)[4], 31500);
+  assert.equal(h.calls.find(c => c[0] === 'window' && c[1] === 1)[4], 31000);
+  h.transport.seek(29750); await h.complete();
+  assert.equal(h.players[0].currentTime, 30.75);
+  assert.equal(h.players[1].currentTime, .75, 'incoming source pretrim handle remains available because item start is zero');
+});
+
+test('new URI full source reloads through SDK without a redundant native unclip', async t => {
+  const h = harness(); t.after(() => h.unmount()); await h.complete();
+  h.project.clips = [{ ...h.project.clips[0], sourceEndMs: 60000 }];
+  h.project.sources[0].previewUri = 'file:///new-proxy.mp4';
+  h.transport.synchronizeProject(h.project); await h.complete();
+  assert.equal(h.transport.phase, 'ready');
+  assert.equal(h.calls.filter(c => c[0] === 'replace').at(-1)[2], 'file:///new-proxy.mp4');
+  assert.equal(h.calls.filter(c => c[0] === 'window').length, 1, 'only the previous trimmed source needed a cap');
+});
+
+for (const firstEnd of [10000, 60000]) {
+  test(`cancelled standby installation restores the ${firstEnd === 60000 ? 'full' : 'trimmed'} window before reuse`, async t => {
+    const a = { ...clip('a'), sourceStartMs: 0, sourceEndMs: firstEnd };
+    const b = { ...clip('b', 'other'), sourceStartMs: 0, sourceEndMs: 10000 };
+    const c = { ...clip('c'), sourceStartMs: 20000, sourceEndMs: 30000 };
+    const h = harness({ clips: [a, b, c] }); t.after(() => h.unmount());
+    await h.complete();
+    const standby = h.players[0]; standby.holdWindow = true;
+    h.transport.seek(firstEnd + 1000); await h.complete();
+    assert.equal(h.transport.activeSlot, 1);
+    await h.advance(250);
+    assert.equal(standby.windowEndMs, 30000, 'standby item changes before READY');
+    const lateReady = standby.finishWindow;
+    assert.equal(typeof lateReady, 'function', 'standby READY is still pending');
+    const before = h.calls.filter(call => call[0] === 'window').length;
+    standby.holdWindow = false;
+    h.transport.seek(1000); await h.complete();
+    assert.equal(h.transport.phase, 'ready');
+    assert.equal(h.transport.currentMs, 1000);
+    assert.equal(h.calls.filter(call => call[0] === 'window').length, before + 1,
+      'a cancelled installed item cannot reuse the old confirmed-window cache');
+    assert.equal(standby.windowEndMs, firstEnd === 60000 ? null : firstEnd);
+    lateReady(); await h.settle();
+    assert.equal(standby.windowEndMs, firstEnd === 60000 ? null : firstEnd);
+    assert.equal(h.transport.phase, 'ready');
+    assert.equal(h.calls.some(call => call[0] === 'play'), false);
   });
 }

@@ -1,4 +1,5 @@
 import { NativeModule, requireNativeModule } from 'expo';
+import type { VideoPlayer } from 'expo-video';
 import type { DocumentReadStatus, VideoDocumentResult } from './CaptionMedia.types';
 
 import type { AudioExtractionResult, AudioPeaksResult, AudioTrackExtractionResult, FontValidationResult, ImageValidationResult, MediaInfo, TimelineAudioRenderResult, TimelineVideoExportProgress, TimelineVideoExportResult, VideoPlaybackSupport, VideoPreviewResult, VideoThumbnailResult } from './CaptionMedia.types';
@@ -6,6 +7,15 @@ import type { AudioExtractionResult, AudioPeaksResult, AudioTrackExtractionResul
 export type { TimelineVideoExportProgress } from './CaptionMedia.types';
 
 declare class CaptionMediaModule extends NativeModule<Record<never, never>> {
+  /** Android: reprepare the same SDK-loaded local asset, paused; null restores its full source. */
+  configureVideoPlaybackWindow(
+    player: VideoPlayer,
+    expectedUri: string,
+    requestId: number,
+    endMs: number | null,
+    timeoutMs: number,
+  ): Promise<void>;
+  cancelVideoPlaybackWindow(player: VideoPlayer, requestId: number): Promise<void>;
   pickVideoDocuments(multiple: boolean): Promise<VideoDocumentResult>;
   checkReadAccess(inputUri: string): Promise<{ status: DocumentReadStatus }>;
   persistReadPermission(inputUri: string): Promise<boolean>;

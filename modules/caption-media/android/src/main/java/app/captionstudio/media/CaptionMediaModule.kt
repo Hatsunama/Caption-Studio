@@ -22,8 +22,11 @@ import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.Promise
+import expo.modules.video.player.VideoPlayer
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.interfaces.permissions.Permissions
@@ -41,17 +44,35 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+@OptIn(UnstableApi::class)
 class CaptionMediaModule : Module() {
   private val timelineVideoExporter = lazy { TimelineVideoExporter(context) }
   private val videoPreviewPreparer = lazy { VideoPreviewPreparer(context) }
   private val audioExtractionEpoch = AtomicLong(0L)
   private val videoDocuments = lazy { LinkedVideoDocuments(context) }
+  private val videoPlaybackWindow = VideoPlaybackWindow()
 
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
   override fun definition() = ModuleDefinition {
     Name("CaptionMedia")
+
+    AsyncFunction("configureVideoPlaybackWindow") { player: VideoPlayer, expectedUri: String, requestId: Double, endMs: Double?, timeoutMs: Double, promise: Promise ->
+      videoPlaybackWindow.configure(player, expectedUri, requestId, endMs, timeoutMs) { code ->
+        if (code == null) promise.resolve(null)
+        else promise.reject(code, "Video playback window preparation did not complete", null)
+      }
+    }
+
+    AsyncFunction("cancelVideoPlaybackWindow") { player: VideoPlayer, requestId: Double, promise: Promise ->
+      if (!requestId.isFinite() || requestId <= 0 || requestId > 9007199254740991.0 || requestId != kotlin.math.floor(requestId)) {
+        promise.reject("E_VIDEO_WINDOW_INVALID", "Invalid playback window request", null)
+      } else {
+        videoPlaybackWindow.cancel(player, requestId)
+        promise.resolve(null)
+      }
+    }
 
     AsyncFunction("pickVideoDocuments") { multiple: Boolean, promise: Promise ->
       val activity = appContext.throwingActivity
@@ -208,6 +229,7 @@ class CaptionMediaModule : Module() {
     }
 
     OnDestroy {
+      videoPlaybackWindow.close()
       TimelineAudioRenderer.cancel()
       audioExtractionEpoch.incrementAndGet()
       if (timelineVideoExporter.isInitialized()) timelineVideoExporter.value.close()

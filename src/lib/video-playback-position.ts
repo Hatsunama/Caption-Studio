@@ -1,6 +1,6 @@
-// Keep the project clock at source EOF, but seek inside a slightly shorter
-// loaded item. This Android-only compatibility is bounded by the prior 250ms
-// whole-media window; trimmed endpoints and ordinary seeks keep their targets.
+// Keep the project clock at the caller's source endpoint while seeking inside
+// the loaded item. A native clipped item supplies its enforced end here.
+// Android adjustment stays within 250ms; ordinary seeks keep their targets.
 export function effectiveNativeSeekTarget(
   requestedSeconds: number, sourceDurationSeconds: number, nativeDurationSeconds: number, platform: string,
 ) {

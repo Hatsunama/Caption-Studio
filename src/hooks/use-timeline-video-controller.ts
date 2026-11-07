@@ -1,6 +1,8 @@
 import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project-timeline';
 import { buildVideoTransitionPreviewWindows, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
 import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
+import { desiredVideoPlaybackWindowEnd } from '@/lib/video-playback-window';
+import { configureVideoPlaybackWindow } from '@/services/video-playback-window';
 import { videoPlaybackUri } from '@/lib/video-playback-source';
 import { acknowledgesPlaybackPosition, effectiveNativeSeekTarget } from '@/lib/video-playback-position';
 import { useEventListener } from 'expo';
@@ -41,6 +43,9 @@ type SlotRuntime = TimelineVideoSlot & {
   preparation?: AbortController;
   preparationTask?: Promise<SlotIndex>;
   preparingTimelineMs?: number;
+  preparingWindowEndMs?: number;
+  // null is unknown; undefined is a confirmed full-source item.
+  appliedWindowEndMs: number | null | undefined;
   preparationError?: Error;
   frameWaiters: Set<() => void>;
 };
@@ -52,6 +57,7 @@ function createSlotRuntime(prepareToken: number, nativeViewEpoch: number): SlotR
     nativeViewEpoch,
     renderGate: 'disarmed',
     readiness: 'idle',
+    appliedWindowEndMs: null,
     frameWaiters: new Set(),
   };
 }
@@ -195,7 +201,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     slotRuntimeRef.current.forEach((runtime) => {
       runtime.preparation?.abort();
       // Retire callbacks and async continuations before publishing new surfaces.
-      runtime.prepareToken += 1;
+      runtime.prepareToken = nextPrepareToken(runtime.prepareToken);
       runtime.nativeViewEpoch += 1;
       runtime.renderGate = 'disarmed';
       runtime.preparation = undefined;
@@ -205,6 +211,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       // Retire this controller's URI cache with its surface ownership so the
       // next preparation replaces the item before accepting a fresh frame.
       runtime.playbackUri = undefined;
+      runtime.appliedWindowEndMs = null;
+      runtime.preparingWindowEndMs = undefined;
     });
     hasPresentedFrameRef.current = false;
     if (mountedRef.current) setHasPresentedFrameState(false);
@@ -273,7 +281,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
           return;
         }
         slotRuntimeRef.current = slotRuntimeRef.current.map((runtime) =>
-          createSlotRuntime(runtime.prepareToken + 1, runtime.nativeViewEpoch + 1),
+          createSlotRuntime(nextPrepareToken(runtime.prepareToken), runtime.nativeViewEpoch + 1),
         ) as [SlotRuntime, SlotRuntime];
         activeClipIdRef.current = undefined;
         hasPresentedFrameRef.current = false;
@@ -290,6 +298,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const source = projectRef.current.sources.find((candidate) => candidate.id === entry.clip.sourceId);
     if (!source) throw new Error('This clip has lost its source video.');
     return source;
+  };
+
+  const windowEndForEntry = (entry: ClipTimelineEntry) => {
+    const source = sourceForEntry(entry);
+    return desiredVideoPlaybackWindowEnd(entry, entriesRef.current, source, videoPlaybackUri(source),
+      transitionWindowsRef.current, Platform.OS);
   };
 
   const failSource = (source: Pick<ProjectVideoSource, 'id' | 'uri' | 'displayName'>, error: unknown) => {
@@ -342,6 +356,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     player: VideoPlayer,
     targetSeconds: number,
     signal: AbortSignal,
+    deadline: number,
   ) => new Promise<void>((resolve, reject) => {
     if (signal.aborted) { reject(abortError()); return; }
     let timeout: ReturnType<typeof setTimeout>;
@@ -359,7 +374,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     subscription = player.addListener('timeUpdate', ({ currentTime }) => {
       if (acknowledgesPlaybackPosition(currentTime, targetSeconds, Platform.OS)) finish();
     });
-    timeout = setTimeout(() => finish(new Error('The video did not reach the requested frame in time. Try loading it again.')), FIRST_FRAME_TIMEOUT_MS);
+    timeout = setTimeout(() => finish(new Error('The video did not reach the requested frame in time. Try loading it again.')), Math.max(0, deadline - performance.now()));
     signal.addEventListener('abort', abort, { once: true });
     // Subscribe before assigning: even a synchronous native ACK must be retained.
     try { player.currentTime = targetSeconds; }
@@ -377,18 +392,21 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const source = sourceForEntry(entry);
     const uri = videoPlaybackUri(source);
     const player = playerForSlot(slot);
+    const windowEndMs = windowEndForEntry(entry);
 
     runtime.preparation?.abort();
     const preparation = new AbortController();
     runtime.preparation = preparation;
     runtime.preparationError = undefined;
-    const token = ++runtime.prepareToken;
+    const token = nextPrepareToken(runtime.prepareToken);
+    runtime.prepareToken = token;
     const sourceChanged = forceReload || runtime.playbackUri !== uri;
 
     runtime.sourceId = source.id;
     runtime.playbackUri = uri;
     runtime.preparedClipId = entry.clip.id;
     runtime.preparingTimelineMs = timelineMs;
+    runtime.preparingWindowEndMs = windowEndMs;
     runtime.firstFrameReady = false;
     runtime.renderGate = 'loading';
     runtime.readiness = 'preparing';
@@ -401,21 +419,37 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         runtime.firstFrameReady = false;
         publishSlots();
         await loadPlayableVideoSource(player, uri, 15_000, preparation.signal);
+        if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
+        runtime.appliedWindowEndMs = undefined;
       }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
 
+      // One budget covers native window READY, the position ACK and fresh view.
+      const frameDeadline = performance.now() + FIRST_FRAME_TIMEOUT_MS;
+      if (Platform.OS === 'android' && runtime.appliedWindowEndMs !== windowEndMs) {
+        const remainingMs = Math.floor(frameDeadline - performance.now());
+        if (remainingMs < 1) throw new Error('The video playback window timed out.');
+        // Native installation precedes READY and cancellation does not undo it.
+        // A superseding request must confirm its own window, including full source.
+        runtime.appliedWindowEndMs = null;
+        await configureVideoPlaybackWindow(player, uri, token, windowEndMs, remainingMs, preparation.signal);
+        if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current
+          || preparation.signal.aborted || token !== runtime.prepareToken || runtime.preparation !== preparation) throw abortError();
+        runtime.appliedWindowEndMs = windowEndMs;
+      }
+      if (performance.now() >= frameDeadline) throw new Error('The video did not render a frame in time. Try loading it again.');
       const targetSeconds = effectiveNativeSeekTarget(
-        sourceTimeAt(entry, timelineMs) / 1_000, source.durationMs / 1_000, player.duration, Platform.OS,
+        Math.min(sourceTimeAt(entry, timelineMs), windowEndMs ?? Infinity) / 1_000, (windowEndMs ?? source.durationMs) / 1_000, player.duration, Platform.OS,
       );
       player.pause();
       player.muted = true;
       player.playbackRate = 1;
       runtime.renderGate = 'awaitingPosition';
-      const frameDeadline = performance.now() + FIRST_FRAME_TIMEOUT_MS;
-      await waitForPlaybackPosition(player, targetSeconds, preparation.signal);
+      await waitForPlaybackPosition(player, targetSeconds, preparation.signal, frameDeadline);
       if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current
         || preparation.signal.aborted || token !== runtime.prepareToken
         || runtime.preparation !== preparation) throw abortError();
+      if (performance.now() >= frameDeadline) throw new Error('The video did not render a frame in time. Try loading it again.');
       // Expo 57 suppresses repeated seek-first-frame receipts on a retained
       // view. Rebind only preparation, after its position ACK, with a distinct
       // identity so load-time and retired-view callbacks cannot certify it.
@@ -424,6 +458,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       publishSlots();
       await waitForFirstFrame(slot, preparation.signal, frameDeadline);
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
+      if (performance.now() >= frameDeadline) throw new Error('The video did not render a frame in time. Try loading it again.');
       player.pause();
       runtime.readiness = 'ready';
       runtime.renderGate = 'ready';
@@ -437,6 +472,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         runtime.readiness = isAbortError(error) ? 'cancelled' : 'error';
         // A failed or cancelled replacement must not be reused by URI alone.
         runtime.playbackUri = undefined;
+        runtime.appliedWindowEndMs = null;
+        runtime.preparingWindowEndMs = undefined;
         player.pause();
         player.muted = true;
         publishSlots();
@@ -456,7 +493,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   ): Promise<SlotIndex> => {
     const runtime = slotRuntimeRef.current[slot];
     const uri = videoPlaybackUri(sourceForEntry(entry));
-    if (shouldJoinTimelinePreparation(runtime, entry.clip.id, uri, timelineMs, forceReload)) {
+    if (shouldJoinTimelinePreparation(runtime, entry.clip.id, uri, timelineMs, forceReload, windowEndForEntry(entry))) {
       return runtime.preparationTask!;
     }
     const task = prepareSlotOperation(slot, entry, timelineMs, forceReload);
@@ -473,8 +510,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     media.playbackRate = entry.clip.playbackRate;
     media.muted = entry.clip.muted;
     media.volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
+    const windowEndMs = slotRuntimeRef.current[slot].appliedWindowEndMs;
     const timeSeconds = effectiveNativeSeekTarget(
-      sourceTimeAt(entry, timelineMs) / 1_000, sourceForEntry(entry).durationMs / 1_000, media.duration, Platform.OS,
+      Math.min(sourceTimeAt(entry, timelineMs), windowEndMs ?? Infinity) / 1_000, (windowEndMs ?? sourceForEntry(entry).durationMs) / 1_000, media.duration, Platform.OS,
     );
     if (shouldApplyTimelineSeek(media.currentTime, timeSeconds)) media.currentTime = timeSeconds;
   };
@@ -483,7 +521,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const match = slotRuntimeRef.current.findIndex(
       (runtime) => runtime.preparedClipId === entry.clip.id && runtime.firstFrameReady
         && runtime.readiness === 'ready' && !runtime.preparation
-        && runtime.playbackUri === videoPlaybackUri(sourceForEntry(entry)),
+        && runtime.playbackUri === videoPlaybackUri(sourceForEntry(entry))
+        && runtime.appliedWindowEndMs === windowEndForEntry(entry),
     );
     return match < 0 ? undefined : match as SlotIndex;
   };
@@ -497,7 +536,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     cancelScheduledPreload();
     const next = nextEntryAfter(entry);
     if (!next || next.startMs > entry.endMs + CLIP_HANDOFF_BOUNDARY_TOLERANCE_MS) return;
-    if (canContinueTimelineClip(entry, next)) return;
+    if (canContinueTimelineClip(entry, next) && windowEndForEntry(entry) === windowEndForEntry(next)
+      && slotRuntimeRef.current[occupiedSlot].appliedWindowEndMs === windowEndForEntry(next)) return;
     const standby = (occupiedSlot === 0 ? 1 : 0) as SlotIndex;
     const generation = generationRef.current;
     const entryIndex = entriesRef.current.findIndex((candidate) => candidate.clip.id === entry.clip.id);
@@ -513,6 +553,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         || activeSlotRef.current !== occupiedSlot || activeClipIdRef.current !== entry.clip.id) return;
       const runtime = slotRuntimeRef.current[standby];
       if (runtime.preparedClipId === next.clip.id
+        && runtime.playbackUri === videoPlaybackUri(sourceForEntry(next))
+        && (runtime.readiness === 'preparing' ? runtime.preparingWindowEndMs : runtime.appliedWindowEndMs) === windowEndForEntry(next)
         && (runtime.readiness === 'preparing' || runtime.readiness === 'ready' || runtime.readiness === 'error')) return;
       // Preparation records its own failure. Only an explicit activation may
       // promote it to a transport failure; the current clip keeps playing.
@@ -533,7 +575,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const runtime = slotRuntimeRef.current[slot];
     const player = playerForSlot(slot);
     if (!canContinuePreparedTimelineClip(
-      previous, entry, runtime, videoPlaybackUri(source), player, timelineMs,
+      previous, entry, runtime, videoPlaybackUri(source), player, timelineMs, windowEndForEntry(entry),
     )) return false;
     runtime.preparedClipId = entry.clip.id;
     activeClipIdRef.current = entry.clip.id;
@@ -668,6 +710,19 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const segment = projectTimelineSegmentAt(projectRef.current, targetMs, entriesRef.current);
     const clipId = segment?.kind === 'clip' ? segment.entry.clip.id : undefined;
     abortPreparationsExcept(clipId);
+    if (segment?.kind === 'clip') {
+      try {
+        for (const runtime of slotRuntimeRef.current) {
+          if (runtime.preparation && runtime.preparedClipId === clipId
+            && (runtime.playbackUri !== videoPlaybackUri(sourceForEntry(segment.entry))
+              || runtime.preparingWindowEndMs !== windowEndForEntry(segment.entry))) runtime.preparation.abort();
+        }
+      } catch {
+        // Retire unsafe in-flight work now. The target drain reports invalid
+        // source/window data through the existing actionable failure path.
+        abortPreparationsExcept();
+      }
+    }
     setCurrentMs(targetMs);
     if (!surfacesAdmittedRef.current || translationSuspensionRef.current) {
       generationRef.current += 1;
@@ -778,6 +833,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.renderGate = 'disarmed';
     runtime.firstFrameReady = false;
     runtime.playbackUri = undefined;
+    runtime.appliedWindowEndMs = null;
+    runtime.preparingWindowEndMs = undefined;
     playerForSlot(slot).pause();
     playerForSlot(slot).muted = true;
     publishSlots();
@@ -858,6 +915,13 @@ function abortError() {
   const error = new Error('Video preparation was superseded.');
   error.name = 'AbortError';
   return error;
+}
+
+function nextPrepareToken(previous: number) {
+  if (!Number.isSafeInteger(previous) || previous < 0 || previous >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('The video preparation request identity was exhausted.');
+  }
+  return previous + 1;
 }
 
 function isAbortError(error: unknown) {

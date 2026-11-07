@@ -10,16 +10,19 @@ export function shouldJoinTimelinePreparation(
     readiness: string;
     preparation?: AbortController;
     preparationTask?: Promise<unknown>;
+    preparingWindowEndMs?: number;
   },
   clipId: string,
   playbackUri: string,
   timelineMs: number,
   forceReload: boolean,
+  expectedWindowEndMs?: number,
 ) {
   return !forceReload
     && slot.preparedClipId === clipId
     && slot.playbackUri === playbackUri
     && slot.preparingTimelineMs === timelineMs
+    && slot.preparingWindowEndMs === expectedWindowEndMs
     && slot.readiness === 'preparing'
     && Boolean(slot.preparation && !slot.preparation.signal.aborted && slot.preparationTask);
 }
@@ -55,15 +58,18 @@ export function canContinuePreparedTimelineClip(
     firstFrameReady: boolean;
     readiness: string;
     preparation?: unknown;
+    appliedWindowEndMs?: number | null;
   },
   playbackUri: string,
   player: { status: string; currentTime: number },
   targetMs: number,
+  expectedWindowEndMs?: number,
 ) {
   return canContinueTimelineClip(current, next)
     && Math.abs(targetMs - next.startMs) <= 1
     && slot.sourceId === next.clip.sourceId
     && slot.playbackUri === playbackUri
+    && slot.appliedWindowEndMs === expectedWindowEndMs
     && slot.preparedClipId === current.clip.id
     && slot.firstFrameReady
     && slot.readiness === 'ready'

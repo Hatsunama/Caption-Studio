@@ -35,6 +35,12 @@ android {
 }
 
 dependencies {
+  // SDK 57 autolinking uses the publication by default; source opt-outs include this project.
+  if (findProject(':expo-video') != null) {
+    implementation project(':expo-video')
+  } else {
+    implementation 'host.exp.exponent:expo.modules.video:57.0.5'
+  }
   implementation 'androidx.exifinterface:exifinterface:1.4.2'
   implementation "androidx.media3:media3-transformer:${captionStudioMedia3Version}"
   implementation "androidx.media3:media3-effect:${captionStudioMedia3Version}"

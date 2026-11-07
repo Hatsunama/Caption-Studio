@@ -158,6 +158,12 @@ function videoHarness() {
   const project = { clips: [], sources: [] };
   const controller = load('src/hooks/use-timeline-video-controller.ts', {
     react, expo: { useEventListener() {} },
+    '@/services/video-playback-window': load('src/services/video-playback-window.ts', {
+      'caption-media': { __esModule: true, default: {
+        configureVideoPlaybackWindow() { throw new Error('An empty timeline must never configure a native video window.'); },
+        cancelVideoPlaybackWindow() { throw new Error('An empty timeline has no native window to cancel.'); },
+      } },
+    }),
     'react-native': { Platform: { OS: 'android' } },
     'expo-video': { useVideoPlayer: () => players[playerCursor++] },
     '@/services/video-player-runtime': { configureTimelinePlayer() {} },
