@@ -23,6 +23,8 @@ internal class VideoPlaybackWindow : AutoCloseable {
   private val highest = WeakHashMap<Player, Long>()
   private val pending = mutableMapOf<Player, Request>()
   private var closed = false
+  // PRIVATE diagnostic only: bounded numeric state; never merge into product.
+  private var diagnosticBudget = 64
   internal val pendingCount: Int get() = synchronized(lock) { pending.size }
 
   fun configure(
@@ -100,6 +102,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
     private var installed: MediaItem? = null
     private val timeout = Runnable {
       synchronized(lock) {
+        logState(player, 4, endMs)
         val matches = runCatching { isCurrent() && player.currentMediaItem === installed }.getOrDefault(false)
         finish(if (matches) TIMEOUT else STALE)
       }
@@ -109,6 +112,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
         synchronized(lock) {
           if (done || retired || !prepared) return
           try {
+            logState(player, 3, endMs)
             if (!isCurrent() || player.currentMediaItem !== installed) finish(STALE)
             else if (player.playerError != null) finish(PLAYER_ERROR)
             else if (player.playbackState == Player.STATE_READY) finish(null)
@@ -140,11 +144,13 @@ internal class VideoPlaybackWindow : AutoCloseable {
             if (endMs == null) it else it.coerceAtMost(endMs - 1L)
           }
           installed = item
+          logState(player, 1, endMs)
           player.addListener(listener)
           listening = true
           handler.postDelayed(timeout, timeoutMs)
           install(item, position)
           prepared = true
+          logState(player, 2, endMs)
           // Never settle from the pre-install READY state or a callback's state argument.
           // onEvents observes the actual installed item and real post-prepare state.
         } catch (_: Exception) { finish(PLAYER_ERROR) }
@@ -171,6 +177,15 @@ internal class VideoPlaybackWindow : AutoCloseable {
       if (pending[player] === this) pending.remove(player)
       completion.complete(code)
     }
+  }
+
+  // Every caller already holds lock on applicationLooper. No URI, text or errors.
+  private fun logState(player: Player, phase: Int, endMs: Long?) {
+    if (diagnosticBudget <= 0) return
+    diagnosticBudget--
+    try {
+      android.util.Log.i("CS_WINDOW_STATE", "phase=$phase state=${player.playbackState} end=${endMs ?: -1L}")
+    } catch (_: Exception) { /* Private diagnostics must not change preparation. */ }
   }
 
   companion object {
