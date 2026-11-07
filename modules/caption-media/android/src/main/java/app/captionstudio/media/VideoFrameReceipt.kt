@@ -98,12 +98,6 @@ internal class VideoFrameReceipt(
     }
     override fun onSurfaceSizeChanged(width: Int, height: Int) = observe {
       if (!bindingCurrent()) reset()
-      // Media3 reports zero dimensions when the output surface is destroyed. The view
-      // can survive, but its old buffer cannot prove presentation on the new output.
-      // Keep only the paired SDK receipt: Expo may not emit it again for this item/view.
-      else if (width == 0 || height == 0) {
-        sourceFrame = false; outputFrame = false; sdkFrame = false
-      }
       changed()
     }
     override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) = observe {
