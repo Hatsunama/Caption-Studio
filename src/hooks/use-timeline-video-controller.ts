@@ -422,15 +422,16 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         publishSlots();
         await loadPlayableVideoSource(player, uri, 15_000, preparation.signal);
         if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
-        runtime.appliedWindowEndMs = undefined;
+        // Android's installed contract stays unknown until owned native presentation.
+        runtime.appliedWindowEndMs = Platform.OS === 'android' ? null : undefined;
       }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
 
       // One post-SDK budget covers native presentation and the position ACK,
-      // or the legacy seek/ACK/fresh-view sequence for full source and iOS/web.
+      // or the legacy seek/ACK/fresh-view sequence for iOS/web.
       const frameDeadline = performance.now() + FIRST_FRAME_TIMEOUT_MS;
-      const nativeFiniteWindow = Platform.OS === 'android' && windowEndMs !== undefined;
-      const expectedNativeDuration = nativeFiniteWindow
+      const nativePresentation = Platform.OS === 'android';
+      const expectedNativeDuration = nativePresentation && windowEndMs !== undefined
         ? Math.min(player.duration, Math.fround(Math.fround(windowEndMs) / 1000))
         : player.duration;
       const targetSeconds = effectiveNativeSeekTarget(
@@ -439,11 +440,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       );
       player.playbackRate = 1;
       let nativeFramePresented = false;
-      if (nativeFiniteWindow) {
+      if (nativePresentation) {
         const remainingMs = Math.floor(frameDeadline - performance.now());
         if (remainingMs < 1) throw new Error('The video playback window timed out.');
-        // Every finite preparation installs and positions its own source, even
-        // a new clip ID with the same end. Cancellation cannot undo installation.
+        // PRIVATE prototype: full sources also reprepare after authoritative SDK
+        // initialization. Every installation needs its own presentation receipt;
+        // cancellation cannot undo the installed item.
         runtime.appliedWindowEndMs = null;
         await configureVideoPlaybackWindow(player, uri, token, windowEndMs, targetSeconds * 1000, remainingMs, preparation.signal);
         if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current

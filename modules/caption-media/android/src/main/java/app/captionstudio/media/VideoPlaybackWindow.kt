@@ -26,7 +26,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
   internal val pendingCount: Int get() = synchronized(lock) { pending.size }
 
   fun configure(
-    video: VideoPlayer, expectedUri: String, requestId: Double, endMs: Double,
+    video: VideoPlayer, expectedUri: String, requestId: Double, endMs: Double?,
     targetMs: Double, timeoutMs: Double, completion: Completion,
   ) {
     val player = video.player
@@ -47,12 +47,12 @@ internal class VideoPlaybackWindow : AutoCloseable {
   }
 
   internal fun configure(
-    player: Player, expectedUri: String, requestId: Double, endMs: Double, targetMs: Double, timeoutMs: Double,
+    player: Player, expectedUri: String, requestId: Double, endMs: Double?, targetMs: Double, timeoutMs: Double,
     completion: Completion, frames: (MediaItem, Long, () -> Boolean, () -> Unit) -> VideoFrameReceipt, install: (MediaItem, Long) -> Unit,
   ) {
     if (!safePositiveInteger(requestId) ||
-      (!positiveInteger(endMs) || endMs.toLong() > Long.MAX_VALUE / 1000L) ||
-      !targetMs.isFinite() || targetMs < 0 || targetMs >= endMs ||
+      (endMs != null && (!positiveInteger(endMs) || endMs > MAX_CLOCK_MS)) ||
+      !targetMs.isFinite() || targetMs < 0 || targetMs > MAX_CLOCK_MS || (endMs != null && targetMs >= endMs) ||
       !timeoutMs.isFinite() || timeoutMs < 1 || timeoutMs > 5000) {
       completion.complete(INVALID); return
     }
@@ -65,7 +65,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
       pending[player]?.retire(STALE)
       // A hard limit bounds strong player retention while preparation is pending.
       if (pending.size >= 32 && !pending.containsKey(player)) { completion.complete(BUSY); return }
-      val request = Request(player, expectedUri, token, endMs.toLong(), targetMs.toLong(), kotlin.math.ceil(timeoutMs).toLong(), completion, frames, install)
+      val request = Request(player, expectedUri, token, endMs?.toLong(), targetMs.toLong(), kotlin.math.ceil(timeoutMs).toLong(), completion, frames, install)
       pending[player] = request
       if (!request.handler.post(request.start)) request.finish(STALE)
     }
@@ -92,7 +92,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
   }
 
   private inner class Request(
-    val player: Player, val expectedUri: String, val token: Long, val endMs: Long, val targetMs: Long,
+    val player: Player, val expectedUri: String, val token: Long, val endMs: Long?, val targetMs: Long,
     val timeoutMs: Long, val completion: Completion,
     val frames: (MediaItem, Long, () -> Boolean, () -> Unit) -> VideoFrameReceipt, val install: (MediaItem, Long) -> Unit,
   ) {
@@ -184,6 +184,8 @@ internal class VideoPlaybackWindow : AutoCloseable {
   }
 
   companion object {
+    // Safe in both JS and Media3 millisecond-to-microsecond clock conversions.
+    private const val MAX_CLOCK_MS = 9007199254740991.0
     private const val STALE = "E_VIDEO_WINDOW_STALE"
     private const val INVALID = "E_VIDEO_WINDOW_INVALID"
     private const val BUSY = "E_VIDEO_WINDOW_BUSY"

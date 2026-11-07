@@ -19,8 +19,8 @@ const clip = (id = 'a', sourceId = 'source') => ({ id, sourceId, sourceStartMs: 
 
 // Executes complete modules, with real timeline/policy/overlay consumers. Only
 // React scheduling and the native boundary are faked. Public view frames never
-// arrive by default; finite native presentation is controlled by holdWindow.
-// The default source ends at the default clip end to preserve legacy frame gates.
+// arrive by default; all Android native presentation is controlled by holdWindow.
+// Explicit iOS/web fixtures below retain coverage of the legacy public frame gates.
 function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false, sourceDurationMs = 31000, allowGapClock = false } = {}) {
   const hosts = new Map(), cache = new Map(), timers = new Map(), calls = [], eofFrames = new Map();
   const gapFrames = new Map();
@@ -321,16 +321,20 @@ test('independent app harnesses keep clocks, native calls and teardown isolated'
 test('load-time frame plus an unrelated position 115ms away cannot certify preparation', async t => {
   const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
   await h.frame(0); // Source load has not completed and no target has been assigned.
+  h.players[0].holdWindow = true;
   h.players[0].finishReplacement(); await h.settle();
   h.players[0].emit('timeUpdate', { currentTime: 1.115 }); await h.settle();
   assert.notEqual(h.transport.phase, 'ready', 'load frame and nearby stale clock are unrelated receipts');
   assert.equal(h.transport.slots[0].firstFrameReady, false);
   await h.positionAck(0); assert.notEqual(h.transport.phase, 'ready');
-  await h.frame(0); assert.equal(h.transport.phase, 'ready');
+  await h.frame(0); assert.notEqual(h.transport.phase, 'ready');
+  h.players[0].finishWindow(); await h.settle();
+  assert.notEqual(h.transport.phase, 'ready');
+  await h.positionAck(0); assert.equal(h.transport.phase, 'ready');
 });
 
-test('position ACK remounts only its slot; pre-ACK view and wrong-slot frames cannot certify the new epoch', async t => {
-  const h = harness(); t.after(() => h.unmount()); await h.settle();
+test('iOS legacy: position ACK remounts only its slot; pre-ACK view and wrong-slot frames cannot certify the new epoch', async t => {
+  const h = harness({ platform: 'ios' }); t.after(() => h.unmount()); await h.settle();
   const before = h.views.map(view => ({ path: view.nativePath, frame: view.onFirstFrameRender }));
   await h.frame(0); // Even a frame after target assignment is disarmed until ACK.
   await h.positionAck(0);
@@ -343,8 +347,8 @@ test('position ACK remounts only its slot; pre-ACK view and wrong-slot frames ca
   await h.frame(0); assert.equal(h.transport.phase, 'ready');
 });
 
-test('position listener precedes target assignment, including a synchronous native ACK', async t => {
-  const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+test('iOS legacy: position listener precedes target assignment, including a synchronous native ACK', async t => {
+  const h = harness({ platform: 'ios', holdReplacement: true }); t.after(() => h.unmount());
   h.players[0].ackOnSeek = true;
   h.players[0].finishReplacement(); await h.settle();
   await h.frame(0);
@@ -358,8 +362,8 @@ test('replacement is paused and muted before native load begins', async t => {
   assert.equal(h.players[0].muted, true);
 });
 
-test('new-epoch frame delivered during publication is latched before waiter registration', async t => {
-  const h = harness({ frameOnPublish: true }); t.after(() => h.unmount()); await h.settle();
+test('iOS legacy: new-epoch frame delivered during publication is latched before waiter registration', async t => {
+  const h = harness({ platform: 'ios', frameOnPublish: true }); t.after(() => h.unmount()); await h.settle();
   await h.positionAck(0);
   assert.equal(h.transport.phase, 'ready'); assert.equal(h.timerCount, 0);
 });
@@ -405,8 +409,8 @@ for (const platform of ['ios', 'web']) {
   });
 }
 
-test('timed-out view callback stays retired during retry load and after retry position ACK', async t => {
-  const h = harness(); t.after(() => h.unmount()); await h.settle();
+test('iOS legacy: timed-out view callback stays retired during retry load and after retry position ACK', async t => {
+  const h = harness({ platform: 'ios' }); t.after(() => h.unmount()); await h.settle();
   await h.positionAck(0);
   const retired = h.views[0].onFirstFrameRender;
   const epoch = h.transport.slots[0].nativeViewEpoch;
@@ -422,8 +426,8 @@ test('timed-out view callback stays retired during retry load and after retry po
   assert.equal(h.calls.some(call => call[0] === 'play'), false);
 });
 
-test('unmount after position ACK cancels the new-epoch frame waiter and rejects its late callback', async () => {
-  const h = harness(); await h.settle(); await h.positionAck(0);
+test('iOS legacy: unmount after position ACK cancels the new-epoch frame waiter and rejects its late callback', async () => {
+  const h = harness({ platform: 'ios' }); await h.settle(); await h.positionAck(0);
   const frame = h.views[0].onFirstFrameRender;
   h.unmount(); const count = h.calls.length;
   frame(); await h.advance(15000);
@@ -431,8 +435,8 @@ test('unmount after position ACK cancels the new-epoch frame waiter and rejects 
   assert.ok(h.players.every(player => player.listenerCount() === 0));
 });
 
-test('position and fresh-view receipts share the original five-second preparation budget', async t => {
-  const h = harness(); t.after(() => h.unmount()); await h.settle();
+test('iOS legacy: position and fresh-view receipts share the original five-second preparation budget', async t => {
+  const h = harness({ platform: 'ios' }); t.after(() => h.unmount()); await h.settle();
   await h.advance(4999); assert.notEqual(h.transport.phase, 'error');
   await h.positionAck(0); assert.notEqual(h.transport.phase, 'ready');
   const expired = h.views[0].onFirstFrameRender;
@@ -450,6 +454,7 @@ test('fractional paused target keeps its domain clock through Home and rejects t
   await h.complete(); h.transport.seek(6385.416); await h.settle();
   assert.equal(h.transport.currentMs, 6385.416);
   const retired = h.views[0].onFirstFrameRender;
+  h.players[0].holdWindow = true;
   await h.app('background'); await h.app('active');
   const loadView = h.views[0].onFirstFrameRender;
   retired(); loadView();
@@ -457,7 +462,11 @@ test('fractional paused target keeps its domain clock through Home and rejects t
   assert.notEqual(h.transport.phase, 'ready'); assert.equal(h.transport.slots[0].firstFrameReady, false);
   h.players[0].emit('timeUpdate', { currentTime: 6.385 }); await h.settle();
   retired(); loadView(); await h.settle(); assert.notEqual(h.transport.phase, 'ready');
-  await h.frame(0); assert.equal(h.transport.phase, 'ready');
+  await h.frame(0); assert.notEqual(h.transport.phase, 'ready');
+  h.players[0].finishWindow(); await h.settle();
+  h.players[0].emit('timeUpdate', { currentTime: 6.5 }); await h.settle();
+  assert.notEqual(h.transport.phase, 'ready');
+  await h.positionAck(0); assert.equal(h.transport.phase, 'ready');
   assert.equal(h.transport.currentMs, 6385.416); assert.equal(h.players[0].currentTime, 6.385416);
   assert.equal(h.calls.some(call => call[0] === 'play'), false);
 });
@@ -512,11 +521,15 @@ test('explicit Play during paused preparation activates only the requested slot 
   h.transport.seek(31800); await h.settle();
   const slot = h.transport.activeSlot;
   assert.equal(h.transport.slots[slot].preparedClipId, 'b');
+  h.players[slot].holdWindow = true;
   await h.app('background'); await h.app('active');
   h.transport.play(); await h.settle();
   assert.equal(h.calls.some(call => call[0] === 'play'), false, 'intent waits for preparation');
   await h.positionAck(slot); assert.equal(h.calls.some(call => call[0] === 'play'), false);
-  await h.frame(slot);
+  await h.frame(slot); assert.equal(h.calls.some(call => call[0] === 'play'), false);
+  h.players[slot].finishWindow(); await h.settle();
+  assert.equal(h.calls.some(call => call[0] === 'play'), false);
+  await h.positionAck(slot);
   assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.isPlaying, true);
   assert.equal(h.transport.activeSlot, slot); assert.equal(h.transport.slots[slot].preparedClipId, 'b');
   assert.deepEqual(h.calls.filter(call => call[0] === 'play'), [['play', slot, false]]);
@@ -561,13 +574,16 @@ test('ordinary same-URI clip seeks reprepare the loaded slot without replacing a
     const token = h.transport.slots[slot].prepareToken;
     h.players[slot].status = 'loading';
     h.players[slot].emit('statusChange', { status: 'loading' });
+    h.players[slot].holdWindow = true;
     h.transport.seek(target); await h.settle();
     assert.ok(h.transport.slots[slot].prepareToken > token, 'seek must exercise preparation');
     assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements,
       'ordinary same-URI preparation must retain the loaded decoder during transient loading');
     assert.equal(h.transport.slots[slot].readiness, 'preparing');
-    await h.positionAck(slot); assert.notEqual(h.transport.phase, 'ready', 'fresh view frame remains mandatory');
-    await h.frame(slot);
+    await h.positionAck(slot); assert.notEqual(h.transport.phase, 'ready', 'native presentation remains mandatory');
+    await h.frame(slot); assert.notEqual(h.transport.phase, 'ready');
+    h.players[slot].finishWindow(); await h.settle();
+    await h.positionAck(slot);
     assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.activeSlot, slot);
     assert.equal(h.transport.slots[slot].readiness, 'ready');
     assert.equal(h.transport.currentMs, target); assert.equal(h.transport.isPlaying, false);
@@ -578,7 +594,7 @@ test('ordinary same-URI clip seeks reprepare the loaded slot without replacing a
   assert.equal(h.calls.some(call => call[0] === 'play'), false, 'same-URI repreparation remains paused');
 });
 
-test('Home detaches actual overlay; resume at 21.8s reloads once and needs a fresh view frame AND playback position', async t => {
+test('Home detaches actual overlay; resume at 21.8s reloads once and needs native presentation AND playback position', async t => {
   const h = harness(); t.after(() => h.unmount()); await h.complete();
   h.transport.seek(21800); await h.complete();
   const retired = h.views.map(view => view.onFirstFrameRender), tokens = h.transport.slots.map(slot => slot.prepareToken);
@@ -587,6 +603,7 @@ test('Home detaches actual overlay; resume at 21.8s reloads once and needs a fre
   assert.equal(h.transport.slots.some(slot => slot.firstFrameReady), false);
   retired.forEach(callback => callback()); await h.settle();
   assert.equal(h.transport.slots.some(slot => slot.firstFrameReady), false);
+  h.players[0].holdWindow = true;
   await h.app('active');
   assert.equal(h.transport.currentMs, 21800); assert.equal(h.transport.isPlaying, false);
   assert.notEqual(h.transport.phase, 'ready');
@@ -595,7 +612,8 @@ test('Home detaches actual overlay; resume at 21.8s reloads once and needs a fre
   assert.equal(h.players[slot].currentTime, 22.8);
   retired.forEach(callback => callback()); await h.positionAck(slot);
   assert.notEqual(h.transport.phase, 'ready');
-  await h.frame(slot); assert.equal(h.transport.phase, 'ready');
+  await h.frame(slot); assert.notEqual(h.transport.phase, 'ready');
+  h.players[slot].finishWindow(); await h.settle(); await h.positionAck(slot); assert.equal(h.transport.phase, 'ready');
   assert.equal(h.transport.currentMs, 21800); assert.equal(h.players[slot].playing, false);
   assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements + 1);
   assert.equal(h.calls.filter(call => call[0] === 'play').length, 0);
@@ -670,7 +688,7 @@ for (const status of ['idle', 'loading', 'error']) {
       // Expo Android maps a clean STATE_ENDED to idle, even with the source retained.
       if (status === 'idle') player.emit('playToEnd', {});
       player.emit('statusChange', { status }); await h.settle();
-      player.holdReplacement = true; player.replacementStatus = 'loading';
+      player.holdWindow = true; player.holdReplacement = true; player.replacementStatus = 'loading';
       const playCount = h.calls.filter(call => call[0] === 'play').length;
       await h.app('active');
       assert.equal(replacements().length, initialReplacements + cycle + 1,
@@ -688,14 +706,14 @@ for (const status of ['idle', 'loading', 'error']) {
         'replacement completion must not start frame preparation before decoder readiness');
       player.status = 'readyToPlay'; player.emit('statusChange', { status: 'readyToPlay' }); await h.settle();
       assert.equal(player.currentTime, 7.999, 'native endpoint stays inside the loaded item');
-      if (cycle === 0) await h.frame(slot); else await h.positionAck(slot);
-      assert.notEqual(h.transport.phase, 'ready', 'both a fresh surface frame and playback position are required');
+      const epoch = h.transport.slots[slot].nativeViewEpoch;
+      await h.frame(slot); await h.positionAck(slot);
+      assert.notEqual(h.transport.phase, 'ready', 'public frames and clocks cannot replace native presentation');
       await h.advance(4999); assert.notEqual(h.transport.phase, 'error');
-      if (cycle === 0) {
-        await h.positionAck(slot);
-        assert.notEqual(h.transport.phase, 'ready', 'pre-ACK frame cannot certify the newly mounted view');
-      }
-      await h.frame(slot);
+      player.finishWindow(); await h.settle();
+      assert.notEqual(h.transport.phase, 'ready', 'pre-presentation ACK cannot satisfy the new waiter');
+      await h.positionAck(slot);
+      assert.equal(h.transport.slots[slot].nativeViewEpoch, epoch);
       assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.sourceFailure, undefined);
       assert.equal(h.transport.currentMs, 8000); assert.equal(h.transport.isPlaying, false);
       assert.equal(h.players.some(value => value.playing), false);
@@ -727,13 +745,15 @@ test('resume timeout remains 5s; stale callbacks cannot hide failure, and explic
   const h = harness(); t.after(() => h.unmount()); await h.complete();
   h.transport.seek(21800); await h.complete();
   const retired = h.views.map(view => view.onFirstFrameRender);
+  h.players[0].holdWindow = true;
   await h.app('background'); await h.app('active');
   const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
   retired.forEach(callback => callback()); await h.positionAck(slot);
   await h.advance(4999); assert.notEqual(h.transport.phase, 'error');
   await h.advance(1); assert.equal(h.transport.phase, 'error');
-  assert.match(h.transport.sourceFailure.detail, /did not render a frame/);
+  assert.match(h.transport.sourceFailure.detail, /playback window timed out/);
   assert.equal(h.transport.currentMs, 21800); assert.equal(h.players[slot].playing, false);
+  h.players[slot].holdWindow = false;
   h.transport.retrySource(); await h.complete();
   assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.sourceFailure, undefined);
   assert.equal(h.transport.currentMs, 21800); assert.equal(h.transport.isPlaying, false);
@@ -787,13 +807,16 @@ test('translation unload and background restore retire tokens permanently and re
   await h.app('background'); await lease.restore(); await lease.restore(); await h.settle();
   assert.equal(h.transport.phase, 'suspended');
   const count = h.calls.filter(call => call[0] === 'replace').length;
+  h.players[0].holdWindow = true;
   await h.app('active'); await h.settle();
   assert.ok(h.transport.slots[0].prepareToken > token);
   assert.ok(h.transport.slots[0].nativeViewEpoch >= unloadedEpoch, 'runtime factory must preserve retired epoch identity');
+  const restoredEpoch = h.transport.slots[0].nativeViewEpoch;
   retired.forEach(callback => callback()); await h.positionAck(0);
   assert.notEqual(h.transport.phase, 'ready');
-  await h.frame(0); assert.equal(h.transport.phase, 'ready');
-  assert.ok(h.transport.slots[0].nativeViewEpoch > unloadedEpoch);
+  await h.frame(0); assert.notEqual(h.transport.phase, 'ready');
+  h.players[0].finishWindow(); await h.settle(); await h.positionAck(0); assert.equal(h.transport.phase, 'ready');
+  assert.equal(h.transport.slots[0].nativeViewEpoch, restoredEpoch, 'presentation retains the restored view');
   assert.equal(h.transport.currentMs, 21800); assert.equal(h.transport.isPlaying, false);
   assert.equal(h.calls.filter(call => call[0] === 'replace').length, count + 1);
 });
@@ -865,10 +888,10 @@ for (const duration of [8, 7.999, 7.95, Math.fround(7.95)]) {
       const h = harness({ sourceDurationMs: 8000, clips: [endpoint], nativeDuration: duration, nativeClock: true });
       t.after(() => h.unmount());
       if (preview) h.project.sources[0].previewUri = 'file:///editing-preview.mp4';
-      await h.complete(); h.transport.seek(8000); await h.settle(); await h.app('background'); await h.app('active');
+      await h.complete(); h.transport.seek(8000); await h.settle(); h.players.forEach(player => { player.holdWindow = true; }); await h.app('background'); await h.app('active');
       const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
       const expected = (Math.round(duration * 1000) - 1) / 1000;
-      assert.equal(h.calls.filter(call => call[0] === 'seek').at(-1)[2], expected, 'normalize the native request before ACK');
+      assert.equal(h.calls.filter(call => call[0] === 'nativePosition').at(-1)[2], expected, 'normalize the native request before ACK');
       assert.equal(h.transport.currentMs, 8000);
       const oldFrame = h.views.find(view => view.player === h.players[slot]).onFirstFrameRender;
       oldFrame(); await h.settle();
@@ -878,9 +901,12 @@ for (const duration of [8, 7.999, 7.95, Math.fround(7.95)]) {
         assert.equal(h.transport.slots[slot].firstFrameReady, false, 'only the effective position can arm the frame gate');
       }
       h.players[slot].emit('timeUpdate', { currentTime: expected }); await h.settle();
-      assert.notEqual(h.transport.phase, 'ready', 'ACK alone cannot certify a rendered frame');
+      assert.notEqual(h.transport.phase, 'ready', 'ACK and public frame cannot replace native presentation');
       oldFrame(); await h.settle(); assert.equal(h.transport.slots[slot].firstFrameReady, false);
-      await h.frame(slot);
+      await h.frame(slot); assert.notEqual(h.transport.phase, 'ready');
+      h.players[slot].finishWindow(); await h.settle();
+      assert.notEqual(h.transport.phase, 'ready', 'clock observation follows native presentation');
+      await h.positionAck(slot);
       assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.currentMs, 8000);
       assert.equal(h.calls.filter(call => call[0] === 'seek').length, seekCount, 'activation must not re-seek raw domain EOF');
       assert.equal(h.transport.sourceFailure, undefined); assert.equal(h.timerCount, 0);
@@ -894,7 +920,7 @@ for (const duration of [7.75, 6, 0, -1, NaN, Infinity]) {
     t.after(() => h.unmount());
     await h.complete(); h.transport.seek(8000); await h.settle(); await h.app('background'); await h.app('active');
     const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
-    assert.equal(h.calls.filter(call => call[0] === 'seek').at(-1)[2], 8);
+    assert.equal(h.calls.filter(call => call[0] === 'nativePosition').at(-1)[2], 8);
     h.players[slot].emit('timeUpdate', { currentTime: Number.isFinite(duration) ? duration - .001 : 7.949 });
     await h.settle(); await h.frame(slot); await h.advance(5000);
     assert.equal(h.transport.phase, 'error'); assert.ok(h.transport.sourceFailure);
@@ -992,10 +1018,10 @@ test('same URI trim change and untrim reload full source through SDK', async t =
     h.project.clips = [{ ...h.project.clips[0], sourceEndMs: end }];
     h.transport.synchronizeProject(h.project); await h.complete();
     assert.equal(h.transport.phase, 'ready');
-    assert.equal(h.players[h.transport.activeSlot].windowEndMs, end === 60000 ? undefined : end);
+    assert.equal(h.players[h.transport.activeSlot].windowEndMs, end === 60000 ? null : end);
   }
   assert.equal(h.calls.filter(c => c[0] === 'replace').length, 3, 'every window contract change reloads through SDK');
-  assert.equal(h.calls.filter(c => c[0] === 'window').length, 2, 'full source never invokes nullable native unclip');
+  assert.equal(h.calls.filter(c => c[0] === 'window').length, 3, 'full source also requests presentation after SDK contract reload');
 });
 
 
@@ -1011,41 +1037,43 @@ test('native window, position and frame share five seconds after SDK readiness',
   assert.equal(h.timerCount, 0);
 });
 
-for (const reason of ['timeout', 'failure', 'background', 'translation', 'changed trim']) {
-  test(`native window ${reason} retires its cache and ignores late completion`, async t => {
-    const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount());
-    const player = h.players[0]; player.holdWindow = true;
-    player.finishReplacement(); await h.settle();
-    const late = player.finishWindow, id = h.calls.find(c => c[0] === 'window')[3];
-    let suspension;
-    if (reason === 'timeout') await h.advance(5000);
-    if (reason === 'failure') { player.failWindow(new Error('window rejected')); await h.settle(); }
-    if (reason === 'background') await h.app('background');
-    if (reason === 'translation') { suspension = h.transport.suspendForTranslation(); await h.settle(); await suspension.ready; }
-    if (reason === 'changed trim') {
-      h.project.clips = [{ ...h.project.clips[0], sourceEndMs: 6385 }];
-      h.transport.synchronizeProject(h.project); await h.settle();
-    }
-    if (reason !== 'failure') assert.ok(h.calls.some(c => c[0] === 'cancelWindow' && c[2] === id));
-    late(); await h.settle(); await h.frame(0);
-    assert.notEqual(h.transport.phase, 'ready', 'late native READY cannot certify a view');
-    player.holdWindow = false; player.holdReplacement = false;
-    if (reason === 'background') await h.app('active');
-    else if (reason === 'translation') await suspension.restore();
-    else h.transport.retrySource();
-    // The constructor's deliberately held SDK replacement applies to retries too.
-    await h.settle(); player.finishReplacement?.(); await h.settle();
-    await h.complete();
-    assert.equal(h.transport.phase, 'ready');
-    const windows = h.calls.filter(c => c[0] === 'window');
-    assert.ok(windows.at(-1)[3] > id);
-    assert.ok(h.calls.filter(c => c[0] === 'replace' && c[2]).length >= 2, 'retired cache forces SDK reload');
-    assert.equal(h.calls.some(c => c[0] === 'play'), false);
-    assert.equal(h.timerCount, 0);
-  });
+for (const sourceDurationMs of [31000, 60000]) {
+  for (const reason of ['timeout', 'failure', 'background', 'translation', 'changed trim']) {
+    test(`native window ${sourceDurationMs} ${reason} retires its cache and ignores late completion`, async t => {
+      const h = harness({ sourceDurationMs, holdReplacement: true }); t.after(() => h.unmount());
+      const player = h.players[0]; player.holdWindow = true;
+      player.finishReplacement(); await h.settle();
+      const late = player.finishWindow, id = h.calls.find(c => c[0] === 'window')[3];
+      let suspension;
+      if (reason === 'timeout') await h.advance(5000);
+      if (reason === 'failure') { player.failWindow(new Error('window rejected')); await h.settle(); }
+      if (reason === 'background') await h.app('background');
+      if (reason === 'translation') { suspension = h.transport.suspendForTranslation(); await h.settle(); await suspension.ready; }
+      if (reason === 'changed trim') {
+        h.project.clips = [{ ...h.project.clips[0], sourceEndMs: 6385 }];
+        h.transport.synchronizeProject(h.project); await h.settle();
+      }
+      if (reason !== 'failure') assert.ok(h.calls.some(c => c[0] === 'cancelWindow' && c[2] === id));
+      late(); await h.settle(); await h.frame(0);
+      assert.notEqual(h.transport.phase, 'ready', 'late native READY cannot certify a view');
+      player.holdWindow = false; player.holdReplacement = false;
+      if (reason === 'background') await h.app('active');
+      else if (reason === 'translation') await suspension.restore();
+      else h.transport.retrySource();
+      // The constructor's deliberately held SDK replacement applies to retries too.
+      await h.settle(); player.finishReplacement?.(); await h.settle();
+      await h.complete();
+      assert.equal(h.transport.phase, 'ready');
+      const windows = h.calls.filter(c => c[0] === 'window');
+      assert.ok(windows.at(-1)[3] > id);
+      assert.ok(h.calls.filter(c => c[0] === 'replace' && c[2]).length >= 2, 'retired cache forces SDK reload');
+      assert.equal(h.calls.some(c => c[0] === 'play'), false);
+      assert.equal(h.timerCount, 0);
+    });
+  }
 }
 
-test('full contiguous source run reuses one decoder with no native window operation', async t => {
+test('full contiguous source run reuses one presented decoder without another native operation', async t => {
   const a = { ...clip(), sourceStartMs: 0, sourceEndMs: 2000 };
   const b = { ...clip('b'), sourceStartMs: 2000, sourceEndMs: 60000 };
   const h = harness({ sourceDurationMs: 60000, clips: [a, b] }); t.after(() => h.unmount()); await h.complete();
@@ -1055,7 +1083,7 @@ test('full contiguous source run reuses one decoder with no native window operat
   assert.equal(h.transport.slots[0].preparedClipId, 'b');
   assert.equal(h.transport.slots[0].prepareToken, token);
   assert.equal(h.calls.filter(c => c[0] === 'replace').length, 1);
-  assert.equal(h.calls.filter(c => c[0] === 'window').length, 0);
+  assert.equal(h.calls.filter(c => c[0] === 'window').length, 1);
 });
 
 
@@ -1069,14 +1097,14 @@ test('transition source handles extend the outgoing cap and preserve incoming pr
   assert.equal(h.players[1].currentTime, .75, 'incoming source pretrim handle remains available because item start is zero');
 });
 
-test('new URI full source reloads through SDK without a redundant native unclip', async t => {
+test('new URI full source reloads through SDK before native presentation', async t => {
   const h = harness({ sourceDurationMs: 60000 }); t.after(() => h.unmount()); await h.complete();
   h.project.clips = [{ ...h.project.clips[0], sourceEndMs: 60000 }];
   h.project.sources[0].previewUri = 'file:///new-proxy.mp4';
   h.transport.synchronizeProject(h.project); await h.complete();
   assert.equal(h.transport.phase, 'ready');
   assert.equal(h.calls.filter(c => c[0] === 'replace').at(-1)[2], 'file:///new-proxy.mp4');
-  assert.equal(h.calls.filter(c => c[0] === 'window').length, 1, 'only the previous trimmed source needed a cap');
+  assert.equal(h.calls.filter(c => c[0] === 'window').length, 2, 'new full source needs its own presentation receipt');
 });
 
 for (const firstEnd of [10000, 60000]) {
@@ -1098,11 +1126,11 @@ for (const firstEnd of [10000, 60000]) {
     h.transport.seek(1000); await h.complete();
     assert.equal(h.transport.phase, 'ready');
     assert.equal(h.transport.currentMs, 1000);
-    assert.equal(h.calls.filter(call => call[0] === 'window').length, before + (firstEnd === 60000 ? 0 : 1),
+    assert.equal(h.calls.filter(call => call[0] === 'window').length, before + 1,
       'a cancelled installed item cannot reuse the old confirmed-window cache');
-    assert.equal(standby.windowEndMs, firstEnd === 60000 ? undefined : firstEnd);
+    assert.equal(standby.windowEndMs, firstEnd === 60000 ? null : firstEnd);
     lateReady(); await h.settle();
-    assert.equal(standby.windowEndMs, firstEnd === 60000 ? undefined : firstEnd);
+    assert.equal(standby.windowEndMs, firstEnd === 60000 ? null : firstEnd);
     assert.equal(h.transport.phase, 'ready');
     assert.equal(h.calls.some(call => call[0] === 'play'), false);
   });
@@ -1161,27 +1189,29 @@ for (const duration of [8, 6.38, Math.fround(6.38)]) {
   });
 }
 
-for (const interruption of ['background', 'translation', 'unmount', 'effect replay']) {
-  test(`finite presentation receipt cannot survive ${interruption} between ACK and continuation`, async t => {
-    const h = harness({ sourceDurationMs: 60000 }); t.after(() => h.unmount()); await h.settle();
-    const player = h.players[0], epoch = h.transport.slots[0].nativeViewEpoch;
-    player.emit('timeUpdate', { currentTime: player.currentTime });
-    let lease;
-    if (interruption === 'background') await h.app('background');
-    if (interruption === 'translation') { lease = h.transport.suspendForTranslation(); await h.settle(); await lease.ready; }
-    if (interruption === 'unmount') h.unmount();
-    if (interruption === 'effect replay') await h.replayEffects();
-    await h.settle();
-    if (interruption !== 'unmount') {
-      assert.notEqual(h.transport.phase, 'ready');
-      assert.ok(h.transport.slots[0].nativeViewEpoch > epoch);
-      assert.equal(h.transport.slots[0].firstFrameReady, false);
-    }
-    if (interruption === 'background') await h.app('active');
-    if (lease) await lease.restore();
-    if (interruption !== 'unmount') { await h.complete(); assert.equal(h.transport.phase, 'ready'); }
-    assert.equal(h.timerCount, 0); assert.equal(h.calls.some(c => c[0] === 'play'), false);
-  });
+for (const sourceDurationMs of [31000, 60000]) {
+  for (const interruption of ['background', 'translation', 'unmount', 'effect replay']) {
+    test(`Android presentation ${sourceDurationMs} cannot survive ${interruption} between ACK and continuation`, async t => {
+      const h = harness({ sourceDurationMs }); t.after(() => h.unmount()); await h.settle();
+      const player = h.players[0], epoch = h.transport.slots[0].nativeViewEpoch;
+      player.emit('timeUpdate', { currentTime: player.currentTime });
+      let lease;
+      if (interruption === 'background') await h.app('background');
+      if (interruption === 'translation') { lease = h.transport.suspendForTranslation(); await h.settle(); await lease.ready; }
+      if (interruption === 'unmount') h.unmount();
+      if (interruption === 'effect replay') await h.replayEffects();
+      await h.settle();
+      if (interruption !== 'unmount') {
+        assert.notEqual(h.transport.phase, 'ready');
+        assert.ok(h.transport.slots[0].nativeViewEpoch > epoch);
+        assert.equal(h.transport.slots[0].firstFrameReady, false);
+      }
+      if (interruption === 'background') await h.app('active');
+      if (lease) await lease.restore();
+      if (interruption !== 'unmount') { await h.complete(); assert.equal(h.transport.phase, 'ready'); }
+      assert.equal(h.timerCount, 0); assert.equal(h.calls.some(c => c[0] === 'play'), false);
+    });
+  }
 }
 
 test('finite endpoint uses SDK Long-to-Float milliseconds before Float division', async t => {
@@ -1200,22 +1230,72 @@ test('finite endpoint uses SDK Long-to-Float milliseconds before Float division'
   assert.equal(h.calls.filter(c => c[0] === 'seek').length, seeks);
 });
 
-test('rotation layout changes retain the finite SDK view while native presentation is pending and after ACK', async t => {
-  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount());
+for (const sourceDurationMs of [31000, 60000]) {
+  test(`rotation retains Android ${sourceDurationMs} SDK view during presentation and after ACK`, async t => {
+    const h = harness({ sourceDurationMs, holdReplacement: true }); t.after(() => h.unmount());
+    const player = h.players[0]; player.holdWindow = true;
+    player.finishReplacement(); await h.settle();
+    const path = h.views.find(v => v.player === player).nativePath;
+    const epoch = h.transport.slots[0].nativeViewEpoch;
+    await h.rotate(); await h.frame(0); await h.positionAck(0);
+    assert.notEqual(h.transport.phase, 'ready', 'a layout/public frame cannot satisfy native presentation');
+    assert.equal(h.views.find(v => v.player === player).nativePath, path);
+    player.finishWindow(); await h.settle(); await h.rotate();
+    assert.notEqual(h.transport.phase, 'ready', 'presentation still requires its position ACK');
+    await h.positionAck(0); assert.equal(h.transport.phase, 'ready');
+    await h.rotate();
+    assert.equal(h.views.find(v => v.player === player).nativePath, path);
+    assert.equal(h.transport.slots[0].nativeViewEpoch, epoch);
+    assert.equal(h.calls.filter(c => c[0] === 'replace').length, 1);
+    assert.equal(h.calls.filter(c => c[0] === 'seek').length, 0);
+    assert.equal(h.timerCount, 0);
+  });
+}
+
+test('whole Android source fences zero-frame readiness and retains its final view and target', async t => {
+  const h = harness({ holdReplacement: true, clips: [{ ...clip(), sourceStartMs: 0 }] });
+  t.after(() => h.unmount());
   const player = h.players[0]; player.holdWindow = true;
   player.finishReplacement(); await h.settle();
-  const path = h.views.find(v => v.player === player).nativePath;
+  const request = h.calls.find(c => c[0] === 'window');
+  assert.ok(request, 'whole source must request native presentation after SDK initialization');
+  assert.equal(request[4], null); assert.equal(request[6], 0);
   const epoch = h.transport.slots[0].nativeViewEpoch;
-  await h.rotate(); await h.frame(0); await h.positionAck(0);
-  assert.notEqual(h.transport.phase, 'ready', 'a layout/public frame cannot satisfy native presentation');
-  assert.equal(h.views.find(v => v.player === player).nativePath, path);
-  player.finishWindow(); await h.settle(); await h.rotate();
-  assert.notEqual(h.transport.phase, 'ready', 'presentation still requires its position ACK');
-  await h.positionAck(0); assert.equal(h.transport.phase, 'ready');
-  await h.rotate();
-  assert.equal(h.views.find(v => v.player === player).nativePath, path);
+  const path = h.views.find(v => v.player === player).nativePath;
+  await h.frame(0); await h.positionAck(0);
+  assert.notEqual(h.transport.phase, 'ready');
+  assert.equal(h.transport.slots[0].firstFrameReady, false);
+  player.finishWindow(); await h.settle();
+  assert.notEqual(h.transport.phase, 'ready', 'native presentation still needs clock observation');
+  await h.positionAck(0);
+  assert.equal(h.transport.phase, 'ready'); assert.equal(player.currentTime, 0);
+  assert.equal(h.transport.currentMs, 0);
   assert.equal(h.transport.slots[0].nativeViewEpoch, epoch);
-  assert.equal(h.calls.filter(c => c[0] === 'replace').length, 1);
+  assert.equal(h.views.find(v => v.player === player).nativePath, path);
   assert.equal(h.calls.filter(c => c[0] === 'seek').length, 0);
+  assert.equal(h.calls.filter(c => c[0] === 'replace').length, 1);
   assert.equal(h.timerCount, 0);
 });
+
+for (const sourceDurationMs of [31000, 60000]) {
+  test(`superseding target while SDK replacement is pending waits for a loaded source: ${sourceDurationMs}`, async t => {
+    const h = harness({ holdReplacement: true, sourceDurationMs });
+    t.after(() => h.unmount());
+    const player = h.players[0], finishOld = player.finishReplacement;
+    h.transport.seek(3000); await h.settle();
+    assert.equal(h.calls.filter(call => call[0] === 'window').length, 0,
+      'a desired URI is not proof that the SDK has installed it');
+    assert.notEqual(h.transport.phase, 'error');
+    const finishCurrent = player.finishReplacement;
+    finishOld(); await h.settle();
+    if (finishCurrent !== finishOld) {
+      assert.equal(h.calls.filter(call => call[0] === 'window').length, 0,
+        'a retired SDK completion cannot certify its replacement');
+      finishCurrent();
+    }
+    await h.complete();
+    assert.equal(h.transport.phase, 'ready');
+    assert.equal(h.transport.currentMs, 3000);
+    assert.equal(h.calls.some(call => call[0] === 'play'), false);
+  });
+}

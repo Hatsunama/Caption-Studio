@@ -34,10 +34,79 @@ class VideoPlaybackWindowTest {
   private fun drain() = shadowOf(Looper.getMainLooper()).idle()
   private fun stateEvent() = Player.Events(androidx.media3.common.FlagSet.Builder()
     .add(Player.EVENT_PLAYBACK_STATE_CHANGED).build())
-  private fun start(id: Double = 1.0, end: Double = 6375.0, expected: String = uri, timeout: Double = 100.0, target: Double = 123.0): Reply {
+  private fun start(id: Double = 1.0, end: Double? = 6375.0, expected: String = uri, timeout: Double = 100.0, target: Double = 123.0): Reply {
     val reply = Reply()
     owner.configure(fake.player, expected, id, end, target, timeout, reply, fake::frames, fake::install)
     return reply
+  }
+
+  @Test fun fullSourceClearsPriorClipAndPreservesSdkMetadataAtZero() {
+    fake.item = fake.item.buildUpon().setClippingConfiguration(
+      MediaItem.ClippingConfiguration.Builder().setEndPositionMs(6375).build()).build()
+    val metadata = fake.item.mediaMetadata
+    val id = fake.item.mediaId
+    val reply = start(end = null, target = 0.0); drain()
+    assertSame(metadata, fake.item.mediaMetadata)
+    assertEquals(id, fake.item.mediaId)
+    assertEquals(MediaItem.ClippingConfiguration.UNSET, fake.item.clippingConfiguration)
+    assertEquals(0L, fake.position)
+    fake.ready(); fake.sdkFrame(); fake.outputFrame()
+    assertEquals(0, reply.calls) // READY/public SDK callback cannot substitute source analytics.
+    fake.frame(); assertEquals(listOf<String?>(null), reply.results)
+    assertEquals(1, fake.installs)
+    assertTrue(fake.listeners.isEmpty() && fake.analytics.isEmpty() && fake.sdk.isEmpty())
+  }
+
+  @Test fun fullSourceEofRetainsTargetAndViewUntilMatchingPresentation() {
+    val reply = start(end = null, target = 7999.875); drain()
+    val view = fake.view
+    assertEquals(7999L, fake.position)
+    fake.ready(); fake.analyticsFrame(); fake.sdkFrame()
+    assertEquals(0, reply.calls)
+    fake.outputFrame(); assertEquals(listOf<String?>(null), reply.results)
+    assertSame(view, fake.view)
+    assertEquals(7999L, fake.position)
+    assertEquals(1, fake.installs)
+  }
+
+  @Test fun cancelledFullPresentationCannotResolveOrPoisonNextFiniteRequest() {
+    val full = start(end = null, target = 0.0); drain(); fake.ready()
+    val oldAnalytics = fake.analytics.last()
+    val oldOutput = fake.listeners.last()
+    val oldSdk = fake.sdk.last()
+    owner.cancel(fake.player, 1.0)
+    fake.frame(); drain()
+    assertEquals(listOf("E_VIDEO_WINDOW_STALE"), full.results)
+    val finite = start(id = 2.0, end = 6385.0, target = 6384.999); drain(); fake.ready()
+    fake.analyticsFrame(listener = oldAnalytics)
+    oldOutput.onRenderedFirstFrame(); oldSdk.onRenderedFirstFrame(fake.sdkSender)
+    assertEquals(0, finite.calls)
+    fake.frame(); assertEquals(listOf<String?>(null), finite.results)
+    assertEquals(6385L, fake.item.clippingConfiguration.endPositionMs)
+    assertEquals(6384L, fake.position)
+    assertEquals(0, owner.pendingCount)
+  }
+
+  @Test fun fullSourceCancellationBeforeStartAndCloseBeforePresentationRetireOwnedWork() {
+    val queued = start(end = null, target = 0.0)
+    owner.cancel(fake.player, 1.0); drain()
+    assertEquals(listOf("E_VIDEO_WINDOW_STALE"), queued.results)
+    assertEquals(0, fake.installs)
+    val installed = start(id = 2.0, end = null, target = 0.0); drain(); fake.ready()
+    owner.close(); drain(); fake.frame()
+    assertEquals(listOf("E_VIDEO_WINDOW_STALE"), installed.results)
+    assertEquals(1, fake.installs)
+    assertEquals(0, owner.pendingCount)
+    assertTrue(fake.listeners.isEmpty() && fake.analytics.isEmpty() && fake.sdk.isEmpty())
+  }
+
+  @Test fun unsafeFullSourceTargetsFailClosedBeforeInstallation() {
+    listOf(-1.0, Double.NaN, Double.POSITIVE_INFINITY, Double.MAX_VALUE,
+      9007199254740992.0, Long.MAX_VALUE.toDouble()).forEach {
+      assertEquals(listOf("E_VIDEO_WINDOW_INVALID"), start(end = null, target = it).results)
+    }
+    drain(); assertEquals(0, fake.installs)
+    assertEquals(0, owner.pendingCount)
   }
 
   @Test fun readyAloneMustNotResolveWithoutPresentedFrame() {

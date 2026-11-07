@@ -65,14 +65,37 @@ test('invalid timeout, request identity or bound never reaches native code', asy
   assert.equal(h.calls.length, 0); assert.equal(h.timers.size, 0);
 });
 
-test('only finite positive integer ends and finite in-window targets cross native boundary', async () => {
+test('finite windows require positive integer ends and finite in-window targets', async () => {
   const h = harness(), signal = new AbortController().signal;
-  for (const end of [undefined, null, NaN, Infinity, 0, -1, 6385.5])
+  for (const end of [null, NaN, Infinity, 0, -1, 6385.5])
     await assert.rejects(h.configure({}, 'uri', 1, end, 0, 5000, signal));
   for (const target of [undefined, null, NaN, Infinity, -1, 6385, 6386])
     await assert.rejects(h.configure({}, 'uri', 1, 6385, target, 5000, signal));
   assert.equal(h.calls.length, 0);
   const ready = h.configure({}, 'uri', 2, 6385, 6384.125, 5000, signal);
   assert.equal(h.calls[0][5], 6384.125); assert.equal(h.calls[0][6], 5000);
+  h.pending[0].resolve(); await ready;
+});
+
+test('confirmed full source serializes null and fences target zero until native presentation', async () => {
+  const h = harness(), signal = new AbortController().signal;
+  let settled = false;
+  const ready = h.configure({}, 'file:///approved.mp4', 10, undefined, 0, 5000, signal);
+  const observed = ready.then(() => { settled = true; });
+  observed.catch(() => {}); // Keep a failing boundary assertion from leaking an unhandled rejection.
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0][4], null); assert.equal(h.calls[0][5], 0);
+  await Promise.resolve(); assert.equal(settled, false);
+  h.pending[0].resolve(); await observed; assert.equal(settled, true);
+});
+
+test('full targets keep fractions but reject unknown ends and unsafe clock conversions', async () => {
+  const h = harness(), signal = new AbortController().signal;
+  for (const target of [null, undefined, NaN, Infinity, -1, Number.MAX_SAFE_INTEGER + 1, 9223372036854776])
+    await assert.rejects(h.configure({}, 'uri', 1, undefined, target, 5000, signal));
+  await assert.rejects(h.configure({}, 'uri', 1, null, 0, 5000, signal));
+  assert.equal(h.calls.length, 0);
+  const ready = h.configure({}, 'uri', 2, undefined, 6385.416, 5000, signal);
+  assert.equal(h.calls[0][4], null); assert.equal(h.calls[0][5], 6385.416);
   h.pending[0].resolve(); await ready;
 });

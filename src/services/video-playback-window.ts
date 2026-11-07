@@ -1,11 +1,12 @@
 import CaptionMedia from 'caption-media';
 import type { VideoPlayer } from 'expo-video';
 
+// undefined is a confirmed full source; null is an invalid/unknown JS contract.
 export function configureVideoPlaybackWindow(
   player: VideoPlayer,
   expectedUri: string,
   requestId: number,
-  endMs: number,
+  endMs: number | undefined,
   targetMs: number,
   timeoutMs: number,
   signal: AbortSignal,
@@ -40,8 +41,10 @@ export function configureVideoPlaybackWindow(
     }
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5000
       || !Number.isSafeInteger(requestId) || requestId <= 0
-      || !Number.isSafeInteger(endMs) || endMs <= 0
-      || typeof targetMs !== 'number' || !Number.isFinite(targetMs) || targetMs < 0 || targetMs >= endMs) {
+      || (endMs !== undefined && (!Number.isSafeInteger(endMs) || endMs <= 0))
+      || typeof targetMs !== 'number' || !Number.isFinite(targetMs) || targetMs < 0
+      // Safe JS milliseconds also remain below Long.MAX_VALUE after Media3 converts to microseconds.
+      || targetMs > Number.MAX_SAFE_INTEGER || (endMs !== undefined && targetMs >= endMs)) {
       reject(new Error('Invalid video playback window request.'));
       return;
     }
@@ -51,7 +54,7 @@ export function configureVideoPlaybackWindow(
       finish(new Error('The video playback window timed out. Try loading it again.'));
     }, timeoutMs);
     try {
-      void CaptionMedia.configureVideoPlaybackWindow(player, expectedUri, requestId, endMs, targetMs, timeoutMs)
+      void CaptionMedia.configureVideoPlaybackWindow(player, expectedUri, requestId, endMs ?? null, targetMs, timeoutMs)
         .then(() => finish(), error => finish(error));
     } catch (error) { finish(error); }
   });
