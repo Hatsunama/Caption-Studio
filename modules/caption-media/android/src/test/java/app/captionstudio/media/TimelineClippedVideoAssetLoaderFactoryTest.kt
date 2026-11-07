@@ -13,7 +13,9 @@ import androidx.media3.exoplayer.source.MediaPeriod
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.upstream.Allocator
+import androidx.media3.exoplayer.upstream.BandwidthMeter
 import androidx.media3.exoplayer.upstream.DefaultAllocator
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.transformer.AssetLoader
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
@@ -33,6 +35,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
+import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Proxy
 
 /** JVM adapter/source regression coverage, not decoder, GPU, or physical export proof. */
@@ -155,7 +158,7 @@ class TimelineClippedVideoAssetLoaderFactoryTest {
       val source = sourceFactory.createMediaSource(edited.mediaItem)
       var periodUid: Any? = null
       val caller = MediaSource.MediaSourceCaller { _, timeline -> periodUid = timeline.getUidOfPeriod(0) }
-      source.prepareSource(caller, null, PlayerId.UNSET)
+      prepareSourceForMedia3Version(source, caller)
       try {
         val period = source.createPeriod(
           MediaSource.MediaPeriodId(requireNotNull(periodUid)), DefaultAllocator(true, 1024), 0L,
@@ -177,6 +180,24 @@ class TimelineClippedVideoAssetLoaderFactoryTest {
     }
     assertSame(delegate.loader, factory.createAssetLoader(edited, looper, listener, settings))
     assertTrue(checked)
+  }
+
+  // Test-only version adapter: keep the actual native source and the 1.10.1 baseline.
+  private fun prepareSourceForMedia3Version(source: MediaSource, caller: MediaSource.MediaSourceCaller) {
+    val prepareSource = try {
+      MediaSource::class.java.getMethod(
+        "prepareSource", MediaSource.MediaSourceCaller::class.java,
+        PlayerId::class.java, BandwidthMeter::class.java,
+      )
+    } catch (_: NoSuchMethodException) {
+      source.prepareSource(caller, null, PlayerId.UNSET)
+      return
+    }
+    try {
+      prepareSource.invoke(source, caller, PlayerId.UNSET, DefaultBandwidthMeter.getSingletonInstance(context))
+    } catch (failure: InvocationTargetException) {
+      throw failure.targetException
+    }
   }
 
   @Implements(ProgressiveMediaSource::class)
