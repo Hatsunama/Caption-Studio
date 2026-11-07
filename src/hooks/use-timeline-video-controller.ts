@@ -23,6 +23,36 @@ type SlotIndex = 0 | 1;
 type CompositeClock = { key: string; slot: SlotIndex; prepareToken: number };
 const FIRST_FRAME_TIMEOUT_MS = 5_000;
 
+// PRIVATE DIAGNOSTIC ONLY. Status: idle=0/loading=1/ready=2/error=3/unknown=4.
+let readinessTraceBudget = 400;
+const readinessSourceErrors = new WeakSet<object>();
+function traceReadiness(event: 'retire' | 'prepare' | 'replacement-ready' | 'seek' | 'play' | 'frame' | 'frame-ready' | 'frame-timeout' | 'position-ready' | 'position-timeout' | 'prepared' | 'prepare-failed' | 'fail' | 'status' | 'ended', slot: number, token: number, player: VideoPlayer, ...values: (number | boolean)[]) {
+  try {
+    if (readinessTraceBudget-- <= 0) return;
+    let status = 4, positionMs = -1, durationMs = -1;
+    try {
+      status = ['idle', 'loading', 'readyToPlay', 'error'].indexOf(player.status);
+      if (status < 0) status = 4;
+      positionMs = player.currentTime * 1_000;
+      durationMs = player.duration * 1_000;
+    } catch { /* Disposed players must not affect transport. */ }
+    console.info?.('CS_FRAME_READINESS_DIAG', event, Date.now(), slot, token, status,
+      Number.isFinite(positionMs) ? positionMs : -1, Number.isFinite(durationMs) ? durationMs : -1, ...values);
+  } catch { /* Diagnostics must never affect transport. */ }
+}
+
+// Exact known failures only: other=0/frame timeout=1/position timeout=2/source timeout=3/source error=4.
+function readinessFailureReason(error: unknown) {
+  try {
+    if (error && typeof error === 'object' && readinessSourceErrors.has(error)) return 4;
+    return error instanceof Error ? Math.max(0, [
+      '', 'The video did not render a frame in time. Try loading it again.',
+      'The video did not reach the requested frame in time. Try loading it again.',
+      'The video did not become ready. Check the original file and try again.', 'The video could not be loaded.',
+    ].indexOf(error.message)) : 0;
+  } catch { return 0; }
+}
+
 export type TimelineVideoSlot = {
   sourceId?: string;
   playbackUri?: string;
@@ -185,7 +215,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   }, [players]);
 
   const retireSurfaceFrames = useCallback(() => {
-    slotRuntimeRef.current.forEach((runtime) => {
+    slotRuntimeRef.current.forEach((runtime, slot) => {
+      traceReadiness('retire', slot, runtime.prepareToken, players[slot], ['idle', 'preparing', 'ready', 'error', 'cancelled'].indexOf(runtime.readiness), runtime.firstFrameReady, !!runtime.preparation);
       runtime.preparation?.abort();
       // Retire callbacks and async continuations before publishing new surfaces.
       runtime.prepareToken += 1;
@@ -199,7 +230,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     hasPresentedFrameRef.current = false;
     if (mountedRef.current) setHasPresentedFrameState(false);
     publishSlots();
-  }, [publishSlots]);
+  }, [players, publishSlots]);
 
   const suspendForTranslation = useCallback(() => {
     if (translationSuspensionRef.current && !translationSuspensionRef.current.restored) {
@@ -283,6 +314,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   };
 
   const failSource = (source: Pick<ProjectVideoSource, 'id' | 'uri' | 'displayName'>, error: unknown) => {
+    traceReadiness('fail', activeSlotRef.current, slotRuntimeRef.current[activeSlotRef.current].prepareToken, players[activeSlotRef.current], readinessFailureReason(error));
     if (!mountedRef.current) return;
     generationRef.current += 1;
     desiredRef.current = undefined;
@@ -294,6 +326,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const markFirstFrame = useCallback((slot: SlotIndex, token: number) => {
     const runtime = slotRuntimeRef.current[slot];
+    traceReadiness('frame', slot, token, players[slot], runtime.prepareToken, mountedRef.current, surfacesAdmittedRef.current, !!translationSuspensionRef.current, runtime.readiness === 'preparing' || runtime.readiness === 'ready');
     if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current
       || token !== runtime.prepareToken
       || (runtime.readiness !== 'preparing' && runtime.readiness !== 'ready')) return;
@@ -301,10 +334,11 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     for (const resolve of runtime.frameWaiters) resolve();
     runtime.frameWaiters.clear();
     publishSlots();
-  }, [publishSlots]);
+  }, [players, publishSlots]);
 
   const waitForFirstFrame = (slot: SlotIndex, signal: AbortSignal) => {
     const runtime = slotRuntimeRef.current[slot];
+    const token = runtime.prepareToken;
     if (signal.aborted) return Promise.reject(abortError());
     if (runtime.firstFrameReady) return Promise.resolve();
     return new Promise<void>((resolve, reject) => {
@@ -312,6 +346,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       const finish = (error?: Error) => {
         if (settled) return;
         settled = true;
+        if (!error || !isAbortError(error)) traceReadiness(error ? 'frame-timeout' : 'frame-ready', slot, token, players[slot], runtime.prepareToken, runtime.firstFrameReady);
         clearTimeout(timeout);
         signal.removeEventListener('abort', abort);
         runtime.frameWaiters.delete(ready);
@@ -330,13 +365,16 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     targetSeconds: number,
     signal: AbortSignal,
   ) => new Promise<void>((resolve, reject) => {
+    const slot = players.indexOf(player), token = slotRuntimeRef.current[slot].prepareToken;
     if (signal.aborted) { reject(abortError()); return; }
     let timeout: ReturnType<typeof setTimeout>;
     let subscription: { remove: () => void } | undefined;
     let settled = false;
+    let lastEventMs = -1;
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
+      if (!error || !isAbortError(error)) traceReadiness(error ? 'position-timeout' : 'position-ready', slot, token, player, targetSeconds * 1_000, slotRuntimeRef.current[slot].prepareToken, lastEventMs);
       clearTimeout(timeout);
       signal.removeEventListener('abort', abort);
       subscription?.remove();
@@ -344,6 +382,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     };
     const abort = () => finish(abortError());
     subscription = player.addListener('timeUpdate', ({ currentTime }) => {
+      lastEventMs = currentTime * 1_000;
       if (Math.abs(currentTime - targetSeconds) <= 0.25) finish();
     });
     timeout = setTimeout(() => finish(new Error('The video did not reach the requested frame in time. Try loading it again.')), FIRST_FRAME_TIMEOUT_MS);
@@ -369,6 +408,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const token = ++runtime.prepareToken;
     const sourceChanged = forceReload || runtime.playbackUri !== uri
       || (runtime.readiness === 'idle' && player.status !== 'readyToPlay');
+    traceReadiness('prepare', slot, token, player, timelineMs, sourceTimeAt(entry, timelineMs), sourceChanged, forceReload, runtime.firstFrameReady);
     if (sourceChanged) runtime.loadedPlaybackUri = undefined;
 
     runtime.sourceId = source.id;
@@ -384,6 +424,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         runtime.firstFrameReady = false;
         publishSlots();
         await loadPlayableVideoSource(player, uri, 15_000, preparation.signal);
+        traceReadiness('replacement-ready', slot, token, player);
       }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       runtime.loadedPlaybackUri = uri;
@@ -393,12 +434,14 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       player.muted = true;
       player.playbackRate = 1;
       player.currentTime = targetSeconds;
+      traceReadiness('seek', slot, token, player, targetSeconds * 1_000);
       const ready = Promise.all([
         waitForFirstFrame(slot, preparation.signal),
         waitForDecodedPosition(player, targetSeconds, preparation.signal),
       ]);
       try {
         player.play();
+        traceReadiness('play', slot, token, player);
       } catch (error) {
         preparation.abort();
         await ready.catch(() => {});
@@ -408,10 +451,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       player.pause();
       runtime.readiness = 'ready';
+      traceReadiness('prepared', slot, token, player);
       publishSlots();
       return slot;
     } catch (caught) {
       const error = token === runtime.prepareToken ? runtime.preparationError ?? caught : abortError();
+      traceReadiness('prepare-failed', slot, token, player, runtime.prepareToken, runtime.preparationError ? 4 : readinessFailureReason(error), isAbortError(error));
       if (token === runtime.prepareToken) {
         runtime.firstFrameReady = false;
         runtime.readiness = isAbortError(error) ? 'cancelled' : 'error';
@@ -727,6 +772,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   };
 
   const onPlayToEnd = (slot: SlotIndex) => {
+    traceReadiness('ended', slot, slotRuntimeRef.current[slot].prepareToken, players[slot]);
     if (slot !== activeSlotRef.current || processingRef.current || phaseRef.current !== 'ready') return;
     const entry = entriesRef.current.find((candidate) => candidate.clip.id === activeClipIdRef.current);
     if (entry) advanceFrom(entry);
@@ -741,12 +787,15 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   };
 
   const onStatusChange = (slot: SlotIndex, status: string, error: unknown) => {
+    traceReadiness('status', slot, slotRuntimeRef.current[slot].prepareToken, players[slot], status === 'idle' ? 0 : status === 'loading' ? 1 : status === 'readyToPlay' ? 2 : status === 'error' ? 3 : 4);
     if (status !== 'error') return;
+    if (error && typeof error === 'object') readinessSourceErrors.add(error);
     const runtime = slotRuntimeRef.current[slot];
     if (runtime.preparation) {
       runtime.preparationError = error instanceof Error ? error : new Error(
         typeof error === 'object' && error && 'message' in error ? String(error.message) : 'The video could not be loaded.',
       );
+      readinessSourceErrors.add(runtime.preparationError);
       runtime.preparation.abort();
       return;
     }
