@@ -66,15 +66,18 @@ export function projectRenderDuration(project: CaptionProject): number {
   return Math.ceil(duration);
 }
 
-/** Missing footage inside the project extent is canvas, including its endpoint. */
+/** Missing footage is canvas; footage-only rounding padding retains its last endpoint. */
 export function projectTimelineSegmentAt(
   project: CaptionProject,
   timelineMs: number,
   entries: ClipTimelineEntry[] = buildClipTimeline(project.clips),
 ): TimelineSegment | undefined {
-  const videoEndMs = entries.at(-1)?.afterGapEndMs ?? 0;
+  const last = entries.at(-1);
+  const videoEndMs = last?.afterGapEndMs ?? 0;
   const durationMs = projectTimelineDuration(project);
   if (durationMs > videoEndMs && timelineMs >= videoEndMs && timelineMs <= durationMs) {
+    if (project.clips?.length && last && durationMs === Math.ceil(videoEndMs)
+      && last.afterGapEndMs === last.endMs) return { kind: 'clip', entry: last };
     return { kind: 'gap', startMs: videoEndMs, endMs: durationMs };
   }
   return timelineSegmentAt(entries, timelineMs);

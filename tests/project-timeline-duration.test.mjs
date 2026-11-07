@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { deleteVideoClip, reorderVideoClip, splitVideoClip, trimVideoClip } from '../src/lib/project-editor.ts';
-import { projectTimelineDuration, projectTimelineSegmentAt } from '../src/lib/project-timeline.ts';
-import { setClipPlaybackRate, rippleDelete, totalClipDuration } from '../src/lib/video-timeline.ts';
+import { projectRenderDuration, projectTimelineDuration, projectTimelineSegmentAt } from '../src/lib/project-timeline.ts';
+import { buildClipTimeline, sourceTimeAt, setClipPlaybackRate, rippleDelete, totalClipDuration } from '../src/lib/video-timeline.ts';
 import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
 import { buildTimelineAudioRenderPlan } from '../src/lib/timeline-audio-render-plan.ts';
 import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
@@ -19,6 +19,58 @@ function fixture() {
     sourceStartMs: 200, sourceEndMs: 5_200, volume: 0.7, muted: false, fadeInMs: 100, fadeOutMs: 300 }];
   return project;
 }
+
+for (const playbackRate of [0.5, 1, 1.5, 2]) {
+  test(`footage rounding padding retains the final clip at rate ${playbackRate}`, () => {
+    const project = fixture();
+    project.clips = [{ ...project.clips[0], sourceStartMs: 0, sourceEndMs: 6385.416666666667, playbackRate }];
+    const before = structuredClone(project);
+    const entries = buildClipTimeline(project.clips), last = entries.at(-1);
+    const duration = Math.ceil(last.endMs);
+    assert.equal(projectTimelineDuration(project), duration);
+    assert.equal(projectRenderDuration(project), duration);
+    for (const time of [last.endMs - 0.001, last.endMs, (last.endMs + duration) / 2, duration]) {
+      const segment = projectTimelineSegmentAt(project, time, entries);
+      assert.equal(segment?.kind, 'clip', `time ${time}`);
+      assert.equal(segment.entry, last);
+      assert.equal(projectTimelineSegmentAt(project, time)?.entry.clip, project.clips[0]);
+      if (time >= last.endMs) {
+        assert.equal(sourceTimeAt(segment.entry, time), sourceTimeAt(last, last.endMs));
+        assert.ok(sourceTimeAt(segment.entry, time) <= last.clip.sourceEndMs);
+      }
+    }
+    assert.equal(projectTimelineSegmentAt(project, duration + 0.001), undefined);
+    assert.deepEqual(project, before, 'lookup must not quantize or mutate saved footage');
+  });
+}
+
+test('rounding repair preserves authored leading, interior and arbitrarily small trailing gaps', () => {
+  for (const gapAfterMs of [0.0001, 0.25, 20]) {
+    const project = fixture();
+    project.clips = [
+      { ...project.clips[0], sourceEndMs: 1000, gapBeforeMs: 5, gapAfterMs: 7 },
+      { ...project.clips[1], sourceEndMs: 6385.416666666667, gapBeforeMs: 3, gapAfterMs },
+    ];
+    const entries = buildClipTimeline(project.clips), last = entries.at(-1);
+    for (const time of [0, 4.999, entries[0].endMs, last.startMs - 0.001, last.endMs,
+      last.endMs + gapAfterMs / 2, last.afterGapEndMs, projectTimelineDuration(project)]) {
+      assert.equal(projectTimelineSegmentAt(project, time, entries)?.kind, 'gap', `gap ${gapAfterMs}, time ${time}`);
+    }
+    assert.equal(projectTimelineSegmentAt(project, last.startMs, entries)?.kind, 'clip');
+    assert.equal(projectTimelineSegmentAt(project, projectTimelineDuration(project) + 1, entries), undefined);
+  }
+});
+
+test('the rounding exception never fills a genuinely missing suffix from supplied entries', () => {
+  const project = fixture();
+  const available = buildClipTimeline([project.clips[0]]);
+  assert.deepEqual(projectTimelineSegmentAt(project, 15000, available),
+    { kind: 'gap', startMs: 10000, endMs: 20000 });
+  const canvas = { clips: [], captions: [{ id: 'cue', startMs: 0, endMs: 6385.416666666667 }] };
+  const retired = buildClipTimeline([{ ...project.clips[0], sourceEndMs: 6385.416666666667 }]);
+  assert.deepEqual(projectTimelineSegmentAt(canvas, 6386, retired),
+    { kind: 'gap', startMs: retired[0].endMs, endMs: 6386 });
+});
 
 test('deleting the second video preserves stored audio but bounds both render plans to footage', () => {
   const before = fixture();

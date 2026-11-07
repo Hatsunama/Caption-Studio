@@ -766,7 +766,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     if (!playIntentRef.current || boundaryClipIdRef.current === entry.clip.id) return;
     boundaryClipIdRef.current = entry.clip.id;
     const next = nextEntryAfter(entry);
-    const gapEndMs = next?.startMs ?? projectTimelineDuration(projectRef.current);
+    const gapEndMs = next?.startMs ?? (entry.afterGapEndMs > entry.endMs
+      ? projectTimelineDuration(projectRef.current) : entry.endMs);
     if (gapEndMs > entry.endMs) {
       runGap(entry.endMs, gapEndMs, next);
       return;

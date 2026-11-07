@@ -19,8 +19,9 @@ const clip = (id = 'a', sourceId = 'source') => ({ id, sourceId, sourceStartMs: 
 
 // Executes complete modules, with real timeline/policy/overlay consumers. Only
 // React scheduling and the native boundary are faked; frames never arrive by default.
-function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false, sourceDurationMs = 60000 } = {}) {
+function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false, sourceDurationMs = 60000, allowGapClock = false } = {}) {
   const hosts = new Map(), cache = new Map(), timers = new Map(), calls = [], eofFrames = new Map();
+  const gapFrames = new Map();
   const publishedFrames = new Map();
   let host, cursor, dirty = true, transport, views = [], alive = true, timerId = 0, now = 0;
   let appStateListener, playerCursor = 0, blockingUi = false;
@@ -104,7 +105,10 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   // factories provide their own lexical scope without duplicating VM intrinsics.
   const context = vm.createContext({ Error, AbortController, performance: { now: () => now },
     setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, at: now + delay }); return id; },
-    clearTimeout: id => timers.delete(id), requestAnimationFrame: () => { throw new Error('unexpected gap clock'); }, cancelAnimationFrame() {},
+    clearTimeout: id => timers.delete(id), requestAnimationFrame(fn) {
+      if (!allowGapClock) throw new Error('unexpected gap clock');
+      const id = ++timerId; gapFrames.set(id, fn); calls.push(['gapRAF']); return id;
+    }, cancelAnimationFrame: id => gapFrames.delete(id),
   });
   function load(path) {
     if (cache.has(path)) return cache.get(path);
@@ -211,7 +215,8 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     async complete() { await settle(); for (let i = 0; i < 4; i++) {
       for (const slot of [0, 1]) if (transport.slots[slot].readiness === 'preparing') { await this.positionAck(slot); await this.frame(slot); }
       await settle(); } },
-    async advance(ms) { now += ms; for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.fn(); } await settle(); },
+    async advance(ms) { now += ms; for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.fn(); }
+      for (const [id, frame] of [...gapFrames]) { gapFrames.delete(id); frame(now); } await settle(); },
     async replayEffects() {
       const cells = [...hosts.values()].flatMap(owner => owner.cells).filter(cell => cell?.setup);
       for (const kind of ['layout', 'passive']) for (const cell of cells) {
@@ -225,6 +230,63 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     unmount() { alive = false; for (const owner of hosts.values()) owner.cells.forEach(cell => cell?.cleanup?.()); hosts.clear(); },
     get timerCount() { return timers.size; },
   };
+}
+
+test('authored trailing gap still uses its canvas clock through the rounded project endpoint', async t => {
+  const final = { ...clip(), sourceStartMs: 0, sourceEndMs: 6385.416666666667, gapAfterMs: 20.25 };
+  const h = harness({ clips: [final], allowGapClock: true }); t.after(() => h.unmount()); await h.complete();
+  h.transport.play(); await h.complete();
+  h.players[h.transport.activeSlot].emit('playToEnd', {}); await h.settle();
+  assert.equal(h.transport.phase, 'gap'); assert.equal(h.transport.isGap, true);
+  assert.equal(h.transport.currentMs, final.sourceEndMs);
+  assert.equal(h.calls.filter(call => call[0] === 'gapRAF').length, 1);
+  await h.advance(10);
+  assert.equal(h.transport.currentMs, final.sourceEndMs + 10);
+  assert.equal(h.transport.isPlaying, true);
+  await h.advance(12);
+  assert.equal(h.transport.phase, 'ended');
+  assert.equal(h.transport.currentMs, Math.ceil(final.sourceEndMs + final.gapAfterMs));
+  assert.equal(h.transport.isGap, true); assert.equal(h.transport.isPlaying, false);
+});
+
+for (const playbackRate of [0.5, 1, 1.5, 2]) {
+  for (const sourceEndMs of [6385.416666666667, 6000]) {
+    test(`paused final endpoint remains footage: end ${sourceEndMs}, rate ${playbackRate}`, async t => {
+      const final = { ...clip(), sourceStartMs: 0, sourceEndMs, playbackRate };
+      const h = harness({ clips: [final], nativeClock: true }); t.after(() => h.unmount());
+      await h.complete();
+      const end = sourceEndMs / playbackRate, duration = Math.ceil(end);
+      for (const target of [end, (end + duration) / 2, duration]) {
+        h.transport.seek(target); await h.complete(); h.transport.pause(); await h.settle();
+        assert.equal(h.transport.currentMs, target);
+        assert.equal(h.transport.phase, 'ready');
+        assert.equal(h.transport.isGap, false);
+        assert.equal(h.transport.isPlaying, false);
+        assert.equal(h.transport.sourceFailure, undefined);
+        assert.ok(h.views.length > 0, 'footage surface remains mounted');
+        assert.equal(h.transport.slots[h.transport.activeSlot].preparedClipId, final.id);
+        assert.ok(h.players[h.transport.activeSlot].currentTime * 1000 <= sourceEndMs);
+      }
+      assert.equal(h.calls.some(call => call[0] === 'play'), false);
+    });
+  }
+  for (const event of ['timeUpdate', 'playToEnd', 'playingChange']) {
+    test(`fractional playback ends without a gap RAF: ${event}, rate ${playbackRate}`, async t => {
+      const final = { ...clip(), sourceStartMs: 0, sourceEndMs: 6385.416666666667, playbackRate };
+      const h = harness({ clips: [final] }); t.after(() => h.unmount()); await h.complete();
+      h.transport.play(); await h.complete();
+      const player = h.players[h.transport.activeSlot];
+      player.currentTime = final.sourceEndMs / 1000;
+      player.emit(event, { currentTime: player.currentTime, isPlaying: false }); await h.settle();
+      assert.equal(h.transport.phase, 'ended');
+      assert.equal(h.transport.currentMs, final.sourceEndMs / playbackRate);
+      assert.equal(h.transport.isPlaying, false);
+      assert.equal(h.transport.isGap, false);
+      assert.equal(h.transport.sourceFailure, undefined);
+      assert.ok(h.views.length > 0);
+      assert.equal(player.playing, false);
+    });
+  }
 }
 
 test('independent app harnesses keep clocks, native calls and teardown isolated', async t => {
