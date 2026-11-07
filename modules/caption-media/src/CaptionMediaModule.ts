@@ -7,12 +7,13 @@ import type { AudioExtractionResult, AudioPeaksResult, AudioTrackExtractionResul
 export type { TimelineVideoExportProgress } from './CaptionMedia.types';
 
 declare class CaptionMediaModule extends NativeModule<Record<never, never>> {
-  /** Android: reprepare the same SDK-loaded local asset, paused; null restores its full source. */
+  /** Android: finite clip, paused at truncated targetMs; resolves after READY and presentation on the current SDK view. */
   configureVideoPlaybackWindow(
     player: VideoPlayer,
     expectedUri: string,
     requestId: number,
-    endMs: number | null,
+    endMs: number,
+    targetMs: number,
     timeoutMs: number,
   ): Promise<void>;
   cancelVideoPlaybackWindow(player: VideoPlayer, requestId: number): Promise<void>;

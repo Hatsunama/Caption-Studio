@@ -62,7 +62,7 @@ test('timeline seeks retain persistent slot ownership instead of replacing a dec
   assert.equal((controller.match(/useVideoPlayer\(null, configureTimelinePlayer\)/g) ?? []).length, 2);
   assert.match(controller, /const sourceChanged = forceReload \|\| runtime\.playbackUri !== uri/);
   assert.match(controller, /runtime\.preparedClipId === entry\.clip\.id && runtime\.firstFrameReady/);
-  assert.match(controller, /const sourceChanged = forceReload \|\| runtime\.playbackUri !== uri;/);
+  assert.match(controller, /const sourceChanged = forceReload \|\| runtime\.playbackUri !== uri\s*\|\| runtime\.sourceId !== source\.id \|\| runtime\.appliedWindowEndMs !== windowEndMs;/);
   const retirement = controller.slice(controller.indexOf('const retireSurfaceFrames ='), controller.indexOf('const suspendForTranslation ='));
   assert.match(retirement, /runtime\.prepareToken = nextPrepareToken\(runtime\.prepareToken\);/);
   assert.match(retirement, /runtime\.firstFrameReady = false/);

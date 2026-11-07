@@ -18,13 +18,15 @@ const clip = (id = 'a', sourceId = 'source') => ({ id, sourceId, sourceStartMs: 
   transitionAfter: { type: 'none', durationMs: 0 }, transform });
 
 // Executes complete modules, with real timeline/policy/overlay consumers. Only
-// React scheduling and the native boundary are faked; frames never arrive by default.
-function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false, sourceDurationMs = 60000, allowGapClock = false } = {}) {
+// React scheduling and the native boundary are faked. Public view frames never
+// arrive by default; finite native presentation is controlled by holdWindow.
+// The default source ends at the default clip end to preserve legacy frame gates.
+function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false, sourceDurationMs = 31000, allowGapClock = false } = {}) {
   const hosts = new Map(), cache = new Map(), timers = new Map(), calls = [], eofFrames = new Map();
   const gapFrames = new Map();
   const publishedFrames = new Map();
   let host, cursor, dirty = true, transport, views = [], alive = true, timerId = 0, now = 0;
-  let appStateListener, playerCursor = 0, blockingUi = false;
+  let appStateListener, playerCursor = 0, blockingUi = false, width = 300, height = 200;
   const layout = [], passive = [];
   const effect = (queue) => (fn, deps) => {
     const i = cursor++, cell = host.cells[i] ??= {};
@@ -57,7 +59,8 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     const listeners = new Map();
     let time = 0;
     return { mediaItems: 0, status: 'idle', playing: false, muted: false, playbackRate: 1, volume: 1,
-      get duration() { if (this.windowEndMs != null) return Math.fround(this.windowEndMs / 1000); return nativeDuration === undefined ? project.sources[0]?.durationMs / 1000 : nativeDuration; },
+      get duration() { const full = nativeDuration === undefined ? project.sources[0]?.durationMs / 1000 : nativeDuration;
+        return this.windowEndMs == null ? full : Math.min(full, Math.fround(Math.fround(this.windowEndMs) / 1000)); },
       get currentTime() { return nativeClock ? Math.fround(Math.fround(time * 1000) / 1000) : time; },
       set currentTime(value) { time = nativeClock ? Math.min(Math.trunc(value * 1000), Math.round(this.duration * 1000)) / 1000 : value; calls.push(['seek', slot, value]);
         if (this.ackOnSeek) this.emit('timeUpdate', { currentTime: value }); },
@@ -77,15 +80,19 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = {
     'caption-media': { __esModule: true, default: {
-      async configureVideoPlaybackWindow(player, uri, requestId, endMs, timeoutMs) {
+      async configureVideoPlaybackWindow(player, uri, requestId, endMs, targetMs, timeoutMs) {
         const slot = players.indexOf(player);
-        calls.push(['window', slot, uri, requestId, endMs, timeoutMs]);
+        calls.push(['window', slot, uri, requestId, endMs, timeoutMs, targetMs]);
         assert.equal(player.loadedUri, uri, 'SDK source must be current before configuring its window');
-        assert.equal(player.status, 'readyToPlay'); assert.equal(player.playing, false); assert.equal(player.muted, true);
+        assert.equal(player.playing, false); assert.equal(player.muted, true);
         assert.ok(timeoutMs > 0 && timeoutMs <= 5000);
         // Native setMediaSource installs the item before asynchronous READY.
         // Cancellation retires its observer, without restoring the old item.
         player.windowEndMs = endMs;
+        // Model installation/positioning BEFORE the source-specific presentation promise.
+        // This is a contract mock, not evidence of real codec presentation.
+        player.currentTime = targetMs / 1000;
+        calls[calls.length - 1][0] = 'nativePosition';
         if (player.holdWindow) await new Promise((resolve, reject) => { player.finishWindow = resolve; player.failWindow = reject; });
         if (player.cancelledWindow === requestId) throw Object.assign(new Error('cancelled'), { name: 'AbortError' });
       },
@@ -136,7 +143,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     transport = useTimelineVideoController(project, () => {}, policy.videoSurfacesAdmitted);
     return jsx(VideoTransitionOverlay, { entries: buildClipTimeline(project.clips), sources: project.sources,
       timelineMs: transport.currentMs, isPlaying: transport.isPlaying, transportReady: transport.phase === 'ready',
-      width: 300, height: 200, backgroundColor: '#000', admitted: policy.videoSurfacesAdmitted && !transport.previewResourcesSuspended,
+      width, height, backgroundColor: '#000', admitted: policy.videoSurfacesAdmitted && !transport.previewResourcesSuspended,
       visible: !transport.isGap, players, slots: transport.slots, activeSlot: transport.activeSlot,
       currentTransform: transform, currentClipId: transport.slots[transport.activeSlot].preparedClipId,
       onFirstFrameRender: transport.markFirstFrame, setCompositeClock: transport.setCompositeClock });
@@ -170,6 +177,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   return { players, calls, project, render, settle, get transport() { return transport; }, get views() { return views; },
     async app(state) { appState.currentState = state; appStateListener(state); render(); await settle(); },
     async modal(value) { blockingUi = value; render(); await settle(); },
+    async rotate() { [width, height] = [height, width]; render(); await settle(); },
     async frame(slot) { views.find(view => view.player === players[slot])?.onFirstFrameRender(); await settle(); },
     // Native clock events and seek frames can arrive with playback paused.
     // If preparation starts playback, model the decoder running beyond target.
@@ -180,8 +188,12 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
         const player = players[slot], target = player.currentTime;
         if (player.playing) player.currentTime += 0.115;
         await this.positionAck(slot);
-        assert.notEqual(transport.slots[slot].readiness, 'ready', 'clock ack alone cannot replace a surface frame');
-        assert.equal(player.currentTime, target, 'paused preparation must not run the native clock beyond its target');
+        if (player.windowEndMs === undefined) assert.notEqual(transport.slots[slot].readiness, 'ready', 'legacy clock ack alone cannot replace a surface frame');
+        // Native presentation can finish activation during ACK delivery. A
+        // composite may then explicitly seek its source handle; no clock drift.
+        const activatedSeek = calls.filter(call => call[0] === 'seek' && call[1] === slot).at(-1);
+        assert.equal(player.currentTime, player.windowEndMs !== undefined && transport.slots[slot].readiness === 'ready' && activatedSeek
+          ? activatedSeek[2] : target, 'paused preparation only moves for an explicit composite source seek');
         // Completing the frame can activate a composite's explicit source seek.
         await this.frame(slot);
         assert.equal(player.playing, false);
@@ -366,7 +378,7 @@ test('cancel between position receipt and continuation cannot publish a render e
 
 for (const position of [6.385, Math.fround(6.385), 6.385416, 6.5, 6.384, NaN, Infinity]) {
   test(`fractional preparation accepts only native precision ACK: ${position}`, async t => {
-    const h = harness({ clips: [{ ...clip(), sourceStartMs: 6385.416, sourceEndMs: 8000 }] });
+    const h = harness({ sourceDurationMs: 8000, clips: [{ ...clip(), sourceStartMs: 6385.416, sourceEndMs: 8000 }] });
     t.after(() => h.unmount()); await h.settle();
     h.players[0].emit('timeUpdate', { currentTime: position }); await h.settle();
     await h.frame(0);
@@ -432,7 +444,7 @@ test('position and fresh-view receipts share the original five-second preparatio
 });
 
 test('fractional paused target keeps its domain clock through Home and rejects the observed old 6.500s receipt', async t => {
-  const endpoint = { ...clip(), sourceStartMs: 0, sourceEndMs: 7000, availableSourceEndMs: 8000 };
+  const endpoint = { ...clip(), sourceStartMs: 0, sourceEndMs: 8000, availableSourceEndMs: 8000 };
   const h = harness({ sourceDurationMs: 8000, clips: [endpoint] }); t.after(() => h.unmount());
 
   await h.complete(); h.transport.seek(6385.416); await h.settle();
@@ -788,7 +800,7 @@ test('translation unload and background restore retire tokens permanently and re
 
 test('composite consumers cannot reuse detached active/standby frames on foreground', async t => {
   const first = clip(); first.transitionAfter = { type: 'crossfade', durationMs: 1000 };
-  const h = harness({ clips: [first, clip('b', 'other')] }); t.after(() => h.unmount()); await h.complete();
+  const h = harness({ sourceDurationMs: 60000, clips: [first, clip('b', 'other')] }); t.after(() => h.unmount()); await h.complete();
   h.transport.seek(29750); await h.complete();
   const retired = h.views.map(view => view.onFirstFrameRender);
   const assertComposite = () => {
@@ -898,11 +910,11 @@ for (const endMs of [6385, 6385.9]) {
     await h.complete(); h.transport.seek(logicalMs); await h.settle(); await h.app('background'); await h.app('active');
     const slot = h.transport.slots.findIndex(value => value.readiness === 'preparing');
     assert.equal(h.calls.filter(call => call[0] === 'window').at(-1)[4], 6385);
-    assert.equal(h.calls.filter(call => call[0] === 'seek').at(-1)[2], 6.384);
+    assert.equal(h.calls.filter(call => call[0] === 'nativePosition').at(-1)[2], 6.384);
     assert.equal(h.transport.currentMs, logicalMs);
     h.players[slot].emit('timeUpdate', { currentTime: 6.385 }); await h.settle(); await h.frame(slot);
     assert.notEqual(h.transport.phase, 'ready');
-    await h.positionAck(slot); assert.notEqual(h.transport.phase, 'ready');
+    await h.positionAck(slot); assert.equal(h.transport.phase, 'ready');
     const count = h.calls.filter(call => call[0] === 'seek').length;
     await h.frame(slot); assert.equal(h.transport.phase, 'ready');
     assert.equal(h.transport.currentMs, logicalMs);
@@ -955,39 +967,45 @@ for (const interruption of ['native failure', 'cancel', 'new target']) {
 }
 
 
-test('SDK ready precedes cap, then position ACK and fresh view are still mandatory', async t => {
-  const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+test('SDK ready precedes native presentation; ACK retains the consumed view without another seek', async t => {
+  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount());
   h.players[0].holdWindow = true;
   await h.settle(); assert.equal(h.calls.some(c => c[0] === 'window'), false);
   h.players[0].finishReplacement(); await h.settle();
   assert.equal(h.calls.filter(c => c[0] === 'window').length, 1);
   assert.equal(h.calls.some(c => c[0] === 'seek'), false);
-  await h.frame(0); assert.equal(h.transport.slots[0].firstFrameReady, false);
+  await h.frame(0); await h.positionAck(0);
+  assert.equal(h.transport.slots[0].firstFrameReady, false);
+  assert.notEqual(h.transport.phase, 'ready', 'READY, public frame and ACK cannot bypass held native presentation');
   h.players[0].finishWindow(); await h.settle();
-  assert.equal(h.calls.filter(c => c[0] === 'seek').length, 1);
-  await h.positionAck(0); assert.notEqual(h.transport.phase, 'ready');
-  await h.frame(0); assert.equal(h.transport.phase, 'ready');
+  const epoch = h.transport.slots[0].nativeViewEpoch;
+  assert.equal(h.calls.filter(c => c[0] === 'seek').length, 0);
+  assert.notEqual(h.transport.phase, 'ready');
+  await h.positionAck(0); assert.equal(h.transport.phase, 'ready');
+  assert.equal(h.transport.slots[0].nativeViewEpoch, epoch);
+  assert.equal(h.calls.filter(c => c[0] === 'seek').length, 0);
 });
 
-test('same URI trim change and untrim require new windows without SDK source reload', async t => {
-  const h = harness(); t.after(() => h.unmount()); await h.complete();
+test('same URI trim change and untrim reload full source through SDK', async t => {
+  const h = harness({ sourceDurationMs: 60000 }); t.after(() => h.unmount()); await h.complete();
   for (const end of [6385, 60000]) {
     h.project.clips = [{ ...h.project.clips[0], sourceEndMs: end }];
     h.transport.synchronizeProject(h.project); await h.complete();
     assert.equal(h.transport.phase, 'ready');
-    assert.equal(h.calls.filter(c => c[0] === 'window').at(-1)[4], end === 60000 ? null : end);
+    assert.equal(h.players[h.transport.activeSlot].windowEndMs, end === 60000 ? undefined : end);
   }
-  assert.equal(h.calls.filter(c => c[0] === 'replace').length, 2, 'one initial load per used slot, then unclip retained URI');
+  assert.equal(h.calls.filter(c => c[0] === 'replace').length, 3, 'every window contract change reloads through SDK');
+  assert.equal(h.calls.filter(c => c[0] === 'window').length, 2, 'full source never invokes nullable native unclip');
 });
 
 
 test('native window, position and frame share five seconds after SDK readiness', async t => {
-  const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount());
   h.players[0].holdWindow = true;
   await h.advance(6000); assert.notEqual(h.transport.phase, 'error', 'SDK load has its own existing timeout');
   h.players[0].finishReplacement(); await h.settle();
   await h.advance(4000); h.players[0].finishWindow(); await h.settle();
-  await h.positionAck(0); await h.advance(999); assert.notEqual(h.transport.phase, 'error');
+  await h.advance(999); assert.notEqual(h.transport.phase, 'error');
   await h.advance(1); assert.equal(h.transport.phase, 'error');
   await h.frame(0); assert.equal(h.transport.phase, 'error');
   assert.equal(h.timerCount, 0);
@@ -995,7 +1013,7 @@ test('native window, position and frame share five seconds after SDK readiness',
 
 for (const reason of ['timeout', 'failure', 'background', 'translation', 'changed trim']) {
   test(`native window ${reason} retires its cache and ignores late completion`, async t => {
-    const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+    const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount());
     const player = h.players[0]; player.holdWindow = true;
     player.finishReplacement(); await h.settle();
     const late = player.finishWindow, id = h.calls.find(c => c[0] === 'window')[3];
@@ -1030,7 +1048,7 @@ for (const reason of ['timeout', 'failure', 'background', 'translation', 'change
 test('full contiguous source run reuses one decoder with no native window operation', async t => {
   const a = { ...clip(), sourceStartMs: 0, sourceEndMs: 2000 };
   const b = { ...clip('b'), sourceStartMs: 2000, sourceEndMs: 60000 };
-  const h = harness({ clips: [a, b] }); t.after(() => h.unmount()); await h.complete();
+  const h = harness({ sourceDurationMs: 60000, clips: [a, b] }); t.after(() => h.unmount()); await h.complete();
   const token = h.transport.slots[0].prepareToken;
   h.players[0].currentTime = 2; h.transport.seek(2000); await h.settle();
   assert.equal(h.transport.phase, 'ready');
@@ -1043,7 +1061,7 @@ test('full contiguous source run reuses one decoder with no native window operat
 
 test('transition source handles extend the outgoing cap and preserve incoming pretrim clock', async t => {
   const a = { ...clip(), transitionAfter: { type: 'crossfade', durationMs: 1000 } };
-  const h = harness({ clips: [a, clip('b', 'other')] }); t.after(() => h.unmount()); await h.complete();
+  const h = harness({ sourceDurationMs: 60000, clips: [a, clip('b', 'other')] }); t.after(() => h.unmount()); await h.complete();
   assert.equal(h.calls.find(c => c[0] === 'window' && c[1] === 0)[4], 31500);
   assert.equal(h.calls.find(c => c[0] === 'window' && c[1] === 1)[4], 31000);
   h.transport.seek(29750); await h.complete();
@@ -1052,7 +1070,7 @@ test('transition source handles extend the outgoing cap and preserve incoming pr
 });
 
 test('new URI full source reloads through SDK without a redundant native unclip', async t => {
-  const h = harness(); t.after(() => h.unmount()); await h.complete();
+  const h = harness({ sourceDurationMs: 60000 }); t.after(() => h.unmount()); await h.complete();
   h.project.clips = [{ ...h.project.clips[0], sourceEndMs: 60000 }];
   h.project.sources[0].previewUri = 'file:///new-proxy.mp4';
   h.transport.synchronizeProject(h.project); await h.complete();
@@ -1066,7 +1084,7 @@ for (const firstEnd of [10000, 60000]) {
     const a = { ...clip('a'), sourceStartMs: 0, sourceEndMs: firstEnd };
     const b = { ...clip('b', 'other'), sourceStartMs: 0, sourceEndMs: 10000 };
     const c = { ...clip('c'), sourceStartMs: 20000, sourceEndMs: 30000 };
-    const h = harness({ clips: [a, b, c] }); t.after(() => h.unmount());
+    const h = harness({ sourceDurationMs: 60000, clips: [a, b, c] }); t.after(() => h.unmount());
     await h.complete();
     const standby = h.players[0]; standby.holdWindow = true;
     h.transport.seek(firstEnd + 1000); await h.complete();
@@ -1080,12 +1098,124 @@ for (const firstEnd of [10000, 60000]) {
     h.transport.seek(1000); await h.complete();
     assert.equal(h.transport.phase, 'ready');
     assert.equal(h.transport.currentMs, 1000);
-    assert.equal(h.calls.filter(call => call[0] === 'window').length, before + 1,
+    assert.equal(h.calls.filter(call => call[0] === 'window').length, before + (firstEnd === 60000 ? 0 : 1),
       'a cancelled installed item cannot reuse the old confirmed-window cache');
-    assert.equal(standby.windowEndMs, firstEnd === 60000 ? null : firstEnd);
+    assert.equal(standby.windowEndMs, firstEnd === 60000 ? undefined : firstEnd);
     lateReady(); await h.settle();
-    assert.equal(standby.windowEndMs, firstEnd === 60000 ? null : firstEnd);
+    assert.equal(standby.windowEndMs, firstEnd === 60000 ? undefined : firstEnd);
     assert.equal(h.transport.phase, 'ready');
     assert.equal(h.calls.some(call => call[0] === 'play'), false);
   });
 }
+
+// Finite preparation tests intentionally keep the full 60s SDK source.
+test('finite same-end new clip ID at EOF requests a fresh presentation, while ready scrubs reuse it', async t => {
+  const h = harness({ sourceDurationMs: 60000, clips: [clip(), clip('b'), clip('c')] });
+  t.after(() => h.unmount()); await h.complete();
+  const slot = h.transport.activeSlot === 0 ? 1 : 0, player = h.players[slot];
+  player.currentTime = 31; player.status = 'idle'; player.holdWindow = true;
+  const loads = h.calls.filter(c => c[0] === 'replace').length;
+  const windows = h.calls.filter(c => c[0] === 'window').length;
+  h.transport.seek(61800); await h.settle();
+  assert.equal(h.calls.filter(c => c[0] === 'window').length, windows + 1);
+  assert.equal(h.calls.filter(c => c[0] === 'replace').length, loads, 'unchanged contract retains SDK initialization');
+  assert.equal(player.windowEndMs, 31000); assert.equal(player.currentTime, 2.8);
+  const epoch = h.transport.slots[slot].nativeViewEpoch;
+  await h.frame(slot); await h.positionAck(slot); assert.notEqual(h.transport.phase, 'ready');
+  player.finishWindow(); await h.settle(); assert.notEqual(h.transport.phase, 'ready');
+  const seeks = h.calls.filter(c => c[0] === 'seek').length;
+  await h.positionAck(slot);
+  assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.currentMs, 61800);
+  assert.equal(h.transport.slots[slot].nativeViewEpoch, epoch);
+  assert.equal(h.calls.filter(c => c[0] === 'seek').length, seeks);
+  for (const target of [62000, 65000, 65000]) { h.transport.seek(target); await h.settle(); }
+  assert.equal(h.calls.filter(c => c[0] === 'window').length, windows + 1, 'ordinary cached scrubs need no presentation request');
+});
+
+test('finite contiguous handoff reuses presented source and ready token', async t => {
+  const a = { ...clip(), sourceStartMs: 0, sourceEndMs: 2000 };
+  const b = { ...clip('b'), sourceStartMs: 2000, sourceEndMs: 6385 };
+  const h = harness({ sourceDurationMs: 60000, clips: [a, b] }); t.after(() => h.unmount()); await h.complete();
+  const token = h.transport.slots[0].prepareToken;
+  h.players[0].currentTime = 2; h.transport.seek(2000); await h.settle();
+  assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.slots[0].preparedClipId, 'b');
+  assert.equal(h.transport.slots[0].prepareToken, token);
+  assert.equal(h.calls.filter(c => c[0] === 'window').length, 1);
+  assert.equal(h.calls.filter(c => c[0] === 'replace').length, 1);
+});
+
+for (const duration of [8, 6.38, Math.fround(6.38)]) {
+  test(`finite normalization uses SDK full duration ${duration} before installing cap`, async t => {
+    const endpoint = { ...clip(), sourceStartMs: 0, sourceEndMs: 6385 };
+    const h = harness({ sourceDurationMs: 60000, clips: [endpoint], nativeDuration: duration, nativeClock: true });
+    t.after(() => h.unmount()); await h.complete(); h.transport.seek(6385); await h.settle();
+    await h.app('background'); await h.app('active');
+    const request = h.calls.filter(c => c[0] === 'window').at(-1);
+    assert.equal(Math.trunc(request[6]), duration === 8 ? 6384 : 6379);
+    const slot = request[1], epoch = h.transport.slots[slot].nativeViewEpoch;
+    const seeks = h.calls.filter(c => c[0] === 'seek').length;
+    await h.positionAck(slot);
+    assert.equal(h.calls.filter(c => c[0] === 'seek').length, seeks, 'activation retains the native effective target'); assert.equal(h.transport.phase, 'ready');
+    assert.equal(h.transport.currentMs, 6385); assert.equal(h.transport.slots[slot].nativeViewEpoch, epoch);
+    assert.equal(h.timerCount, 0);
+  });
+}
+
+for (const interruption of ['background', 'translation', 'unmount', 'effect replay']) {
+  test(`finite presentation receipt cannot survive ${interruption} between ACK and continuation`, async t => {
+    const h = harness({ sourceDurationMs: 60000 }); t.after(() => h.unmount()); await h.settle();
+    const player = h.players[0], epoch = h.transport.slots[0].nativeViewEpoch;
+    player.emit('timeUpdate', { currentTime: player.currentTime });
+    let lease;
+    if (interruption === 'background') await h.app('background');
+    if (interruption === 'translation') { lease = h.transport.suspendForTranslation(); await h.settle(); await lease.ready; }
+    if (interruption === 'unmount') h.unmount();
+    if (interruption === 'effect replay') await h.replayEffects();
+    await h.settle();
+    if (interruption !== 'unmount') {
+      assert.notEqual(h.transport.phase, 'ready');
+      assert.ok(h.transport.slots[0].nativeViewEpoch > epoch);
+      assert.equal(h.transport.slots[0].firstFrameReady, false);
+    }
+    if (interruption === 'background') await h.app('active');
+    if (lease) await lease.restore();
+    if (interruption !== 'unmount') { await h.complete(); assert.equal(h.transport.phase, 'ready'); }
+    assert.equal(h.timerCount, 0); assert.equal(h.calls.some(c => c[0] === 'play'), false);
+  });
+}
+
+test('finite endpoint uses SDK Long-to-Float milliseconds before Float division', async t => {
+  const end = 16777253;
+  assert.notEqual(Math.fround(Math.fround(end) / 1000), Math.fround(end / 1000));
+  const h = harness({ sourceDurationMs: 60000000, nativeClock: true,
+    clips: [{ ...clip(), sourceStartMs: 0, sourceEndMs: end, availableSourceEndMs: 60000000 }] });
+  t.after(() => h.unmount()); await h.complete(); h.transport.seek(end); await h.settle();
+  await h.app('background'); await h.app('active');
+  const request = h.calls.filter(c => c[0] === 'window').at(-1);
+  assert.equal(request[4], end); assert.equal(Math.trunc(request[6]), end - 2);
+  const slot = request[1], epoch = h.transport.slots[slot].nativeViewEpoch;
+  const seeks = h.calls.filter(c => c[0] === 'seek').length;
+  await h.positionAck(slot); assert.equal(h.transport.phase, 'ready');
+  assert.equal(h.transport.currentMs, end); assert.equal(h.transport.slots[slot].nativeViewEpoch, epoch);
+  assert.equal(h.calls.filter(c => c[0] === 'seek').length, seeks);
+});
+
+test('rotation layout changes retain the finite SDK view while native presentation is pending and after ACK', async t => {
+  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount());
+  const player = h.players[0]; player.holdWindow = true;
+  player.finishReplacement(); await h.settle();
+  const path = h.views.find(v => v.player === player).nativePath;
+  const epoch = h.transport.slots[0].nativeViewEpoch;
+  await h.rotate(); await h.frame(0); await h.positionAck(0);
+  assert.notEqual(h.transport.phase, 'ready', 'a layout/public frame cannot satisfy native presentation');
+  assert.equal(h.views.find(v => v.player === player).nativePath, path);
+  player.finishWindow(); await h.settle(); await h.rotate();
+  assert.notEqual(h.transport.phase, 'ready', 'presentation still requires its position ACK');
+  await h.positionAck(0); assert.equal(h.transport.phase, 'ready');
+  await h.rotate();
+  assert.equal(h.views.find(v => v.player === player).nativePath, path);
+  assert.equal(h.transport.slots[0].nativeViewEpoch, epoch);
+  assert.equal(h.calls.filter(c => c[0] === 'replace').length, 1);
+  assert.equal(h.calls.filter(c => c[0] === 'seek').length, 0);
+  assert.equal(h.timerCount, 0);
+});

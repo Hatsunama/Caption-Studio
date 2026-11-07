@@ -26,11 +26,13 @@ internal class VideoPlaybackWindow : AutoCloseable {
   internal val pendingCount: Int get() = synchronized(lock) { pending.size }
 
   fun configure(
-    video: VideoPlayer, expectedUri: String, requestId: Double, endMs: Double?,
-    timeoutMs: Double, completion: Completion,
+    video: VideoPlayer, expectedUri: String, requestId: Double, endMs: Double,
+    targetMs: Double, timeoutMs: Double, completion: Completion,
   ) {
     val player = video.player
-    configure(player, expectedUri, requestId, endMs, timeoutMs, completion) { item, position ->
+    configure(player, expectedUri, requestId, endMs, targetMs, timeoutMs, completion,
+      { item, target, current, changed -> VideoFrameReceipt(player, item, target, VideoFrameReceipt.NativeHooks(video), current, changed) },
+    ) { item, position ->
       // Called only on applicationLooper. URI-string local sources have no SDK HTTP/cache/DRM
       // responsibilities to reconstruct. Unsupported native item configurations fail closed.
       // Expo clears uncommittedSource on successful SDK load. Its committed source is private;
@@ -45,11 +47,12 @@ internal class VideoPlaybackWindow : AutoCloseable {
   }
 
   internal fun configure(
-    player: Player, expectedUri: String, requestId: Double, endMs: Double?, timeoutMs: Double,
-    completion: Completion, install: (MediaItem, Long) -> Unit,
+    player: Player, expectedUri: String, requestId: Double, endMs: Double, targetMs: Double, timeoutMs: Double,
+    completion: Completion, frames: (MediaItem, Long, () -> Boolean, () -> Unit) -> VideoFrameReceipt, install: (MediaItem, Long) -> Unit,
   ) {
     if (!safePositiveInteger(requestId) ||
-      (endMs != null && (!positiveInteger(endMs) || endMs.toLong() > Long.MAX_VALUE / 1000L)) ||
+      (!positiveInteger(endMs) || endMs.toLong() > Long.MAX_VALUE / 1000L) ||
+      !targetMs.isFinite() || targetMs < 0 || targetMs >= endMs ||
       !timeoutMs.isFinite() || timeoutMs < 1 || timeoutMs > 5000) {
       completion.complete(INVALID); return
     }
@@ -62,7 +65,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
       pending[player]?.retire(STALE)
       // A hard limit bounds strong player retention while preparation is pending.
       if (pending.size >= 32 && !pending.containsKey(player)) { completion.complete(BUSY); return }
-      val request = Request(player, expectedUri, token, endMs?.toLong(), kotlin.math.ceil(timeoutMs).toLong(), completion, install)
+      val request = Request(player, expectedUri, token, endMs.toLong(), targetMs.toLong(), kotlin.math.ceil(timeoutMs).toLong(), completion, frames, install)
       pending[player] = request
       if (!request.handler.post(request.start)) request.finish(STALE)
     }
@@ -89,8 +92,9 @@ internal class VideoPlaybackWindow : AutoCloseable {
   }
 
   private inner class Request(
-    val player: Player, val expectedUri: String, val token: Long, val endMs: Long?,
-    val timeoutMs: Long, val completion: Completion, val install: (MediaItem, Long) -> Unit,
+    val player: Player, val expectedUri: String, val token: Long, val endMs: Long, val targetMs: Long,
+    val timeoutMs: Long, val completion: Completion,
+    val frames: (MediaItem, Long, () -> Boolean, () -> Unit) -> VideoFrameReceipt, val install: (MediaItem, Long) -> Unit,
   ) {
     val handler = Handler(player.applicationLooper)
     private var done = false
@@ -98,6 +102,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
     private var listening = false
     private var prepared = false
     private var installed: MediaItem? = null
+    private var receipt: VideoFrameReceipt? = null
     private val timeout = Runnable {
       synchronized(lock) {
         val matches = runCatching { isCurrent() && player.currentMediaItem === installed }.getOrDefault(false)
@@ -108,11 +113,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
       override fun onEvents(player: Player, events: Player.Events) {
         synchronized(lock) {
           if (done || retired || !prepared) return
-          try {
-            if (!isCurrent() || player.currentMediaItem !== installed) finish(STALE)
-            else if (player.playerError != null) finish(PLAYER_ERROR)
-            else if (player.playbackState == Player.STATE_READY) finish(null)
-          } catch (_: Exception) { finish(PLAYER_ERROR) }
+          evaluate()
         }
       }
       override fun onPlayerError(error: PlaybackException) {
@@ -136,19 +137,26 @@ internal class VideoPlaybackWindow : AutoCloseable {
           }
           requireNotNull(current)
           val item = copyItem(current, expectedUri, endMs)
-          val position = player.currentPosition.coerceAtLeast(0L).let {
-            if (endMs == null) it else it.coerceAtMost(endMs - 1L)
-          }
           installed = item
           player.addListener(listener)
           listening = true
+          receipt = frames(item, targetMs, { synchronized(lock) { !done && !retired && isCurrent() } }) {
+            synchronized(lock) { if (!done && !retired && prepared) evaluate() }
+          }
           handler.postDelayed(timeout, timeoutMs)
-          install(item, position)
+          install(item, targetMs)
           prepared = true
-          // Never settle from the pre-install READY state or a callback's state argument.
-          // onEvents observes the actual installed item and real post-prepare state.
+          evaluate() // READY alone never completes; the installed target needs all frame receipts.
         } catch (_: Exception) { finish(PLAYER_ERROR) }
       }
+    }
+
+    private fun evaluate() {
+      try {
+        if (!isCurrent() || player.currentMediaItem !== installed) finish(STALE)
+        else if (player.playerError != null) finish(PLAYER_ERROR)
+        else if (player.playbackState == Player.STATE_READY && receipt?.isPresented() == true) finish(null)
+      } catch (_: Exception) { finish(PLAYER_ERROR) }
     }
 
     private fun isCurrent() = !closed && highest[player] == token && pending[player] === this
@@ -168,6 +176,8 @@ internal class VideoPlaybackWindow : AutoCloseable {
       handler.removeCallbacks(timeout)
       if (listening) runCatching { player.removeListener(listener) }
       listening = false
+      receipt?.close()
+      receipt = null
       if (pending[player] === this) pending.remove(player)
       completion.complete(code)
     }

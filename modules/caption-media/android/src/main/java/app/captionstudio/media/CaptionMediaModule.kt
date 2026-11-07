@@ -58,8 +58,8 @@ class CaptionMediaModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("CaptionMedia")
 
-    AsyncFunction("configureVideoPlaybackWindow") { player: VideoPlayer, expectedUri: String, requestId: Double, endMs: Double?, timeoutMs: Double, promise: Promise ->
-      videoPlaybackWindow.configure(player, expectedUri, requestId, endMs, timeoutMs) { code ->
+    AsyncFunction("configureVideoPlaybackWindow") { player: VideoPlayer, expectedUri: String, requestId: Double, endMs: Double, targetMs: Double, timeoutMs: Double, promise: Promise ->
+      videoPlaybackWindow.configure(player, expectedUri, requestId, endMs, targetMs, timeoutMs) { code ->
         if (code == null) promise.resolve(null)
         else promise.reject(code, "Video playback window preparation did not complete", null)
       }

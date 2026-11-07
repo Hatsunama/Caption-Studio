@@ -357,6 +357,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     targetSeconds: number,
     signal: AbortSignal,
     deadline: number,
+    assignTarget = true,
   ) => new Promise<void>((resolve, reject) => {
     if (signal.aborted) { reject(abortError()); return; }
     let timeout: ReturnType<typeof setTimeout>;
@@ -377,7 +378,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     timeout = setTimeout(() => finish(new Error('The video did not reach the requested frame in time. Try loading it again.')), Math.max(0, deadline - performance.now()));
     signal.addEventListener('abort', abort, { once: true });
     // Subscribe before assigning: even a synchronous native ACK must be retained.
-    try { player.currentTime = targetSeconds; }
+    try { if (assignTarget) player.currentTime = targetSeconds; }
     catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
   });
 
@@ -400,7 +401,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.preparationError = undefined;
     const token = nextPrepareToken(runtime.prepareToken);
     runtime.prepareToken = token;
-    const sourceChanged = forceReload || runtime.playbackUri !== uri;
+    const sourceChanged = forceReload || runtime.playbackUri !== uri
+      || runtime.sourceId !== source.id || runtime.appliedWindowEndMs !== windowEndMs;
 
     runtime.sourceId = source.id;
     runtime.playbackUri = uri;
@@ -424,39 +426,52 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
 
-      // One budget covers native window READY, the position ACK and fresh view.
+      // One post-SDK budget covers native presentation and the position ACK,
+      // or the legacy seek/ACK/fresh-view sequence for full source and iOS/web.
       const frameDeadline = performance.now() + FIRST_FRAME_TIMEOUT_MS;
-      if (Platform.OS === 'android' && runtime.appliedWindowEndMs !== windowEndMs) {
+      const nativeFiniteWindow = Platform.OS === 'android' && windowEndMs !== undefined;
+      const expectedNativeDuration = nativeFiniteWindow
+        ? Math.min(player.duration, Math.fround(Math.fround(windowEndMs) / 1000))
+        : player.duration;
+      const targetSeconds = effectiveNativeSeekTarget(
+        Math.min(sourceTimeAt(entry, timelineMs), windowEndMs ?? Infinity) / 1_000,
+        (windowEndMs ?? source.durationMs) / 1_000, expectedNativeDuration, Platform.OS,
+      );
+      player.playbackRate = 1;
+      let nativeFramePresented = false;
+      if (nativeFiniteWindow) {
         const remainingMs = Math.floor(frameDeadline - performance.now());
         if (remainingMs < 1) throw new Error('The video playback window timed out.');
-        // Native installation precedes READY and cancellation does not undo it.
-        // A superseding request must confirm its own window, including full source.
+        // Every finite preparation installs and positions its own source, even
+        // a new clip ID with the same end. Cancellation cannot undo installation.
         runtime.appliedWindowEndMs = null;
-        await configureVideoPlaybackWindow(player, uri, token, windowEndMs, remainingMs, preparation.signal);
+        await configureVideoPlaybackWindow(player, uri, token, windowEndMs, targetSeconds * 1000, remainingMs, preparation.signal);
         if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current
           || preparation.signal.aborted || token !== runtime.prepareToken || runtime.preparation !== preparation) throw abortError();
         runtime.appliedWindowEndMs = windowEndMs;
+        nativeFramePresented = true;
       }
       if (performance.now() >= frameDeadline) throw new Error('The video did not render a frame in time. Try loading it again.');
-      const targetSeconds = effectiveNativeSeekTarget(
-        Math.min(sourceTimeAt(entry, timelineMs), windowEndMs ?? Infinity) / 1_000, (windowEndMs ?? source.durationMs) / 1_000, player.duration, Platform.OS,
-      );
       player.pause();
       player.muted = true;
       player.playbackRate = 1;
       runtime.renderGate = 'awaitingPosition';
-      await waitForPlaybackPosition(player, targetSeconds, preparation.signal, frameDeadline);
+      await waitForPlaybackPosition(player, targetSeconds, preparation.signal, frameDeadline, !nativeFramePresented);
       if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current
         || preparation.signal.aborted || token !== runtime.prepareToken
         || runtime.preparation !== preparation) throw abortError();
       if (performance.now() >= frameDeadline) throw new Error('The video did not render a frame in time. Try loading it again.');
-      // Expo 57 suppresses repeated seek-first-frame receipts on a retained
-      // view. Rebind only preparation, after its position ACK, with a distinct
-      // identity so load-time and retired-view callbacks cannot certify it.
-      runtime.nativeViewEpoch += 1;
-      runtime.renderGate = 'awaitingFrame';
-      publishSlots();
-      await waitForFirstFrame(slot, preparation.signal, frameDeadline);
+      if (nativeFramePresented) {
+        // Native proved a real frame on this retained SDK view. Re-seeking or
+        // rebinding now would discard the sole presentation receipt at EOF.
+        runtime.firstFrameReady = true;
+      } else {
+        // Legacy public frame receipts need a fresh view after the seek ACK.
+        runtime.nativeViewEpoch += 1;
+        runtime.renderGate = 'awaitingFrame';
+        publishSlots();
+        await waitForFirstFrame(slot, preparation.signal, frameDeadline);
+      }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       if (performance.now() >= frameDeadline) throw new Error('The video did not render a frame in time. Try loading it again.');
       player.pause();

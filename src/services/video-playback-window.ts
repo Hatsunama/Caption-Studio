@@ -5,7 +5,8 @@ export function configureVideoPlaybackWindow(
   player: VideoPlayer,
   expectedUri: string,
   requestId: number,
-  endMs: number | undefined,
+  endMs: number,
+  targetMs: number,
   timeoutMs: number,
   signal: AbortSignal,
 ): Promise<void> {
@@ -39,7 +40,8 @@ export function configureVideoPlaybackWindow(
     }
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5000
       || !Number.isSafeInteger(requestId) || requestId <= 0
-      || (endMs !== undefined && (!Number.isSafeInteger(endMs) || endMs <= 0))) {
+      || !Number.isSafeInteger(endMs) || endMs <= 0
+      || typeof targetMs !== 'number' || !Number.isFinite(targetMs) || targetMs < 0 || targetMs >= endMs) {
       reject(new Error('Invalid video playback window request.'));
       return;
     }
@@ -49,7 +51,7 @@ export function configureVideoPlaybackWindow(
       finish(new Error('The video playback window timed out. Try loading it again.'));
     }, timeoutMs);
     try {
-      void CaptionMedia.configureVideoPlaybackWindow(player, expectedUri, requestId, endMs ?? null, timeoutMs)
+      void CaptionMedia.configureVideoPlaybackWindow(player, expectedUri, requestId, endMs, targetMs, timeoutMs)
         .then(() => finish(), error => finish(error));
     } catch (error) { finish(error); }
   });
