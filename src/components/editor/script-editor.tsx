@@ -2,6 +2,7 @@ import { renderSpringScrollView } from '@/components/spring-scroll-view';
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  AppState,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
@@ -162,6 +163,7 @@ export function ScriptEditor(props: {
   const listOffsetRef = useRef(0);
   const leadingSpaceRef = useRef(SCRIPT_LEADING_SPACE);
   const userScrollingRef = useRef(false);
+  const appForegroundRef = useRef(AppState.currentState === 'active');
   // Ownership survives gesture completion: delayed layouts must not undo a
   // user's scroll. Only an explicit selection or playback follow takes it back.
   const scrollOwnerRef = useRef<'user' | 'programmatic'>('programmatic');
@@ -234,13 +236,17 @@ export function ScriptEditor(props: {
     if (editingCaptionId) placePendingSelection(editingCaptionId, inputRefs.current[editingCaptionId]);
   }, [draftCaptions, editingCaptionId, editable, placePendingSelection, structuralSelection]);
 
-  const cancelNavigation = useCallback(() => {
+  const cancelNavigationWork = useCallback(() => {
     clearTimeout(navigationTimerRef.current);
     navigationTimerRef.current = undefined;
     if (navigationFrameRef.current !== undefined) cancelAnimationFrame(navigationFrameRef.current);
     navigationFrameRef.current = undefined;
-    navigationRef.current = undefined;
   }, []);
+
+  const cancelNavigation = useCallback(() => {
+    cancelNavigationWork();
+    navigationRef.current = undefined;
+  }, [cancelNavigationWork]);
 
   const revealCaption = useCallback((id: string, attempts = 0, contentReady = false) => {
     const session = sessionRef.current;
@@ -257,9 +263,13 @@ export function ScriptEditor(props: {
     // Native viewport clamping can precede its queued scroll notification.
     // Validated content readiness must reissue the target despite that cache.
     const alreadyAligned = !contentReady && targetOffset !== undefined && Math.abs(targetOffset - listOffsetRef.current) <= 1;
+    const navigation = { id, attempts: !appForegroundRef.current && navigationRef.current?.id === id
+      ? navigationRef.current.attempts : attempts };
     cancelNavigation();
-    const navigation = { id, attempts };
     navigationRef.current = navigation;
+    // Layout and current-cue changes can arrive while backgrounded. Retain the
+    // accepted intent, but only the foreground may issue native commands.
+    if (!appForegroundRef.current) return;
     // RN can retain an old index when a reindexed cell's geometry is unchanged.
     // Prefer the current id/index's measured content-space position.
     if (targetOffset !== undefined) {
@@ -269,10 +279,10 @@ export function ScriptEditor(props: {
     }
     // Fabric layout delivery can precede the native mount that supplies scroll
     // travel. Coalesce one frame handoff; the callback never schedules itself.
-    navigationFrameRef.current = requestAnimationFrame(() => {
-      if (navigationRef.current !== navigation) return;
+    const frame = requestAnimationFrame(() => {
+      if (navigationFrameRef.current !== frame || navigationRef.current !== navigation) return;
       navigationFrameRef.current = undefined;
-      if (!owner.active || inputSessionRef.current !== owner || !owner.visible
+      if (!appForegroundRef.current || !owner.active || inputSessionRef.current !== owner || !owner.visible
         || !sessionRef.current.visible || !inputReadyRef.current || inputSavingRef.current
         || scrollOwnerRef.current === 'user' || userScrollingRef.current || listViewportHeightRef.current <= 0) return;
       const currentIndex = draftCaptionsRef.current.findIndex((caption) => caption.id === navigation.id);
@@ -284,7 +294,40 @@ export function ScriptEditor(props: {
         listRef.current?.scrollToIndex({ index: currentIndex, animated: false, viewPosition: 0, viewOffset: SCRIPT_ANCHOR });
       }
     });
+    navigationFrameRef.current = frame;
   }, [cancelNavigation]);
+
+  useEffect(() => {
+    let live = true;
+    const abandonUserScroll = () => {
+      // Abandon interrupted user seeking, retaining programmatic reveal intent.
+      clearTimeout(scrollEndTimerRef.current);
+      scrollEndTimerRef.current = undefined;
+      userScrollingRef.current = false;
+      pendingScrollSeekRef.current = false;
+      lastScrollSeekIdRef.current = undefined;
+    };
+    const blur = () => {
+      if (!live || (!userScrollingRef.current && !pendingScrollSeekRef.current)) return;
+      abandonUserScroll();
+    };
+    const update = (state: typeof AppState.currentState) => {
+      if (!live) return;
+      const wasForeground = appForegroundRef.current;
+      appForegroundRef.current = state === 'active';
+      if (appForegroundRef.current) {
+        const pending = navigationRef.current;
+        if (!wasForeground && pending) revealCaption(pending.id, pending.attempts, true);
+        return;
+      }
+      abandonUserScroll();
+      cancelNavigationWork();
+    };
+    const subscription = AppState.addEventListener('change', update);
+    const blurSubscription = Platform.OS === 'android' ? AppState.addEventListener('blur', blur) : undefined;
+    update(AppState.currentState);
+    return () => { live = false; subscription.remove(); blurSubscription?.remove(); };
+  }, [cancelNavigationWork, revealCaption]);
 
   useEffect(() => {
     if (props.visible) return;
@@ -473,7 +516,7 @@ export function ScriptEditor(props: {
 
   const seekToAnchoredCaption = useCallback((offsetY: number) => {
     listOffsetRef.current = offsetY;
-    if (!editableRef.current) return;
+    if (!appForegroundRef.current || !editableRef.current) return;
     if ((!userScrollingRef.current && !pendingScrollSeekRef.current) || listViewportHeightRef.current <= 0) return;
     const anchorY = offsetY + SCRIPT_ANCHOR;
     const firstLayout = captionLayoutsRef.current[draftCaptions[0]?.id];
@@ -837,7 +880,7 @@ export function ScriptEditor(props: {
               revealCaption(pending.id, pending.attempts, true);
             }}
             onScrollBeginDrag={() => {
-              if (!editableRef.current) return;
+              if (!appForegroundRef.current || !editableRef.current) return;
               releaseSelection();
               clearTimeout(scrollEndTimerRef.current);
               cancelNavigation();
@@ -852,6 +895,7 @@ export function ScriptEditor(props: {
               seekToAnchoredCaption(event.nativeEvent.contentOffset.y);
             }}
             onScrollEndDrag={(event) => {
+              if (!userScrollingRef.current && !pendingScrollSeekRef.current) return;
               seekToAnchoredCaption(event.nativeEvent.contentOffset.y);
               // Momentum begins after end-drag. Only this gesture owns the gap;
               // playback rerenders cannot cancel its release.
@@ -885,14 +929,19 @@ export function ScriptEditor(props: {
             </View>
           )}
           onScrollToIndexFailed={({ index, averageItemLength }) => {
-            if (!inputSession.active || inputSessionRef.current !== inputSession || !inputSession.visible
+            if (!appForegroundRef.current || !inputSession.active || inputSessionRef.current !== inputSession || !inputSession.visible
               || !inputReadyRef.current || inputSavingRef.current) return;
             const pending = navigationRef.current;
             if (!pending || scrollOwnerRef.current === 'user' || userScrollingRef.current || !props.visible
               || draftCaptions[index]?.id !== pending.id || pending.attempts >= 3) return;
             listRef.current?.scrollToOffset({ offset: Math.max(0, leadingSpaceRef.current + index * averageItemLength - SCRIPT_ANCHOR), animated: false });
             clearTimeout(navigationTimerRef.current);
-            navigationTimerRef.current = setTimeout(() => revealCaption(pending.id, pending.attempts + 1), 80);
+            const timer = setTimeout(() => {
+              if (navigationTimerRef.current !== timer || navigationRef.current !== pending) return;
+              navigationTimerRef.current = undefined;
+              revealCaption(pending.id, pending.attempts + 1);
+            }, 80);
+            navigationTimerRef.current = timer;
           }}
           renderItem={({ item, index }) => {
             const selected = item.id === selectedCaptionId;

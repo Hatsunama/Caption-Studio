@@ -1,5 +1,6 @@
 import type { HostInstance, ScrollView } from 'react-native';
 import type { NativeGesture } from 'react-native-gesture-handler';
+import { scheduleOnRN } from 'react-native-worklets';
 import { cancelAnimation, ReduceMotion, setNativeProps, withSpring, type AnimatedRef, type SharedValue } from 'react-native-reanimated';
 import { beginScrollSpringDrag, releaseScrollSpringDrag, resetScrollSpringAxis,
   updateScrollSpringDrag, type ScrollSpringAxisState } from '../lib/scroll-spring-policy';
@@ -257,7 +258,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     nativeBindings.delete(gesture);
   }
 
-  function activate(generation: number, safe: boolean) {
+  function activate(generation: number, safe: boolean, onReady?: (generation: number) => void) {
     'worklet';
     state.modify(s => {
       'worklet';
@@ -266,6 +267,9 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
       presentationVersion.value++;
       return s;
     });
+    // Acknowledgment follows UI acceptance, independently of geometry/content
+    // decoration. RN delivery must still validate the current attachment lease.
+    if (onReady && state.value.alive && state.value.epoch === generation) scheduleOnRN(onReady, generation);
   }
 
   function deactivate(generation: number) {

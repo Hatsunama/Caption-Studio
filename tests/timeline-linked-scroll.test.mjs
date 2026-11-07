@@ -47,7 +47,7 @@ function attribute(node, name) {
   return only(node.attributes.properties.filter(p => p.name?.text === name), name).initializer.expression;
 }
 
-function fixture() {
+function fixture({ lifecycle = false } = {}) {
   const queue = [], commands = [], trace = [];
   const positions = { labels: 0, items: 0 };
   const verticalOffsetRef = { current: 0 };
@@ -79,8 +79,22 @@ function fixture() {
   handlers.items = evaluate(attribute(column('verticalRef'), 'onScroll'), globals);
   handlers.labels = evaluate(attribute(column('labelScrollRef'), 'onScroll'), globals);
   for (const [side, ref] of [['items', 'verticalRef'], ['labels', 'labelScrollRef']]) {
-    lifecycleHandlers[side] = Object.fromEntries(['onLayout', 'onContentSizeChange', 'onScrollBeginDrag', 'onScrollEndDrag', 'onTouchCancel']
-      .map(name => [name, evaluate(attribute(column(ref), name), globals)]));
+    lifecycleHandlers[side] = Object.fromEntries(['onLayout', 'onContentSizeChange', 'onScrollBeginDrag', 'onScrollEndDrag', 'onTouchCancel', 'onScrollBindingReady']
+      .map(name => [name, name === 'onScrollBindingReady'
+        && !column(ref).attributes.properties.some(p => p.name?.text === name)
+        ? () => {} : evaluate(attribute(column(ref), name), globals)]));
+  }
+  const appListeners = new Map();
+  const appState = { currentState: 'active', addEventListener(event, listener) {
+    appListeners.set(listener, event); return { remove: () => appListeners.delete(listener) };
+  } };
+  let lifecycleCleanup;
+  if (lifecycle) {
+    const effect = only(findAll(n => ts.isCallExpression(n) && n.expression.getText(tree) === 'useEffect'
+      && n.arguments[0]?.getText(tree).includes('AppState.addEventListener')), 'timeline AppState effect');
+    lifecycleCleanup = evaluate(effect.arguments[0], { ...globals, AppState: appState, Platform: { OS: 'android' },
+      scrubEndTimer: { current: null }, scrubbingRef: { current: false }, appForegroundRef: { current: true },
+      setHorizontalGeometry() {}, clearTimeout })();
   }
   function deliver(target, y, kind, metadata = {}) {
     turn++;
@@ -90,6 +104,13 @@ function fixture() {
   }
   return {
     queue, commands, trace, positions, verticalOffsetRef, lifecycleHandlers,
+    interrupt(kind) {
+      const emit = (event, value) => { for (const [listener, type] of [...appListeners]) if (type === event) listener(value); };
+      if (kind === 'blur') emit('blur');
+      else { appState.currentState = 'background'; emit('change', 'background');
+        appState.currentState = 'active'; emit('change', 'active'); }
+    },
+    close() { lifecycleCleanup?.(); assert.equal(appListeners.size, 0); },
     input(target, y, metadata) { deliver(target, y, 'input', metadata); },
     reveal() { turn++; trace.push(`T${turn} reveal:40`); revealCue(0); },
     ack() {
@@ -342,3 +363,196 @@ test('actual drag callbacks hand ownership to current native input and reject ol
   f.input('items', 30, { target: 12, timestamp: 103 });
   assert.equal(f.verticalOffsetRef.current, 30);
 });
+
+for (const side of ['items', 'labels']) test(`${side}: actual binding callback recovers missing delivery without a fake ACK`, () => {
+  const f = fixture();
+  f.reveal();
+  f.queue.splice(0); // Queued commands accepted on JS but retired before native dispatch: no onScroll.
+  const count = f.commands.length;
+  f.lifecycleHandlers[side].onLayout({ nativeEvent: { layout: { height: 100 } } });
+  assert.equal(f.commands.length, count, 'unchanged pending target suppresses ordinary layout retry');
+  f.lifecycleHandlers[side].onScrollBindingReady();
+  assert.deepEqual(f.commands.slice(count).map(e => [e.target, e.y]), [[side, 40]]);
+  assert.equal(f.positions[side], 0, 'readiness does not pretend to acknowledge native delivery');
+  assert.equal(f.verticalOffsetRef.current, 40);
+  f.ack(); assert.equal(f.positions[side], 40);
+  assert.equal(f.commands.length, count + 1, 'real ACK must not bounce');
+});
+
+test('binding readiness clears only delivery bookkeeping and preserves drag ownership and reveal cancellation', () => {
+  const h = coordinator();
+  h.api.sync(150, 'reveal');
+  h.api.begin('labels', 10, 100); h.api.sync(20, 'labels', { timestamp: 101 });
+  const count = h.commands.length;
+  h.api.bindingReady('labels');
+  assert.equal(h.commands.length, count, 'readiness cannot command the active user driver');
+  h.api.bindingReady('items');
+  assert.deepEqual(h.commands.at(-1), ['items', 20]);
+  h.api.sync(5, 'items');
+  assert.equal(h.offsets.at(-1), 20, 'peer input cannot steal the driver');
+  for (const side of ['items', 'labels']) h.api.layout(side, { viewport: 100, content: 600 });
+  assert.equal(h.offsets.at(-1), 20, 'binding readiness cannot resurrect the cancelled reveal');
+});
+
+test('binding readiness retains a clamped explicit reveal for later content readiness', () => {
+  const h = coordinator();
+  for (const side of ['items', 'labels']) h.api.layout(side, { viewport: 100, content: 200 });
+  h.api.sync(150, 'reveal');
+  const count = h.commands.length;
+  h.api.bindingReady('items');
+  assert.deepEqual(h.commands.slice(count), [['items', 100]]);
+  assert.equal(h.offsets.at(-1), 100);
+  for (const side of ['items', 'labels']) h.api.layout(side, { content: 300 });
+  assert.equal(h.offsets.at(-1), 150);
+});
+
+for (const side of ['items', 'labels']) test(`${side}: actual same-host readiness preserves dispatched ACKs when only the reveal queue was rejected`, () => {
+  const peer = side === 'items' ? 'labels' : 'items';
+  const f = interleaved(peer);
+  f.reveal();
+  // Only the reveal commands were retired before dispatch. The earlier native
+  // commands on this same host still owe their genuine FIFO callbacks.
+  f.queue.splice(2);
+  const boundary = f.commands.length;
+  f.lifecycleHandlers[side].onScrollBindingReady();
+  assert.deepEqual(f.commands.slice(boundary).map(e => [e.target, e.y]), [[side, 40]],
+    'retry only the current request on the ready column, never replay history');
+  for (const old of [10, 20]) {
+    assert.equal(f.queue[0].y, old);
+    f.ack();
+    assert.equal(f.verticalOffsetRef.current, 40, f.evidence());
+    assert.equal(f.positions[peer], 20, 'old ACK cannot command the other column backward');
+    assert.equal(f.commands.length, boundary + 1, f.evidence());
+  }
+  f.ack(); // The real retried ACK40 retires the old expectations.
+  assert.equal(f.queue.length, 0);
+  assert.equal(f.commands.length, boundary + 1, 'ACK40 must not bounce');
+  f.lifecycleHandlers[side].onLayout({ nativeEvent: { layout: { height: 100 } } });
+  assert.equal(f.commands.length, boundary + 1, 'settled layout must not retry ACK40');
+  f.lifecycleHandlers[peer].onScrollBindingReady();
+  assert.equal(f.drain(), 1);
+  assert.deepEqual(f.positions, { items: 40, labels: 40 });
+  f.input(side, 10);
+  assert.equal(f.verticalOffsetRef.current, 10, 'ACK40 must retire stale values for later native input');
+});
+
+test('same-host readiness retains the latest reveal intent through old ACKs and later layout', () => {
+  const h = coordinator();
+  h.api.layout('items', { target: 4 });
+  h.api.sync(10, 'labels'); h.api.sync(20, 'labels');
+  h.api.sync(30, 'reveal'); h.api.sync(40, 'reveal');
+  const boundary = h.commands.length;
+  h.api.bindingReady('items');
+  assert.deepEqual(h.commands.slice(boundary), [['items', 40]]);
+  for (const y of [10, 20, 30]) {
+    h.api.sync(y, 'items', { target: 4 });
+    assert.equal(h.offsets.at(-1), 40);
+    assert.equal(h.commands.length, boundary + 1);
+  }
+  h.api.sync(40, 'items', { target: 4 }); h.api.sync(40, 'labels');
+  for (const side of ['items', 'labels']) h.api.layout(side, { viewport: 100, content: 125 });
+  assert.equal(h.offsets.at(-1), 25, 'old ACKs cannot revoke the latest logical reveal');
+  for (const side of ['items', 'labels']) h.api.layout(side, { content: 200 });
+  assert.equal(h.offsets.at(-1), 40);
+});
+
+for (const failure of ['missing receiver', 'throw']) test(`readiness retry rollback after ${failure} preserves older native ACKs and permits another retry`, () => {
+  let mode = 'accept';
+  const h = coordinator({ receiver: () => {
+    if (mode === 'throw') throw Error('retry failure');
+    return mode === 'accept';
+  } });
+  h.api.sync(10, 'labels'); h.api.sync(20, 'labels');
+  h.api.sync(40, 'reveal');
+  const boundary = h.commands.length;
+  mode = failure;
+  if (failure === 'throw') assert.throws(() => h.api.bindingReady('items'), /retry failure/);
+  else h.api.bindingReady('items');
+  assert.equal(h.commands.length, boundary);
+  for (const y of [10, 20]) {
+    h.api.sync(y, 'items');
+    assert.equal(h.offsets.at(-1), 40);
+    assert.equal(h.commands.length, boundary, 'failed retry cannot turn earlier ACKs into commands');
+  }
+  mode = 'accept';
+  h.api.layout('items', { viewport: 100, content: 200 });
+  assert.deepEqual(h.commands.slice(boundary), [['items', 40]]);
+  h.api.sync(40, 'items');
+  h.api.layout('items', { content: 210 });
+  assert.equal(h.commands.length, boundary + 1);
+});
+
+test('readiness preserves mixed old ACKs while a physical driver retains ownership', () => {
+  const h = coordinator();
+  h.api.begin('labels', 0, 100);
+  h.api.sync(10, 'labels', { timestamp: 101 }); h.api.sync(20, 'labels', { timestamp: 102 });
+  const boundary = h.commands.length;
+  h.api.bindingReady('labels');
+  assert.equal(h.commands.length, boundary);
+  h.api.bindingReady('items');
+  for (const y of [10, 20]) h.api.sync(y, 'items');
+  assert.equal(h.offsets.at(-1), 20);
+  assert.equal(h.commands.length, boundary + 1, 'old ACKs must not cause driver correction commands');
+  h.api.sync(5, 'items');
+  assert.equal(h.offsets.at(-1), 20);
+  h.api.sync(15, 'labels', { timestamp: 103 });
+  assert.equal(h.offsets.at(-1), 15, 'the active driver still owns deliberate reversals');
+});
+
+test('clamped readiness recovery keeps old ACKs inert and restores the logical reveal after growth', () => {
+  const h = coordinator();
+  for (const side of ['items', 'labels']) h.api.layout(side, { viewport: 100, content: 125 });
+  h.api.sync(10, 'labels'); h.api.sync(20, 'labels'); h.api.sync(40, 'reveal');
+  const boundary = h.commands.length;
+  h.api.bindingReady('items');
+  assert.deepEqual(h.commands.slice(boundary), [['items', 25]]);
+  for (const y of [10, 20]) {
+    h.api.sync(y, 'items');
+    assert.equal(h.offsets.at(-1), 25);
+    assert.equal(h.commands.length, boundary + 1);
+  }
+  h.api.sync(25, 'items'); h.api.sync(25, 'labels');
+  for (const side of ['items', 'labels']) h.api.layout(side, { content: 200 });
+  assert.equal(h.offsets.at(-1), 40);
+  const count = h.commands.length;
+  h.api.sync(40, 'items'); h.api.sync(40, 'labels');
+  assert.equal(h.commands.length, count, 'recovered reveal ACKs do not bounce');
+});
+
+
+for (const origin of ['items', 'labels']) for (const interruption of ['background', 'blur']) {
+  test(`${origin}: ${interruption} abandons a missing-end vertical owner while preserving current destination and pending ACKs`, () => {
+    const f = fixture({ lifecycle: true });
+    const peer = origin === 'items' ? 'labels' : 'items';
+    try {
+      f.lifecycleHandlers[origin].onScrollBeginDrag({ nativeEvent: { contentOffset: { y: 0 }, timestamp: 100 } });
+      f.input(origin, 10, { timestamp: 101 }); f.input(origin, 20, { timestamp: 102 });
+      const before = f.commands.length;
+      // Native cancellation need not be followed by JS end-drag or touch-cancel.
+      f.interrupt(interruption);
+      assert.equal(f.commands.length, before, 'interruption itself must not force either column');
+      assert.equal(f.verticalOffsetRef.current, 20);
+      f.lifecycleHandlers[origin].onScrollBindingReady();
+      assert.deepEqual(f.commands.slice(before).map(e => [e.target, e.y]), [[origin, 20]],
+        'a new binding may retry the preserved destination after abandonment');
+      while (f.queue.length) { f.ack(); assert.equal(f.verticalOffsetRef.current, 20, 'old mirror ACKs must remain inert'); }
+      assert.deepEqual(f.positions, { labels: 20, items: 20 });
+      f.input(peer, 5); f.drain();
+      assert.equal(f.verticalOffsetRef.current, 5, 'idle accessibility/native scroll can acquire ownership after interruption');
+      assert.deepEqual(f.positions, { labels: 5, items: 5 });
+    } finally { f.close(); }
+  });
+
+  test(`${origin}: ${interruption} preserves a completed manual viewport without forcing a reveal`, () => {
+    const f = fixture({ lifecycle: true });
+    try {
+      f.lifecycleHandlers[origin].onScrollBeginDrag({ nativeEvent: { contentOffset: { y: 0 } } });
+      f.input(origin, 20); f.lifecycleHandlers[origin].onScrollEndDrag({ nativeEvent: {} }); f.drain();
+      const before = f.commands.length;
+      f.interrupt(interruption); f.drain();
+      assert.equal(f.commands.length, before);
+      assert.equal(f.verticalOffsetRef.current, 20);
+      assert.deepEqual(f.positions, { labels: 20, items: 20 });
+    } finally { f.close(); }
+  });
+}

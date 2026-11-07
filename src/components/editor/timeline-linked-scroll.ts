@@ -119,7 +119,17 @@ export function createTimelineLinkedScroll(options: {
     send('items', target); send('labels', target);
   }
 
-  return { sync, begin, layout, end: (source?: TimelineScrollColumn, target?: number) => {
+  function bindingReady(source: TimelineScrollColumn) {
+    const column = columns[source];
+    // JS acceptance is not native delivery: the retired binding may have
+    // dropped queued commands, while earlier commands on this same host may
+    // still owe native ACKs. Retain those expectations; retire only the latest
+    // dedup marker so the current request can retry without replaying history.
+    column.latest = undefined; column.serial++;
+    if (driver !== source) send(source, current, true);
+  }
+
+  return { sync, begin, layout, bindingReady, end: (source?: TimelineScrollColumn, target?: number) => {
     if (source && target !== undefined && columns[source].target !== undefined && target !== columns[source].target) return;
     if (!source || driver === source) driver = undefined;
   } };

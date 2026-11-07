@@ -158,6 +158,7 @@ function videoHarness() {
   const project = { clips: [], sources: [] };
   const controller = load('src/hooks/use-timeline-video-controller.ts', {
     react, expo: { useEventListener() {} },
+    'react-native': { Platform: { OS: 'android' } },
     'expo-video': { useVideoPlayer: () => players[playerCursor++] },
     '@/services/video-player-runtime': { configureTimelinePlayer() {} },
     '@/lib/project-timeline': { projectTimelineDuration: () => 10_000,
@@ -177,12 +178,17 @@ function videoHarness() {
 test('suspension detaches surfaces and unloads both decoders, restoring the same paused position once', async () => {
   const host = videoHarness();
   host.render().seek(1234);
+  const priorEpochs = host.render().slots.map(slot => slot.nativeViewEpoch);
   const lease = host.render().suspendForTranslation();
   await flush();
   assert.equal(host.events.filter((event) => event.startsWith('replace')).length, 0);
   let transport = host.render();
   assert.equal(transport.previewResourcesSuspended, true);
   await lease.ready;
+  const unloaded = host.render();
+  unloaded.slots.forEach((slot, index) => assert.ok(slot.nativeViewEpoch > priorEpochs[index]));
+  unloaded.markFirstFrame(0, priorEpochs[0]);
+  assert.equal(host.render().slots[0].firstFrameReady, false, 'retired view cannot restore a translation-owned surface');
   assert.deepEqual(host.events.filter((event) => event.startsWith('replace')), ['replace:0:null', 'replace:1:null']);
   transport.play(); transport.seek(9876);
   await lease.restore(); await lease.restore();

@@ -36,7 +36,11 @@ const shallow = (left, right) => left && right && same(Object.keys(left), Object
 function mount(overrides = {}, options = {}) {
   const reveal = { viewportRef: { current: null }, focus() { calls.focuses.push(true); }, blur() {}, onViewportLayout() {}, onScroll() {}, onScrollBeginDrag() {} };
   const instances = new Map(), timers = new Map(), frames = new Map(), inputIdentities = new Map();
-  const appStateListeners = new Set();
+  const appStateListeners = new Map();
+  const appState = { currentState: options.initialAppState ?? 'active', addEventListener(event, listener) {
+    assert.ok(['change', 'blur'].includes(event)); appStateListeners.set(listener, event);
+    return { remove: () => appStateListeners.delete(listener) };
+  } };
   const contexts = new Map(), cells = new Map();
   const calls = { reveals: [], nativeReveals: [], offsets: [], focuses: [], seeks: [], alerts: [], reads: [], writes: [], clears: [], saves: [], refresh: [], skip: [], close: 0, cancel: 0, retry: 0, dismiss: 0, visibility: 0, remove: 0, renders: new Map() };
   let nativeListReady = !options.nativeMeasurementGate;
@@ -50,7 +54,7 @@ function mount(overrides = {}, options = {}) {
     const instance = current, index = cursor++;
     if (!instance.slots[index] || !same(instance.slots[index].deps, deps)) pending.push(() => {
       instance.slots[index]?.cleanup?.();
-      instance.slots[index] = { deps, cleanup: callback() };
+      instance.slots[index] = { deps, setup: callback, cleanup: callback() };
     });
   };
   const react = {
@@ -106,14 +110,7 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
         ...Object.fromEntries(['ActivityIndicator', 'FlatList', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View', 'KeyboardAvoidingView'].map((type) => [type, type])),
         useWindowDimensions: () => options.window ?? { width: 390, height: 844 },
         Platform: { OS: options.platform ?? 'android' },
-        AppState: {
-          currentState: 'active',
-          addEventListener(event, listener) {
-            assert.equal(event, 'change');
-            appStateListeners.add(listener);
-            return { remove: () => appStateListeners.delete(listener) };
-          },
-        },
+        AppState: appState,
         Alert: { alert: (...args) => calls.alerts.push(args) },
       };
       if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => options.insets ?? { top: 0, bottom: 24, left: 0, right: 0 } };
@@ -292,6 +289,19 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
   render();
   return {
     calls, all, button, input, flush, act, Store: exports.Store,
+    captureAppStateListeners: (event = 'change') => [...appStateListeners].filter(([, type]) => type === event).map(([listener]) => listener),
+    get appStateListenerCount() { return appStateListeners.size; },
+    replayEffects: () => act(() => {
+      const mounted = [...instances.values()].flatMap(instance => instance.slots.filter(slot => slot?.setup));
+      for (const slot of mounted) slot.cleanup?.();
+      for (const slot of mounted) slot.cleanup = slot.setup();
+    }),
+    blur: () => act(() => { assert.equal(appState.currentState, 'active');
+      for (const [listener, event] of [...appStateListeners]) if (event === 'blur') listener(); }),
+    appState: (state) => act(() => {
+      appState.currentState = state;
+      for (const [listener, event] of [...appStateListeners]) if (event === 'change') listener(state);
+    }),
     cell(index) {
       const cell = cells.get(index); assert.ok(cell, `missing rendered cell ${index}`);
       const host = all(node => node.type === 'View' && node.props.onFocusCapture === cell.onFocusCapture)[0];
@@ -799,6 +809,95 @@ test('dual only shares intentional list navigation and does not rerender rows fo
   viewable(h, [1, 2]); assert.deepEqual(h.calls.seeks, [8000]);
 });
 
+for (const delivery of ['drag', 'momentum', 'missingEnd']) test(`focus-only blur dual stale viewability after ${delivery} cannot seek for a drag abandoned without terminal events`, async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 200 }); await h.flush();
+  try {
+    h.act(() => listOf(h).onScrollBeginDrag({}));
+    viewable(h, [8, 9]);
+    assert.deepEqual(h.calls.seeks, [8000], 'ordinary user viewability seeks before interruption');
+    h.update({ currentMs: 8000 });
+    const stale = listOf(h).onViewableItemsChanged;
+    // Keep the same live pair objects: rejection must come from abandoning the
+    // drag on background, not the existing replaced-data identity safeguard.
+    const queued = { viewableItems: [{ item: h.props.pairs[3], index: 3, isViewable: true }] };
+    if (delivery !== 'drag') h.act(() => listOf(h).onScrollEndDrag({ nativeEvent: { velocity: { y: 1 } } }));
+    if (delivery === 'momentum') h.act(() => listOf(h).onMomentumScrollBegin({}));
+    h.blur();
+    // Deliver before any fresh external seek: a clock change independently
+    // releases dual navigation and would mask the missing lifecycle cleanup.
+
+    h.act(() => stale(queued));
+    assert.deepEqual(h.calls.seeks, [8000], 'queued viewability must not seek after background abandons a drag lacking end/momentum-end');
+
+    h.act(() => listOf(h).onScrollBeginDrag({}));
+    viewable(h, [4]);
+    assert.deepEqual(h.calls.seeks, [8000, 4000], 'a genuinely new user drag still seeks');
+    h.act(() => listOf(h).onScrollEndDrag({ nativeEvent: { velocity: { y: 1 } } }));
+    h.act(() => listOf(h).onMomentumScrollBegin({}));
+    viewable(h, [5]);
+    assert.deepEqual(h.calls.seeks, [8000, 4000, 5000], 'ordinary momentum retains seeking');
+    h.act(() => listOf(h).onMomentumScrollEnd({}));
+    viewable(h, [6]);
+    assert.deepEqual(h.calls.seeks, [8000, 4000, 5000], 'normal momentum completion releases ownership');
+  } finally { h.update({ visible: false }); await h.flush(); }
+});
+
+for (const delivery of ['background', 'resume']) test(`dual stale viewability after ${delivery} cannot seek for a drag abandoned without terminal events`, async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 200 }); await h.flush();
+  try {
+    h.act(() => listOf(h).onScrollBeginDrag({}));
+    viewable(h, [8, 9]);
+    assert.deepEqual(h.calls.seeks, [8000], 'ordinary user viewability seeks before interruption');
+    h.update({ currentMs: 8000 });
+    const stale = listOf(h).onViewableItemsChanged;
+    // Keep the same live pair objects: rejection must come from abandoning the
+    // drag on background, not the existing replaced-data identity safeguard.
+    const queued = { viewableItems: [{ item: h.props.pairs[3], index: 3, isViewable: true }] };
+    h.appState('background');
+    // Deliver before any fresh external seek: a clock change independently
+    // releases dual navigation and would mask the missing lifecycle cleanup.
+    if (delivery === 'resume') h.appState('active');
+    h.act(() => stale(queued));
+    assert.deepEqual(h.calls.seeks, [8000], 'queued viewability must not seek after background abandons a drag lacking end/momentum-end');
+    if (delivery === 'background') h.appState('active');
+    h.act(() => listOf(h).onScrollBeginDrag({}));
+    viewable(h, [4]);
+    assert.deepEqual(h.calls.seeks, [8000, 4000], 'a genuinely new user drag still seeks');
+    h.act(() => listOf(h).onScrollEndDrag({ nativeEvent: { velocity: { y: 1 } } }));
+    h.act(() => listOf(h).onMomentumScrollBegin({}));
+    viewable(h, [5]);
+    assert.deepEqual(h.calls.seeks, [8000, 4000, 5000], 'ordinary momentum retains seeking');
+    h.act(() => listOf(h).onMomentumScrollEnd({}));
+    viewable(h, [6]);
+    assert.deepEqual(h.calls.seeks, [8000, 4000, 5000], 'normal momentum completion releases ownership');
+  } finally { h.update({ visible: false }); await h.flush(); }
+});
+
+test('dual effect replay replaces its AppState subscription and ignores retired deliveries', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 200 }); await h.flush();
+  const retired = h.captureAppStateListeners();
+  const retiredBlur = h.captureAppStateListeners('blur');
+  assert.equal(retiredBlur.length, 1);
+  assert.equal(retired.length, 1);
+  h.replayEffects(); await h.flush();
+  assert.equal(h.appStateListenerCount, 2);
+  h.act(() => listOf(h).onScrollBeginDrag({}));
+  h.act(() => { retired.forEach(listener => listener('background')); retiredBlur.forEach(listener => listener()); });
+  viewable(h, [4]);
+  assert.deepEqual(h.calls.seeks, [4000], 'retired delivery cannot abandon live navigation');
+  h.appState('inactive');
+  h.act(() => listOf(h).onScrollBeginDrag({}));
+  h.act(() => listOf(h).onMomentumScrollBegin({}));
+  h.appState('active'); viewable(h, [5]);
+  assert.deepEqual(h.calls.seeks, [4000], 'background callbacks cannot reacquire intentional navigation');
+  const unmountedBlur = h.captureAppStateListeners('blur');
+  h.update({ visible: false }); await h.flush();
+  assert.equal(h.appStateListenerCount, 0);
+  const commands = h.calls.reveals.length;
+  h.act(() => unmountedBlur.forEach(listener => listener()));
+  assert.equal(h.calls.reveals.length, commands);
+});
+
 test('dual measurement failures have bounded retries and stale callbacks cannot seek after close', async () => {
   const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, { nativeMeasurementGate: true }); await h.flush();
   const stale = listOf(h).onViewableItemsChanged;
@@ -834,6 +933,113 @@ async function settleNativeReveal(h) {
   for (let step = 0; step < 12; step++) await h.advance(250);
   assert.equal(h.timerCount, 0, 'native readiness must not leave an endless retry timer');
   assert.equal(h.frameCount, 0, 'native readiness must not leave an endless frame loop');
+}
+
+for (const readiness of ['after resume', 'before resume']) {
+  test(`dual background pending reveal recovers unchanged index 90 with readiness ${readiness}`, async () => {
+    const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, { nativeMeasurementGate: true });
+    await h.flush();
+    assert.equal(h.calls.reveals[0]?.index, 90);
+    assert.equal(h.frameCount, 1);
+    const staleFrames = h.frameCallbacks();
+    h.appState('background');
+    const requests = h.calls.reveals.length;
+    assert.equal(h.frameCount, 0); assert.equal(h.timerCount, 0);
+    h.act(() => staleFrames.forEach(callback => callback()));
+    h.act(() => nativeReadinessEvents(h).content());
+    await settleNativeReveal(h);
+    assert.equal(h.calls.reveals.length, requests, 'background callbacks cannot issue commands');
+    if (readiness === 'before resume') h.setNativeListReady(true);
+    h.appState('active');
+    if (readiness === 'after resume') {
+      await settleNativeReveal(h);
+      assert.deepEqual(h.calls.nativeReveals, [], 'resume alone cannot fabricate measurements');
+      h.setNativeListReady(true);
+      h.act(() => nativeReadinessEvents(h).content());
+    }
+    await settleNativeReveal(h);
+    assert.equal(h.calls.nativeReveals.at(-1)?.index, 90, 'accepted opening intent must survive unchanged clock');
+    assert.equal(h.input(90).props.value, 'Source 90');
+    assert.equal(h.input(90, 'Chinese').props.value, 'Translation 90');
+    assert.equal(h.props.currentMs, 90000);
+    assert.deepEqual(h.calls.seeks, []);
+    assert.equal(h.calls.nativeReveals.length, 2, 'one immediate command and one bounded native handoff');
+    const completed = h.calls.reveals.length;
+    h.appState('background'); h.appState('active');
+    h.act(() => nativeReadinessEvents(h).content()); await settleNativeReveal(h);
+    assert.equal(h.calls.reveals.length, completed, 'completed intent cannot restart on resume');
+  });
+}
+
+test('dual background pending reveal follows only a superseding timeline target', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, { nativeMeasurementGate: true });
+  await h.flush();
+  const staleFrames = h.frameCallbacks();
+  h.appState('background');
+  const requests = h.calls.reveals.length;
+  h.update({ currentMs: 95000 });
+  h.setNativeListReady(true);
+  h.act(() => { staleFrames.forEach(callback => callback()); nativeReadinessEvents(h).content(); });
+  await settleNativeReveal(h);
+  assert.equal(h.calls.reveals.length, requests);
+  h.appState('active'); await settleNativeReveal(h);
+  assert.deepEqual(h.calls.nativeReveals.map(command => command.index), [95, 95]);
+  assert.equal(h.input(95).props.value, 'Source 95');
+  assert.deepEqual(h.calls.seeks, []);
+});
+
+test('dual background suspends a measured retry without resetting its finite attempt budget', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, {
+    nativeMeasurementGate: true, nativeFailureAverage: 120,
+  });
+  await h.flush();
+  assert.equal(h.timerCount, 1); assert.equal(h.calls.offsets.length, 1);
+  const staleFailure = listOf(h).onScrollToIndexFailed;
+  h.appState('background');
+  const requests = h.calls.reveals.length;
+  h.act(() => staleFailure({ index: 90, averageItemLength: 120 }));
+  await settleNativeReveal(h);
+  assert.equal(h.calls.offsets.length, 1, 'queued failures cannot issue offsets in background');
+  assert.equal(h.calls.reveals.length, requests);
+  h.appState('active'); await settleNativeReveal(h);
+  assert.equal(h.calls.offsets.length, 2, 'resume retains the one remaining measured retry');
+  h.appState('background'); h.appState('active'); await settleNativeReveal(h);
+  assert.equal(h.calls.offsets.length, 2, 'repeated lifecycle transitions cannot reset the retry budget');
+  h.setNativeListReady(true);
+  h.act(() => nativeReadinessEvents(h).content()); await settleNativeReveal(h);
+  assert.equal(h.calls.nativeReveals.at(-1)?.index, 90);
+  assert.equal(h.input(90).props.value, 'Source 90');
+  assert.deepEqual(h.calls.seeks, []);
+});
+
+test('dual initial background mount retains its blocked opening intent until active without new layout', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, {
+    nativeMeasurementGate: true, initialAppState: 'background',
+  });
+  await h.flush();
+  assert.deepEqual(h.calls.reveals, []);
+  h.setNativeListReady(true);
+  h.appState('active'); await settleNativeReveal(h);
+  assert.deepEqual(h.calls.nativeReveals.map(command => command.index), [90, 90]);
+  assert.equal(h.input(90).props.value, 'Source 90');
+  assert.deepEqual(h.calls.seeks, []);
+});
+
+for (const terminal of [false, true]) {
+  test(`dual background resume preserves ordinary user viewport with drag terminal ${terminal}`, async () => {
+    const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, { nativeMeasurementGate: true });
+    await h.flush();
+    h.act(() => listOf(h).onScrollBeginDrag({}));
+    h.scroll(12); viewable(h, [12, 13]); h.update({ currentMs: 12000 });
+    if (terminal) h.act(() => listOf(h).onScrollEndDrag({ nativeEvent: { velocity: { y: 0 } } }));
+    const requests = h.calls.reveals.length;
+    h.appState('background'); h.setNativeListReady(true); h.appState('active');
+    h.act(() => nativeReadinessEvents(h).content()); await settleNativeReveal(h);
+    assert.equal(h.calls.reveals.length, requests, 'resume cannot reclaim a reveal canceled by the user');
+    assert.equal(h.input(12).props.value, 'Source 12');
+    assert.deepEqual(h.calls.nativeReveals, []);
+    assert.deepEqual(h.calls.seeks, [12000]);
+  });
 }
 
 for (const lastEvent of ['show', 'viewport', 'content']) {
@@ -1580,3 +1786,39 @@ for (const interrupt of ['drag', 'focus', 'close', 'session change', 'track chan
     assert.deepEqual(h.calls.seeks, []);
   });
 }
+
+for (const platform of ['ios', 'web']) test(`${platform} dual subscribes only to AppState change`, async () => {
+  const h = mount({}, { platform }); await h.flush();
+  assert.equal(h.appStateListenerCount, 1); assert.equal(h.captureAppStateListeners('blur').length, 0);
+  h.update({ visible: false }); await h.flush(); assert.equal(h.appStateListenerCount, 0);
+});
+
+test('dual focus-only blur preserves an unmeasured nonzero modal opening reveal and editable inputs', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 90000 }, { nativeMeasurementGate: true }); await h.flush();
+  try {
+    const frames = h.frameCount;
+    h.blur();
+    assert.equal(h.frameCount, frames, 'programmatic frame must survive activity blur');
+    h.setNativeListReady(true); h.act(() => nativeReadinessEvents(h).content());
+    await settleNativeReveal(h);
+    assert.equal(h.calls.nativeReveals.at(-1).index, 90);
+    assert.equal(h.input(90).props.editable, true);
+    assert.equal(h.all(node => node.type === 'RefractBackground')[0].props.active, true);
+    h.act(() => h.input(90).props.onChangeText('Still editable after blur'));
+    assert.equal(h.input(90).props.value, 'Still editable after blur');
+    assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.focuses, []);
+  } finally { h.update({ visible: false }); await h.flush(); }
+});
+
+test('dual focus-only blur preserves a completed user viewport', async () => {
+  const h = mount({ pairs: timelinePairs(), currentMs: 200 }); await h.flush();
+  try {
+    h.act(() => listOf(h).onScrollBeginDrag({})); viewable(h, [4]);
+    h.update({ currentMs: 4000 });
+    h.act(() => listOf(h).onScrollEndDrag({ nativeEvent: { velocity: { y: 0 } } }));
+    const commands = [h.calls.reveals.length, h.calls.offsets.length];
+    h.blur(); h.act(() => nativeReadinessEvents(h).content()); await settleNativeReveal(h);
+    assert.deepEqual([h.calls.reveals.length, h.calls.offsets.length], commands);
+    viewable(h, [5]); assert.deepEqual(h.calls.seeks, [4000]);
+  } finally { h.update({ visible: false }); await h.flush(); }
+});

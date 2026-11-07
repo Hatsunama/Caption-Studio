@@ -26,7 +26,7 @@ export function load(dependencies) {
   ${videoHook}
   return { useTimelineTimingPanHandlers, VideoMoveGrip };
 }
-export function layout(gestureGeometry, setViewportWidth) {
+export function layout(gestureGeometry, setViewportWidth, setOuterGeometryValid) {
   const scrubEndTimer = { current: null };
   const scrubbingRef = { current: true };
   const invalidatedScrollTouchRef = { current: false };
@@ -47,6 +47,9 @@ function harness() {
   };
   const cleanups = [];
   let width = 360;
+  // Record the React state boundary; gesture cancellation still runs through
+  // the extracted production layout callback and geometry subscriptions.
+  let outerGeometryValid = false;
   const hooks = production.load({
     useRef: (current) => ({ current }),
     useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
@@ -64,8 +67,9 @@ function harness() {
   });
   return {
     ...hooks, geometry,
-    resize: production.layout(geometry, (next) => { width = next; }),
+    resize: production.layout(geometry, (next) => { width = next; }, (valid) => { outerGeometryValid = valid; }),
     get width() { return width; },
+    get outerGeometryValid() { return outerGeometryValid; },
     unmount() { for (const cleanup of cleanups) cleanup(); },
   };
 }
@@ -93,6 +97,7 @@ for (const edge of ['start', 'end', 'move']) {
     handlers.onPanResponderMove(touch, { dx: 120, dy: 0 });
     handlers.onPanResponderRelease(touch, { dx: 120, dy: 0 });
     assert.equal(fixture.width, 720);
+    assert.equal(fixture.outerGeometryValid, true);
     assert.equal(changes.length, 1, 'resized coordinates must not reach the editor');
     assert.equal(starts, 1);
     assert.equal(cancels, 1);
