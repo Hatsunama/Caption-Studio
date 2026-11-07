@@ -2,7 +2,7 @@ import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project
 import { buildVideoTransitionPreviewWindows, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
 import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
 import { videoPlaybackUri } from '@/lib/video-playback-source';
-import { createPausedThumbnailDiagnostic, type PausedDiagnosticThumbnail } from '@/lib/private-paused-thumbnail-diagnostic';
+import { createPausedThumbnailDiagnostic, type PausedDiagnosticThumbnail } from '@/components/editor/private-paused-thumbnail-diagnostic';
 import { useEventListener } from 'expo';
 import { useVideoPlayer, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';

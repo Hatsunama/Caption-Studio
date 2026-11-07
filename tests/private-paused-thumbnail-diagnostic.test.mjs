@@ -12,7 +12,7 @@ const target = 6385.416507720947;
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 function loadHelper() {
   const logs = [], exports = {};
-  const code = ts.transpileModule(readFileSync(resolve(root, 'src/lib/private-paused-thumbnail-diagnostic.ts'), 'utf8'), {
+  const code = ts.transpileModule(readFileSync(resolve(root, 'src/components/editor/private-paused-thumbnail-diagnostic.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   vm.runInNewContext(code, { exports, console: { info: (...args) => logs.push(args) } });
