@@ -44,6 +44,8 @@ dependencies {
   implementation 'androidx.exifinterface:exifinterface:1.4.2'
   implementation "androidx.media3:media3-transformer:${captionStudioMedia3Version}"
   implementation "androidx.media3:media3-effect:${captionStudioMedia3Version}"
+  // The frame observer reads Expo's PlayerView; Expo's implementation dependency is not exported.
+  implementation "androidx.media3:media3-ui:${captionStudioMedia3Version}"
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.robolectric:robolectric:4.16.1'
 }

@@ -33,7 +33,7 @@ function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.
   requireText(mediaBuild, "file('media3-version.properties').withInputStream { captionStudioMedia3Properties.load(it) }", 'module Media3 version file');
   requireText(mediaBuild, "def captionStudioMedia3Version = captionStudioMedia3Properties.getProperty('media3Version')", 'module Media3 version binding');
   const mediaDeclarations = [...mediaBuild.matchAll(/^\s*implementation\s+['"]androidx\.media3:([^'"\r\n]+)['"]/gm)].map(match => match[1]);
-  if (mediaDeclarations.length !== 2 || !['media3-transformer', 'media3-effect'].every(name =>
+  if (mediaDeclarations.length !== 3 || !['media3-transformer', 'media3-effect', 'media3-ui'].every(name =>
     mediaDeclarations.includes(`${name}:\${captionStudioMedia3Version}`))) {
     throw new Error('Caption media Media3 dependencies must use the authoritative Media3 version.');
   }

@@ -68,6 +68,24 @@ test('release verifier refuses missing, narrowed, stale or ineffective Media3 al
   }
 });
 
+test('native frame observer has an explicit aligned Media3 UI compile dependency', () => {
+  const source = readFileSync(new URL('../modules/caption-media/android/build.gradle', import.meta.url), 'utf8');
+  assert.match(source, /^\s*implementation "androidx\.media3:media3-ui:\$\{captionStudioMedia3Version\}"/m);
+});
+
+test('release verifier rejects missing or runtime-only native UI dependency', () => {
+  for (const mutation of [
+    source => source.replace(/^\s*implementation "androidx\.media3:media3-ui:[^\r\n]+/m, ''),
+    source => source.replace('implementation "androidx.media3:media3-ui:', 'runtimeOnly "androidx.media3:media3-ui:'),
+  ]) {
+    withFixture(root => {
+      const file = join(root, 'modules', 'caption-media', 'android', 'build.gradle');
+      writeFileSync(file, mutation(readFileSync(file, 'utf8')));
+      assert.throws(() => verifyAndroidReleaseConfig(root), /Media3/i);
+    });
+  }
+});
+
 test('module Media3 declarations use their own authoritative file without a root fallback', () => {
   withFixture((root) => {
     configureAndroidRelease(root);
