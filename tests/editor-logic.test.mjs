@@ -143,7 +143,7 @@ test('timeline export is native, local, multi-track, and version-aligned', () =>
   assert.match(exporter, /MediaStore\.Video\.Media\.EXTERNAL_CONTENT_URI/);
   assert.match(exporter, /Environment\.getExternalStoragePublicDirectory/);
   assert.doesNotMatch(exporter, /builder\.addGap/);
-  assert.match(exporter, /buildNativeVideoSequence\(plan, baseVideoItem\)/);
+  assert.match(exporter, /buildNativeVideoSequence\(plan, baseVideoItem,\s*task\.sourceInfoByUri\[plan\.clips\.first\(\)\.uri\]\?\.durationMs\)/);
   assert.match(exporter, /canvasMediaItem\.buildUpon\(\)\.setImageDurationMs\(durationMs\)/);
   assert.match(exporter, /addCanvasGap\(clip\.timelineStartMs - cursorMs\)/);
   assert.match(exporter, /addCanvasGap\(plan\.durationMs - cursorMs\)/);
