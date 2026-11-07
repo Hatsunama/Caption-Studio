@@ -133,7 +133,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     ]);
   }, []);
 
+  // TEMPORARY synthetic-only transport diagnostics; remove before final verification.
   const setPhase = (next: TransportPhase) => {
+    console.info?.('CS_TRANSPORT_DIAG', 'phase', Date.now(), phaseRef.current, next, mountedRef.current);
     phaseRef.current = next;
     if (mountedRef.current) setPhaseState(next);
   };
@@ -616,6 +618,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   });
 
   const requestTarget = (timelineMs: number) => {
+    console.info?.('CS_TRANSPORT_DIAG', 'request', Date.now(), timelineMs, surfacesAdmittedRef.current, !!translationSuspensionRef.current, generationRef.current, !!desiredRef.current);
     compositeClockRef.current = undefined;
     cancelScheduledPreload();
     const targetMs = clamp(timelineMs, 0, projectTimelineDuration(projectRef.current));
@@ -640,6 +643,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const seek = useCallback((timelineMs: number) => requestTargetRef.current(timelineMs), []);
 
   const play = useCallback(() => {
+    console.info?.('CS_TRANSPORT_DIAG', 'play', Date.now(), currentMsRef.current, surfacesAdmittedRef.current, !!translationSuspensionRef.current, playIntentRef.current, mountedRef.current);
     if (!surfacesAdmittedRef.current || translationSuspensionRef.current) return;
     const duration = projectTimelineDuration(projectRef.current);
     const targetMs = currentMsRef.current >= duration - 1 ? 0 : currentMsRef.current;
@@ -649,6 +653,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   }, []);
 
   const pause = useCallback(() => {
+    console.info?.('CS_TRANSPORT_DIAG', 'pause', Date.now(), currentMsRef.current);
     stopTransport();
     const segment = projectTimelineSegmentAt(projectRef.current, currentMsRef.current, entriesRef.current);
     if (segment?.kind === 'gap') setPhase('gap');
