@@ -17,6 +17,8 @@ export type SpringScrollViewProps = ScrollViewProps & {
   springOffset?: SharedValue<number>;
   /** Allow this viewport to acquire spring feedback. Disable for app-specific motion preferences. */
   springOwner?: boolean;
+  /** Current command binding is ready; callers may retry their latest logical viewport. */
+  onScrollBindingReady?: () => void;
 };
 const owners = new WeakMap<SharedValue<number>, SharedValue<number>>();
 let nextOwner = 0;
@@ -29,13 +31,41 @@ function unsupported(props: SpringScrollViewProps) {
 }
 
 export function SpringScrollView(props: SpringScrollViewProps) {
-  const { nativeGesture, springOffset: _offset, springOwner: _owner, ...nativeProps } = props;
   if (Platform.OS !== 'android' || unsupported(props)) {
-    const view = <NativeScrollView {...nativeProps} />;
-    return Platform.OS === 'android' && nativeGesture
-      ? <GestureDetector gesture={nativeGesture}>{view}</GestureDetector> : view;
+    return <NativeFallbackScrollView {...props} />;
   }
   return <AndroidSpringScrollView {...props} />;
+}
+
+function NativeFallbackScrollView({ ref: publicRef, nativeGesture, springOffset: _offset,
+  springOwner: _owner, onScrollBindingReady, ...props }: SpringScrollViewProps) {
+  const callback = useRef<(() => void) | undefined>(undefined);
+  const life = useRef<{ node: NativeScrollView | null; generation: number; cleanup?: () => void }>({ node: null, generation: 0 });
+  const [binding, setBinding] = useState<{ node: NativeScrollView; generation: number }>();
+  useLayoutEffect(() => { callback.current = onScrollBindingReady; });
+  const commitRef = useCallback((node: NativeScrollView | null) => {
+    const current = life.current;
+    if (current.cleanup) { current.cleanup(); current.cleanup = undefined; }
+    else if (current.node && typeof publicRef === 'function') publicRef(null);
+    current.node = node;
+    const generation = ++current.generation;
+    if (typeof publicRef === 'function') {
+      if (node) {
+        const cleanup = publicRef(node);
+        if (typeof cleanup === 'function') current.cleanup = cleanup;
+      }
+    } else if (publicRef) publicRef.current = node;
+    setBinding(node ? { node, generation } : undefined);
+  }, [publicRef]);
+  useLayoutEffect(() => {
+    // Ref attachment has committed and public refs can now issue native commands.
+    // Effect replay renews this readiness even while the host itself survives.
+    if (binding && life.current.node === binding.node && life.current.generation === binding.generation) callback.current?.();
+  }, [binding]);
+  // Keep the original native ref pass-through when no readiness is requested.
+  const view = <NativeScrollView {...props} ref={onScrollBindingReady ? commitRef : publicRef} />;
+  return Platform.OS === 'android' && nativeGesture
+    ? <GestureDetector gesture={nativeGesture}>{view}</GestureDetector> : view;
 }
 
 /** Stable VirtualizedList renderer; virtualization and direct cell children stay native. */
@@ -44,7 +74,7 @@ export function renderSpringScrollView(props: ScrollViewProps) {
 }
 
 function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, springOwner = true,
-  children, contentContainerStyle, onLayout, onContentSizeChange, ...props }: SpringScrollViewProps) {
+  children, contentContainerStyle, onLayout, onContentSizeChange, onScrollBindingReady, ...props }: SpringScrollViewProps) {
   const ancestors = useContext(SpringScrollGestureContext);
   // Match RNGH 2.32's ScrollView preset: the child that starts scrolling keeps
   // the stream, and dragging beyond its bounds does not cancel that scroll.
@@ -95,6 +125,20 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
 
   const lifecycle = useRef<{ generation: number; node: NativeScrollView | null; content: HostInstance | null;
     contentGeneration?: number; restore?: () => void; refCleanup?: () => void }>({ generation: 0, node: null, content: null });
+  const readiness = useRef<{ live: boolean; delivered?: number; callback?: () => void }>({ live: false });
+  // Never publish a callback from an uncommitted render, and never rebind the
+  // native host merely because a caller supplied a new function identity.
+  useLayoutEffect(() => { readiness.current.callback = onScrollBindingReady; });
+  useLayoutEffect(() => {
+    readiness.current.live = true;
+    return () => { readiness.current.live = false; };
+  }, []);
+  const bindingReady = useCallback((generation: number) => {
+    const ready = readiness.current, life = lifecycle.current;
+    if (!ready.live || !life.node || life.generation !== generation || ready.delivered === generation) return;
+    ready.delivered = generation;
+    ready.callback?.();
+  }, [lifecycle, readiness]);
   const [contentBinding, setContentBinding] = useState<{ host: HostInstance; generation: number }>();
   const [contentStyle, setContentStyle] = useState<{ generation: number; value: ViewStyle | undefined }>();
   const bindContent = useCallback(() => {
@@ -111,14 +155,14 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     scheduleOnUI(controller.deactivate, generation);
     life.content = content;
     life.contentGeneration = generation;
-    if (life.node) scheduleOnUI(controller.activate, generation, !!life.restore);
+    if (life.node) scheduleOnUI(controller.activate, generation, !!life.restore, bindingReady);
     setContentStyle(undefined);
     if (!content) {
       setContentBinding(undefined);
       return;
     }
     setContentBinding({ host: content, generation });
-  }, [lifecycle, controller]);
+  }, [lifecycle, controller, bindingReady]);
   const publishContentStyle = useCallback((generation: number, value: ViewStyle | undefined) => {
     if (lifecycle.current.generation !== generation || !lifecycle.current.content) return;
     setContentStyle(previous => previous?.generation === generation && sameContentStyle(previous.value, value) ? previous : { generation, value });

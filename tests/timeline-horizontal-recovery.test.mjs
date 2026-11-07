@@ -22,11 +22,13 @@ function code(file) {
 // Execute the whole LayerTimeline render, its real hooks/callbacks and the
 // production command interceptor/controller. Only host layout/clamping and the
 // hook scheduler are doubles: these schedules are contracts, not device traces.
-function harness(initial = {}) {
+function harness(initial = {}, { fullBinding = false } = {}) {
   let cursor = 0, dirty = false, tree, effects = [], horizontal, outer, first = true;
   let scrubStarts = 0, timingStarts = 0, timingEnds = 0;
   let slots = [];
   const primarySlots = slots, childSlots = [], modules = new Map(), jobs = [], commands = [], seeks = [], changes = [];
+  const springSlots = [], rnJobs = [];
+  let springHost, committedRef;
   let geometry;
   let holdAcknowledgements = false;
   const acknowledgements = [];
@@ -63,6 +65,7 @@ function harness(initial = {}) {
     },
   };
   hooks.useLayoutEffect = hooks.useEffect;
+  hooks.forwardRef = render => render;
   const jsx = (type, props) => ({ type, props });
   const shared = value => ({ value, modify(fn) { this.value = fn(this.value); } });
   const gesture = () => new Proxy({ handlers: { isWorklet: [] } }, {
@@ -71,17 +74,27 @@ function harness(initial = {}) {
       return receiver;
     }; },
   });
-  const reanimated = { useSharedValue: value => hooks.useMemo(() => shared(value), []),
-    cancelAnimation() {}, dispatchCommand(_ref, name, args) {
+  const reanimated = { __esModule: true, useSharedValue: value => hooks.useMemo(() => shared(value), []),
+    default: { createAnimatedComponent: component => component },
+    useReducedMotion: () => false,
+    useAnimatedRef: () => hooks.useMemo(() => {
+      const ref = value => { if (value) ref.current = value; return ref.current; };
+      return ref;
+    }, []),
+    // Decorative spring presentation is outside this binding/command contract.
+    // No inner host is attached, so no content-owner animation is mounted.
+    useScrollOffset() {}, useAnimatedReaction() {},
+    cancelAnimation() {}, dispatchCommand(ref, name, args) {
+      if (fullBinding) assert.equal(ref(), node, 'real wrapper animated ref resolves the bound host');
       assert.equal(name, 'scrollTo'); assert.equal(args[2], false);
       commands.push(args[0]);
       native.x = Math.min(Math.max(0, args[0]), Math.max(0, native.content - native.viewport));
       const x = native.x;
-      const acknowledge = () => horizontal.props.onScroll({ nativeEvent: { contentOffset: { x } } });
+      const acknowledge = () => (fullBinding ? springHost : horizontal).props.onScroll({ nativeEvent: { contentOffset: { x } } });
       (holdAcknowledgements ? acknowledgements : jobs).push(acknowledge);
     } };
   const worklets = { scheduleOnUI: (fn, ...args) => jobs.push(() => fn(...args)),
-    scheduleOnRN: (fn, ...args) => jobs.push(() => fn(...args)) };
+    scheduleOnRN: (fn, ...args) => (fullBinding ? rnJobs : jobs).push(() => fn(...args)) };
   const spring = { SpringScrollView: 'SpringScrollView', SpringScrollGestureContext: { value: [] } };
   function load(file) {
     if (modules.has(file)) return modules.get(file);
@@ -90,13 +103,18 @@ function harness(initial = {}) {
       performance: { now: () => 1 }, require(id) {
         if (id === 'react') return hooks;
         if (id === 'react/jsx-runtime') return { jsx, jsxs: jsx };
-        if (id === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable',
+        if (id === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'NativeScrollView',
+          StyleSheet: { flatten: style => Object.assign({}, ...[style].flat(Infinity).filter(Boolean)) },
+          AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) },
+          AccessibilityInfo: { addEventListener: () => ({ remove() {} }),
+            isReduceMotionEnabled: () => ({ then: resolve => resolve(false) }) },
           Platform: { OS: 'android' }, PanResponder: { create: panHandlers => ({ panHandlers }) },
           PixelRatio: { roundToNearestPixel: x => x, get: () => 1 } };
         if (id === 'react-native-reanimated') return reanimated;
         if (id === 'react-native-worklets') return worklets;
         if (id === 'react-native-gesture-handler') return { Gesture: { Native: gesture, Pan: gesture }, GestureDetector: 'GestureDetector' };
-        if (id === '@/components/spring-scroll-view') return spring;
+        if (id === '@/components/spring-scroll-view') return fullBinding
+          ? load(resolve(root, 'components/spring-scroll-view.tsx')) : spring;
         if (id === 'expo-image') return { Image: 'Image' };
         if (id.startsWith('@/services/')) return { timelineHaptic() {} };
         if (id === '@/lib/ui-theme') return { chrome: {} };
@@ -119,11 +137,13 @@ function harness(initial = {}) {
   const state = shared({ alive: false, epoch: 0, axis: policy.createScrollSpringAxisState() });
   const node = { scrollTo() { assert.fail('must use production generation guard'); }, scrollToEnd() {},
     getNativeScrollRef: () => node };
-  const controller = createScrollSpringController({ state, owner: shared(0), offset: shared(0), id: 1,
+  const controller = fullBinding ? undefined : createScrollSpringController({ state, owner: shared(0), offset: shared(0), id: 1,
     nativeOffset: shared(0), getAnimatedRef: () => () => node, getContentRef: () => () => ({}),
     presentationVersion: shared(0), gesture: gesture() });
-  const restore = interceptSpringScrollCommands(node, () => node, () => native.generation, controller.command);
-  controller.activate(1, true);
+  // In fullBinding mode only AndroidSpringScrollView may install/activate the guard.
+  node.getInnerViewRef = () => null;
+  const restore = fullBinding ? () => {} : interceptSpringScrollCommands(node, () => node, () => native.generation, controller.command);
+  if (!fullBinding) controller.activate(1, true);
   function render() {
     slots = primarySlots; cursor = 0; dirty = false;
     tree = LayerTimeline(props);
@@ -136,13 +156,27 @@ function harness(initial = {}) {
     }
     walk(tree);
     assert.ok(horizontal); assert.ok(outer);
-    horizontal.props.ref.current = node;
+    if (fullBinding) {
+      slots = springSlots; cursor = 0;
+      const android = horizontal.type(horizontal.props);
+      const fragment = android.type(android.props);
+      assert.equal(fragment.type, hooks.Fragment, 'real Android spring branch');
+      springHost = fragment.props.children.find(child => child?.type === 'GestureDetector').props.children;
+      assert.equal(springHost.type, 'NativeScrollView');
+      if (committedRef !== springHost.props.ref) {
+        committedRef?.(null);
+        committedRef = springHost.props.ref;
+        committedRef(node);
+      }
+      slots = primarySlots;
+    } else horizontal.props.ref.current = node;
     if (first) { native.content = expectedContent(); first = false; }
     while (effects.length) effects.shift()();
   }
-  function flush(runJobs = true) {
+  function flush(runJobs = true, runRN = true) {
     for (let i = 0; i < 40; i++) {
       if (runJobs) while (jobs.length) jobs.shift()();
+      if (runJobs && runRN) while (rnJobs.length) rnJobs.shift()();
       if (!dirty) return;
       render();
     }
@@ -150,11 +184,11 @@ function harness(initial = {}) {
   }
   function layout(width = native.viewport) {
     native.viewport = width;
-    horizontal.props.onLayout?.({ nativeEvent: { layout: { width } } });
+    (fullBinding ? springHost : horizontal).props.onLayout?.({ nativeEvent: { layout: { width } } });
   }
   function content(width = expectedContent()) {
     native.content = width;
-    horizontal.props.onContentSizeChange?.(width, 200);
+    (fullBinding ? springHost : horizontal).props.onContentSizeChange?.(width, 200);
   }
   function expectedContent() { return horizontal.props.contentContainerStyle.width; }
   render(); flush();
@@ -210,7 +244,16 @@ function harness(initial = {}) {
     rebind() { controller.deactivate(++native.generation); controller.activate(native.generation, true); native.x = 0; },
     rejectNextCommand() { jobs.push(() => controller.deactivate(++native.generation)); },
     activate() { controller.activate(native.generation, true); },
-    close() { restore(); for (const store of [primarySlots, ...childSlots]) for (const slot of store) slot?.cleanup?.(); },
+    bindingReady() { horizontal.props.onScrollBindingReady?.(); flush(); },
+    // Ref detach/attach only: no layout, content or transport event is synthesized.
+    reattach() {
+      assert.ok(fullBinding);
+      committedRef(null); committedRef(node); native.x = 0;
+      flush(true, false);
+    },
+    get pendingRN() { return rnJobs.length; },
+    deliverRN() { assert.ok(rnJobs.length); rnJobs.shift()(); flush(true, false); },
+    close() { committedRef?.(null); restore(); for (const store of [primarySlots, springSlots, ...childSlots]) for (const slot of store) slot?.cleanup?.(); },
   };
 }
 
@@ -221,6 +264,74 @@ function aligned(h) {
   assert.equal(h.native.x, Math.min(1, Math.max(0, h.props.currentMs / h.props.durationMs)) * track);
   assert.deepEqual(h.seeks, [], 'passive geometry must never change transport time');
 }
+
+test('full binding: paused reattachment follows only after UI acceptance reaches RN and native ACK reaches the ruler', () => {
+  const h = harness({ durationMs: 120000, currentMs: 90000 }, { fullBinding: true });
+  try {
+    h.ready(); aligned(h);
+    const count = h.commands.length, clock = h.props.currentMs;
+    const range = () => {
+      const ruler = h.find('TimelineRuler');
+      return [ruler.visibleStartMs, ruler.visibleEndMs];
+    };
+    // The replacement native viewport reports its initial offset, then has no
+    // further layout/content/time changes. Only binding readiness can follow.
+    h.reattach();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 0 } } });
+    h.flush(true, false);
+    const before = range();
+    assert.equal(h.pendingRN, 1, 'real controller.activate scheduled the readiness delivery');
+    assert.equal(h.commands.length, count, 'UI activation alone cannot call the RN follow effect');
+    h.holdAcknowledgements(); h.deliverRN();
+    assert.equal(h.commands.length, count + 1, 'real wrapper callback reaches LayerTimeline follow and intercepted native dispatch');
+    aligned(h);
+    assert.deepEqual(range(), before, 'dispatch cannot claim an acknowledged viewport');
+    h.acknowledge();
+    assert.notDeepEqual(range(), before, 'native onScroll advances the rendered ruler');
+    h.flush(); h.update({});
+    assert.equal(h.commands.length, count + 1, 'ACK and unchanged render cannot feed back into follow');
+    assert.equal(h.props.currentMs, clock);
+    assert.deepEqual(h.changes, []); assert.equal(h.scrubStarts, 0);
+    assert.equal(h.timingStarts, 0); assert.equal(h.timingEnds, 0);
+  } finally { h.close(); }
+});
+
+test('full binding: delayed RN readiness from a retired attachment cannot retry the latest target', () => {
+  const h = harness({ currentMs: 5000 }, { fullBinding: true });
+  try {
+    h.ready(); const count = h.commands.length;
+    h.reattach(); h.reattach();
+    assert.equal(h.pendingRN, 2);
+    h.deliverRN();
+    assert.equal(h.commands.length, count, 'production wrapper must reject the retired RN generation');
+    assert.equal(h.native.x, 0);
+    h.deliverRN();
+    assert.equal(h.commands.length, count + 1, 'only current attachment readiness may recover');
+    aligned(h); h.flush(); assert.equal(h.commands.length, count + 1);
+  } finally { h.close(); }
+});
+
+for (const owner of ['scrub', 'cue edit']) test(`full binding: reattachment readiness preserves ${owner} ownership`, () => {
+  const h = harness({ currentMs: 4000, selectedLayerId: 'captions', selectedCaptionId: 'cue',
+    layers: [{ id: 'captions', kind: 'captions' }],
+    captions: [{ id: 'cue', startMs: 3000, endMs: 4500, text: 'cue' }],
+  }, { fullBinding: true });
+  try {
+    h.ready();
+    if (owner === 'scrub') h.horizontal.onScrollBeginDrag();
+    else { h.find('TimedBlock').onChangeStart(); h.flush(); h.find('TimedBlock').onTouchLock(false); h.flush(); }
+    const count = h.commands.length;
+    h.reattach(); h.native.x = 55;
+    assert.equal(h.pendingRN, 1); h.deliverRN();
+    assert.equal(h.commands.length, count, 'binding callback cannot reclaim an owned viewport');
+    assert.equal(h.native.x, 55); assert.deepEqual(h.seeks, []); assert.deepEqual(h.changes, []);
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    assert.equal(h.commands.length, count, 'scroll feedback cannot cause passive follow');
+    assert.equal(h.seeks.length, owner === 'scrub' ? 1 : 0, 'only the genuine scrub may seek');
+    assert.equal(h.scrubStarts, owner === 'scrub' ? 1 : 0);
+    assert.equal(h.timingStarts, owner === 'cue edit' ? 1 : 0);
+  } finally { h.close(); }
+});
 
 for (const reject of [false, true]) test(`displayed viewport waits for native acknowledgement${reject ? ' after generation rejection and retry' : ''}`, () => {
   const h = harness({ durationMs: 120000, currentMs: 0,
@@ -257,7 +368,7 @@ for (const reject of [false, true]) test(`displayed viewport waits for native ac
       assert.equal(h.commands.length, count, 'the real spring guard rejected the command');
       assert.equal(h.native.x, 0);
       assert.deepEqual(snapshot(), before, 'rejection cannot claim a displayed offset');
-      h.activate(); h.layout(); h.flush();
+      h.activate(); h.bindingReady();
     }
     assert.equal(h.commands.length, count + 1, 'readiness retries exactly once when needed');
     aligned(h);
@@ -370,7 +481,7 @@ test('selected cue ownership defers readiness until the transaction ends', () =>
   h.find('TimedBlock').onChangeStart(); h.flush();
   h.find('TimedBlock').onTouchLock(false); h.flush();
   const count = h.commands.length; h.native.x = 60;
-  h.layout(); h.content(); h.update({ currentMs: 4100 });
+  h.layout(); h.content(); h.bindingReady(); h.update({ currentMs: 4100 });
   assert.equal(h.native.x, 60); assert.equal(h.commands.length, count);
   h.find('TimedBlock').onEnd(); h.update({ currentMs: 4200 }); aligned(h); h.close();
 });
@@ -405,7 +516,7 @@ test('geometry callbacks leave video reorder ownership intact until cancellation
   // overwrite that offset with clock-follow even if native input is unlocked.
   h.find('VideoClipBlock').onGestureLock(false); h.flush();
   const x = h.native.x, count = h.commands.length;
-  h.layout(); h.content(); h.flush();
+  h.layout(); h.content(); h.bindingReady(); h.flush();
   assert.equal(h.native.x, x); assert.equal(h.commands.length, count);
   h.find('VideoClipBlock').onReorderCancel(); h.flush(); h.ready(); aligned(h); h.close();
 });
@@ -443,4 +554,71 @@ test('JS touch cancellation from native takeover must not revoke a genuine scrub
   assert.equal(h.native.x, 55);
   h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
   assert.equal(h.seeks.length, 1); h.close();
+});
+
+// No new layout/content/currentMs event follows the last rejected paused command.
+test('binding readiness alone recovers the latest paused target after a real generation rejection', () => {
+  const h = harness({ currentMs: 1000 });
+  try {
+    h.ready(); const count = h.commands.length;
+    h.rejectNextCommand(); h.update({ currentMs: 5000 });
+    assert.equal(h.commands.length, count, 'production generation guard dropped the final command');
+    h.activate(); h.bindingReady();
+    assert.equal(h.commands.length, count + 1, 'accepted binding must invalidate follow without another native measurement');
+    aligned(h);
+  } finally { h.close(); }
+});
+
+test('binding readiness uses the replacement project target and waits for matching geometry', () => {
+  const h = harness({ currentMs: 1000 });
+  try {
+    h.ready(); h.resize(800); h.rebind();
+    h.update({ projectId: 'replacement', currentMs: 5000 });
+    const count = h.commands.length;
+    h.bindingReady(); assert.equal(h.commands.length, count, 'partial old geometry is insufficient');
+    h.layout(); h.content(); h.flush();
+    h.rejectNextCommand(); h.update({ currentMs: 6000 });
+    const rejected = h.commands.length;
+    h.activate(); h.bindingReady();
+    assert.equal(h.commands.length, rejected + 1); aligned(h);
+  } finally { h.close(); }
+});
+
+test('binding readiness preserves a genuine scrub owner', () => {
+  const h = harness({ currentMs: 4000 });
+  try {
+    h.ready(); h.horizontal.onScrollBeginDrag();
+    h.native.x = 55; const count = h.commands.length;
+    h.bindingReady();
+    assert.equal(h.commands.length, count); assert.equal(h.native.x, 55);
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    assert.equal(h.seeks.length, 1);
+  } finally { h.close(); }
+});
+
+for (const translated of [false, true]) test(`${translated ? 'dual translated' : 'primary'} cue lifecycle retains edit ownership then follows on binding readiness`, () => {
+  const cue = { id: 'cue', startMs: 3000, endMs: 4500, text: 'primary cue' };
+  const h = harness({ currentMs: 4000, selectedLayerId: translated ? 'translated' : 'captions', selectedCaptionId: 'cue',
+    layers: [{ id: 'captions', kind: 'captions' }], captions: [cue],
+    translationTracks: translated ? [{ id: 'translated', name: 'Translated', visible: true, pairs: [{
+      source: cue, translation: { id: 'translated-cue', status: 'ready' }, startMs: 3000, endMs: 4500,
+      timelineVisible: true, displayText: 'translated cue',
+    }] }] : [],
+  });
+  try {
+    h.ready(); aligned(h);
+    const item = h.findAll('TimedBlock').find(item => item.label === (translated ? 'translated cue' : 'primary cue'));
+    assert.ok(item); assert.equal(item.selected, true);
+    item.onChangeStart(); h.flush(); item.onTouchLock(false); h.flush();
+    h.native.x = 60; const count = h.commands.length;
+    h.bindingReady();
+    assert.equal(h.commands.length, count); assert.equal(h.native.x, 60);
+    item.onEnd(); h.flush();
+    h.rejectNextCommand(); h.update({ currentMs: 4200 });
+    const rejected = h.commands.length;
+    h.activate(); h.bindingReady();
+    assert.equal(h.commands.length, rejected + 1); aligned(h);
+    assert.equal(h.timingStarts, 1); assert.equal(h.timingEnds, 1);
+    assert.deepEqual(h.changes, []);
+  } finally { h.close(); }
 });

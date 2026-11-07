@@ -279,8 +279,8 @@ export function LayerTimeline(props: {
       (hasSelectedCue && selectionOwnsViewportRef.current)) return;
     // React geometry alone cannot prove that Android has laid out the new
     // nonzero content. A command can clamp there, or be dropped by a retired
-    // spring binding. Native callbacks arrive after bindContent and must retry
-    // even when their dimensions are unchanged. Ignore stale/partial geometry.
+    // spring binding. Measurements and accepted binding readiness invalidate
+    // this effect even with unchanged dimensions. Ignore stale/partial geometry.
     const pixel = 1 / PixelRatio.get();
     if (horizontalGeometry.viewport <= 0 || horizontalGeometry.content <= 0 ||
       Math.abs(horizontalGeometry.viewport - viewportWidth) > pixel ||
@@ -671,6 +671,11 @@ export function LayerTimeline(props: {
         scrollEventThrottle={32}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ width: scrollContentWidth }}
+        onScrollBindingReady={() => {
+          // A new accepted binding can deliver follow again. This only changes
+          // readiness; onScroll still owns displayed offset/virtualization.
+          setHorizontalGeometry((previous) => ({ ...previous }));
+        }}
         onLayout={(event) => {
           const viewport = event.nativeEvent.layout.width;
           if (Number.isFinite(viewport) && viewport > 0) setHorizontalGeometry((previous) => ({ ...previous, viewport }));
@@ -712,6 +717,7 @@ export function LayerTimeline(props: {
         <View style={{ width: LABEL_WIDTH + trackWidth + trailingPadding, height: '100%', marginLeft: leadingPadding }}>
           <TimelineRuler durationMs={duration} trackWidth={trackWidth} pixelsPerSecond={effectiveScale} visibleStartMs={visibleRange.startMs} visibleEndMs={visibleRange.endMs} />
           <TimelineNativeScrollView nativeGesture={nativeScrollGestures[1]} springOffset={verticalSpringOffset} key={props.projectId} ref={verticalRef} style={{ marginTop: RULER_HEIGHT }} contentContainerStyle={{ paddingVertical: 1 }} nestedScrollEnabled scrollEnabled={!gestureLock}
+            onScrollBindingReady={() => linkedScroll.bindingReady('items')}
             onLayout={(event) => linkedScroll.layout('items', { viewport: event.nativeEvent.layout.height, target: timelineScrollMetadata(event.nativeEvent).target })}
             onContentSizeChange={(_width, height) => linkedScroll.layout('items', { content: height })}
             onScrollBeginDrag={(event) => {
@@ -728,6 +734,7 @@ export function LayerTimeline(props: {
         </View>
       </TimelineNativeScrollView>
       <TimelineNativeScrollView nativeGesture={nativeScrollGestures[2]} springOffset={verticalSpringOffset} ref={labelScrollRef} testID="timeline-track-labels" nestedScrollEnabled scrollEnabled={!gestureLock}
+        onScrollBindingReady={() => linkedScroll.bindingReady('labels')}
         onLayout={(event) => linkedScroll.layout('labels', { viewport: event.nativeEvent.layout.height, target: timelineScrollMetadata(event.nativeEvent).target })}
         onContentSizeChange={(_width, height) => linkedScroll.layout('labels', { content: height })}
         onScrollBeginDrag={(event) => {
