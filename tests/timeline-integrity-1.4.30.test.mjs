@@ -60,5 +60,7 @@ test('timeline seeks retain persistent slot ownership instead of replacing a dec
   assert.equal((controller.match(/useVideoPlayer\(null, configureTimelinePlayer\)/g) ?? []).length, 2);
   assert.match(controller, /const sourceChanged = forceReload \|\| runtime\.playbackUri !== uri/);
   assert.match(controller, /runtime\.preparedClipId === entry\.clip\.id && runtime\.firstFrameReady/);
-  assert.doesNotMatch(controller, /status !== 'readyToPlay'/);
+  assert.match(controller, /const sourceChanged = forceReload \|\| runtime\.playbackUri !== uri\s*\|\| \(runtime\.readiness === 'idle' && player\.status !== 'readyToPlay'\);/);
+  assert.ok(controller.indexOf('const sourceChanged =') < controller.indexOf("runtime.readiness = 'preparing'"),
+    'native readiness revalidation must inspect the retired idle state before preparation changes it');
 });

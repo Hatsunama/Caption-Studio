@@ -51,8 +51,8 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
       pause() { this.playing = false; calls.push(['pause', slot]); },
       play() { this.playing = true; calls.push(['play', slot, this.muted]); },
       async replaceAsync(uri) { calls.push(['replace', slot, uri]);
-        if (holdReplacement && uri) await new Promise(resolve => { this.finishReplacement = resolve; });
-        this.status = uri ? 'readyToPlay' : 'idle'; },
+        if ((holdReplacement || this.holdReplacement) && uri) await new Promise(resolve => { this.finishReplacement = resolve; });
+        this.status = uri ? this.replacementStatus ?? 'readyToPlay' : 'idle'; },
       addListener(event, fn) { const set = listeners.get(event) ?? new Set(); listeners.set(event, set); set.add(fn);
         return { remove: () => set.delete(fn) }; },
       emit(event, value) { for (const fn of [...(listeners.get(event) ?? [])]) fn(value); },
@@ -152,6 +152,56 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   };
 }
 
+test('ordinary play and repeated same-clip scrubs keep a ready slot during transient native loading', async t => {
+  const h = harness(); t.after(() => h.unmount()); await h.complete();
+  const slot = h.transport.activeSlot, token = h.transport.slots[slot].prepareToken;
+  const replacements = h.calls.filter(call => call[0] === 'replace').length;
+  h.players[slot].status = 'loading';
+  h.players[slot].emit('statusChange', { status: 'loading' });
+  h.transport.play(); await h.settle();
+  for (const target of [21800, 8000, 8000, 12000]) {
+    h.transport.seek(target); await h.settle();
+    assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.activeSlot, slot);
+    assert.equal(h.transport.slots[slot].readiness, 'ready');
+    assert.equal(h.transport.slots[slot].prepareToken, token);
+    assert.equal(h.transport.currentMs, target); assert.equal(h.transport.isPlaying, true);
+    assert.equal(h.players[slot].currentTime, (target + 1000) / 1000);
+    await h.decoded(slot); assert.equal(h.transport.currentMs, target);
+    assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements);
+  }
+  h.players[slot].currentTime = 13.25; await h.decoded(slot);
+  assert.equal(h.transport.currentMs, 12250, 'native clock still advances during transient loading');
+  h.transport.pause(); await h.settle();
+  assert.equal(h.transport.isPlaying, false); assert.equal(h.timerCount, 0);
+});
+
+test('ordinary same-URI clip seeks reprepare the loaded slot without replacing a transiently loading decoder', async t => {
+  // Discontinuous source ranges prevent seamless continuation; changing clip identity
+  // also prevents findPreparedSlot from bypassing prepareSlotOperation.
+  const h = harness({ clips: [clip(), clip('b'), clip('c')] }); t.after(() => h.unmount()); await h.complete();
+  assert.equal(h.transport.slots.filter(slot => slot.readiness === 'ready').length, 2);
+  const replacements = h.calls.filter(call => call[0] === 'replace').length;
+  for (const target of [61800, 31800, 1800, 61800, 31800, 1800]) {
+    const slot = h.transport.activeSlot === 0 ? 1 : 0;
+    const token = h.transport.slots[slot].prepareToken;
+    h.players[slot].status = 'loading';
+    h.players[slot].emit('statusChange', { status: 'loading' });
+    h.transport.seek(target); await h.settle();
+    assert.ok(h.transport.slots[slot].prepareToken > token, 'seek must exercise preparation');
+    assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements,
+      'ordinary same-URI preparation must retain the loaded decoder during transient loading');
+    assert.equal(h.transport.slots[slot].readiness, 'preparing');
+    await h.decoded(slot); assert.notEqual(h.transport.phase, 'ready', 'fresh view frame remains mandatory');
+    await h.frame(slot);
+    assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.activeSlot, slot);
+    assert.equal(h.transport.slots[slot].readiness, 'ready');
+    assert.equal(h.transport.currentMs, target); assert.equal(h.transport.isPlaying, false);
+    assert.equal(h.players[slot].currentTime, 2.8);
+  }
+  await h.advance(15000); assert.equal(h.transport.phase, 'ready'); assert.equal(h.timerCount, 0);
+  assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements);
+});
+
 test('Home detaches actual overlay; resume at 21.8s needs a fresh view frame AND decoded position without source reload', async t => {
   const h = harness(); t.after(() => h.unmount()); await h.complete();
   h.transport.seek(21800); await h.complete();
@@ -174,6 +224,55 @@ test('Home detaches actual overlay; resume at 21.8s needs a fresh view frame AND
   assert.equal(h.calls.filter(call => call[0] === 'replace').length, replacements);
   assert.ok(h.calls.filter(call => call[0] === 'play').every(call => call[2] === true));
 });
+
+for (const status of ['idle', 'loading', 'error']) {
+  test(`paused 8s endpoint with completed same-URI source in native ${status} rechecks readiness on repeated resume`, async t => {
+    const endpoint = { ...clip(), sourceStartMs: 0, sourceEndMs: 8000, availableSourceEndMs: 8000 };
+    const h = harness({ clips: [endpoint] }); t.after(() => h.unmount());
+    h.project.sources[0].durationMs = 8000;
+    await h.complete(); h.transport.seek(8000); await h.complete();
+    assert.equal(h.transport.currentMs, 8000); assert.equal(h.transport.phase, 'ready');
+    const slot = h.transport.activeSlot, player = h.players[slot];
+    const replacements = () => h.calls.filter(call => call[0] === 'replace');
+    const initialReplacements = replacements().length;
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const retired = h.views.map(view => view.onFirstFrameRender);
+      const token = h.transport.slots[slot].prepareToken;
+      await h.app('background');
+      player.status = status;
+      // Expo Android maps a clean STATE_ENDED to idle, even with the source retained.
+      if (status === 'idle') player.emit('playToEnd', {});
+      player.emit('statusChange', { status }); await h.settle();
+      player.holdReplacement = true; player.replacementStatus = 'loading';
+      const playCount = h.calls.filter(call => call[0] === 'play').length;
+      await h.app('active');
+      assert.equal(replacements().length, initialReplacements + cycle + 1,
+        'same URI must be replaced again when the native decoder is not readyToPlay');
+      assert.equal(replacements().at(-1)[2], 'file:///source.mp4');
+      assert.ok(h.transport.slots[slot].prepareToken > token);
+      retired.forEach(callback => callback()); await h.decoded(slot);
+      assert.equal(h.transport.slots[slot].firstFrameReady, false);
+      assert.equal(h.transport.currentMs, 8000); assert.equal(h.transport.isPlaying, false);
+      assert.equal(player.playing, false);
+      player.finishReplacement(); await h.settle();
+      await h.advance(6000);
+      assert.notEqual(h.transport.phase, 'ready'); assert.notEqual(h.transport.phase, 'error');
+      assert.equal(h.calls.filter(call => call[0] === 'play').length, playCount,
+        'replacement completion must not start frame preparation before decoder readiness');
+      player.status = 'readyToPlay'; player.emit('statusChange', { status: 'readyToPlay' }); await h.settle();
+      assert.equal(player.currentTime, 8, 'domain endpoint remains exact');
+      if (cycle === 0) await h.frame(slot); else await h.decoded(slot);
+      assert.notEqual(h.transport.phase, 'ready', 'both a fresh surface frame and decoded position are required');
+      await h.advance(4999); assert.notEqual(h.transport.phase, 'error');
+      if (cycle === 0) await h.decoded(slot); else await h.frame(slot);
+      assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.sourceFailure, undefined);
+      assert.equal(h.transport.currentMs, 8000); assert.equal(h.transport.isPlaying, false);
+      assert.equal(h.players.some(value => value.playing), false);
+      await h.advance(15000); assert.equal(h.transport.phase, 'ready'); assert.equal(h.timerCount, 0);
+      assert.ok(h.calls.filter(call => call[0] === 'play').every(call => call[2] === true), 'all preparation playback stays muted');
+    }
+  });
+}
 
 test('retired callbacks cannot revive either active or standby slot across repeated interruptions', async t => {
   const h = harness({ clips: [clip(), clip('b', 'other')] }); t.after(() => h.unmount()); await h.complete();

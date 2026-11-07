@@ -193,7 +193,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       runtime.preparationTask = undefined;
       runtime.firstFrameReady = false;
       runtime.readiness = 'idle';
-      // Only a completed replacement is safe to reuse without loading its URI.
+      // Preserve completed sources; idle preparation rechecks native decoder readiness.
       runtime.playbackUri = runtime.loadedPlaybackUri;
     });
     hasPresentedFrameRef.current = false;
@@ -367,7 +367,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.preparation = preparation;
     runtime.preparationError = undefined;
     const token = ++runtime.prepareToken;
-    const sourceChanged = forceReload || runtime.playbackUri !== uri;
+    const sourceChanged = forceReload || runtime.playbackUri !== uri
+      || (runtime.readiness === 'idle' && player.status !== 'readyToPlay');
     if (sourceChanged) runtime.loadedPlaybackUri = undefined;
 
     runtime.sourceId = source.id;
