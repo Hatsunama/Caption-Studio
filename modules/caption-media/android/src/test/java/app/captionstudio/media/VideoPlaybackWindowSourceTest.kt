@@ -37,7 +37,7 @@ class VideoPlaybackWindowSourceTest {
     val cleared = VideoPlaybackWindow.copyItem(cap, original.localConfiguration!!.uri.toString(), null)
     val ends = mutableListOf<Long>()
     ChildPeriod.period = Proxy.newProxyInstance(MediaPeriod::class.java.classLoader, arrayOf(MediaPeriod::class.java)) { _, method, args ->
-      if (method.name == "setEndPositionUs") { ends += args!![0] as Long; null }
+      if (method.name == "setEndPositionUs") (args!![0] as Long).also { ends += it }
       else throw AssertionError("Unexpected child call: ${method.name}")
     } as MediaPeriod
     val factory = VideoPlaybackWindow.sourceFactory(context)
