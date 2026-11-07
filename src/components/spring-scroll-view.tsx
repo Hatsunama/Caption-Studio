@@ -130,8 +130,9 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
   // native host merely because a caller supplied a new function identity.
   useLayoutEffect(() => { readiness.current.callback = onScrollBindingReady; });
   useLayoutEffect(() => {
-    readiness.current.live = true;
-    return () => { readiness.current.live = false; };
+    const ready = readiness.current;
+    ready.live = true;
+    return () => { ready.live = false; };
   }, []);
   const bindingReady = useCallback((generation: number) => {
     const ready = readiness.current, life = lifecycle.current;
