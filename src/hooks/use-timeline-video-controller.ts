@@ -2,6 +2,7 @@ import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project
 import { buildVideoTransitionPreviewWindows, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
 import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
 import { videoPlaybackUri } from '@/lib/video-playback-source';
+import { createPausedThumbnailDiagnostic, type PausedDiagnosticThumbnail } from '@/lib/private-paused-thumbnail-diagnostic';
 import { useEventListener } from 'expo';
 import { useVideoPlayer, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -24,6 +25,8 @@ type CompositeClock = { key: string; slot: SlotIndex; prepareToken: number };
 const FIRST_FRAME_TIMEOUT_MS = 5_000;
 
 export type TimelineVideoSlot = {
+  // PRIVATE DIAGNOSTIC — DO NOT SHIP. Native surface remains mounted underneath.
+  diagnosticThumbnail?: PausedDiagnosticThumbnail;
   sourceId?: string;
   playbackUri?: string;
   preparedClipId?: string;
@@ -91,6 +94,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const reloadRequestedRef = useRef(false);
   const hasPresentedFrameRef = useRef(false);
   const mountedRef = useRef(true);
+  const [diagnostic] = useState(createPausedThumbnailDiagnostic);
   const surfacesAdmittedRef = useRef(surfacesAdmitted);
   const translationSuspensionRef = useRef<{
     generation: number;
@@ -121,6 +125,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         firstFrameReady: first.firstFrameReady,
         prepareToken: first.prepareToken,
         readiness: first.readiness,
+        diagnosticThumbnail: first.diagnosticThumbnail,
       },
       {
         sourceId: second.sourceId,
@@ -129,6 +134,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         firstFrameReady: second.firstFrameReady,
         prepareToken: second.prepareToken,
         readiness: second.readiness,
+        diagnosticThumbnail: second.diagnosticThumbnail,
       },
     ]);
   }, []);
@@ -766,6 +772,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     requestTargetRef.current(0);
     return () => {
       mountedRef.current = false;
+      diagnostic.retire();
+      diagnostic.collect([]);
       if (translationSuspensionRef.current) {
         translationSuspensionRef.current.restored = true;
         translationSuspensionRef.current.resolveReady();
@@ -779,7 +787,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       cancelGapClock();
       cancelScheduledPreload();
     };
-  }, [retireSurfaceFrames]);
+  }, [diagnostic, retireSurfaceFrames]);
 
   useLayoutEffect(() => {
     if (!surfacesAdmitted || translationSuspensionRef.current) {
@@ -792,6 +800,29 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       requestTargetRef.current(currentMsRef.current);
     }
   }, [retireSurfaceFrames, surfacesAdmitted, stopTransport]);
+
+  // PRIVATE DIAGNOSTIC — DO NOT SHIP. Observe completed paused preparation;
+  // never await extraction or alter the player/domain-clock schedule.
+  const diagnosticToken = slots[activeSlot].prepareToken;
+  const diagnosticReadiness = slots[activeSlot].readiness;
+  useEffect(() => {
+    if (isPlaying || phase !== 'ready' || diagnosticReadiness !== 'ready' || !surfacesAdmitted) return;
+    const runtime = slotRuntimeRef.current[activeSlot];
+    const entry = entriesRef.current.find(candidate => candidate.clip.id === runtime.preparedClipId);
+    const source = projectRef.current.sources.find(candidate => candidate.id === runtime.sourceId);
+    if (!entry || !source) return;
+    const generation = generationRef.current;
+    return diagnostic.request(players[activeSlot], source, sourceTimeAt(entry, currentMs), currentMs, diagnosticToken,
+      runtime.playbackUri === source.previewUri,
+      () => mountedRef.current && surfacesAdmittedRef.current && !playIntentRef.current
+        && !players[activeSlot].playing && generationRef.current === generation
+        && runtime.prepareToken === diagnosticToken && runtime.readiness === 'ready'
+        && runtime.playbackUri === videoPlaybackUri(source),
+      thumbnail => { runtime.diagnosticThumbnail = thumbnail; publishSlots(); });
+  }, [activeSlot, currentMs, diagnostic, diagnosticReadiness, diagnosticToken, isPlaying, phase, players, project, publishSlots, surfacesAdmitted]);
+  useEffect(() => {
+    diagnostic.collect(slots.map(slot => slot.diagnosticThumbnail?.image));
+  });
 
   return {
     player: players[activeSlot],

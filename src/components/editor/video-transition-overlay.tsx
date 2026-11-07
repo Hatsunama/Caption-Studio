@@ -1,4 +1,5 @@
 import { VideoView, type VideoPlayer } from 'expo-video';
+import { Image } from 'expo-image';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
@@ -104,6 +105,11 @@ function TimelineVideoPair(props: Props & { composite?: Composite; concealed: bo
           <VideoLayer
             key={`${slot}:${props.slots[slot].prepareToken}`}
             player={player}
+            diagnosticThumbnail={!props.isPlaying && props.transportReady
+              && props.slots[slot].readiness === 'ready'
+              && props.slots[slot].diagnosticThumbnail?.prepareToken === props.slots[slot].prepareToken
+              && props.slots[slot].diagnosticThumbnail?.timelineMs === props.timelineMs
+              ? props.slots[slot].diagnosticThumbnail : undefined}
             transform={source?.transform ?? props.currentTransform}
             width={props.width}
             height={props.height}
@@ -249,6 +255,7 @@ function compositeLayerStyle(
 
 function VideoLayer(props: {
   player: VideoPlayer;
+  diagnosticThumbnail?: TimelineVideoSlot['diagnosticThumbnail'];
   transform: VideoTransform;
   width: number;
   height: number;
@@ -272,6 +279,14 @@ function VideoLayer(props: {
               useExoShutter={false}
               onFirstFrameRender={props.onFirstFrameRender}
             />
+            {/* PRIVATE DIAGNOSTIC — DO NOT SHIP. Cover only; preserve VideoView ancestry/lifecycle. */}
+            {props.diagnosticThumbnail ? <Image
+              pointerEvents="none"
+              source={props.diagnosticThumbnail.image}
+              style={{ position: 'absolute', inset: 0 }}
+              contentFit={props.transform.fit === 'fill' ? 'cover' : 'contain'}
+              transition={0}
+            /> : null}
           </View>
         </View>
       </View>
