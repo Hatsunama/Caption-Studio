@@ -27,6 +27,33 @@ type SlotIndex = 0 | 1;
 type CompositeClock = { key: string; slot: SlotIndex; prepareToken: number };
 const FIRST_FRAME_TIMEOUT_MS = 5_000;
 
+// PRIVATE diagnostic only; strip before product repair or merge.
+enum PreparationPhase {
+  SDKload = 1,
+  nativeWindow = 2,
+  positionACK = 3,
+  freshView = 4,
+  complete = 5,
+}
+
+function logPreparationFailure(phase: PreparationPhase, error: unknown) {
+  let code = 'other';
+  try {
+    const candidate = typeof error === 'object' && error && 'code' in error ? error.code : undefined;
+    switch (candidate) {
+      case 'E_VIDEO_WINDOW_INVALID':
+      case 'E_VIDEO_WINDOW_STALE':
+      case 'E_VIDEO_WINDOW_BUSY':
+      case 'E_VIDEO_WINDOW_TIMEOUT':
+      case 'E_VIDEO_WINDOW_PLAYER':
+        code = candidate;
+    }
+  } catch { /* Diagnostics must not affect preparation failure handling. */ }
+  try {
+    console.warn('CS_WINDOW_READY', phase, code);
+  } catch { /* Diagnostics must not affect preparation failure handling. */ }
+}
+
 export type TimelineVideoSlot = {
   sourceId?: string;
   playbackUri?: string;
@@ -412,6 +439,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.readiness = 'preparing';
     publishSlots();
 
+    let preparationPhase = PreparationPhase.SDKload;
     try {
       player.pause();
       player.muted = true;
@@ -424,6 +452,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       }
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
 
+      preparationPhase = PreparationPhase.nativeWindow;
       // One budget covers native window READY, the position ACK and fresh view.
       const frameDeadline = performance.now() + FIRST_FRAME_TIMEOUT_MS;
       if (Platform.OS === 'android' && runtime.appliedWindowEndMs !== windowEndMs) {
@@ -438,6 +467,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         runtime.appliedWindowEndMs = windowEndMs;
       }
       if (performance.now() >= frameDeadline) throw new Error('The video did not render a frame in time. Try loading it again.');
+      preparationPhase = PreparationPhase.positionACK;
       const targetSeconds = effectiveNativeSeekTarget(
         Math.min(sourceTimeAt(entry, timelineMs), windowEndMs ?? Infinity) / 1_000, (windowEndMs ?? source.durationMs) / 1_000, player.duration, Platform.OS,
       );
@@ -450,6 +480,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         || preparation.signal.aborted || token !== runtime.prepareToken
         || runtime.preparation !== preparation) throw abortError();
       if (performance.now() >= frameDeadline) throw new Error('The video did not render a frame in time. Try loading it again.');
+      preparationPhase = PreparationPhase.freshView;
       // Expo 57 suppresses repeated seek-first-frame receipts on a retained
       // view. Rebind only preparation, after its position ACK, with a distinct
       // identity so load-time and retired-view callbacks cannot certify it.
@@ -459,6 +490,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       await waitForFirstFrame(slot, preparation.signal, frameDeadline);
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       if (performance.now() >= frameDeadline) throw new Error('The video did not render a frame in time. Try loading it again.');
+      preparationPhase = PreparationPhase.complete;
       player.pause();
       runtime.readiness = 'ready';
       runtime.renderGate = 'ready';
@@ -467,6 +499,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     } catch (caught) {
       const error = token === runtime.prepareToken ? runtime.preparationError ?? caught : abortError();
       if (token === runtime.prepareToken) {
+        if (runtime.preparation === preparation && !isAbortError(error)) logPreparationFailure(preparationPhase, error);
         runtime.firstFrameReady = false;
         runtime.renderGate = 'disarmed';
         runtime.readiness = isAbortError(error) ? 'cancelled' : 'error';
