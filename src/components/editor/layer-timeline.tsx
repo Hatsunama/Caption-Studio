@@ -274,7 +274,10 @@ export function LayerTimeline(props: {
     setFrontTrimPreview(undefined);
   }, []);
 
+  // TEMPORARY synthetic-only numeric diagnostics; remove once the trace is classified.
+  // CS_TIMELINE_DIAG tuples: event, wallMs, then explicit numeric/boolean fields only.
   useEffect(() => {
+    console.info?.('CS_TIMELINE_DIAG', 'follow', Date.now(), props.currentMs, scrollXRef.current, viewportWidth, trackWidth, scrollContentWidth, horizontalGeometry.viewport, horizontalGeometry.content, scrubbingRef.current, gestureLock, gestureLockRef.current, reorderMode, hasSelectedCue, selectionOwnsViewportRef.current);
     if (scrubbingRef.current || gestureLock || gestureLockRef.current || reorderMode ||
       (hasSelectedCue && selectionOwnsViewportRef.current)) return;
     // React geometry alone cannot prove that Android has laid out the new
@@ -282,11 +285,13 @@ export function LayerTimeline(props: {
     // spring binding. Measurements and accepted binding readiness invalidate
     // this effect even with unchanged dimensions. Ignore stale/partial geometry.
     const pixel = 1 / PixelRatio.get();
+    console.info?.('CS_TIMELINE_DIAG', 'geometryGuards', Date.now(), pixel, horizontalGeometry.viewport <= 0, horizontalGeometry.content <= 0, Math.abs(horizontalGeometry.viewport - viewportWidth) > pixel, Math.abs(horizontalGeometry.content - scrollContentWidth) > pixel);
     if (horizontalGeometry.viewport <= 0 || horizontalGeometry.content <= 0 ||
       Math.abs(horizontalGeometry.viewport - viewportWidth) > pixel ||
       Math.abs(horizontalGeometry.content - scrollContentWidth) > pixel) return;
     const x = timelineScrollOffset(props.currentMs, duration, trackWidth);
     // Only onScroll can acknowledge the displayed offset and visible bounds.
+    console.info?.('CS_TIMELINE_DIAG', 'request', Date.now(), props.currentMs, x, !!horizontalRef.current);
     horizontalRef.current?.scrollTo({ x, animated: false });
   }, [duration, gestureLock, hasSelectedCue, horizontalGeometry, props.currentMs, props.projectId,
     reorderMode, scrollContentWidth, trackWidth, viewportWidth]);
@@ -332,6 +337,7 @@ export function LayerTimeline(props: {
   };
 
   const finishScrub = () => {
+    console.info?.('CS_TIMELINE_DIAG', 'finishScrub', Date.now(), props.currentMs, scrubbingRef.current, gestureLock, gestureLockRef.current, reorderMode, hasSelectedCue, selectionOwnsViewportRef.current, invalidatedScrollTouchRef.current);
     if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
     if (!scrubbingRef.current) return;
     scrubbingRef.current = false;
@@ -632,6 +638,7 @@ export function LayerTimeline(props: {
     <TimelineGestureGeometryContext.Provider value={gestureGeometry}>
     <View
       onLayout={(event) => {
+        console.info?.('CS_TIMELINE_DIAG', 'outerLayout', Date.now(), event.nativeEvent.layout.width, event.nativeEvent.layout.height);
         const width = Math.max(1, event.nativeEvent.layout.width);
         if (gestureGeometry.update({ viewportWidth: width })) {
           invalidatedScrollTouchRef.current = true;
@@ -672,21 +679,26 @@ export function LayerTimeline(props: {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ width: scrollContentWidth }}
         onScrollBindingReady={() => {
+          console.info?.('CS_TIMELINE_DIAG', 'bindingReady', Date.now());
           // A new accepted binding can deliver follow again. This only changes
           // readiness; onScroll still owns displayed offset/virtualization.
           setHorizontalGeometry((previous) => ({ ...previous }));
         }}
         onLayout={(event) => {
+          console.info?.('CS_TIMELINE_DIAG', 'horizontalLayout', Date.now(), event.nativeEvent.layout.width, event.nativeEvent.layout.height, timelineScrollMetadata(event.nativeEvent).target ?? -1, timelineScrollMetadata(event.nativeEvent).timestamp ?? -1);
           const viewport = event.nativeEvent.layout.width;
           if (Number.isFinite(viewport) && viewport > 0) setHorizontalGeometry((previous) => ({ ...previous, viewport }));
         }}
-        onContentSizeChange={(content) => {
+        onContentSizeChange={(content, height) => {
+          console.info?.('CS_TIMELINE_DIAG', 'contentSize', Date.now(), content, height);
           if (Number.isFinite(content) && content > 0) setHorizontalGeometry((previous) => ({ ...previous, content }));
         }}
         onTouchStart={(event) => {
+          console.info?.('CS_TIMELINE_DIAG', 'touchStart', Date.now(), props.currentMs, scrubbingRef.current, gestureLock, gestureLockRef.current, reorderMode, hasSelectedCue, selectionOwnsViewportRef.current, invalidatedScrollTouchRef.current, event.nativeEvent.touches.length);
           if (event.nativeEvent.touches.length === 1) invalidatedScrollTouchRef.current = false;
         }}
         onScrollBeginDrag={() => {
+          console.info?.('CS_TIMELINE_DIAG', 'beginDrag', Date.now(), props.currentMs, scrubbingRef.current, gestureLock, gestureLockRef.current, reorderMode, hasSelectedCue, selectionOwnsViewportRef.current, invalidatedScrollTouchRef.current);
           // A cancelled item pan yields its external Native dependency through
           // a live manager. That old coordinate stream cannot acquire scrub
           // ownership after reflow; only a fresh touch may do so.
@@ -697,6 +709,7 @@ export function LayerTimeline(props: {
           props.onScrubStart();
         }}
         onScroll={(event) => {
+          console.info?.('CS_TIMELINE_DIAG', 'ack', Date.now(), event.nativeEvent.contentOffset.x, event.nativeEvent.layoutMeasurement?.width ?? -1, event.nativeEvent.layoutMeasurement?.height ?? -1, event.nativeEvent.contentSize?.width ?? -1, event.nativeEvent.contentSize?.height ?? -1, timelineScrollMetadata(event.nativeEvent).target ?? -1, timelineScrollMetadata(event.nativeEvent).timestamp ?? -1, props.currentMs, scrubbingRef.current, gestureLock, gestureLockRef.current, reorderMode, hasSelectedCue, selectionOwnsViewportRef.current, invalidatedScrollTouchRef.current);
           const x = clamp(event.nativeEvent.contentOffset.x, 0, trackWidth);
           scrollXRef.current = x;
           setViewportScrollX(x);
@@ -704,11 +717,13 @@ export function LayerTimeline(props: {
           if (scrubbingRef.current && !gestureLockRef.current) seekFromScroll(x);
         }}
         onScrollEndDrag={() => {
+          console.info?.('CS_TIMELINE_DIAG', 'endDrag', Date.now(), props.currentMs, scrubbingRef.current, gestureLock, gestureLockRef.current, reorderMode, hasSelectedCue, selectionOwnsViewportRef.current, invalidatedScrollTouchRef.current);
           if (!scrubbingRef.current) return;
           if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
           scrubEndTimer.current = setTimeout(finishScrub, 90);
         }}
         onMomentumScrollBegin={() => {
+          console.info?.('CS_TIMELINE_DIAG', 'momentumBegin', Date.now(), props.currentMs, scrubbingRef.current, gestureLock, gestureLockRef.current, reorderMode, hasSelectedCue, selectionOwnsViewportRef.current, invalidatedScrollTouchRef.current);
           if (gestureLockRef.current || !scrubbingRef.current) return;
           if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
           scrubbingRef.current = true;

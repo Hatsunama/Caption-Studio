@@ -134,9 +134,12 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     ready.live = true;
     return () => { ready.live = false; };
   }, []);
+  // TEMPORARY synthetic-only numeric diagnostics; remove once the trace is classified.
   const bindingReady = useCallback((generation: number) => {
     const ready = readiness.current, life = lifecycle.current;
+    console.info?.('CS_SCROLL_DIAG', 'readiness', Date.now(), generation, life.generation, ready.live, !!life.node, life.generation !== generation, ready.delivered === generation, !!ready.callback);
     if (!ready.live || !life.node || life.generation !== generation || ready.delivered === generation) return;
+    console.info?.('CS_SCROLL_DIAG', 'readinessDeliver', Date.now(), generation);
     ready.delivered = generation;
     ready.callback?.();
   }, [lifecycle, readiness]);
@@ -148,11 +151,13 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
     // even though its TS declaration omits it. Never access private view fields.
     const node = life.node as (NativeScrollView & { getInnerViewRef?: () => HostInstance | null }) | null;
     const content = node?.getInnerViewRef?.() ?? null;
+    console.info?.('CS_SCROLL_DIAG', 'bindContent', Date.now(), life.generation, !!life.node, life.content !== content, !!content, life.contentGeneration ?? -1, !!life.restore);
     if (life.content === content && life.contentGeneration === life.generation) return;
     // Retire a removed/replaced content host, even if the outer node survives.
     // Initial late attachment keeps commands to the existing outer node valid.
     if (life.content && life.content !== content && life.contentGeneration === life.generation) life.generation++;
     const generation = life.generation;
+    console.info?.('CS_SCROLL_DIAG', 'bindSchedule', Date.now(), generation, !!life.node, !!content, !!life.restore);
     scheduleOnUI(controller.deactivate, generation);
     life.content = content;
     life.contentGeneration = generation;
@@ -180,6 +185,7 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
   }, [contentBinding, lifecycle, controller]);
   const commitRef = useCallback((node: NativeScrollView | null) => {
     const life = lifecycle.current;
+    console.info?.('CS_SCROLL_DIAG', 'commitRef', Date.now(), life.generation, life.node === node, !!node, !!life.restore);
     life.restore?.(); life.restore = undefined;
     if (life.refCleanup) { life.refCleanup(); life.refCleanup = undefined; }
     else if (life.node && typeof publicRef === 'function') publicRef(null);
@@ -247,10 +253,12 @@ function AndroidSpringScrollView({ ref: publicRef, nativeGesture, springOffset, 
         onLayout={event => {
           bindContent();
           const layout = event.nativeEvent.layout;
+          console.info?.('CS_SCROLL_DIAG', 'layout', Date.now(), id, horizontal, lifecycle.current.generation, layout.width, layout.height);
           scheduleOnUI(controller.updateGeometry, lifecycle.current.generation, horizontal ? layout.width : layout.height, null);
           onLayout?.(event);
         }}
         onContentSizeChange={(width, height) => {
+          console.info?.('CS_SCROLL_DIAG', 'contentSize', Date.now(), id, horizontal, lifecycle.current.generation, width, height);
           bindContent();
           scheduleOnUI(controller.updateGeometry, lifecycle.current.generation, null, horizontal ? width : height);
           onContentSizeChange?.(width, height);

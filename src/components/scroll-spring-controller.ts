@@ -69,6 +69,8 @@ function applyNativeCallbacks(target: NativeHandlers, source: NativeHandlers) {
 export function createScrollSpringController(options: ScrollSpringControllerOptions) {
   const { state, owner, offset, id, nativeOffset, getAnimatedRef, getContentRef, presentationVersion, gesture } = options;
 
+  // TEMPORARY synthetic-only numeric diagnostics; remove once the trace is classified.
+  // CS_SCROLL_DIAG tuples contain fixed event/verdict labels and numeric/boolean fields only.
   // Private helpers receive the state owned by the current modify boundary.
   // They never reenter state.modify, including synchronous animation completion.
   function resetOwned(s: ScrollSpringRuntimeState) {
@@ -154,6 +156,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     original.onTouchesDown?.(event, manager);
     state.modify(s => {
       'worklet';
+      console.info?.('CS_SCROLL_DIAG', 'nativeDown', Date.now(), id, s.epoch, s.alive, s.horizontal, nativeOffset.value, owner.value, s.nativeActive, s.active, s.owned, s.pending, s.blocked, s.released, s.touches, event.numberOfTouches);
       if (event.numberOfTouches !== 1) { s.blocked = true; resetOwned(s); return s; }
       const touch = event.allTouches[0];
       if (!touch) return s;
@@ -172,6 +175,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     original.onStart?.(event);
     state.modify(s => {
       'worklet';
+      console.info?.('CS_SCROLL_DIAG', 'nativeStart', Date.now(), id, s.epoch, s.alive, s.horizontal, nativeOffset.value, owner.value, s.nativeActive, s.active, s.owned, s.pending, s.blocked, s.released, s.touches);
       s.nativeActive = true; acquire(s);
       return s;
     });
@@ -199,6 +203,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     original.onTouchesUp?.(event, manager);
     state.modify(s => {
       'worklet';
+      console.info?.('CS_SCROLL_DIAG', 'nativeUp', Date.now(), id, s.epoch, s.alive, s.horizontal, nativeOffset.value, owner.value, s.nativeActive, s.active, s.owned, s.pending, s.blocked, s.released, s.touches, event.numberOfTouches);
       // A successful zero-touch Up must preserve release position and velocity.
       s.touches = event.numberOfTouches;
       return s;
@@ -208,6 +213,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     original.onTouchesCancelled?.(event, manager);
     state.modify(s => {
       'worklet';
+      console.info?.('CS_SCROLL_DIAG', 'nativeCancel', Date.now(), id, s.epoch, s.alive, s.horizontal, nativeOffset.value, owner.value, s.nativeActive, s.active, s.owned, s.pending, s.blocked, s.released, s.touches, event.numberOfTouches);
       s.nativeActive = false;
       if (s.active || s.pending) {
         if (owner.value === id && offset.value !== 0 && allowed(s)) {
@@ -222,6 +228,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     original.onFinalize?.(event, success);
     state.modify(s => {
       'worklet';
+      console.info?.('CS_SCROLL_DIAG', 'nativeFinalize', Date.now(), id, s.epoch, s.alive, s.horizontal, nativeOffset.value, owner.value, s.nativeActive, s.active, s.owned, s.pending, s.blocked, s.released, s.touches, success);
       s.nativeActive = false;
       if (s.released) return s;
       const pending = s.pending;
@@ -262,6 +269,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     'worklet';
     state.modify(s => {
       'worklet';
+      console.info?.('CS_SCROLL_DIAG', 'activate', Date.now(), id, generation, s.epoch, s.alive, s.horizontal, nativeOffset.value, s.viewport, s.content, safe, generation >= s.epoch);
       if (generation < s.epoch) return s;
       s.epoch = generation; s.alive = true; s.safe = safe;
       presentationVersion.value++;
@@ -276,6 +284,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     'worklet';
     state.modify(s => {
       'worklet';
+      console.info?.('CS_SCROLL_DIAG', 'deactivate', Date.now(), id, generation, s.epoch, s.alive, s.horizontal, nativeOffset.value, s.viewport, s.content, generation >= s.epoch);
       if (generation < s.epoch) return s;
       // A queued React detach can run after Fabric removed this host. Animated
       // refs retain their wrapper on null; cleanup must never write through it.
@@ -326,6 +335,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     'worklet';
     state.modify(s => {
       'worklet';
+      console.info?.('CS_SCROLL_DIAG', 'foreground', Date.now(), id, generation, s.epoch, s.alive, s.horizontal, s.foreground, value, s.nativeActive, s.active, s.owned, s.pending);
       if (!s.alive || s.epoch !== generation) return s;
       s.foreground = value;
       if (!value) resetOwned(s);
@@ -338,6 +348,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     'worklet';
     state.modify(s => {
       'worklet';
+      console.info?.('CS_SCROLL_DIAG', 'geometry', Date.now(), id, generation, s.epoch, s.alive, s.horizontal, nativeOffset.value, s.viewport, s.content, viewport ?? -1, content ?? -1, s.alive && s.epoch === generation);
       if (!s.alive || s.epoch !== generation) return s;
       if ((viewport != null && viewport !== s.viewport) || (content != null && content !== s.content)) {
         resetOwned(s);
@@ -350,6 +361,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
 
   function command(generation: number, name: string, args: (number | boolean)[]) {
     'worklet';
+    console.info?.('CS_SCROLL_DIAG', 'command', Date.now(), id, generation, state.value.epoch, state.value.alive, state.value.horizontal, nativeOffset.value, state.value.viewport, state.value.content, state.value.alive && state.value.epoch === generation, name === 'scrollTo' ? 1 : name === 'scrollToEnd' ? 2 : 0, args.length, Number(args[0] ?? -1), Number(args[1] ?? -1), Number(args[2] ?? -1));
     if (!state.value.alive || state.value.epoch !== generation) return;
     reset(generation);
     dispatchSpringScrollCommand(getAnimatedRef(), name, args);
@@ -359,6 +371,7 @@ export function createScrollSpringController(options: ScrollSpringControllerOpti
     'worklet';
     state.modify(s => {
       'worklet';
+      console.info?.('CS_SCROLL_DIAG', 'nativeOffset', Date.now(), id, s.epoch, s.alive, s.horizontal, value, previous ?? -1, nativeOffset.value, owner.value, s.nativeActive, s.active, s.owned, s.pending, s.blocked, s.released, s.touches);
       if (!s.owned || !allowed(s) || owner.value !== id) return s;
       const now = performance.now();
       const dt = now - s.lastOffsetAt;
