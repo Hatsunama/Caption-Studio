@@ -158,7 +158,7 @@ export function LayerTimeline(props: {
   const [nativeScrollX, setNativeScrollX] = useState(0);
   const followPendingRef = useRef<false | 'request' | 'ack'>(false);
   const [visibleCenterX, setVisibleCenterX] = useState(0);
-  const lastScrubMsRef = useRef(-1);
+  const lastScrubMsRef = useRef<number | undefined>(undefined);
   const pinch = useRef({ distance: 0, scale: effectiveScale });
   const captionIndex = useMemo(() => indexTimelineCues(displayCaptions), [displayCaptions]);
   const translationIndexes = useMemo(() => new Map(displayTranslationTracks.map((track) => [track.id,
@@ -378,7 +378,7 @@ export function LayerTimeline(props: {
 
   const seekFromScroll = (offset: number, force = false) => {
     const timeMs = timelineTimeAtScroll(offset, duration, trackWidth);
-    if (!force && Math.abs(timeMs - lastScrubMsRef.current) < 32) return;
+    if (!force && lastScrubMsRef.current !== undefined && Math.abs(timeMs - lastScrubMsRef.current) < 32) return;
     lastScrubMsRef.current = timeMs;
     props.onSeek(timeMs);
   };
@@ -750,6 +750,7 @@ export function LayerTimeline(props: {
           if (!appForegroundRef.current || !outerGeometryValid || gestureLockRef.current || invalidatedScrollTouchRef.current) return;
           followPendingRef.current = false;
           if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+          lastScrubMsRef.current = undefined;
           scrubbingRef.current = true;
           selectionOwnsViewportRef.current = false;
           props.onScrubStart();

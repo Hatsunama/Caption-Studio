@@ -287,6 +287,104 @@ function aligned(h) {
   assert.deepEqual(h.seeks, [], 'passive geometry must never change transport time');
 }
 
+for (const ending of ['completed', 'blur', 'background']) {
+  for (const target of [0, 20, 7060]) test(`repeated scrub: ${ending} then external clock advance seeks the same ${target}ms during a fresh drag`, () => {
+    const h = harness({ currentMs: 4000 }, { fullBinding: true });
+    try {
+      h.ready();
+      const x = target / h.props.durationMs * (h.expectedContent() - h.native.viewport);
+      h.horizontal.onTouchStart({ nativeEvent: { touches: [{}] } });
+      h.horizontal.onScrollBeginDrag();
+      h.horizontal.onScroll({ nativeEvent: { contentOffset: { x } } }); h.flush();
+      // Complete the first gesture even on the broken zero/near-zero baseline,
+      // so this assertion specifically diagnoses cache retention across owners.
+      if (ending === 'completed') h.horizontal.onMomentumScrollEnd();
+      else if (ending === 'blur') h.blur();
+      else { h.appState('background'); h.appState('active'); }
+      const before = [...h.seeks];
+      h.update({ currentMs: 8000 });
+      assert.deepEqual(h.seeks, before, 'external clock follow must not seek');
+      assert.equal(h.native.x, h.expectedContent() - h.native.viewport);
+      h.horizontal.onTouchStart({ nativeEvent: { touches: [{}] } });
+      h.horizontal.onScrollBeginDrag();
+      h.horizontal.onScroll({ nativeEvent: { contentOffset: { x } } }); h.flush();
+      assert.equal(h.scrubStarts, 2);
+      assert.equal(h.seeks.length, before.length + 1, 'fresh owner must seek before UP or any terminal callback');
+      assert.ok(Math.abs(h.seeks.at(-1) - target) < 1e-8);
+    } finally { h.close(); }
+  });
+}
+
+for (const target of [0, 20, 30]) test(`repeated scrub: first target ${target}ms is not suppressed by an uninitialized cache`, () => {
+  const h = harness({ currentMs: 4000 });
+  try {
+    h.ready(); h.horizontal.onScrollBeginDrag();
+    const x = target / h.props.durationMs * (h.expectedContent() - h.native.viewport);
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x } } }); h.flush();
+    assert.equal(h.seeks.length, 1, 'the first scroll must seek during the drag, including zero');
+    assert.ok(Math.abs(h.seeks[0] - target) < 1e-8);
+  } finally { h.close(); }
+});
+
+test('repeated scrub: 32ms dedup survives momentum continuation and final seek remains forced', () => {
+  const h = harness({ currentMs: 4000 });
+  try {
+    h.ready();
+    const scroll = ms => {
+      const x = ms / h.props.durationMs * (h.expectedContent() - h.native.viewport);
+      h.horizontal.onScroll({ nativeEvent: { contentOffset: { x } } }); h.flush();
+    };
+    h.horizontal.onScrollBeginDrag(); scroll(1000); scroll(1010); scroll(1031);
+    assert.deepEqual(h.seeks, [1000]);
+    scroll(1032); assert.deepEqual(h.seeks, [1000, 1032]);
+    h.horizontal.onScrollEndDrag(); h.horizontal.onMomentumScrollBegin();
+    scroll(1040); assert.deepEqual(h.seeks, [1000, 1032], 'momentum retains the same gesture cache');
+    scroll(1064); assert.deepEqual(h.seeks, [1000, 1032, 1064]);
+    scroll(1070); h.horizontal.onMomentumScrollEnd();
+    assert.deepEqual(h.seeks, [1000, 1032, 1064, 1070], 'terminal seek bypasses dedup');
+    assert.equal(h.scrubStarts, 1);
+  } finally { h.close(); }
+});
+
+test('repeated scrub: a locked begin cannot reset the cache of the current owner', () => {
+  const h = harness({ currentMs: 4000, layers: [{ id: 'text', kind: 'text', text: 'item', startMs: 2000, endMs: 5000 }] });
+  try {
+    h.ready(); h.horizontal.onScrollBeginDrag();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    const before = [...h.seeks];
+    h.find('TimedBlock').onTouchLock(true); h.flush();
+    h.horizontal.onScrollBeginDrag();
+    h.find('TimedBlock').onTouchLock(false); h.flush();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    assert.deepEqual(h.seeks, before, 'rejected begin must not clear live dedup');
+    assert.equal(h.scrubStarts, 1);
+  } finally { h.close(); }
+});
+
+for (const guard of ['background', 'invalid geometry', 'invalidated touch']) test(`repeated scrub: ${guard} rejects stale begin until a fresh eligible touch`, () => {
+  const h = harness({ currentMs: 4000 });
+  try {
+    h.ready(); h.horizontal.onScrollBeginDrag();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    if (guard === 'background') h.appState('background');
+    else { h.resize(0); if (guard === 'invalidated touch') { h.resize(360); h.ready(); } }
+    const before = [...h.seeks];
+    h.horizontal.onScrollBeginDrag();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    h.horizontal.onMomentumScrollEnd();
+    assert.deepEqual(h.seeks, before, 'rejected stream must not seek even at its terminal callback');
+    assert.equal(h.scrubStarts, 1);
+    if (guard === 'background') h.appState('active');
+    else { h.resize(360); h.ready(); }
+    h.update({ currentMs: 8000 });
+    h.horizontal.onTouchStart({ nativeEvent: { touches: [{}] } });
+    h.horizontal.onScrollBeginDrag();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    assert.equal(h.seeks.length, before.length + 1, 'fresh eligible owner resets dedup');
+    assert.equal(h.scrubStarts, 2);
+  } finally { h.close(); }
+});
+
 test('Samsung clamped ACK keeps the paused target pending across shadow content and late native layout', () => {
   const h = harness({}, { fullBinding: true, pixelRatio: 3 });
   try {
