@@ -14,7 +14,7 @@ const hashes = require('./fixtures/rn-source-catalog-hashes.json');
 const target = 'node_modules/react-native/gradle/libs.versions.toml';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const from = 'kotlin = "2.1.20"';
-const to = 'kotlin = "2.3.0"';
+const to = 'kotlin = "2.3.21"';
 
 function fixture(t, catalog = original) {
   // Every write, including child process fixtures, stays under this candidate.
