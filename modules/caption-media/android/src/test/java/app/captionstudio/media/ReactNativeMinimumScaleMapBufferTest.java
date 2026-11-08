@@ -43,7 +43,7 @@ public class ReactNativeMinimumScaleMapBufferTest {
   protected Method fitter;
 
   @Before public void setUp() throws Exception {
-    assertEquals("SDK36 sandbox requires the verified Java21 test launcher", 21, Runtime.version().feature());
+    assertEquals("SDK36 sandbox requires the verified Java21 test launcher", "21", System.getProperty("java.specification.version"));
     // Public RN getters require initialization. Preserve null when previously uninitialized.
     try { oldWindow = DisplayMetricsHolder.getWindowDisplayMetrics(); }
     catch (IllegalStateException uninitialized) { oldWindow = null; }
