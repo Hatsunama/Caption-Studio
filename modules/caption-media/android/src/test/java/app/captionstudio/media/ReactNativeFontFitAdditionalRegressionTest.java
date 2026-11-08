@@ -263,7 +263,7 @@ public class ReactNativeFontFitAdditionalRegressionTest {
     final int largest;
     Snapshot(SpannableString value, TextPaint base) {
       text = new SpannableString(value);
-      paint = new TextPaint(base);
+      paint = copyPaint(base);
       spans = value.getSpans(0, value.length(), AbsoluteSizeSpan.class);
       sizes = new int[spans.length]; starts = new int[spans.length];
       ends = new int[spans.length]; flags = new int[spans.length];
@@ -290,7 +290,7 @@ public class ReactNativeFontFitAdditionalRegressionTest {
   }
 
   private static TextPaint oraclePaint(Snapshot original, int size, int floor) {
-    TextPaint paint = new TextPaint(original.paint);
+    TextPaint paint = copyPaint(original.paint);
     paint.setTextSize(Math.max(floor, original.paint.getTextSize() * ((float) size / original.largest)));
     return paint;
   }
@@ -349,6 +349,30 @@ public class ReactNativeFontFitAdditionalRegressionTest {
     SpannableString text = new SpannableString(value);
     text.setSpan(spanConstructor.newInstance(INITIAL_PX), 0, text.length(), SPAN_FLAGS);
     return text;
+  }
+
+  @Test public void snapshotCopiesTextPaintMetricsWithoutAliasing() throws Exception {
+    TextPaint source = newPaint();
+    source.bgColor = 0xff123456;
+    source.baselineShift = 7;
+    Snapshot snapshot = new Snapshot(newText("Toolbar"), source);
+    assertNotSame(source, snapshot.paint);
+    assertEquals(3f, snapshot.paint.density, 0f);
+    assertEquals(source.bgColor, snapshot.paint.bgColor);
+    assertEquals(7, snapshot.paint.baselineShift);
+    TextPaint oracle = oraclePaint(snapshot, 30, 12);
+    assertEquals(3f, oracle.density, 0f);
+    assertEquals(source.bgColor, oracle.bgColor);
+    source.density = 9f;
+    assertEquals(3f, snapshot.paint.density, 0f);
+  }
+
+  private static TextPaint copyPaint(TextPaint source) {
+    // TextPaint(Paint) copies only Paint fields; set(TextPaint) also preserves
+    // density, baselineShift and other text-specific fields used by the oracle.
+    TextPaint copy = new TextPaint();
+    copy.set(source);
+    return copy;
   }
 
   private static TextPaint newPaint() {
