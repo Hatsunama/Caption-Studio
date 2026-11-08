@@ -41,7 +41,9 @@ public class ReactNativeMinimumScaleCachedRetagTest extends ReactNativeMinimumSc
 
   @Before public void isolateStatelessFabricReceiver() throws Exception {
     routes = new ReactNativeMinimumScaleManagerRoutesTest();
-    routes.fitter = fitter;
+    // This helper is not JUnit-owned: initialize and release its entire fixture.
+    routes.setUp();
+    assertNotNull(routes.newText("fixture setup must initialize the real span constructor"));
     routes.useOfficialJvmFeatureFlagFixture();
     Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
     Field singleton = unsafeClass.getDeclaredField("theUnsafe");
@@ -59,8 +61,12 @@ public class ReactNativeMinimumScaleCachedRetagTest extends ReactNativeMinimumSc
   }
 
   @After public void restoreOfficialFlags() throws Exception {
-    if (routes != null) routes.restorePreviousFeatureFlagObjects();
-    fabric = null;
+    try {
+      if (routes != null) routes.restorePreviousFeatureFlagObjects();
+    } finally {
+      if (routes != null) routes.tearDown();
+      fabric = null;
+    }
   }
 
   // Reuse the existing real measurement/manager/draw fixture without changing its suite or lifecycle.
