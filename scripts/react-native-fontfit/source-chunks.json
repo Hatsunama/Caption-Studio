@@ -1,0 +1,303 @@
+[
+  {
+    "relative": "ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt",
+    "beforeSha256": "6dd95802eae01819bc96c64f920eab119c3dbac20a659e3ad8ef602eba47caf8",
+    "afterSha256": "bed3c49edc8807ed92cccbeb34aa2ed9be2cf8a40cdba5f66eee4e013cce3c77",
+    "chunks": [
+      {
+        "offset": 3980,
+        "length": 0,
+        "replacementUtf8": "  const val PA_KEY_MINIMUM_FONT_SCALE: Int = 10\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "ade7c9952341428dde15f776f36010c037e181c7508722f3c356e058b2386042"
+      },
+      {
+        "offset": 30182,
+        "length": 234,
+        "replacementUtf8": "    val minimumFontSize =\n        if (paragraphAttributes.contains(PA_KEY_MINIMUM_FONT_SIZE))\n            paragraphAttributes.getDouble(PA_KEY_MINIMUM_FONT_SIZE).toFloat()\n        else Float.NaN\n    val minimumFontScale =\n        if (paragraphAttributes.contains(PA_KEY_MINIMUM_FONT_SCALE))\n            paragraphAttributes.getDouble(PA_KEY_MINIMUM_FONT_SCALE).toFloat()\n        else Float.NaN\n    // Resolve against original spans before measurement can shrink them.\n    val originalFontSize =\n        text.getSpans(0, text.length, ReactAbsoluteSizeSpan::class.java)\n            .fold(0) { size, span -> max(size, span.size) }\n    val resolvedMinimumFontSize =\n        resolveMinimumFontSize(minimumFontSize, minimumFontScale, originalFontSize).toFloat()\n",
+        "beforeSha256": "23a4ae8f47d7889419f8df25fd3dbe9bf1e5d8782e3dab384a4a9b5b1028d2a0",
+        "afterSha256": "ff0f04a31d8060ce318e4bb3c21786898d534afc1518657c614bba4a3c4212e0"
+      },
+      {
+        "offset": 30417,
+        "length": 0,
+        "replacementUtf8": "    if (adjustFontSizeToFit) {\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "fb75b01d28bdc6b5a3687147ea6dd732a29a3e7507fe8dd261d408261917bcb0"
+      },
+      {
+        "offset": 30568,
+        "length": 27,
+        "replacementUtf8": "          resolvedMinimumFontSize,\n",
+        "beforeSha256": "493dd290b454da78b9f15c44869f2b1b5391952733e996af7879ad8633ca4c1c",
+        "afterSha256": "d3f43b25c0bfe57f9f99fd7963d61a134a59f7773a4c1b136a5d11d4f4c354b4"
+      },
+      {
+        "offset": 31240,
+        "length": 0,
+        "replacementUtf8": "        resolvedMinimumFontSize,\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "cb21ae6840a63a036fdfdc77c7a8f15fdd3677cfaafb5286002e25d8df8dc664"
+      },
+      {
+        "offset": 32956,
+        "length": 0,
+        "replacementUtf8": "        result.resolvedMinimumFontSize,\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "c3ca245a949c815727860a7950c55da544d9ce0c09f10c72c117c3e740f90510"
+      },
+      {
+        "offset": 33433,
+        "length": 0,
+        "replacementUtf8": "    adjustSpannableFontToFit(\n        text, width, widthYogaMeasureMode, height, heightYogaMeasureMode,\n        minimumFontSizeAttr, Float.NaN, maximumNumberOfLines, includeFontPadding,\n        textBreakStrategy, hyphenationFrequency, alignment, justificationMode, paint,\n    )\n  }\n\n  @JvmStatic\n  fun adjustSpannableFontToFit(\n      text: Spannable,\n      width: Float,\n      widthYogaMeasureMode: YogaMeasureMode,\n      height: Float,\n      heightYogaMeasureMode: YogaMeasureMode,\n      minimumFontSizeAttr: Float,\n      minimumFontScale: Float,\n      maximumNumberOfLines: Int,\n      includeFontPadding: Boolean,\n      textBreakStrategy: Int,\n      hyphenationFrequency: Int,\n      alignment: Layout.Alignment,\n      justificationMode: Int,\n      paint: TextPaint,\n  ): Unit {\n\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "dafc6ba9b8ac8641b953e28476690e47d970b9ed9a5308ed407d9e645aab87c0"
+      },
+      {
+        "offset": 33496,
+        "length": 306,
+        "replacementUtf8": "    // Largest original span determines the scale floor, as in upstream b735789.\n    var currentFontSize = 0\n",
+        "beforeSha256": "b386bbb7195519143e292194e93125773d0e0061b9e85b72e2a78f808eec1959",
+        "afterSha256": "424b0f0ed6015ed37a71cac8fe6d08110a7da367b1b153ec4c97697b6d16a0df"
+      },
+      {
+        "offset": 33909,
+        "length": 64,
+        "replacementUtf8": "      currentFontSize = max(currentFontSize, span.size)\n",
+        "beforeSha256": "848a16aa96b3f7114452724e8d06e473657b9eb1fb0a78ebc435c2ec313032bd",
+        "afterSha256": "1537f700594de4e1aaca46ab07952472deec7409d7855b7053981bbb6534e473"
+      },
+      {
+        "offset": 33980,
+        "length": 0,
+        "replacementUtf8": "    val minimumFontSize =\n        resolveMinimumFontSize(minimumFontSizeAttr, minimumFontScale, currentFontSize)\n    currentFontSize = max(currentFontSize, minimumFontSize)\n\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "855f87b6cd37885ee77748cef62cb9beb57e89637e88398494a228228e409530"
+      },
+      {
+        "offset": 34058,
+        "length": 43,
+        "replacementUtf8": "    // Every trial is relative to this call's input, never a previously rounded trial.\n    // Keep paint independent: base attributes need not match the largest size span.\n    val originalFontSize = currentFontSize\n    val originalPaintSize = paint.textSize\n    val originalSpanSizes = IntArray(spans.size) { spans[it].size }\n    val spanStarts = IntArray(spans.size) { text.getSpanStart(spans[it]) }\n    val spanEnds = IntArray(spans.size) { text.getSpanEnd(spans[it]) }\n    val spanFlags = IntArray(spans.size) { text.getSpanFlags(spans[it]) }\n",
+        "beforeSha256": "7c2f4012c537d6e891af27e7414a69dcf8e0aa8c2fd99beaaa29eaad525eea1c",
+        "afterSha256": "7f4079c86e1d7bba19d9ed2fc78c39879b423f310bf20a9f8ee6f1e1a75baba4"
+      },
+      {
+        "offset": 34755,
+        "length": 161,
+        "replacementUtf8": "      // A zero-size input can produce a zero denominator; its unchanged trial has scale 1.\n      val ratio =\n          if (currentFontSize == originalFontSize) 1f\n          else currentFontSize.toFloat() / originalFontSize.toFloat()\n      paint.textSize = max(originalPaintSize * ratio, minimumFontSize.toFloat())\n",
+        "beforeSha256": "5af5099cece22e29acb3f4255e4e976c0c0e9269bcf83005e8f3dfb555308832",
+        "afterSha256": "90dcf302cb812851c1c2a62f22e6180864c84a92f4b5247c1c9efda543f96c2c"
+      },
+      {
+        "offset": 34917,
+        "length": 346,
+        "replacementUtf8": "      // Replace in the original getSpans order, retaining ranges, priorities and endpoint flags.\n      for (index in spans.indices) {\n        val span = spans[index]\n        val replacement =\n            ReactAbsoluteSizeSpan(\n                max((originalSpanSizes[index] * ratio).toInt(), minimumFontSize)\n            )\n        text.setSpan(replacement, spanStarts[index], spanEnds[index], spanFlags[index])\n",
+        "beforeSha256": "7c555ba7e475a49d2cad7d8173fe9c57cf93501b0beff436374bfb54bd3e4d0c",
+        "afterSha256": "e2c8af10f5421f09b0f49b7906bdf52a8710dbcc4f7af592a6568aa4a4e021bc"
+      },
+      {
+        "offset": 35293,
+        "length": 0,
+        "replacementUtf8": "        spans[index] = replacement\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "388a4137dea146f4e1d0e5581dd7abe3341956fbc7a4b597404ccfb78d88270a"
+      },
+      {
+        "offset": 36883,
+        "length": 42,
+        "replacementUtf8": "",
+        "beforeSha256": "784f94563cbcf39aeea7d5555293283e38a063d3911657ae408600340cf91906",
+        "afterSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "offset": 47711,
+        "length": 0,
+        "replacementUtf8": "  // Same floor policy for measurement and standalone/view fitting. Absolute values win.\n  private fun resolveMinimumFontSize(\n      minimumFontSizeAttr: Float,\n      minimumFontScale: Float,\n      currentFontSize: Int,\n  ): Int {\n    val absoluteMinimumFontSize = 4.dpToPx().toInt()\n    return when {\n      !minimumFontSizeAttr.isNaN() -> minimumFontSizeAttr.toInt()\n      !minimumFontScale.isNaN() && minimumFontScale > 0f ->\n          max((minimumFontScale * currentFontSize).toInt(), absoluteMinimumFontSize)\n      else -> absoluteMinimumFontSize\n    }\n  }\n\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "a9af3105241a0324f1dcdf601fc4c165f5fc884c4c5a98267940db4d9288968c"
+      },
+      {
+        "offset": 47841,
+        "length": 0,
+        "replacementUtf8": "      val resolvedMinimumFontSize: Float,\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "632d57187a68d7f4c617492ceb3dd290afdbb811ecfd815ec8adaceeac681104"
+      }
+    ]
+  },
+  {
+    "relative": "ReactAndroid/src/main/java/com/facebook/react/views/text/PreparedLayout.kt",
+    "beforeSha256": "c3ceaa3b0ab040b3e4bdea5c09b69dc86d59d4ac2aa897114ca655ecce7c128e",
+    "afterSha256": "948c33f6f51a8c623c78541fb70dfd42f7753b11b6420e5169e5a769324e37b4",
+    "chunks": [
+      {
+        "offset": 438,
+        "length": 31,
+        "replacementUtf8": "internal class PreparedLayout @JvmOverloads constructor(\n",
+        "beforeSha256": "f0a3762b79af1f93675f98fea6bd86bb1fd8c6e42a1fc45d31cc02590f0373c3",
+        "afterSha256": "dc43649c5f8225d171a4d40de923b8eba29749c80caaa0f852cad48b484502d0"
+      },
+      {
+        "offset": 652,
+        "length": 0,
+        "replacementUtf8": "    // Absolute floor resolved before measurement; NaN for legacy constructor callers.\n    val resolvedMinimumFontSize: Float = Float.NaN,\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "79a60f6920e734b5a891a29dbac7c8cd6a40bc37d0388db364eb3cb7e47c5675"
+      }
+    ]
+  },
+  {
+    "relative": "ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextViewManager.kt",
+    "beforeSha256": "d724532208681904c7cc11326859e10ecd4482c5ba14a1fc0ab9d70d2c5895e0",
+    "afterSha256": "f3d2e7c256c3f8d3b4453d5538d3cc259e52ea0317d183bd00667a2dd2ef441c",
+    "chunks": [
+      {
+        "offset": 6081,
+        "length": 0,
+        "replacementUtf8": "    view.setMinimumFontScale(\n        if (paragraphAttributes.contains(TextLayoutManager.PA_KEY_MINIMUM_FONT_SCALE))\n            paragraphAttributes.getDouble(TextLayoutManager.PA_KEY_MINIMUM_FONT_SCALE).toFloat()\n        else Float.NaN\n    )\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "856afb8c7c3a0758257b8399e5d594112a028bcb431b2222863ac3e85315d707"
+      },
+      {
+        "offset": 7203,
+        "length": 0,
+        "replacementUtf8": "    view.setMinimumFontSize(preparedLayout.resolvedMinimumFontSize)\n    view.setMinimumFontScale(Float.NaN)\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "beb89ed7c080ae8e07c8b18dcbce60b83388fb7459589ada9e6dffa64ce89da5"
+      }
+    ]
+  },
+  {
+    "relative": "ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextView.java",
+    "beforeSha256": "f6854ff6811b1ead2c93edbe7ae740ac76de78782478bcc2e07f73457a1ab99d",
+    "afterSha256": "7277c6a4ed6619a118f1e110d9125888093b409613849275b5046c84f8f39fec",
+    "chunks": [
+      {
+        "offset": 378,
+        "length": 0,
+        "replacementUtf8": "import android.text.Selection;\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "b8df2b8a5ad0a18f4b52b4977baaa272cf0cb6d58313ecd7b8d10b6ecddab3f9"
+      },
+      {
+        "offset": 506,
+        "length": 0,
+        "replacementUtf8": "import android.text.TextPaint;\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "76620615a26d0ee174b8bfd7df2f506a99dbc4409477862568ae41b16273db3c"
+      },
+      {
+        "offset": 2662,
+        "length": 0,
+        "replacementUtf8": "  // Pre-fit base size; NaN means the current TextView size has not been fitted.\n  private float mUnfittedTextSize;\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "c1ce0b0df4d85adbfa4c2fb6f2d55f3e3def347629005352a75b063c00dd2ce8"
+      },
+      {
+        "offset": 2696,
+        "length": 0,
+        "replacementUtf8": "  private float mMinimumFontScale;\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "7d79452b1f01275f211c2e72b482b05cd4dea76b9ee2181d5a2a179456cf7198"
+      },
+      {
+        "offset": 3610,
+        "length": 0,
+        "replacementUtf8": "    mUnfittedTextSize = Float.NaN;\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "d3bac8bcc15cdddc91b5a28a4a915971c6cf1db6d8a89a5b2124d845b2eaa35b"
+      },
+      {
+        "offset": 3644,
+        "length": 0,
+        "replacementUtf8": "    mMinimumFontScale = Float.NaN;\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "e0fe67dc1b2907ef91fb7f0c4b9f41b5b81022566ef8d67b29b04b6564094d84"
+      },
+      {
+        "offset": 3795,
+        "length": 0,
+        "replacementUtf8": "    // Do not carry a fitted presentation size into the next use of this view.\n    if (!Float.isNaN(mUnfittedTextSize)) {\n      super.setTextSize(TypedValue.COMPLEX_UNIT_PX, mUnfittedTextSize);\n    }\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "36e3cb6075f08e45a1d1e5354b6986c5ada2b2cca49ef6d81f963869db5dabe0"
+      },
+      {
+        "offset": 7033,
+        "length": 0,
+        "replacementUtf8": "  protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {\n    super.onSizeChanged(width, height, oldWidth, oldHeight);\n    if (mAdjustsFontSizeToFit && (width != oldWidth || height != oldHeight)) {\n      mShouldAdjustSpannableFontSize = true;\n      invalidate();\n    }\n  }\n\n  @Override\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "a184941b50026117c40b0913bfbe77b5fef57f58b2096c7765f0ca35bb4e908c"
+      },
+      {
+        "offset": 7326,
+        "length": 0,
+        "replacementUtf8": "        // The Fabric PreparedLayout/cache owns spanned. Every fit starts from that input,\n        // never from a previously fitted presentation stored in TextView.\n        Spannable ownedSpannable = new SpannableString(spanned);\n        TextPaint workingTextPaint = new TextPaint();\n        // TextPaint(Paint) does not copy TextPaint-specific fields such as density.\n        workingTextPaint.set(getPaint());\n        if (Float.isNaN(mUnfittedTextSize)) {\n          mUnfittedTextSize = getTextSize();\n        }\n        workingTextPaint.setTextSize(mUnfittedTextSize);\n        int selectionStart = getSelectionStart();\n        int selectionEnd = getSelectionEnd();\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "145362670d62fedd179a17507e62e374072406b865bb0f8a17c1158761a7617d"
+      },
+      {
+        "offset": 7378,
+        "length": 21,
+        "replacementUtf8": "            ownedSpannable,\n",
+        "beforeSha256": "f403e743e12cef963211f38425f29eee0b3436212d54f15d9240d1d1c0e88274",
+        "afterSha256": "e8a958740fc1a91591419f63505c7efbf4ba9388b4ff4164e9f4e6304b9924a2"
+      },
+      {
+        "offset": 7552,
+        "length": 0,
+        "replacementUtf8": "            mMinimumFontScale,\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "637a48422146feff894464fc386a919ece160205e6810a8bedde21d3444da1c2"
+      },
+      {
+        "offset": 7985,
+        "length": 51,
+        "replacementUtf8": "            workingTextPaint);\n        // Consume fitted metrics without replacing the authoritative base size.\n        super.setTextSize(TypedValue.COMPLEX_UNIT_PX, workingTextPaint.getTextSize());\n        setText(ownedSpannable);\n        // A frame-only refit keeps the same characters and logical selection.\n        CharSequence displayedText = getText();\n        if (displayedText instanceof Spannable\n            && selectionStart >= 0\n            && selectionEnd >= 0\n            && selectionStart <= displayedText.length()\n            && selectionEnd <= displayedText.length()) {\n          Selection.setSelection((Spannable) displayedText, selectionStart, selectionEnd);\n        }\n",
+        "beforeSha256": "d91e1e08202276775f13efa27e2fb9d17b7e8cadb549b81c4a6f301471129128",
+        "afterSha256": "b48dc7820f69e595278b3e83f8e87566029311809f224180327f0f5b226a5c13"
+      },
+      {
+        "offset": 14575,
+        "length": 0,
+        "replacementUtf8": "  @Override\n  public void setTextSize(int unit, float size) {\n    super.setTextSize(unit, size);\n    // Also covers TextView's one-argument SP setter and applyTextAttributes().\n    // The applied size is the next fit's base, even when equal to the fitted size.\n    mUnfittedTextSize = Float.NaN;\n    mShouldAdjustSpannableFontSize = true;\n  }\n\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "3bb9075e3aa970f779152c47b8b5ebef4e996225648f4d980f4ddf239a780898"
+      },
+      {
+        "offset": 14834,
+        "length": 0,
+        "replacementUtf8": "  @Deprecated\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "527fcfa6cd29a25604d27590f612ffa6a250df005a6120716c3236f00bd1dc24"
+      },
+      {
+        "offset": 14980,
+        "length": 0,
+        "replacementUtf8": "  public void setMinimumFontScale(float minimumFontScale) {\n    mMinimumFontScale = minimumFontScale;\n    mShouldAdjustSpannableFontSize = true;\n  }\n\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "96175ca5fd24acf0f070d48ac14a278ea91895a7160851eb42a029753711bc0c"
+      }
+    ]
+  },
+  {
+    "relative": "ReactCommon/react/renderer/attributedstring/conversions.h",
+    "beforeSha256": "96265168deb10c4564024b58356a96dbfdeef79c1fad859f98c9042ea967c91e",
+    "afterSha256": "e80e457fd3f33da415d41848b1dc50ff7858d8f1914ecb85360040777c4497c9",
+    "chunks": [
+      {
+        "offset": 39240,
+        "length": 0,
+        "replacementUtf8": "constexpr static MapBuffer::Key PA_KEY_MINIMUM_FONT_SCALE = 10;\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "e55ff3d1ccc895ef418beedb523279eed24e841d339efe623f964da9280aaa0e"
+      },
+      {
+        "offset": 40256,
+        "length": 0,
+        "replacementUtf8": "  builder.putDouble(PA_KEY_MINIMUM_FONT_SCALE, paragraphAttributes.minimumFontScale);\n",
+        "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "afterSha256": "0a7d2f8e1bd9b9f94b18068ec070b5a037fb8aec719955c56fa7a064971cb21e"
+      }
+    ]
+  }
+]

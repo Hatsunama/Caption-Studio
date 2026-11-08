@@ -1,11 +1,10 @@
 'use strict';
-
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const hash = value => createHash('sha256').update(value).digest('hex');
-// Inspect every ancestor as well as the leaf: lstat rejects Windows junctions too.
-// No writes are made while discovering or validating the package.
+// External copy of parent immutable-rn-source.cjs. Shared preflight extracted;
+// publication sequence retained, plus staged file identity checks.
 function inspect(file, directory = false) {
   const absolute = path.resolve(file);
   const root = path.parse(absolute).root;
@@ -18,17 +17,12 @@ function inspect(file, directory = false) {
     stat = fs.lstatSync(paths[i]);
     if (stat.isSymbolicLink()) throw Error('Link/reparse path rejected: ' + paths[i]);
     const isDirectory = i < paths.length - 1 || directory;
-    if (isDirectory ? !stat.isDirectory() : !stat.isFile()) {
-      throw Error('Unexpected file type: ' + paths[i]);
-    }
+    if (isDirectory ? !stat.isDirectory() : !stat.isFile()) throw Error('Unexpected file type: ' + paths[i]);
     if (!isDirectory && stat.nlink !== 1) throw Error('Hard link rejected: ' + paths[i]);
   }
   return stat;
 }
-
-// Returns true only on publication, false only for the exact approved bytes.
-// Internal to the two pinned RN source repairs; caller supplies the project root.
-function repairReactNativeSource(projectRoot, { relative, beforeHash, afterHash, label, prepare }) {
+function preflightReactNativeSource(projectRoot, { relative, beforeHash, afterHash, label }) {
   if (typeof projectRoot !== 'string' || !projectRoot) throw Error('Explicit project root required');
   const pkg = path.resolve(projectRoot, 'node_modules', 'react-native');
   const metadata = path.join(pkg, 'package.json');
@@ -46,22 +40,26 @@ function repairReactNativeSource(projectRoot, { relative, beforeHash, afterHash,
   const original = readTarget();
   const digest = hash(original.bytes);
   if (digest !== beforeHash && digest !== afterHash) throw Error('Unknown ' + label + ' source/hash');
-  if (digest === afterHash) return false;
-
-  const repaired = prepare(original.bytes);
-  if (!Buffer.isBuffer(repaired) || hash(repaired) !== afterHash) {
-    throw Error('Unexpected repaired ' + label + ' hash');
-  }
-
   function checkUnchanged() {
     checkVersion();
     const now = readTarget();
     if (now.stat.dev !== original.stat.dev || now.stat.ino !== original.stat.ino ||
         now.stat.mode !== original.stat.mode || now.stat.mtimeMs !== original.stat.mtimeMs ||
-        now.stat.ctimeMs !== original.stat.ctimeMs || hash(now.bytes) !== beforeHash) {
+        now.stat.ctimeMs !== original.stat.ctimeMs || hash(now.bytes) !== digest) {
       throw Error(label + ' source changed before publication');
     }
   }
+  return { original, digest, target, checkUnchanged };
+}
+// Reuses the exact all-file preflight snapshot, including inode/time identity.
+// Returns true only on publication, false only for exact final bytes.
+function repairReactNativeSource(projectRoot, spec, preflight) {
+  const { afterHash, label, prepare } = spec;
+  const { original, digest, target, checkUnchanged } = preflight || preflightReactNativeSource(projectRoot, spec);
+  checkUnchanged();
+  if (digest === afterHash) return false;
+  const repaired = prepare(original.bytes);
+  if (!Buffer.isBuffer(repaired) || hash(repaired) !== afterHash) throw Error('Unexpected repaired ' + label + ' hash');
   checkUnchanged();
   const lock = target + '.repair.lock';
   const temporary = target + '.' + randomUUID() + '.tmp';
@@ -71,26 +69,31 @@ function repairReactNativeSource(projectRoot, { relative, beforeHash, afterHash,
     checkUnchanged();
     const fd = fs.openSync(temporary, 'wx', original.stat.mode);
     temporaryOwned = true;
+    let staged;
     try {
       fs.writeFileSync(fd, repaired);
       fs.fchmodSync(fd, original.stat.mode);
+      staged = fs.fstatSync(fd);
       fs.fsyncSync(fd);
     } finally { fs.closeSync(fd); }
-    inspect(temporary);
-    if (hash(fs.readFileSync(temporary)) !== afterHash) throw Error('Staged ' + label + ' hash mismatch');
+    function checkStaged() {
+      const now = inspect(temporary);
+      if (now.dev !== staged.dev || now.ino !== staged.ino || now.mode !== staged.mode ||
+          hash(fs.readFileSync(temporary)) !== afterHash) throw Error('Staged ' + label + ' identity/hash mismatch');
+    }
+    checkStaged();
     checkUnchanged();
-    // Same-directory rename publishes complete bytes; no unlink or in-place overwrite fallback.
+    checkStaged();
+    // Same-directory atomic rename. No unlink or in-place fallback; no cross-file transaction.
     fs.renameSync(temporary, target);
     temporaryOwned = false;
     return true;
   } finally {
-    try {
-      if (temporaryOwned) fs.unlinkSync(temporary);
-    } finally {
+    try { if (temporaryOwned) fs.unlinkSync(temporary); }
+    finally {
       try { fs.closeSync(lockFd); }
       finally { fs.unlinkSync(lock); }
     }
   }
 }
-
-module.exports = { repairReactNativeSource };
+module.exports = { repairReactNativeSource, preflightReactNativeSource };
