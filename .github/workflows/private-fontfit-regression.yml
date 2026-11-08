@@ -58,6 +58,7 @@ jobs:
         run: |
           set -o pipefail
           cd android
+          ./gradlew :caption-media:dependencyInsight --dependency react-android --configuration releaseUnitTestRuntimeClasspath --no-daemon --console=plain | tee ../evidence/rn-classpath.txt
           ./gradlew :caption-media:testReleaseUnitTest --tests app.captionstudio.media.ReactNativeFontFitRegressionTest --no-daemon --stacktrace --console=plain 2>&1 | tee ../evidence/native-audio.log
       - name: Retain complete raw evidence
         if: always()
