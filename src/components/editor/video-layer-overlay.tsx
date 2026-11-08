@@ -34,22 +34,29 @@ function MountedVideoLayerOverlay(props: VideoLayerOverlayProps) {
   const state = overlayPlaybackState(layer, timelineMs, isPlaying, props.clips);
   const geometry = resolveLayerGeometry(props.geometry ?? layer);
   // PRIVATE numeric-only observation; never merge or publish this diagnostic branch.
+  // CSOverlayEvent CSV: event,row,monotonic,targetSeconds,desiredPlaying,extra1,extra2.
+  // monotonic is performance.now() in ms; targetSeconds/desiredPlaying are desired state,
+  // not a native clock or proof of presented pixels. Nonfinite/nonnumeric cells become -1.
+  // 1/9 = subscription setup/cleanup (may repeat; not component mount/unmount markers).
+  // 2/3 = before/after existing seek call; 4 = delivered status index in extra1
+  // (idle=0, loading=1, readyToPlay=2, error=3, unknown=-1); 5 = delivered duration in extra1.
+  // 6 = first-frame callback notification; 7 = nativeEvent.layout width/height in extras
+  // (React Native box, not SDK surface dimensions). Unused extras are 0.
+  // Neither READY, first-frame notification nor layout proves pixels survived a resume.
   const probeRows = useRef(0);
-  const probe = useCallback((event: number, extra = 0) => {
+  const probe = useCallback((event: number, extra1 = 0, extra2 = 0) => {
     try {
       if (probeRows.current >= 120) return;
       const values = [event, ++probeRows.current, performance.now(), state.seconds,
-        Number(state.playing), player.currentTime, player.duration,
-        ['idle', 'loading', 'readyToPlay', 'error'].indexOf(player.status),
-        Number(player.playing), Number(player.muted), player.playbackRate, extra];
-      console.info('CSOverlayDiag', values.map(value => Number.isFinite(value) ? value : -1).join(','));
+        Number(state.playing), extra1, extra2];
+      console.info('CSOverlayEvent', values.map(value => Number.isFinite(value) ? value : -1).join(','));
     } catch { /* Observation must not affect resource ownership. */ }
-  }, [player, state.playing, state.seconds]);
+  }, [state.playing, state.seconds]);
 
   useEffect(() => {
     probe(1);
-    const status = player.addListener('statusChange', () => probe(4));
-    const source = player.addListener('sourceLoad', () => probe(5));
+    const status = player.addListener('statusChange', ({ status }) => probe(4, ['idle', 'loading', 'readyToPlay', 'error'].indexOf(status)));
+    const source = player.addListener('sourceLoad', ({ duration }) => probe(5, duration));
     return () => { probe(9); status.remove(); source.remove(); };
   }, [player, probe]);
 
@@ -75,7 +82,7 @@ function MountedVideoLayerOverlay(props: VideoLayerOverlayProps) {
       opacity: layer.opacity,
       transform: [{ rotate: `${geometry.rotation}deg` }, { scaleX: geometry.scale * geometry.scaleX }, { scaleY: geometry.scale * geometry.scaleY }],
     }}>
-      <VideoView player={player} nativeControls={false} contentFit="contain" surfaceType="textureView" onFirstFrameRender={() => probe(6)} onLayout={() => probe(7)} style={{ width: '100%', height: '100%' }} />
+      <VideoView player={player} nativeControls={false} contentFit="contain" surfaceType="textureView" onFirstFrameRender={() => probe(6)} onLayout={({ nativeEvent: { layout } }) => probe(7, layout.width, layout.height)} style={{ width: '100%', height: '100%' }} />
     </View>
   </View>;
 }
