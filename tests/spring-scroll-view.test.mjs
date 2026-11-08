@@ -191,7 +191,9 @@ function harness(initial = {}, platform = 'android', engineOptions) {
     setNativeProps:(ref,updates)=>{assert.ok(!('style' in updates),'Reanimated 4.5.1 accepts flattened native props');assert.ok(ref(),'content host must be bound');assert.ok(!removedHosts.has(ref()),'setNativeProps must not target a removed native host');ref().updates=plain(updates);calls.props.push({node:ref(),updates:plain(updates)});},
     scrollTo:(ref,x,y,animated)=>calls.commands.push({node:ref(),name:'scrollTo',args:[x,y,animated]}),
   };
-  const worklets={scheduleOnUI:(fn,...args)=>{jobs.push(()=>fn(...args));if(!deferred)flush();}};
+  const rnJobs=[];
+  const worklets={scheduleOnUI:(fn,...args)=>{jobs.push(()=>fn(...args));if(!deferred)flush();},
+    scheduleOnRN:(fn,...args)=>rnJobs.push(()=>fn(...args))};
   const modules={};
   function load(code) { const exports={};runInNewContext(code,{exports,performance:{now:()=>now},console:{warn:(...args)=>calls.warnings.push(args)},
     require(id){if(id==='react')return hooks;if(id==='react/jsx-runtime')return {jsx,jsxs:jsx};if(id==='react-native')return native;
@@ -233,7 +235,14 @@ function harness(initial = {}, platform = 'android', engineOptions) {
       if(!Object.is(value,slot.value)){slot.value=value;changed=true;}}
     pendingState.clear();return changed;
   }
-  const h={calls,queries,mutable,nativeGesture,listeners,flush,jobs,
+  const h={calls,queries,mutable,nativeGesture,listeners,flush,jobs,rnJobs,
+    flushRN(){while(rnJobs.length)rnJobs.shift()();},
+    preview(next){
+      const saved=primarySlots.slice(),effectCount=effects.length,passiveCount=passiveEffects.length;
+      slots=primarySlots;cursor=0;let candidate=modules.component.SpringScrollView(next);
+      while(typeof candidate.type==='function')candidate=candidate.type(candidate.props);
+      primarySlots.splice(0,primarySlots.length,...saved);effects.length=effectCount;passiveEffects.length=passiveCount;
+    },
     removeNativeHost(node=h.node){assert.ok(node?.inner);removedHosts.add(node.inner);},
     setTime(value){now=value;},defer(value=true){deferred=value;},
     render(next=props){
@@ -279,6 +288,79 @@ function harness(initial = {}, platform = 'android', engineOptions) {
 }
 function makeNode(){const inner={updates:{transform:[]}};return {inner,scrollTo(){},scrollToEnd(){},getInnerViewRef(){return inner;},getNativeScrollRef(){return this;},measure(){},flashScrollIndicators(){}};}
 function drag(h){h.attach();h.geometry();h.start();h.setTime(10);h.touch('onTouchesMove',20);h.setTime(20);h.touch('onTouchesMove',50);}
+
+test('binding ready retries current viewport after old-generation command rejection without layout',()=>{
+  let desired=35,ready=0;
+  const ref={current:null},h=harness({ref,onScrollBindingReady:()=>{ready++;ref.current.scrollTo({y:desired,animated:false});}});
+  const node=h.attach();h.flushRN();assert.equal(ready,1);h.calls.commands.length=0;
+  h.defer();node.scrollTo({y:35,animated:false});const old=h.jobs.shift();
+  h.scroll().props.ref(null);desired=91;h.attach(node);
+  assert.equal(ready,1,'attachment alone cannot acknowledge UI acceptance');
+  h.flush();old();assert.equal(h.calls.commands.length,0,'old command must stay rejected');
+  h.flushRN();h.flush();assert.equal(ready,2);
+  assert.deepEqual(h.calls.commands.map(c=>c.args),[[0,91,false]]);
+  h.geometry();h.flush();h.flushRN();assert.equal(ready,2,'layout cannot duplicate readiness');
+});
+
+test('queued binding readiness rejects detach, replacement, unmount and effect replay',()=>{
+  for(const transition of ['detach','replacement','unmount','replay']){
+    let ready=0;const h=harness({onScrollBindingReady:()=>ready++}),first=h.attach();
+    assert.ok(h.rnJobs.length>0,'accepted activation must schedule an RN acknowledgment');
+    const stale=h.rnJobs.splice(0);
+    if(transition==='replay')h.replay();
+    else if(transition==='unmount')h.unmount();
+    else {h.scroll().props.ref(null);if(transition==='replacement')h.attach(makeNode());}
+    for(const job of stale)job();assert.equal(ready,0,'retired acknowledgment cannot reach caller');
+    h.flushRN();assert.equal(ready,transition==='replacement'||transition==='replay'?1:0);
+    if(transition==='replay'){assert.equal(h.node,first);h.replay();h.flushRN();assert.equal(ready,2);}
+  }
+});
+
+test('retired UI activation cannot acknowledge after a newer binding activates',()=>{
+  let ready=0;const h=harness({onScrollBindingReady:()=>ready++});
+  h.defer();const first=h.attach(),retired=h.jobs.splice(0);
+  h.scroll().props.ref(null);h.attach(makeNode());h.flush();
+  const accepted=h.rnJobs.length;assert.ok(accepted>0);
+  for(const job of retired)job();
+  assert.equal(h.rnJobs.length,accepted,'UI generation rejection must not enqueue readiness');
+  h.flushRN();assert.equal(ready,1);assert.notEqual(h.node,first);
+  assert.equal(h.calls.commands.length,0);
+});
+
+test('late content attachment does not duplicate readiness for an already usable native binding',()=>{
+  let ready=0,inner=null;const node=makeNode();node.getInnerViewRef=()=>inner;
+  const h=harness({onScrollBindingReady:()=>ready++});h.attach(node);h.flushRN();assert.equal(ready,1);
+  node.scrollTo({y:37});assert.equal(h.calls.commands.length,1,'readiness does not depend on decoration');
+  inner=node.inner;h.geometry();h.flushRN();assert.equal(ready,1);
+});
+
+test('binding callback uses latest commit and callback changes neither rebind nor loop',()=>{
+  const seen=[],first=()=>seen.push('first'),latest=()=>seen.push('latest');
+  const h=harness({onScrollBindingReady:first}),node=h.attach(),leaf=h.scroll(),binding=leaf.props.ref;
+  h.render({onScrollBindingReady:latest});
+  h.preview({onScrollBindingReady:()=>seen.push('abandoned')});
+  h.flushRN();assert.deepEqual(seen,['latest']);
+  for(let i=0;i<3;i++){h.render({onScrollBindingReady:()=>seen.push('changed')});h.flushRN();}
+  assert.deepEqual(seen,['latest']);assert.equal(h.scroll().type,leaf.type);assert.equal(h.scroll().props.ref,binding);
+  assert.equal(h.node,node);assert.equal(h.calls.commands.length,0);
+  assert.equal('onScrollBindingReady' in h.scroll().props,false);
+});
+
+test('native fallback reports attached node readiness without leaking prop or remounting',()=>{
+  for(const [platform,extra]of [['ios',{}],['android',{stickyHeaderIndices:[0]}]]){
+    const seen=[],ref={current:null};let cleanups=0;
+    const publicRef=node=>{ref.current=node;return ()=>{cleanups++;ref.current=null;};};
+    const props={...extra,ref:publicRef,onScrollBindingReady:()=>{assert.ok(ref.current);seen.push('ready');}};
+    const h=harness(props,platform),node=h.attach(),leaf=h.scroll(),binding=leaf.props.ref;
+    assert.deepEqual(seen,['ready']);assert.equal('onScrollBindingReady' in leaf.props,false);
+    h.render({...props,onScrollBindingReady:()=>seen.push('latest')});
+    assert.equal(h.scroll().props.ref,binding);assert.equal(h.scroll().type,leaf.type);assert.deepEqual(seen,['ready']);
+    h.preview({...props,onScrollBindingReady:()=>seen.push('abandoned')});
+    h.replay();assert.deepEqual(seen,['ready','latest']);
+    h.scroll().props.ref(null);assert.equal(cleanups,1);h.attach(node);assert.deepEqual(seen,['ready','latest','latest']);
+    h.unmount();assert.equal(cleanups,2);assert.equal(ref.current,null);assert.equal(h.calls.commands.length,0);
+  }
+});
 
 test('installed setter skips zero-target assignment but UI modify forces zero-origin initialization',()=>{
   const engine=installedEngine(),offset=engine.mutable(0),seen=[];

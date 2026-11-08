@@ -6,6 +6,14 @@ plugins {
 group = 'app.captionstudio'
 version = '1.0.0'
 
+// Read locally so this module also works without the generated application root.
+def captionStudioMedia3Properties = new Properties()
+file('media3-version.properties').withInputStream { captionStudioMedia3Properties.load(it) }
+def captionStudioMedia3Version = captionStudioMedia3Properties.getProperty('media3Version')
+if (captionStudioMedia3Version == null || !(captionStudioMedia3Version ==~ /\d+\.\d+\.\d+/)) {
+  throw new GradleException('Caption Studio Media3 version is missing or invalid')
+}
+
 android {
   namespace = 'app.captionstudio.media'
   defaultConfig {
@@ -27,9 +35,19 @@ android {
 }
 
 dependencies {
+  // SDK 57 autolinking uses the publication by default; source opt-outs include this project.
+  if (findProject(':expo-video') != null) {
+    implementation project(':expo-video')
+  } else {
+    implementation 'host.exp.exponent:expo.modules.video:57.0.5'
+  }
   implementation 'androidx.exifinterface:exifinterface:1.4.2'
-  implementation 'androidx.media3:media3-transformer:1.10.1'
-  implementation 'androidx.media3:media3-effect:1.10.1'
+  implementation "androidx.media3:media3-transformer:${captionStudioMedia3Version}"
+  implementation "androidx.media3:media3-effect:${captionStudioMedia3Version}"
+  // The frame observer reads Expo's PlayerView; Expo's implementation dependency is not exported.
+  implementation "androidx.media3:media3-ui:${captionStudioMedia3Version}"
+  // Exercise the actual source-built RN implementation in native regressions.
+  testImplementation 'com.facebook.react:react-android:0.86.3'
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.robolectric:robolectric:4.16.1'
 }

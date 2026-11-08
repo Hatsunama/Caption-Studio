@@ -2084,7 +2084,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             width={canvasWidth}
             height={canvasHeight}
             backgroundColor={project.canvas.backgroundColor}
-            admitted={runtimePolicy.videoSurfacesAdmitted}
+            admitted={runtimePolicy.videoSurfacesAdmitted && !transport.previewResourcesSuspended}
             visible={!transport.isGap}
             players={transport.players}
             slots={transport.slots}

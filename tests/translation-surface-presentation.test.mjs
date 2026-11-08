@@ -32,7 +32,7 @@ const walk = (node, predicate) => Array.isArray(node) ? node.flatMap(child => wa
 const style = value => Object.assign({}, ...[value].flat(Infinity).filter(Boolean));
 
 function mount(overrides = {}, options = {}) {
-  const instances = new Map(), listeners = new Set(), timers = new Map();
+  const instances = new Map(), listeners = new Map(), timers = new Map();
   const contexts = new Map(), frames = new Map();
   const calls = { cancel: 0, dismiss: 0, retry: 0, subscriptions: 0, removals: 0, alerts: [] };
   let current, cursor, dirty = true, pending = [], pendingLayout = [], tree, timerId = 0;
@@ -79,7 +79,7 @@ function mount(overrides = {}, options = {}) {
   const appState = {
     currentState: options.appState ?? 'active',
     addEventListener(event, callback) {
-      assert.equal(event, 'change'); calls.subscriptions++; listeners.add(callback);
+      assert.ok(['change', 'blur'].includes(event)); calls.subscriptions++; listeners.set(callback, event);
       return { remove() { calls.removals++; listeners.delete(callback); } };
     },
   };
@@ -183,7 +183,8 @@ function mount(overrides = {}, options = {}) {
     one(predicate) { const found = walk(tree, predicate); assert.equal(found.length, 1); return found[0]; },
     button(label) { return this.one(node => node.type === 'Pressable' && (node.props.accessibilityLabel === label || text(node) === label)); },
     update(next) { props = { ...props, ...next }; render(); },
-    state(next) { appState.currentState = next; [...listeners].forEach(listener => listener(next)); render(); },
+    state(next) { appState.currentState = next; for (const [listener, event] of [...listeners]) if (event === 'change') listener(next); render(); },
+    blur() { for (const [listener, event] of [...listeners]) if (event === 'blur') listener(); render(); },
     rotate(next, keyboardCovered = false) { dimensions = next; covered = keyboardCovered; render(); },
     async settle() { for (let i = 0; i < 12; i++) { await Promise.resolve(); if (dirty) render(); } },
   };
@@ -243,24 +244,43 @@ test('background runs only while visible and foreground, and removes listeners o
   const host = mount({}, { appState: 'background' });
   const active = () => host.one(node => node.type === 'CaptionRefract').props.active;
   assert.equal(active(), false);
-  assert.equal(host.listeners.size, 1);
+  assert.equal(host.listeners.size, 2);
   host.state('active'); assert.equal(active(), true);
   host.state('inactive'); assert.equal(active(), false);
   host.state('background'); assert.equal(active(), false);
   host.state('active'); assert.equal(active(), true);
   host.update({ busy: false, translationActive: false }); assert.equal(active(), true);
-  assert.equal(host.calls.subscriptions, 1, 'rerenders must not stack animation listeners');
+  assert.equal(host.calls.subscriptions, 2, 'rerenders must not stack change or blur listeners');
   host.update({ visible: false });
   assert.equal(host.all(node => node.type === 'CaptionRefract').length, 0);
   assert.equal(host.listeners.size, 0);
-  assert.equal(host.calls.removals, 1);
+  assert.equal(host.calls.removals, 2);
   host.state('background'); host.update({ visible: true }); assert.equal(active(), false);
-  assert.equal(host.listeners.size, 1);
+  assert.equal(host.listeners.size, 2);
   host.update({ trackId: 'fr' });
-  assert.equal(host.listeners.size, 1, 'session replacement cleans the old listener');
+  assert.equal(host.listeners.size, 2, 'session replacement cleans both old listeners');
   host.update({ visible: false });
   assert.equal(host.calls.removals, host.calls.subscriptions);
   assert.equal(host.timers.size, 0);
+});
+
+test('Android focus-only interruption keeps the translation modal foreground and its native background active', () => {
+  const host = mount();
+  const active = () => host.one(node => node.type === 'CaptionRefract').props.active;
+  assert.equal(active(), true);
+  assert.equal([...host.listeners.values()].filter(event => event === 'change').length, 1);
+  assert.equal([...host.listeners.values()].filter(event => event === 'blur').length, 1);
+  host.blur();
+  assert.equal(active(), true, 'Activity blur must not background its owned modal');
+  assert.equal(host.calls.cancel, 0); assert.equal(host.calls.dismiss, 0);
+  host.state('background'); assert.equal(active(), false);
+  host.state('active'); assert.equal(active(), true);
+  const retiredBlur = [...host.listeners].filter(([, event]) => event === 'blur').map(([listener]) => listener);
+  host.update({ visible: false });
+  retiredBlur.forEach(listener => listener());
+  assert.equal(host.listeners.size, 0);
+  assert.equal(host.calls.removals, host.calls.subscriptions);
+  assert.equal(host.calls.cancel, 0); assert.equal(host.calls.dismiss, 0);
 });
 
 test('Cancel, system back, error retry/dismiss and warning dismissal retain their callbacks', async () => {

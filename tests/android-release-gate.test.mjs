@@ -17,9 +17,14 @@ test('both release workflows test every owned Android module before building', a
     assert.ok(testCommand, `${file} must run explicit native release tests`);
     const args = testCommand.split(/\s+/).slice(1);
     assert.deepEqual(args.slice(0, ownedTasks.length), ownedTasks);
-    assert.deepEqual(args.slice(ownedTasks.length), file === 'unsigned-store-build.yml'
-      ? ['--init-script', '../scripts/unsigned-play-release.gradle', '--no-daemon', '--stacktrace', '--warning-mode', 'all']
-      : ['--no-daemon', '--stacktrace', '--warning-mode', 'all']);
+    const unsignedArgs = file === 'unsigned-store-build.yml'
+      ? ['--init-script', '../scripts/unsigned-play-release.gradle'] : [];
+    assert.deepEqual(args.slice(ownedTasks.length), [...unsignedArgs,
+      '--init-script', '../scripts/react-native-fontfit/sdk36-test-runtime.init.gradle',
+      '-Dorg.gradle.java.installations.auto-detect=false',
+      '-Dorg.gradle.java.installations.auto-download=false',
+      '-Dorg.gradle.java.installations.paths="$JAVA_HOME_17_X64,$JAVA_HOME_21_X64"',
+      '--no-daemon', '--stacktrace', '--warning-mode', 'all']);
     assert.doesNotMatch(testCommand, /expo-modules-core|(?:^|\s)(?:-x|--exclude-task)(?:\s|$)/);
     assert.ok(workflow.indexOf(testCommand) < workflow.indexOf(':app:assembleRelease'));
   }

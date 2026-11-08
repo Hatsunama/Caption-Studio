@@ -911,3 +911,22 @@ test('script Play/Pause admits companion audio and transitions together, includi
   h.appState('active'); h.actions.setFontBrowserOpen(true); h.render();
   assert.equal(h.all((node) => node.props.accessibilityLabel === 'Play video')[0].props.disabled, true);
 });
+
+test('translation resource suspension detaches the actual editor main preview and restores only in foreground', async () => {
+  const h = mount(), original = h.project;
+  h.transport.currentMs = 2180; h.render();
+  const preview = () => h.all(node => node.type === 'VideoTransitionOverlay')[0].props;
+  for (const [state, suspended, admitted] of [
+    ['active', false, true], ['active', true, false], ['active', false, true],
+    ['background', true, false], ['background', false, false], ['active', false, true],
+    ['active', true, false], ['active', false, true],
+  ]) {
+    h.transport.previewResourcesSuspended = suspended; h.appState(state); h.render();
+    assert.equal(preview().admitted, admitted, state + ' suspended=' + suspended);
+    assert.equal(h.transport.currentMs, 2180);
+    assert.equal(h.project, original);
+  }
+  await h.flush();
+  assert.equal(h.calls.writes.length, 0);
+  assert.equal(h.disk, original);
+});

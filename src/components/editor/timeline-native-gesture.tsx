@@ -33,6 +33,7 @@ export function createTimelineNativeScrollGestures(): NativeScrolls {
 export function TimelineNativeScrollView(props: ComponentPropsWithRef<typeof ScrollView> & {
   nativeGesture?: ReturnType<typeof Gesture.Native>;
   springOffset?: SharedValue<number>;
+  onScrollBindingReady?: () => void;
 }) {
   return <SpringScrollView {...props} />;
 }

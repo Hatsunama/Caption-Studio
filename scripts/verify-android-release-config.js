@@ -28,6 +28,15 @@ function resolveExpectedAndroidPackage(environment = process.env) {
 function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.filename), '..')) {
   const appBuild = readRequired(path.join(projectRoot, 'android', 'app', 'build.gradle'));
   const rootBuild = readRequired(path.join(projectRoot, 'android', 'build.gradle'));
+  requireText(rootBuild.replaceAll('\r\n', '\n'), media3AlignmentBlock(projectRoot), 'global Media3 alignment and resolved-version guard');
+  const mediaBuild = readRequired(path.join(projectRoot, 'modules', 'caption-media', 'android', 'build.gradle'));
+  requireText(mediaBuild, "file('media3-version.properties').withInputStream { captionStudioMedia3Properties.load(it) }", 'module Media3 version file');
+  requireText(mediaBuild, "def captionStudioMedia3Version = captionStudioMedia3Properties.getProperty('media3Version')", 'module Media3 version binding');
+  const mediaDeclarations = [...mediaBuild.matchAll(/^\s*implementation\s+['"]androidx\.media3:([^'"\r\n]+)['"]/gm)].map(match => match[1]);
+  if (mediaDeclarations.length !== 3 || !['media3-transformer', 'media3-effect', 'media3-ui'].every(name =>
+    mediaDeclarations.includes(`${name}:\${captionStudioMedia3Version}`))) {
+    throw new Error('Caption media Media3 dependencies must use the authoritative Media3 version.');
+  }
   const settings = readRequired(path.join(projectRoot, 'android', 'settings.gradle'));
   const properties = readRequired(path.join(projectRoot, 'android', 'gradle.properties'));
   const wrapper = readRequired(
@@ -105,6 +114,35 @@ function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.
   }
 }
 
+function media3AlignmentBlock(projectRoot) {
+  const properties = readRequired(path.join(projectRoot, 'modules', 'caption-media', 'android', 'media3-version.properties'));
+  const entries = properties.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
+  const version = entries.length === 1 && entries[0].match(/^media3Version=(\d+\.\d+\.\d+)$/)?.[1];
+  if (!version) throw new Error('Caption Studio Media3 version must have one exact release value.');
+  return `// BEGIN Caption Studio Media3 alignment
+// Generated from caption-media/android/media3-version.properties; applies to Expo and transitive modules too.
+def captionStudioMedia3Version = '${version}'
+allprojects {
+    configurations.configureEach {
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'androidx.media3') {
+                details.useVersion(captionStudioMedia3Version)
+                details.because('Caption Studio native clipping requires a consistent Media3 release')
+            }
+        }
+        incoming.afterResolve { dependencies ->
+            dependencies.resolutionResult.allComponents { component ->
+                def module = component.moduleVersion
+                if (module != null && module.group == 'androidx.media3' && module.version != captionStudioMedia3Version) {
+                    throw new GradleException('Caption Studio Media3 alignment failed: ' + module)
+                }
+            }
+        }
+    }
+}
+// END Caption Studio Media3 alignment`;
+}
+
 function readRequired(file) {
   if (!fs.existsSync(file)) throw new Error(`Required generated Android file is missing: ${file}`);
   return fs.readFileSync(file, 'utf8');
@@ -145,6 +183,7 @@ function escapeRegExp(value) {
 if (require.main === module) verifyAndroidReleaseConfig();
 
 module.exports = {
+  media3AlignmentBlock,
   FIXED_ANDROID_PACKAGE,
   PRODUCTION_ANDROID_PACKAGE,
   resolveExpectedAndroidPackage,

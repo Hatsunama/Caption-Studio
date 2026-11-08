@@ -8,8 +8,9 @@ import { runInNewContext } from 'node:vm';
 test('the actual postinstall connects native input and delivery repairs before configuring Android', () => {
   const filename = fileURLToPath(new URL('../scripts/patch-react-native-gradle.js', import.meta.url));
   const calls = [];
-  runInNewContext(readFileSync(filename, 'utf8'), {
-    module: { filename },
+  const module = { filename, exports: {} };
+  const context = {
+    module,
     require(id) {
       if (id === 'node:path') return path;
       if (id === './patch-android-dependencies') return { patchAndroidDependencies: root => calls.push(['android', root]) };
@@ -19,7 +20,9 @@ test('the actual postinstall connects native input and delivery repairs before c
       if (id === './repair-pressable-accessibility') return { repairPressableAccessibility: root => calls.push(['pressable', root]) };
       throw Error(`Unexpected postinstall dependency ${id}`);
     },
-  });
+  };
+  context.require.main = module;
+  runInNewContext(readFileSync(filename, 'utf8'), context);
   const root = path.join(path.dirname(filename), '..');
   assert.deepEqual(calls, [['pressable', root], ['input', root], ['delivery', root], ['android', root], ['release', root]]);
 });

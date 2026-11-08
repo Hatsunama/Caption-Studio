@@ -3,6 +3,18 @@ import test from 'node:test';
 
 import { projectTimelineDuration, projectTimelineSegmentAt } from '../src/lib/project-timeline.ts';
 
+test('fractional caption-only canvas retains its rounded endpoint without inventing footage', () => {
+  const project = { clips: [], captions: [{ id: 'cue', startMs: 0, endMs: 6385.416666666667 }] };
+  const before = structuredClone(project);
+  assert.equal(projectTimelineDuration(project), 6386);
+  for (const time of [0, 6385.416666666667, 6385.75, 6386]) {
+    assert.deepEqual(projectTimelineSegmentAt(project, time), { kind: 'gap', startMs: 0, endMs: 6386 });
+  }
+  assert.equal(projectTimelineSegmentAt(project, 6386.001), undefined);
+  assert.deepEqual(project, before);
+  assert.equal(projectTimelineSegmentAt({ clips: [], captions: [] }, 0), undefined);
+});
+
 test('visible primary and independent translation intervals extend editable canvas', () => {
   const project = {
     clips: [], audioClips: [], layers: [{ kind: 'captions', visible: true }], export: { burnCaptions: true },

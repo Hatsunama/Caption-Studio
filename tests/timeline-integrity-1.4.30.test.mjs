@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
 
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { splitVideoClip } from '../src/lib/project-editor.ts';
@@ -60,5 +62,47 @@ test('timeline seeks retain persistent slot ownership instead of replacing a dec
   assert.equal((controller.match(/useVideoPlayer\(null, configureTimelinePlayer\)/g) ?? []).length, 2);
   assert.match(controller, /const sourceChanged = forceReload \|\| runtime\.playbackUri !== uri/);
   assert.match(controller, /runtime\.preparedClipId === entry\.clip\.id && runtime\.firstFrameReady/);
-  assert.doesNotMatch(controller, /status !== 'readyToPlay'/);
+  assert.match(controller, /const sourceChanged = forceReload \|\| runtime\.playbackUri !== uri\s*\|\| runtime\.sourceId !== source\.id \|\| runtime\.appliedWindowEndMs !== windowEndMs;/);
+  const retirement = controller.slice(controller.indexOf('const retireSurfaceFrames ='), controller.indexOf('const suspendForTranslation ='));
+  assert.match(retirement, /runtime\.prepareToken = nextPrepareToken\(runtime\.prepareToken\);/);
+  assert.match(retirement, /runtime\.firstFrameReady = false/);
+  assert.match(retirement, /runtime\.playbackUri = undefined/);
+  assert.doesNotMatch(controller, /loadedPlaybackUri/);
+  assert.match(controller, /if \(sourceChanged\) \{[\s\S]*?await loadPlayableVideoSource\(player, uri, 15_000, preparation\.signal\)/);
+});
+
+test('preparation identities advance monotonically and reject invalid or exhausted ownership', () => {
+  const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
+  const helper = controller.match(/^function nextPrepareToken\(previous: number\) \{[\s\S]*?^\}/m);
+  assert.ok(helper, 'execute the actual controller helper, without duplicating its implementation');
+  const nextPrepareToken = runInNewContext(`${stripTypeScriptTypes(helper[0])}\nnextPrepareToken;`, {}, { timeout: 1_000 });
+
+  let token = 0;
+  const identities = new Set([token]);
+  for (let expected = 1; expected <= 1_024; expected += 1) {
+    const next = nextPrepareToken(token);
+    assert.equal(next, expected);
+    assert.ok(Number.isSafeInteger(next));
+    assert.ok(next > token);
+    assert.ok(!identities.has(next), 'retired preparation identities must never be reused');
+    identities.add(next);
+    token = next;
+  }
+
+  for (const [previous, expected] of [
+    [2_147_483_647, 2_147_483_648],
+    [4_294_967_295, 4_294_967_296],
+    [Number.MAX_SAFE_INTEGER - 2, Number.MAX_SAFE_INTEGER - 1],
+    [Number.MAX_SAFE_INTEGER - 1, Number.MAX_SAFE_INTEGER],
+  ]) {
+    assert.equal(nextPrepareToken(previous), expected);
+  }
+
+  for (const invalid of [
+    -1, -Number.MAX_SAFE_INTEGER, 0.5, -0.5, NaN, Infinity, -Infinity,
+    Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1,
+    undefined, null, '0', true, false, {}, [], 0n, Symbol('token'),
+  ]) {
+    assert.throws(() => nextPrepareToken(invalid), /preparation request identity was exhausted/);
+  }
 });

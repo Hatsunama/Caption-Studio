@@ -98,6 +98,7 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
   const timers = new Map();
   const frames = new Map(), nativeCommands = [];
   const keyboardListeners = new Map();
+  const appStateListeners = new Map();
   const inputInstances = new Map(), inputProps = new Map();
   let cursor = 0, dirty = false, effects = [], tree, now = 0, timerId = 0, recover, recoveryError;
   const calls = { seeks: [], selects: [], indices: [], offsets: [], drafts: [], keyboards: [], editing: [], focuses: [], alerts: [], saves: [], nativeLayouts: 0, focusCaptures: 0 };
@@ -191,6 +192,10 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
   const jsx = (type, props) => ({ type, props: props ?? {} });
   const native = Object.fromEntries(['FlatList', 'KeyboardAvoidingView', 'Pressable', 'Text', 'TextInput', 'View'].map((name) => [name, name]));
   native.Platform = { OS: platform }; native.Alert = { alert: (...args) => calls.alerts.push(args) };
+  native.AppState = { currentState: nativeReadiness?.appState ?? 'active', addEventListener(event, listener) {
+    assert.ok(['change', 'blur'].includes(event)); appStateListeners.set(listener, event);
+    return { remove: () => appStateListeners.delete(listener) };
+  } };
   native.Keyboard = { isVisible: () => false, addListener(name, callback) {
     keyboardListeners.set(name, callback);
     return { remove: () => keyboardListeners.delete(name) };
@@ -366,6 +371,14 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
   }
   return {
     calls, props, list, row, find, act, fire, measure, viewport, advance,
+    captureAppStateListeners: (event = 'change') => [...appStateListeners].filter(([, type]) => type === event).map(([listener]) => listener),
+    appStateListenerCount: () => appStateListeners.size,
+    blur: () => act(() => { assert.equal(native.AppState.currentState, 'active');
+      for (const [listener, event] of [...appStateListeners]) if (event === 'blur') listener(); }),
+    appState: (state) => act(() => {
+      native.AppState.currentState = state;
+      for (const [listener, event] of [...appStateListeners]) if (event === 'change') listener(state);
+    }),
     nativePosition, nativeContentSize, listMetrics, reportContentSize, commitNativeContent,
     dispatchNativeCommands: () => act(() => {
       for (const command of nativeCommands.splice(0)) command();
@@ -380,6 +393,7 @@ function mount(overrides = {}, platform = 'android', storage = {}, nativeReadine
     },
     pendingFrameCount: () => frames.size,
     captureFrames: () => [...frames.values()],
+    captureTimers: () => [...timers.values()].map(timer => timer.callback),
     captureCellLayout: () => walk(tree, node => !!node.type?.context).props.value,
     commitNativeCell: (index, y, height) => nativePosition.commitCell(list().data[index].id, index, y, height),
     flushNativeScrollEvents: () => act(() => {
@@ -715,6 +729,121 @@ test('Primary Fabric frame coalesces notifications and uses the latest cell geom
     assert.equal(h.calls.offsets.length, offsets + 1);
   } finally { h.unmount(); }
 });
+
+for (const boundary of ['pending frame', 'late measurements', 'initial background mount']) {
+  test(`Primary background pending reveal resumes the same clock after ${boundary}`, () => {
+    const h = boundary === 'pending frame' ? mountBeforeFabricFooterCommit()
+      : mount({ captions: initialPositionCues, currentMs: 10000 }, 'android', {}, {
+        queueCommands: true, appState: boundary === 'initial background mount' ? 'background' : 'active',
+      });
+    try {
+      if (boundary !== 'pending frame') {
+        h.commitNativeContent(fabricContent(48));
+        h.viewport(fabricViewport);
+        h.dispatchNativeCommands();
+      }
+      const staleFrames = h.captureFrames();
+      h.appState('background');
+      const commands = [h.calls.indices.length, h.calls.offsets.length];
+      if (boundary !== 'pending frame') {
+        for (let index = 0; index < 5; index++) h.measure(index, 96 + index * 80, 72);
+        h.reportContentSize(fabricContent(fabricViewport - 8));
+      }
+      for (const callback of staleFrames) h.act(() => callback(0));
+      h.advance(1000); h.frame();
+      assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], commands,
+        'background layout and canceled work must issue no commands');
+      assert.equal(h.pendingFrameCount(), 0);
+      // Native footer readiness arrives without another JS layout notification.
+      h.commitNativeContent(fabricContent(fabricViewport - 8));
+      h.appState('active');
+      const resumedCommands = [h.calls.indices.length, h.calls.offsets.length];
+      for (const callback of staleFrames) h.act(() => callback(0));
+      assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], resumedCommands,
+        'canceled callbacks cannot consume or replace resumed work');
+      settleFabricFrames(h);
+      assert.equal(h.props.currentMs, 10000);
+      assert.equal(h.nativePosition.guideY('cue-4'), 8,
+        'the unchanged current cue must reach the physical guide on resume');
+      assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.selects, []);
+      assert.deepEqual(h.calls.focuses, []);
+      const settled = [h.calls.indices.length, h.calls.offsets.length, h.calls.frameCallbacks];
+      settleFabricFrames(h);
+      assert.deepEqual([h.calls.indices.length, h.calls.offsets.length, h.calls.frameCallbacks], settled);
+    } finally { h.unmount(); }
+  });
+}
+
+test('Primary background pending reveal keeps the retry budget and rejects canceled timers', () => {
+  const h = mount({ currentMs: 4100 }, 'android', {}, {});
+  try {
+    h.viewport(200); h.advance(160);
+    const canceledTimers = h.captureTimers(), canceledFrames = h.captureFrames();
+    assert.ok(canceledTimers.length > 0);
+    h.appState('background');
+    h.appState('active');
+    const commands = [h.calls.indices.length, h.calls.offsets.length];
+    for (const callback of [...canceledTimers, ...canceledFrames]) h.act(() => callback(0));
+    assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], commands);
+    h.advance(1000);
+    assert.equal(h.calls.indices.length, commands[0] + 1,
+      'resume retains attempt two, leaving only the third timed retry');
+    const settled = [h.calls.indices.length, h.calls.offsets.length];
+    h.advance(1000);
+    assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], settled);
+    assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.focuses, []);
+  } finally { h.unmount(); }
+});
+
+test('Primary background pending reveal resumes the latest accepted current cue', () => {
+  const h = mountBeforeFabricFooterCommit();
+  try {
+    const staleFrames = h.captureFrames();
+    h.appState('background');
+    h.update({ currentMs: 8100 });
+    h.commitNativeContent(fabricContent(fabricViewport - 8));
+    h.appState('active');
+    const commands = h.calls.offsets.length;
+    for (const callback of staleFrames) h.act(() => callback(0));
+    assert.equal(h.calls.offsets.length, commands);
+    settleFabricFrames(h);
+    assert.equal(h.nativePosition.guideY('cue-3'), 8);
+    assert.equal(h.calls.offsets.at(-1).offset, 328);
+    assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.focuses, []);
+  } finally { h.unmount(); }
+});
+
+for (const boundary of ['drag', 'close', 'session change', 'save']) {
+  test(`Primary background pending reveal cannot reclaim intent after ${boundary}`, () => {
+    const h = mountBeforeFabricFooterCommit();
+    try {
+      const staleFrames = h.captureFrames(), staleList = h.list(), staleCell = h.captureCellLayout();
+      if (boundary === 'drag') {
+        h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 0); h.advance(150);
+      }
+      h.appState('background');
+      if (boundary === 'close') h.update({ visible: false });
+      if (boundary === 'session change') h.update({ projectId: 'next-project', captions: [] });
+      if (boundary === 'save') {
+        h.update({ onSave: () => new Promise(() => {}) });
+        h.act(() => h.button('Save all caption edits').onPress());
+      }
+      h.dispatchNativeCommands();
+      const commands = [h.calls.indices.length, h.calls.offsets.length];
+      const seeks = [...h.calls.seeks], focuses = [...h.calls.focuses];
+      h.commitNativeContent(fabricContent(fabricViewport - 8));
+      h.appState('active');
+      h.act(() => {
+        for (const callback of staleFrames) callback(0);
+        staleList.onContentSizeChange(360, fabricContent(fabricViewport - 8));
+        staleCell('cue-4', 4, { x: 0, y: 416, width: 360, height: 72 });
+      });
+      settleFabricFrames(h);
+      assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], commands);
+      assert.deepEqual(h.calls.seeks, seeks); assert.deepEqual(h.calls.focuses, focuses);
+    } finally { h.unmount(); }
+  });
+}
 
 test('Primary Fabric pending frame survives empty recovery without another layout', () => {
   const h = mountBeforeFabricFooterCommit('after viewport and cells', { deferRecovery: true });
@@ -1622,6 +1751,111 @@ test('end-drag without momentum releases across ticks; new gestures can revisit 
   assert.deepEqual(h.calls.seeks, [2000]);
   h.fire('onScrollBeginDrag'); h.fire('onScroll', 292);
   assert.deepEqual(h.calls.seeks, [2000, 2000]);
+});
+
+for (const interrupted of ['drag', 'momentum', 'missingEnd']) test(`focus-only blur abandons primary ${interrupted} without its terminal event so fresh playback follows the current cue`, () => {
+  const h = mount({ currentMs: 100 });
+  try {
+    h.fire('onScrollBeginDrag'); h.fire('onScroll', 192);
+    assert.deepEqual(h.calls.seeks, [1000], 'the live drag must seek before interruption');
+    h.update({ currentMs: 1000 });
+    if (interrupted === 'momentum') {
+      h.fire('onScrollEndDrag', 192); h.fire('onMomentumScrollBegin');
+    }
+    if (interrupted === 'missingEnd') h.fire('onScrollEndDrag', 192);
+    h.blur();
+    const count = h.calls.offsets.length;
+    h.update({ isPlaying: true, currentMs: 4100 });
+    assert.ok(h.calls.offsets.length > count, 'fresh playback must issue primary follow after background abandoned the stream');
+    assert.equal(h.calls.offsets.at(-1).offset, 500 - 8, 'the current cue must reach the existing top guide');
+    h.fire('onScroll', 492); h.advance(1000);
+    assert.deepEqual(h.calls.seeks, [1000], 'follow acknowledgements cannot inherit the abandoned drag');
+    assert.deepEqual(h.calls.selects, ['cue-1'], 'passive follow must not publish user selection');
+    h.fire('onScrollBeginDrag'); h.fire('onScroll', 292);
+    assert.deepEqual(h.calls.seeks, [1000, 2000], 'a fresh drag retains intentional seeking');
+  } finally { h.unmount(); }
+});
+
+for (const interrupted of ['drag', 'momentum']) test(`background abandons primary ${interrupted} without its terminal event so fresh playback follows the current cue`, () => {
+  const h = mount({ currentMs: 100 });
+  try {
+    h.fire('onScrollBeginDrag'); h.fire('onScroll', 192);
+    assert.deepEqual(h.calls.seeks, [1000], 'the live drag must seek before interruption');
+    h.update({ currentMs: 1000 });
+    if (interrupted === 'momentum') {
+      h.fire('onScrollEndDrag', 192); h.fire('onMomentumScrollBegin');
+    }
+    h.appState('background'); h.appState('active');
+    const count = h.calls.offsets.length;
+    h.update({ isPlaying: true, currentMs: 4100 });
+    assert.ok(h.calls.offsets.length > count, 'fresh playback must issue primary follow after background abandoned the stream');
+    assert.equal(h.calls.offsets.at(-1).offset, 500 - 8, 'the current cue must reach the existing top guide');
+    h.fire('onScroll', 492); h.advance(1000);
+    assert.deepEqual(h.calls.seeks, [1000], 'follow acknowledgements cannot inherit the abandoned drag');
+    assert.deepEqual(h.calls.selects, ['cue-1'], 'passive follow must not publish user selection');
+    h.fire('onScrollBeginDrag'); h.fire('onScroll', 292);
+    assert.deepEqual(h.calls.seeks, [1000, 2000], 'a fresh drag retains intentional seeking');
+  } finally { h.unmount(); }
+});
+
+for (const interrupted of [false, true]) test(`focus-only blur primary ${interrupted ? 'interruption discards' : 'normal completion retains'} an unresolved scroll seek awaiting cell measurement`, () => {
+  const h = mount({}, 'android', {}, {});
+  try {
+    h.viewport(200); h.measure(0);
+    h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 292); h.advance(150);
+    assert.deepEqual(h.calls.seeks, [], 'the row at the guide is not measured yet');
+    if (interrupted) { h.blur(); }
+    const commands = h.calls.offsets.length;
+    h.measure(2);
+    assert.deepEqual(h.calls.seeks, interrupted ? [] : [2000]);
+    assert.equal(h.calls.offsets.length, commands, 'late measurement preserves ordinary manual viewport ownership');
+    if (interrupted) {
+      h.update({ currentMs: 2100, isPlaying: true });
+      assert.equal(h.calls.offsets.at(-1).offset, 292, 'fresh playback can take ownership');
+    }
+  } finally { h.unmount(); }
+});
+
+for (const interrupted of [false, true]) test(`primary ${interrupted ? 'interruption discards' : 'normal completion retains'} an unresolved scroll seek awaiting cell measurement`, () => {
+  const h = mount({}, 'android', {}, {});
+  try {
+    h.viewport(200); h.measure(0);
+    h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 292); h.advance(150);
+    assert.deepEqual(h.calls.seeks, [], 'the row at the guide is not measured yet');
+    if (interrupted) { h.appState('inactive'); h.appState('active'); }
+    const commands = h.calls.offsets.length;
+    h.measure(2);
+    assert.deepEqual(h.calls.seeks, interrupted ? [] : [2000]);
+    assert.equal(h.calls.offsets.length, commands, 'late measurement preserves ordinary manual viewport ownership');
+    if (interrupted) {
+      h.update({ currentMs: 2100, isPlaying: true });
+      assert.equal(h.calls.offsets.at(-1).offset, 292, 'fresh playback can take ownership');
+    }
+  } finally { h.unmount(); }
+});
+
+test('primary effect replay replaces its AppState subscription and ignores retired deliveries', () => {
+  const h = mount();
+  const retired = h.captureAppStateListeners();
+  const retiredBlur = h.captureAppStateListeners('blur');
+  assert.equal(retiredBlur.length, 1);
+  assert.equal(retired.length, 1);
+  h.replayEffects();
+  assert.equal(h.appStateListenerCount(), 2);
+  h.fire('onScrollBeginDrag');
+  h.act(() => { retired.forEach(listener => listener('background')); retiredBlur.forEach(listener => listener()); });
+  h.fire('onScroll', 192);
+  assert.deepEqual(h.calls.seeks, [1000], 'retired delivery cannot abandon the new drag');
+  h.appState('background');
+  h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 292);
+  h.appState('active'); h.fire('onScroll', 392); h.advance(200);
+  assert.deepEqual(h.calls.seeks, [1000], 'background callbacks cannot acquire or retain navigation');
+  const unmountedBlur = h.captureAppStateListeners('blur');
+  h.unmount();
+  assert.equal(h.appStateListenerCount(), 0);
+  const commands = h.calls.offsets.length;
+  h.act(() => unmountedBlur.forEach(listener => listener()));
+  assert.equal(h.calls.offsets.length, commands);
 });
 
 test('playback follows changing cues without reverse seeks', () => {
@@ -2706,4 +2940,42 @@ test('the actual workspace supplies top safe space only when its native header i
     assert.equal(style.paddingTop, expectedTop);
     assert.equal(style.flexDirection, width > height ? 'row' : 'column');
   }
+});
+
+for (const platform of ['ios', 'web']) test(`${platform} primary subscribes only to AppState change`, () => {
+  const h = mount({}, platform);
+  try { assert.equal(h.appStateListenerCount(), 1); assert.equal(h.captureAppStateListeners('blur').length, 0); }
+  finally { h.unmount(); }
+});
+
+test('primary focus-only blur preserves an unmeasured nonzero opening reveal and input editing', () => {
+  const h = mount({ captions: initialPositionCues, currentMs: 10000 }, 'android', {}, { queueCommands: true });
+  try {
+    h.commitNativeContent(fabricContent(48)); h.viewport(fabricViewport); h.dispatchNativeCommands();
+    assert.equal(h.calls.indices.at(-1).index, 4);
+    const frames = h.pendingFrameCount();
+    h.blur();
+    assert.equal(h.pendingFrameCount(), frames, 'programmatic frame must survive activity blur');
+    h.commitNativeContent(fabricContent(fabricViewport - 8));
+    for (let index = 0; index < 5; index++) h.measure(index, 96 + index * 80, 72);
+    h.reportContentSize(fabricContent(fabricViewport - 8)); settleFabricFrames(h);
+    assert.equal(h.nativePosition.guideY('cue-4'), 8);
+    assert.deepEqual(h.calls.seeks, []); assert.deepEqual(h.calls.focuses, []);
+    h.blur();
+    assert.equal(h.input(4).editable, true);
+    h.act(() => h.input(4).onChangeText('Still editable after blur'));
+    assert.equal(h.input(4).value, 'Still editable after blur');
+  } finally { h.unmount(); }
+});
+
+test('primary focus-only blur preserves a completed user viewport through late layout', () => {
+  const h = mount();
+  try {
+    h.fire('onScrollBeginDrag'); h.fire('onScrollEndDrag', 292); h.advance(150);
+    const commands = [h.calls.indices.length, h.calls.offsets.length];
+    const seeks = [...h.calls.seeks];
+    h.blur(); h.measure(2); h.frame(); h.advance(200);
+    assert.deepEqual([h.calls.indices.length, h.calls.offsets.length], commands);
+    assert.deepEqual(h.calls.seeks, seeks);
+  } finally { h.unmount(); }
 });

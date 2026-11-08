@@ -88,6 +88,8 @@ function mount(kind) {
     context.navigationFrameRef = { current: undefined };
     context.requestAnimationFrame = (callback) => { const key = nextFrame++; frames.set(key, callback); return key; };
     context.cancelAnimationFrame = (key) => frames.delete(key);
+    // Include the production dependency so Save exercises physical cancellation too.
+    context.cancelNavigationWork = expression(kind, 'cancelNavigationWork', context);
     const cancelNavigation = expression(kind, 'cancelNavigation', context);
     context.cancelNavigation = () => { navigationCancellations++; cancelNavigation(); };
     context.ownsInput = expression(kind, 'ownsInput', context);

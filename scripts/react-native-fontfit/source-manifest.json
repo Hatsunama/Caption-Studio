@@ -1,0 +1,59 @@
+{
+  "reactNativeVersion": "0.86.3",
+  "expoMajor": 57,
+  "payloadSha256": "c3e3bec85699d4967bc84d18601e2002acc8299447936adeeabec6203e319949",
+  "originalWriterSha256": "872ad7a9f7232564709feb6dd94b6b6a6a6f9f12ef54c970cba571294bbe9df5",
+  "files": [
+    {
+      "relative": "ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt",
+      "beforeSha256": "6dd95802eae01819bc96c64f920eab119c3dbac20a659e3ad8ef602eba47caf8",
+      "afterSha256": "bed3c49edc8807ed92cccbeb34aa2ed9be2cf8a40cdba5f66eee4e013cce3c77",
+      "chunkCount": 17
+    },
+    {
+      "relative": "ReactAndroid/src/main/java/com/facebook/react/views/text/PreparedLayout.kt",
+      "beforeSha256": "c3ceaa3b0ab040b3e4bdea5c09b69dc86d59d4ac2aa897114ca655ecce7c128e",
+      "afterSha256": "948c33f6f51a8c623c78541fb70dfd42f7753b11b6420e5169e5a769324e37b4",
+      "chunkCount": 2
+    },
+    {
+      "relative": "ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextViewManager.kt",
+      "beforeSha256": "d724532208681904c7cc11326859e10ecd4482c5ba14a1fc0ab9d70d2c5895e0",
+      "afterSha256": "f3d2e7c256c3f8d3b4453d5538d3cc259e52ea0317d183bd00667a2dd2ef441c",
+      "chunkCount": 2
+    },
+    {
+      "relative": "ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextView.java",
+      "beforeSha256": "f6854ff6811b1ead2c93edbe7ae740ac76de78782478bcc2e07f73457a1ab99d",
+      "afterSha256": "7277c6a4ed6619a118f1e110d9125888093b409613849275b5046c84f8f39fec",
+      "chunkCount": 15
+    },
+    {
+      "relative": "ReactCommon/react/renderer/attributedstring/conversions.h",
+      "beforeSha256": "96265168deb10c4564024b58356a96dbfdeef79c1fad859f98c9042ea967c91e",
+      "afterSha256": "e80e457fd3f33da415d41848b1dc50ff7858d8f1914ecb85360040777c4497c9",
+      "chunkCount": 2
+    },
+    {
+      "relative": "ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java",
+      "beforeSha256": "7d2de088ca63afa0d38764dee2667a6bd64818b65c5c153fc5cf1270adb60829",
+      "afterSha256": "171c9e4e1040bc2acee2f74057e774f4009f007069ffa135fa4388c5281597ac",
+      "chunkCount": 1
+    }
+  ],
+  "evidence": {
+    "minscaleRedRun": 42499752484,
+    "redExpectedPx": 20,
+    "redActualPx": 12,
+    "nativeGreen": {
+      "run": 42511394177,
+      "source": "3ac29421f463b7382dcc843bea9ddc51e6ac433c",
+      "tests": 255,
+      "failures": 0,
+      "skipped": 0,
+      "scope": "Private component suite, including observer tests not adopted into product; physical and final combined-product verification remain pending."
+    },
+    "physicalVerification": "pending",
+    "cacheRetagRedRun": 42510008489
+  }
+}
