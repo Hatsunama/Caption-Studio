@@ -22,7 +22,7 @@ jobs:
       - name: Fetch and verify exact signed build JDKs
         run: |
           mkdir -p evidence
-          node scripts/build-toolchain/verified-java-download.mjs --install "$RUNNER_TEMP" --receipt "$GITHUB_WORKSPACE/evidence/verified-java.json"
+          node scripts/build-toolchain/verified-java-download.mjs --install "$RUNNER_TOOL_CACHE" --receipt "$GITHUB_WORKSPACE/evidence/verified-java.json"
       - name: Harden and verify Java trust stores
         run: node scripts/harden-java-truststores.mjs --ci
       - name: Install locked dependencies

@@ -11,8 +11,10 @@ export const JAVA_RELEASES = Object.freeze({
     21: Object.freeze({ major: 21, version: '21.0.13+9', file: 'OpenJDK21U-jdk_x64_linux_hotspot_21.0.13_9.tar.gz', bytes: 207858352, sha256: 'd7f5d5cf865a2902b70ff549b97586a7d3f234e016f041ab447ea740c7d66d1c', sigBytes: 310, sigSha256: '9033070d11b972570405554d42b2108583c05aae3bd4f4aabeceec69533976b7' }),
     17: Object.freeze({ major: 17, version: '17.0.21+9', file: 'OpenJDK17U-jdk_x64_linux_hotspot_17.0.21_9.tar.gz', bytes: 193594705, sha256: '8b9b611d917e3dfd8419d3566b5949226f69b052fed7e109c1368add1dfe8711', sigBytes: 310, sigSha256: '7ec27464f0180ad18ad9733f1151f74367493763187fa48b8fb97ebda203bd0f' }),
 });
-function requireThat(ok, message) { if (!ok)
-    throw new Error(message); }
+function requireThat(ok, message) {
+    if (!ok)
+        throw new Error(message);
+}
 export function downloadUrl(a, signature = false) { requireThat(Object.values(JAVA_RELEASES).includes(a), 'Unpinned release'); return signature ? `https://github.com/adoptium/temurin${a.major}-binaries/releases/download/jdk-${encodeURIComponent(a.version)}/${a.file}.sig?download=1` : `https://api.adoptium.net/v3/binary/version/jdk-${encodeURIComponent(a.version)}/linux/x64/jdk/hotspot/normal/eclipse`; }
 export async function verifyFile(file, bytes, sha256) {
     const stat = fs.lstatSync(file);
@@ -30,17 +32,29 @@ export function assertSignatureStatus(output, status) {
     const f = valid[0][1].trim().split(/\s+/);
     requireThat(f.length === 10 && f[0] === PUBLIC_KEY_FINGERPRINT && f[9] === PUBLIC_KEY_FINGERPRINT && ['8', '9', '10'].includes(f[7]) && f[8] === '00', 'Wrong publisher/signature digest');
 }
-const gpgPath = file => process.platform === 'win32' ? file.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, (_, d) => '/' + d.toLowerCase() + '/') : file;
+const gpgPath = file => {
+    if (process.platform !== 'win32')
+        return file;
+    const converter = path.join(path.dirname(gpgExecutable('gpg')), 'cygpath.exe');
+    const converted = command(converter, ['-u', path.resolve(file)]).stdout.trim();
+    requireThat(converted.startsWith('/') && [...converted].every(c => c.charCodeAt(0) > 31), 'Invalid native GPG path');
+    return converted;
+};
 function command(exe, args) { const r = spawnSync(exe, args, { encoding: 'utf8', timeout: 600000, maxBuffer: 1024 * 1024, windowsHide: true }); requireThat(!r.error && r.status === 0, `${path.basename(exe)} failed: ${(r.stderr ?? '').slice(-600)}`); return r; }
-function gpgExecutable(name) { if (process.platform !== 'win32')
-    return name; const candidate = path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'usr', 'bin', name + '.exe'); requireThat(fs.statSync(candidate).isFile(), 'Git GPG tool missing'); return candidate; }
+function gpgExecutable(name) {
+    if (process.platform !== 'win32')
+        return name;
+    const candidate = path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'usr', 'bin', name + '.exe');
+    requireThat(fs.statSync(candidate).isFile(), 'Git GPG tool missing');
+    return candidate;
+}
 function download(url, dest, bytes) {
     const python = process.platform === 'win32' ? 'C:\\Python311\\python.exe' : 'python3';
     const script = fileURLToPath(new URL('./ranged-download.py', import.meta.url));
     const r = spawnSync(python, ['-I', '-B', script, url, dest, String(bytes)], { encoding: 'utf8', stdio: ['ignore', 'inherit', 'pipe'], timeout: 600000, maxBuffer: 1024 * 1024, windowsHide: true });
     requireThat(!r.error && r.status === 0, 'Bounded HTTPS transport failed; no archive is trusted');
 }
-export async function verifyPublisher(archive, signature, workspace) {
+export async function preparePublisher(workspace) {
     const key = fileURLToPath(new URL('./adoptium-public.asc', import.meta.url));
     await verifyFile(key, fs.statSync(key).size, PUBLIC_KEY_SHA256);
     const home = path.join(workspace, 'gnupg');
@@ -49,6 +63,10 @@ export async function verifyPublisher(archive, signature, workspace) {
     const ring = path.join(workspace, 'publisher.gpg');
     if (!fs.existsSync(ring))
         command(gpgExecutable('gpg'), ['--no-options', '--batch', '--homedir', gpgPath(home), '--dearmor', '--output', gpgPath(ring), gpgPath(key)]);
+    return { home, ring };
+}
+export async function verifyPublisher(archive, signature, workspace) {
+    const { home, ring } = await preparePublisher(workspace);
     const r = spawnSync(gpgExecutable('gpgv'), ['--homedir', gpgPath(home), '--status-fd', '1', '--keyring', gpgPath(ring), gpgPath(signature), gpgPath(archive)], { encoding: 'utf8', timeout: 60000, maxBuffer: 1024 * 1024, windowsHide: true });
     requireThat(!r.error, 'Publisher verifier unavailable');
     assertSignatureStatus(r.stdout ?? '', r.status);
@@ -62,12 +80,13 @@ async function main() {
     requireThat(!fs.existsSync(receipt), 'Receipt already exists');
     requireThat(fs.lstatSync(parent).isDirectory() && !fs.lstatSync(parent).isSymbolicLink() && path.relative(parent, fs.realpathSync(parent)) === '', 'Stage parent redirected');
     if (install)
-        requireThat(process.platform === 'linux' && process.env.GITHUB_ACTIONS === 'true' && process.env.GITHUB_REPOSITORY === 'Hatsunama/Caption-Studio' && process.env.GITHUB_ENV && process.env.GITHUB_PATH, 'Installation restricted to isolated authorized Linux CI');
+        requireThat(process.platform === 'linux' && process.arch === 'x64' && typeof process.env.RUNNER_TOOL_CACHE === 'string' && path.resolve(process.env.RUNNER_TOOL_CACHE) === parent && process.env.GITHUB_ACTIONS === 'true' && process.env.GITHUB_REPOSITORY === 'Hatsunama/Caption-Studio' && process.env.GITHUB_ENV && process.env.GITHUB_PATH, 'Installation restricted to isolated authorized Linux CI');
     const work = fs.mkdtempSync(path.join(parent, 'caption-studio-verified-java-'));
     fs.chmodSync(work, 0o700);
     let retain = false;
     const results = [];
     try {
+        await preparePublisher(work); // Prove native GPG path/bootstrap before any large download.
         for (const a of [JAVA_RELEASES[21], JAVA_RELEASES[17]]) {
             const archive = path.join(work, a.file), signature = archive + '.sig';
             console.log(`Downloading pinned signed Temurin ${a.version}`);
@@ -99,7 +118,7 @@ async function main() {
             fs.appendFileSync(process.env.GITHUB_PATH, path.join(home, 'bin') + '\n');
             retain = true;
         }
-        fs.writeFileSync(receipt, JSON.stringify({ transport: 'official HTTPS release URL with query; fresh download, no JDK cache', install, publicKeySha256: PUBLIC_KEY_SHA256, results }, null, 2) + '\n', { flag: 'wx' });
+        fs.writeFileSync(receipt, JSON.stringify({ transport: 'official Adoptium API/release signature via bounded HTTPS ranges; fresh download, no JDK cache', install, publicKeySha256: PUBLIC_KEY_SHA256, results }, null, 2) + '\n', { flag: 'wx' });
     }
     finally {
         if (!retain) {

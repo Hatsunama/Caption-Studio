@@ -29,8 +29,12 @@ test('manual transport retains exact signed Temurin builds and TLS release origi
     assert.match(key.toString(), /BEGIN PGP PUBLIC KEY BLOCK/);
     assert.doesNotMatch(key.toString(), /PRIVATE KEY/);
 });
-test('signature requires a single valid pinned signer and SHA256 or stronger', () => { assert.doesNotThrow(() => assertSignatureStatus(good, 0)); for (const bad of [good.replace(fpr, 'A'.repeat(40)), good.replace(' 1 8 00 ', ' 1 2 00 '), good + good, good + '[GNUPG:] EXPKEYSIG key expired\n', good + '[GNUPG:] REVKEYSIG key revoked\n', good + '[GNUPG:] BADSIG key\n', '[GNUPG:] GOODSIG key only\n'])
-    assert.throws(() => assertSignatureStatus(bad, 0)); assert.throws(() => assertSignatureStatus(good, 1)); });
+test('signature requires a single valid pinned signer and SHA256 or stronger', () => {
+    assert.doesNotThrow(() => assertSignatureStatus(good, 0));
+    for (const bad of [good.replace(fpr, 'A'.repeat(40)), good.replace(' 1 8 00 ', ' 1 2 00 '), good + good, good + '[GNUPG:] EXPKEYSIG key expired\n', good + '[GNUPG:] REVKEYSIG key revoked\n', good + '[GNUPG:] BADSIG key\n', '[GNUPG:] GOODSIG key only\n'])
+        assert.throws(() => assertSignatureStatus(bad, 0));
+    assert.throws(() => assertSignatureStatus(good, 1));
+});
 test('integrity rejects truncated, tampered, oversized and linked input before use', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-java-integrity-'));
     try {
@@ -82,7 +86,7 @@ test('every manual Java bootstrap hardens both verified JDKs before any consumer
                 if (!String(steps[i].run ?? '').includes('scripts/build-toolchain/verified-java-download.mjs --install'))
                     continue;
                 count++;
-                assert.match(steps[i].run, /--install "\$RUNNER_TEMP" --receipt "\$GITHUB_WORKSPACE\/evidence\/verified-java.json"/);
+                assert.match(steps[i].run, /--install "\$RUNNER_TOOL_CACHE" --receipt "\$GITHUB_WORKSPACE\/evidence\/verified-java.json"/);
                 assert.equal(steps[i + 1].name, 'Harden and verify Java trust stores');
                 assert.equal(steps[i + 1].run, 'node scripts/harden-java-truststores.mjs --ci');
                 assert.ok(steps.slice(0, i).every(x => !String(x.run ?? '').match(/gradlew|keytool|npm ci/)), 'No consuming build or dependency install before hardening');
@@ -124,4 +128,21 @@ with tempfile.TemporaryDirectory(prefix='cs-java-range-test-') as root:
 `;
     const r = spawnSync(python, ['-I', '-B', '-c', code], { encoding: 'utf8', timeout: 10000 });
     assert.equal(r.status, 0, (r.stderr ?? '') + String(r.error ?? ''));
+});
+test('real publisher keyring initializes in an isolated home before download', async () => {
+    const { preparePublisher } = await import('../scripts/build-toolchain/verified-java-download.mjs');
+    const parent = fs.realpathSync(os.tmpdir()), dir = fs.mkdtempSync(path.join(parent, 'cs-java-publisher-test-'));
+    try {
+        const result = await preparePublisher(dir);
+        assert.equal(path.dirname(result.home), dir);
+        assert.equal(path.dirname(result.ring), dir);
+        assert.ok(fs.statSync(result.ring).size > 1000);
+        assert.ok(fs.statSync(result.home).isDirectory());
+    }
+    finally {
+        assert.equal(path.dirname(fs.realpathSync(dir)), parent);
+        assert.match(path.basename(dir), /^cs-java-publisher-test-/);
+        assert.ok(!fs.lstatSync(dir).isSymbolicLink());
+        fs.rmSync(dir, { recursive: true, force: false });
+    }
 });
