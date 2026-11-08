@@ -106,7 +106,9 @@ public class ReactTextViewOwnershipTest {
     assertSize(cached.layout.getText(), RAW_PX);
     assertSame(cached.rawSize, sizeSpan(cached.text));
     assertSame(cached.text, view.getSpanned());
-    assertBasePaint(base, view.getPaint());
+    // The view paint is presentation state: it must consume the fitter's base-size output.
+    assertEquals(FLOOR_PX, view.getPaint().getTextSize(), 0f);
+    assertEquals(base.density, view.getPaint().density, 0f);
     assertBasePaint(cached.layoutPaintBefore, cached.layout.getPaint());
     assertMetadata(cached.text, cached);
   }
@@ -175,7 +177,7 @@ public class ReactTextViewOwnershipTest {
   }
 
   @Test public void noRnSizeSpan_drawConsumesFittedBasePaintMinimum() throws Exception {
-    CachedInput cached = new CachedInput(false);
+    CachedInput cached = new CachedInput(false, 6f);
     ReactTextView view = newView(cached, true, 6f);
     assertEquals(0, cached.text.getSpans(0, TEXT.length(), rnSizeClass).length);
     frameAndDraw(view, WIDE);
@@ -256,9 +258,9 @@ public class ReactTextViewOwnershipTest {
     final TextPaint layoutPaintBefore;
     final Object prepared;
 
-    CachedInput() throws Exception { this(true); }
+    CachedInput() throws Exception { this(true, RAW_PX); }
 
-    CachedInput(boolean includeRnSize) throws Exception {
+    CachedInput(boolean includeRnSize, float basePx) throws Exception {
       rawSize = includeRnSize ? rnSizeConstructor.newInstance(RAW_PX) : null;
       reactTag = internalSpan("ReactTagSpan", REACT_TAG);
       fragmentIndex = internalSpan("ReactFragmentIndexSpan", 0);
@@ -267,7 +269,7 @@ public class ReactTextViewOwnershipTest {
         if (span != null) text.setSpan(span, 0, TEXT.length(), FLAGS);
       }
       TextPaint paint = new TextPaint(TextPaint.ANTI_ALIAS_FLAG);
-      paint.setTextSize(RAW_PX);
+      paint.setTextSize(basePx);
       paint.density = 3f;
       layout = StaticLayout.Builder.obtain(text, 0, text.length(), paint, WIDE)
           .setIncludePad(false).setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE).build();
@@ -317,7 +319,6 @@ public class ReactTextViewOwnershipTest {
   }
 
   private static void assertBasePaint(TextPaint expected, TextPaint actual) {
-    assertEquals(RAW_PX, actual.getTextSize(), 0f);
     assertEquals(expected.getTextSize(), actual.getTextSize(), 0f);
     assertEquals(expected.density, actual.density, 0f);
     assertEquals(expected.baselineShift, actual.baselineShift);
