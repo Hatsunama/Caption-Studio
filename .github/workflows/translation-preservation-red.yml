@@ -43,6 +43,7 @@ jobs:
           ./android/gradlew -p android :app:dependencyInsight --dependency react-android --configuration releaseRuntimeClasspath --no-daemon --console=plain 2>&1 | tee evidence/app-react-android-runtime.txt
           ./android/gradlew -p android :app:dependencyInsight --dependency hermes-android --configuration releaseRuntimeClasspath --no-daemon --console=plain 2>&1 | tee evidence/app-hermes-android-runtime.txt
           ./android/gradlew -p android :app:dependencyInsight --dependency kotlin-stdlib --configuration releaseRuntimeClasspath --no-daemon --console=plain 2>&1 | tee evidence/app-kotlin-stdlib-runtime.txt
+          node --max-old-space-size=128 scripts/verify-native-notice-versions.cjs evidence/app-kotlin-stdlib-runtime.txt
           cd android
           ./gradlew :caption-translation:verifyTranslationSdkToolchain :caption-translation:testReleaseUnitTest --no-daemon --stacktrace --warning-mode all
       - name: Retain Gradle module test reports

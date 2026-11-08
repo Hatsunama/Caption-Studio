@@ -51,6 +51,7 @@ jobs:
           ./gradlew :app:dependencyInsight --dependency react-android --configuration releaseRuntimeClasspath --no-daemon --console=plain 2>&1 | tee ../evidence/app-react-android-runtime.txt
           ./gradlew :app:dependencyInsight --dependency hermes-android --configuration releaseRuntimeClasspath --no-daemon --console=plain 2>&1 | tee ../evidence/app-hermes-android-runtime.txt
           ./gradlew :app:dependencyInsight --dependency kotlin-stdlib --configuration releaseRuntimeClasspath --no-daemon --console=plain 2>&1 | tee ../evidence/app-kotlin-stdlib-runtime.txt
+          node --max-old-space-size=128 ../scripts/verify-native-notice-versions.cjs ../evidence/app-kotlin-stdlib-runtime.txt
       - name: Execute production composition regression
         env:
           NODE_ENV: production

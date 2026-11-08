@@ -1,0 +1,9 @@
+# Frozen representative lines from evidence/app-kotlin-stdlib-runtime.txt (UTF-8).
+# Repository HEAD supplied: 68ca56ff6979c6e13cd930d97e5e0be672126c4e
+# CI run: 42515642930
+# artifact.zip SHA-256: f99f6c320aa4e64d5879b39d67ac6cab750091883c84c906da72315dbb583ff4
+# Full original receipt remains external; these are selected/caller lines, not a complete graph.
++--- org.jetbrains.kotlin:kotlin-reflect:2.3.21
+|    \--- com.google.ai.edge.litertlm:litertlm-android:0.16.1 (requested org.jetbrains.kotlin:kotlin-reflect:2.2.21)
++--- org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2
+|    \--- com.google.ai.edge.litertlm:litertlm-android:0.16.1 (requested org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0)

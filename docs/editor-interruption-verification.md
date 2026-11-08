@@ -252,3 +252,11 @@ stdlib, actual final full-suite/native results, the exact untraced artifact's
 toolbar pixels before/after resize and interruption on both phones, and the
 existing preview/PiP/edit/save/export checks. Restore device preferences and
 return Home. Reuse canonical source media and remove newly created test exports.
+
+The resolved native graph selects Kotlin reflection2.3.21 and coroutines
+Android1.10.2. The two existing notices now read a shared version declaration,
+and each live native builder verifies it against its fresh selected-component
+receipt. Caller-requested versions and Gradle constraints are not treated as
+selected artifacts. The information values change; notice layout stays intact.
+The first actual overview regression failed on the older displayed versions;
+constraint-only and workflow-wiring regressions also failed before repair.

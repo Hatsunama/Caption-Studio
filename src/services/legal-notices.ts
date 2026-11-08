@@ -1,3 +1,5 @@
+import nativeNoticeVersions from '../../shared/native-notice-versions.json';
+
 import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system/legacy';
 
@@ -60,8 +62,8 @@ const OVERVIEW = `Caption Studio is MIT-licensed. It includes open-source Androi
 Native media and machine-learning components
 • Google AI Edge LiteRT-LM 0.16.1 — Apache License 2.0
 • Gson 2.13.2 — Apache License 2.0
-• Kotlin reflection 2.2.21 — Apache License 2.0
-• Kotlin coroutines Android 1.9.0 — Apache License 2.0
+• Kotlin reflection ${nativeNoticeVersions['org.jetbrains.kotlin:kotlin-reflect']} — Apache License 2.0
+• Kotlin coroutines Android ${nativeNoticeVersions['org.jetbrains.kotlinx:kotlinx-coroutines-android']} — Apache License 2.0
 • AndroidX Media3 Transformer and Effect — Apache License 2.0
 • Expo, React Native, and React Navigation components — MIT License
 
