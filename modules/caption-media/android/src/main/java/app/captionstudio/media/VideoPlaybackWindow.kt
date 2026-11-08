@@ -2,6 +2,8 @@ package app.captionstudio.media
 
 import android.content.Context
 import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -103,8 +105,25 @@ internal class VideoPlaybackWindow : AutoCloseable {
     private var prepared = false
     private var installed: MediaItem? = null
     private var receipt: VideoFrameReceipt? = null
+    // PRIVATE never-merge numeric CSV. 1 start, 2 install, 3 evaluate, 4 timeout, 5 finish.
+    // kind,event,row,token,playerId,endMs,targetMs,position,state,error,itemMatch,live,code,receipt...
+    private var probeRows = 0
+    private fun probe(event: Int, code: String? = null) {
+      runCatching {
+        if (probeRows >= 120 || (event == 3 && probeRows >= 110)) return
+        probeRows++
+        val live = Looper.myLooper() == handler.looper && !done && !retired && isCurrent()
+        val bucket = when (code) { null -> 0; STALE -> 1; INVALID -> 2; BUSY -> 3; TIMEOUT -> 4; PLAYER_ERROR -> 5; else -> 6 }
+        Log.i("CSResumeDiag", listOf(2, event, probeRows, token, System.identityHashCode(player), endMs ?: -1L, targetMs,
+          if (live) player.currentPosition else -1L, if (live) player.playbackState else -1,
+          if (live) if (player.playerError != null) 1 else 0 else -1,
+          if (live) if (player.currentMediaItem === installed) 1 else 0 else -1,
+          if (live) 1 else 0, bucket).joinToString(",") + "," + (receipt?.diagnosticSnapshot() ?: "-1"))
+      }
+    }
     private val timeout = Runnable {
       synchronized(lock) {
+        probe(4)
         val matches = runCatching { isCurrent() && player.currentMediaItem === installed }.getOrDefault(false)
         finish(if (matches) TIMEOUT else STALE)
       }
@@ -129,6 +148,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
     val start = Runnable {
       synchronized(lock) {
         if (done || retired) return@synchronized
+        probe(1)
         if (!isCurrent()) { finish(STALE); return@synchronized }
         try {
           val current = player.currentMediaItem
@@ -144,6 +164,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
             synchronized(lock) { if (!done && !retired && prepared) evaluate() }
           }
           handler.postDelayed(timeout, timeoutMs)
+          probe(2)
           install(item, targetMs)
           prepared = true
           evaluate() // READY alone never completes; the installed target needs all frame receipts.
@@ -152,6 +173,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
     }
 
     private fun evaluate() {
+      probe(3)
       try {
         if (!isCurrent() || player.currentMediaItem !== installed) finish(STALE)
         else if (player.playerError != null) finish(PLAYER_ERROR)
@@ -171,6 +193,7 @@ internal class VideoPlaybackWindow : AutoCloseable {
 
     fun finish(code: String?) {
       if (done) return
+      probe(5, code)
       done = true
       handler.removeCallbacks(start)
       handler.removeCallbacks(timeout)

@@ -358,6 +358,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     signal: AbortSignal,
     deadline: number,
     assignTarget = true,
+    resumeProbe?: (event: number, receivedSeconds?: number, ack?: number) => void,
   ) => new Promise<void>((resolve, reject) => {
     if (signal.aborted) { reject(abortError()); return; }
     let timeout: ReturnType<typeof setTimeout>;
@@ -373,7 +374,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     };
     const abort = () => finish(abortError());
     subscription = player.addListener('timeUpdate', ({ currentTime }) => {
-      if (acknowledgesPlaybackPosition(currentTime, targetSeconds, Platform.OS)) finish();
+      const ack = acknowledgesPlaybackPosition(currentTime, targetSeconds, Platform.OS);
+      resumeProbe?.(6, currentTime, Number(ack));
+      if (ack) finish();
     });
     timeout = setTimeout(() => finish(new Error('The video did not reach the requested frame in time. Try loading it again.')), Math.max(0, deadline - performance.now()));
     signal.addEventListener('abort', abort, { once: true });
@@ -404,6 +407,32 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const sourceChanged = forceReload || runtime.playbackUri !== uri
       || runtime.sourceId !== source.id || runtime.appliedWindowEndMs !== windowEndMs;
 
+    // PRIVATE never-merge diagnostic. Numeric CSV only; -1 means full/unknown.
+    // 1 start, 2 SDK load resolved, 3/4 native start/complete, 5 clock start,
+    // 6 timeUpdate, 7 clock done, 8 catch, 9 finally. Reserve terminal rows.
+    // Columns: kind,event,row,slot,token,endMs,targetSec,currentSec,receivedSec,ack,code,live,remainingMs,sourceChanged,startViewEpoch,currentViewEpoch.
+    const probeStartViewEpoch = runtime.nativeViewEpoch;
+    let probeRows = 0;
+    let probeTargetSeconds = -1;
+    let probeDeadline = -1;
+    const resumeProbe = (event: number, receivedSeconds = -1, ack = -1, caught?: unknown) => {
+      try {
+        if (probeRows >= 120 || (event === 6 && probeRows >= 110)) return;
+        probeRows += 1;
+        const live = mountedRef.current && surfacesAdmittedRef.current && !translationSuspensionRef.current
+          && !preparation.signal.aborted && token === runtime.prepareToken && runtime.preparation === preparation;
+        const codes = ['E_VIDEO_WINDOW_STALE', 'E_VIDEO_WINDOW_INVALID', 'E_VIDEO_WINDOW_BUSY',
+          'E_VIDEO_WINDOW_TIMEOUT', 'E_VIDEO_WINDOW_PLAYER'];
+        const code = caught && typeof caught === 'object' && 'code' in caught && typeof caught.code === 'string'
+          ? codes.indexOf(caught.code) + 1 : 0;
+        const values = [1, event, probeRows, slot, token, windowEndMs ?? -1, probeTargetSeconds,
+          live ? player.currentTime : -1, receivedSeconds, ack, code, Number(live),
+          probeDeadline < 0 ? -1 : probeDeadline - performance.now(), Number(sourceChanged),
+          probeStartViewEpoch, runtime.nativeViewEpoch];
+        console.info('CSResumeDiag', values.map(value => Number.isFinite(value) ? value : -1).join(','));
+      } catch { /* Probes must never affect preparation, including released players/log sinks. */ }
+    };
+
     runtime.sourceId = source.id;
     runtime.playbackUri = uri;
     runtime.preparedClipId = entry.clip.id;
@@ -415,12 +444,14 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     publishSlots();
 
     try {
+      resumeProbe(1);
       player.pause();
       player.muted = true;
       if (sourceChanged) {
         runtime.firstFrameReady = false;
         publishSlots();
         await loadPlayableVideoSource(player, uri, 15_000, preparation.signal);
+        resumeProbe(2);
         if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
         // Android's installed contract stays unknown until owned native presentation.
         runtime.appliedWindowEndMs = Platform.OS === 'android' ? null : undefined;
@@ -430,6 +461,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       // One post-SDK budget covers native presentation and the position ACK,
       // or the legacy seek/ACK/fresh-view sequence for iOS/web.
       const frameDeadline = performance.now() + FIRST_FRAME_TIMEOUT_MS;
+      probeDeadline = frameDeadline;
       const nativePresentation = Platform.OS === 'android';
       const expectedNativeDuration = nativePresentation && windowEndMs !== undefined
         ? Math.min(player.duration, Math.fround(Math.fround(windowEndMs) / 1000))
@@ -438,6 +470,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         Math.min(sourceTimeAt(entry, timelineMs), windowEndMs ?? Infinity) / 1_000,
         (windowEndMs ?? source.durationMs) / 1_000, expectedNativeDuration, Platform.OS,
       );
+      probeTargetSeconds = targetSeconds;
       player.playbackRate = 1;
       let nativeFramePresented = false;
       if (nativePresentation) {
@@ -447,7 +480,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         // initialization. Every installation needs its own presentation receipt;
         // cancellation cannot undo the installed item.
         runtime.appliedWindowEndMs = null;
+        resumeProbe(3);
         await configureVideoPlaybackWindow(player, uri, token, windowEndMs, targetSeconds * 1000, remainingMs, preparation.signal);
+        resumeProbe(4);
         if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current
           || preparation.signal.aborted || token !== runtime.prepareToken || runtime.preparation !== preparation) throw abortError();
         runtime.appliedWindowEndMs = windowEndMs;
@@ -458,7 +493,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       player.muted = true;
       player.playbackRate = 1;
       runtime.renderGate = 'awaitingPosition';
-      await waitForPlaybackPosition(player, targetSeconds, preparation.signal, frameDeadline, !nativeFramePresented);
+      resumeProbe(5);
+      await waitForPlaybackPosition(player, targetSeconds, preparation.signal, frameDeadline, !nativeFramePresented, resumeProbe);
+      resumeProbe(7);
       if (!mountedRef.current || !surfacesAdmittedRef.current || translationSuspensionRef.current
         || preparation.signal.aborted || token !== runtime.prepareToken
         || runtime.preparation !== preparation) throw abortError();
@@ -482,6 +519,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       publishSlots();
       return slot;
     } catch (caught) {
+      resumeProbe(8, -1, -1, caught);
       const error = token === runtime.prepareToken ? runtime.preparationError ?? caught : abortError();
       if (token === runtime.prepareToken) {
         runtime.firstFrameReady = false;
@@ -497,6 +535,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       }
       throw error;
     } finally {
+      resumeProbe(9);
       preparation.abort();
       if (runtime.preparation === preparation) runtime.preparation = undefined;
     }
