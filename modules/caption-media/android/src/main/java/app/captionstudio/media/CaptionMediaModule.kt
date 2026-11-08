@@ -51,12 +51,15 @@ class CaptionMediaModule : Module() {
   private val audioExtractionEpoch = AtomicLong(0L)
   private val videoDocuments = lazy { LinkedVideoDocuments(context) }
   private val videoPlaybackWindow = VideoPlaybackWindow()
+  private val privateVideoViewProbe = PrivateVideoViewProbe()
 
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
   override fun definition() = ModuleDefinition {
     Name("CaptionMedia")
+
+    OnCreate { privateVideoViewProbe.start() }
 
     AsyncFunction("configureVideoPlaybackWindow") { player: VideoPlayer, expectedUri: String, requestId: Double, endMs: Double?, targetMs: Double, timeoutMs: Double, promise: Promise ->
       videoPlaybackWindow.configure(player, expectedUri, requestId, endMs, targetMs, timeoutMs) { code ->
@@ -229,6 +232,7 @@ class CaptionMediaModule : Module() {
     }
 
     OnDestroy {
+      privateVideoViewProbe.close()
       videoPlaybackWindow.close()
       TimelineAudioRenderer.cancel()
       audioExtractionEpoch.incrementAndGet()
