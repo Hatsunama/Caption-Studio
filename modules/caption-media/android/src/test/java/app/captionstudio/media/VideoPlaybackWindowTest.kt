@@ -495,6 +495,150 @@ class VideoPlaybackWindowTest {
     assertTrue(replies.all { it.calls == 1 })
   }
 
+  @Test fun staleReadingSourceCanConsumeSdkLayoutBeforeGenuineCurrentOutput() {
+    listOf(false, true).forEachIndexed { index, sdkFirst ->
+      val oldItem = fake.item
+      val reply = start(id = index + 1.0, end = 6385.0, target = 6384.999); drain()
+      val installed = fake.item
+      val lateAnalytics = fake.analytics.single()
+      val lateOutput = fake.listeners.last()
+      val lateSdk = fake.sdk.single()
+      // Runtime regression: old-source analytics, current-output callback, SDK layout.
+      // Also cover SDK dispatch nested before this observer's raw Player callback.
+      fake.analyticsFrame(oldItem)
+      if (sdkFirst) { fake.sdkFrame(); fake.outputFrame() }
+      else { fake.outputFrame(); fake.sdkFrame() }
+      assertEquals(0, reply.calls)
+      fake.ready() // Even READY cannot promote the stale-source output.
+      assertEquals(0, reply.calls)
+      fake.analyticsFrame()
+      assertEquals(0, reply.calls)
+      fake.outputFrame() // SDK deduplicates: deliberately NO second sdkFrame().
+      assertEquals(listOf<String?>(null), reply.results)
+      assertSame(installed, fake.item)
+      assertEquals(6384L, fake.position)
+      assertEquals(6385L, fake.item.clippingConfiguration.endPositionMs)
+      assertEquals(index + 1, fake.installs)
+      fake.analyticsFrame(listener = lateAnalytics)
+      lateOutput.onRenderedFirstFrame(); lateSdk.onRenderedFirstFrame(fake.sdkSender)
+      assertEquals(1, reply.calls)
+      assertEquals(0, owner.pendingCount)
+      assertTrue(fake.listeners.isEmpty() && fake.analytics.isEmpty() && fake.sdk.isEmpty())
+    }
+  }
+
+  @Test fun independentSdkNotificationAtInvalidLayoutCannotBePromotedByResize() {
+    val oldItem = fake.item
+    val reply = start(); drain()
+    fake.layoutValid = false
+    fake.analyticsFrame(oldItem); fake.outputFrame(); fake.sdkFrame()
+    fake.layoutValid = true; fake.resize()
+    fake.analyticsFrame(); fake.outputFrame(); fake.ready()
+    assertEquals("Layout becoming valid cannot invent an accepted SDK notification", 0, reply.calls)
+    fake.sdkFrame()
+    assertEquals(listOf<String?>(null), reply.results)
+  }
+
+  @Test fun independentLayoutNeverPromotesStaleOrDetachedOutputAndKeepsBudget() {
+    val oldItem = fake.item
+    val reply = start(); drain(); fake.ready()
+    fake.analyticsFrame(oldItem); fake.outputFrame(); fake.sdkFrame()
+    assertEquals(0, reply.calls)
+    fake.analyticsFrame() // Detached-output analytics: no raw Player callback.
+    assertEquals(0, reply.calls)
+    fake.analyticsFrame(oldItem); fake.outputFrame() // Replaces the current-source candidate.
+    assertEquals(0, reply.calls)
+    fake.analyticsFrame() // Current source again, still no current-output callback.
+    fake.resize()
+    assertEquals(0, reply.calls)
+    shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(90))
+    fake.sdkFrame(); fake.resize(); fake.ready()
+    assertEquals(0, reply.calls)
+    shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(10))
+    assertEquals(listOf("E_VIDEO_WINDOW_TIMEOUT"), reply.results)
+    assertEquals(0, owner.pendingCount)
+    assertTrue(fake.listeners.isEmpty() && fake.analytics.isEmpty() && fake.sdk.isEmpty())
+  }
+
+  @Test fun independentLayoutCannotCrossRebindWrongViewOrTargetExcursion() {
+    (0..3).forEach { variant ->
+      val oldItem = fake.item
+      val reply = start(id = variant + 1.0); drain()
+      fake.analyticsFrame(oldItem); fake.outputFrame(); fake.sdkFrame()
+      val oldView = fake.view
+      when (variant) {
+        0 -> fake.rebind()
+        1 -> { // Identity check also protects an observed wrong view without a rebind event.
+          fake.view = Any(); fake.sdkFrame(); fake.resize(); fake.view = oldView
+        }
+        2 -> { fake.position = 124L; fake.resize(); fake.position = 123L }
+        3 -> { fake.view = null; fake.sdkFrame(); fake.resize(); fake.view = oldView }
+      }
+      fake.analyticsFrame(); fake.outputFrame(); fake.ready()
+      assertEquals("Old SDK layout witness must be invalidated, variant=$variant", 0, reply.calls)
+      fake.sdkFrame()
+      assertEquals(listOf<String?>(null), reply.results)
+    }
+  }
+
+  @Test fun surfaceZeroAfterIndependentLayoutRequiresFreshSourceAndCurrentOutput() {
+    listOf(0 to 0, 0 to 180, 320 to 0).forEachIndexed { index, size ->
+      val oldItem = fake.item
+      val reply = start(id = index + 1.0); drain()
+      fake.analyticsFrame(oldItem); fake.outputFrame(); fake.sdkFrame()
+      fake.analyticsFrame(); fake.outputFrame() // All evidence, but still BUFFERING.
+      fake.layoutValid = false; fake.resize(size.first, size.second)
+      fake.layoutValid = true; fake.resize(); fake.ready()
+      assertEquals(0, reply.calls)
+      fake.outputFrame() // Old source witness must not survive zero size.
+      assertEquals(0, reply.calls)
+      fake.analyticsFrame() // No current output yet.
+      assertEquals(0, reply.calls)
+      fake.layoutValid = false; fake.resize(0, 0)
+      fake.layoutValid = true; fake.resize()
+      fake.outputFrame()
+      assertEquals(0, reply.calls)
+      fake.analyticsFrame(); fake.outputFrame() // No further SDK notification.
+      assertEquals(listOf<String?>(null), reply.results)
+    }
+  }
+
+  @Test fun independentLayoutIsRequestOwnedAcrossSupersessionCancelAndDispose() {
+    val oldItem = fake.item
+    val first = start(); drain()
+    fake.analyticsFrame(oldItem); fake.outputFrame(); fake.sdkFrame()
+    val oldAnalytics = fake.analytics.single()
+    val oldOutput = fake.listeners.last()
+    val oldSdk = fake.sdk.single()
+    val second = start(2.0)
+    // Tombstone must take effect before asynchronous cleanup, even with a layout witness.
+    fake.analyticsFrame(listener = oldAnalytics)
+    oldOutput.onRenderedFirstFrame(); oldSdk.onRenderedFirstFrame(fake.sdkSender)
+    drain()
+    assertEquals(listOf("E_VIDEO_WINDOW_STALE"), first.results)
+    fake.analyticsFrame(listener = oldAnalytics)
+    oldOutput.onRenderedFirstFrame(); oldSdk.onRenderedFirstFrame(fake.sdkSender)
+    fake.analyticsFrame(); fake.outputFrame(); fake.ready()
+    assertEquals("Neither old request's layout nor late callback can satisfy the new one", 0, second.calls)
+    owner.cancel(fake.player, 2.0); drain()
+    assertEquals(listOf("E_VIDEO_WINDOW_STALE"), second.results)
+    val third = start(3.0); drain()
+    fake.sdkFrame() // Current target/view notification before any source frame.
+    val closedAnalytics = fake.analytics.single()
+    val closedOutput = fake.listeners.last()
+    val closedSdk = fake.sdk.single()
+    owner.close(); drain()
+    fake.released = true
+    fake.analyticsFrame(listener = closedAnalytics)
+    closedOutput.onRenderedFirstFrame(); closedOutput.onSurfaceSizeChanged(0, 0)
+    closedSdk.onRenderedFirstFrame(fake.sdkSender)
+    closedSdk.onTargetViewChanged(fake.sdkSender, null, null)
+    assertEquals(listOf("E_VIDEO_WINDOW_STALE"), third.results)
+    assertEquals(1, first.calls); assertEquals(1, second.calls); assertEquals(1, third.calls)
+    assertEquals(0, owner.pendingCount)
+    assertTrue(fake.listeners.isEmpty() && fake.analytics.isEmpty() && fake.sdk.isEmpty())
+  }
+
   private class Reply : VideoPlaybackWindow.Completion {
     val results = mutableListOf<String?>()
     val calls get() = results.size

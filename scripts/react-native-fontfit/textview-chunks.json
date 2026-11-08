@@ -1,0 +1,72 @@
+[
+  {
+    "offset": 378,
+    "before": "",
+    "after": "import android.text.Selection;\n",
+    "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "afterSha256": "b8df2b8a5ad0a18f4b52b4977baaa272cf0cb6d58313ecd7b8d10b6ecddab3f9"
+  },
+  {
+    "offset": 506,
+    "before": "",
+    "after": "import android.text.TextPaint;\n",
+    "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "afterSha256": "76620615a26d0ee174b8bfd7df2f506a99dbc4409477862568ae41b16273db3c"
+  },
+  {
+    "offset": 2662,
+    "before": "",
+    "after": "  // Pre-fit base size; NaN means the current TextView size has not been fitted.\n  private float mUnfittedTextSize;\n",
+    "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "afterSha256": "c1ce0b0df4d85adbfa4c2fb6f2d55f3e3def347629005352a75b063c00dd2ce8"
+  },
+  {
+    "offset": 3610,
+    "before": "",
+    "after": "    mUnfittedTextSize = Float.NaN;\n",
+    "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "afterSha256": "d3bac8bcc15cdddc91b5a28a4a915971c6cf1db6d8a89a5b2124d845b2eaa35b"
+  },
+  {
+    "offset": 3795,
+    "before": "",
+    "after": "    // Do not carry a fitted presentation size into the next use of this view.\n    if (!Float.isNaN(mUnfittedTextSize)) {\n      super.setTextSize(TypedValue.COMPLEX_UNIT_PX, mUnfittedTextSize);\n    }\n",
+    "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "afterSha256": "36e3cb6075f08e45a1d1e5354b6986c5ada2b2cca49ef6d81f963869db5dabe0"
+  },
+  {
+    "offset": 7033,
+    "before": "",
+    "after": "  protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {\n    super.onSizeChanged(width, height, oldWidth, oldHeight);\n    if (mAdjustsFontSizeToFit && (width != oldWidth || height != oldHeight)) {\n      mShouldAdjustSpannableFontSize = true;\n      invalidate();\n    }\n  }\n\n  @Override\n",
+    "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "afterSha256": "a184941b50026117c40b0913bfbe77b5fef57f58b2096c7765f0ca35bb4e908c"
+  },
+  {
+    "offset": 7326,
+    "before": "",
+    "after": "        // The Fabric PreparedLayout/cache owns spanned. Every fit starts from that input,\n        // never from a previously fitted presentation stored in TextView.\n        Spannable ownedSpannable = new SpannableString(spanned);\n        TextPaint workingTextPaint = new TextPaint();\n        // TextPaint(Paint) does not copy TextPaint-specific fields such as density.\n        workingTextPaint.set(getPaint());\n        if (Float.isNaN(mUnfittedTextSize)) {\n          mUnfittedTextSize = getTextSize();\n        }\n        workingTextPaint.setTextSize(mUnfittedTextSize);\n        int selectionStart = getSelectionStart();\n        int selectionEnd = getSelectionEnd();\n",
+    "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "afterSha256": "145362670d62fedd179a17507e62e374072406b865bb0f8a17c1158761a7617d"
+  },
+  {
+    "offset": 7378,
+    "before": "            spanned,\n",
+    "after": "            ownedSpannable,\n",
+    "beforeSha256": "f403e743e12cef963211f38425f29eee0b3436212d54f15d9240d1d1c0e88274",
+    "afterSha256": "e8a958740fc1a91591419f63505c7efbf4ba9388b4ff4164e9f4e6304b9924a2"
+  },
+  {
+    "offset": 7985,
+    "before": "            getPaint());\n        setText(spanned);\n",
+    "after": "            workingTextPaint);\n        // Consume fitted metrics without replacing the authoritative base size.\n        super.setTextSize(TypedValue.COMPLEX_UNIT_PX, workingTextPaint.getTextSize());\n        setText(ownedSpannable);\n        // A frame-only refit keeps the same characters and logical selection.\n        CharSequence displayedText = getText();\n        if (displayedText instanceof Spannable\n            && selectionStart >= 0\n            && selectionEnd >= 0\n            && selectionStart <= displayedText.length()\n            && selectionEnd <= displayedText.length()) {\n          Selection.setSelection((Spannable) displayedText, selectionStart, selectionEnd);\n        }\n",
+    "beforeSha256": "d91e1e08202276775f13efa27e2fb9d17b7e8cadb549b81c4a6f301471129128",
+    "afterSha256": "b48dc7820f69e595278b3e83f8e87566029311809f224180327f0f5b226a5c13"
+  },
+  {
+    "offset": 14570,
+    "before": "",
+    "after": "  }\n\n  @Override\n  public void setTextSize(int unit, float size) {\n    super.setTextSize(unit, size);\n    // Also covers TextView's one-argument SP setter and applyTextAttributes().\n    // The applied size is the next fit's base, even when equal to the fitted size.\n    mUnfittedTextSize = Float.NaN;\n    mShouldAdjustSpannableFontSize = true;\n",
+    "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "afterSha256": "f0de23b67e08033285fc163123d299d98c300013cbd252e094631105507f9568"
+  }
+]

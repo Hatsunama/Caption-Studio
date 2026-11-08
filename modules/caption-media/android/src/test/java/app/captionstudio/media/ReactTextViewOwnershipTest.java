@@ -191,6 +191,236 @@ public class ReactTextViewOwnershipTest {
     assertBasePaint(cached.layoutPaintBefore, cached.layout.getPaint());
   }
 
+  @Test public void rawBaseSetterAfterFit_rearmsSameFrame_andWideUsesNewBase() throws Exception {
+    CachedInput cached = new CachedInput();
+    ReactTextView view = newView(cached, true);
+    frameAndDraw(view, 1);
+    assertEquals(FLOOR_PX, view.getTextSize(), 0f);
+    view.setTextSize(TypedValue.COMPLEX_UNIT_PX, 60f);
+    frameAndDraw(view, 1); // Same dimensions: setter must re-arm fitting.
+    assertSize(view.getText(), FLOOR_PX);
+    assertEquals(24f, view.getTextSize(), 0f); // 60 * (12 / 30).
+    frameAndDraw(view, WIDE);
+    assertEquals(60f, view.getTextSize(), 0f);
+    assertSize(view.getText(), RAW_PX);
+    assertMetadata((Spanned) view.getText(), cached);
+    assertBasePaint(cached.layoutPaintBefore, cached.layout.getPaint());
+  }
+
+  @Test public void rawBaseSetterEqualToFittedSize_isStillAuthoritative() throws Exception {
+    CachedInput cached = new CachedInput();
+    ReactTextView view = newView(cached, true);
+    frameAndDraw(view, 1);
+    assertEquals(FLOOR_PX, view.getTextSize(), 0f);
+    view.setTextSize(TypedValue.COMPLEX_UNIT_PX, FLOOR_PX);
+    frameAndDraw(view, WIDE);
+    assertEquals(FLOOR_PX, view.getTextSize(), 0f);
+    assertSize(view.getText(), RAW_PX); // Raw spans and base paint are independent.
+    assertSize(cached.text, RAW_PX);
+  }
+
+  @Test public void oneArgumentTextSizeSetterAfterFit_usesAppliedSpPixels() throws Exception {
+    CachedInput cached = new CachedInput();
+    ReactTextView view = newView(cached, true);
+    frameAndDraw(view, 1);
+    // Android uses the view resources for this setter, not RN's DisplayMetricsHolder.
+    float expected = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 60f,
+        view.getResources().getDisplayMetrics());
+    view.setTextSize(60f);
+    assertEquals(expected, view.getTextSize(), 0f);
+    frameAndDraw(view, WIDE);
+    assertEquals(expected, view.getTextSize(), 0f);
+    assertSize(view.getText(), RAW_PX);
+  }
+
+  @Test public void fontSizePropertyAfterFit_rearmsAndReplacesRawBase() throws Exception {
+    CachedInput cached = new CachedInput();
+    ReactTextView view = newView(cached, true);
+    frameAndDraw(view, 1);
+    float expected = (float) Math.ceil(
+        com.facebook.react.uimanager.PixelUtil.toPixelFromSP(20f));
+    view.setFontSize(20f);
+    assertEquals(expected, view.getTextSize(), 0f);
+    frameAndDraw(view, 1);
+    assertSize(view.getText(), FLOOR_PX);
+    assertEquals(Math.max(expected * (FLOOR_PX / (float) RAW_PX), FLOOR_PX),
+        view.getTextSize(), 0.001f);
+    frameAndDraw(view, WIDE);
+    assertSize(view.getText(), RAW_PX);
+    assertEquals(expected, view.getTextSize(), 0f);
+    assertBasePaint(cached.layoutPaintBefore, cached.layout.getPaint());
+  }
+
+  @Test public void propertyApplyAfterFit_restoresFontPropertyAndRearmsSameFrame()
+      throws Exception {
+    CachedInput cached = new CachedInput();
+    ReactTextView view = newView(cached, true);
+    float propertyPx = (float) Math.ceil(
+        com.facebook.react.uimanager.PixelUtil.toPixelFromSP(10f));
+    view.setFontSize(10f);
+    frameAndDraw(view, 1);
+    view.setTextSize(TypedValue.COMPLEX_UNIT_PX, 60f);
+    frameAndDraw(view, 1);
+    assertEquals(24f, view.getTextSize(), 0f);
+    // Existing setLetterSpacing invokes the real private applyTextAttributes path.
+    view.setLetterSpacing(0f);
+    assertEquals(propertyPx, view.getTextSize(), 0f);
+    frameAndDraw(view, 1);
+    assertEquals(Math.max(propertyPx * (FLOOR_PX / (float) RAW_PX), FLOOR_PX),
+        view.getTextSize(), 0.001f);
+    frameAndDraw(view, WIDE);
+    assertEquals(propertyPx, view.getTextSize(), 0f);
+    assertSize(view.getText(), RAW_PX);
+    assertMetadata((Spanned) view.getText(), cached);
+  }
+
+  @Test public void noRnSizeSpan_largeBaseDoesNotInventShrink() throws Exception {
+    CachedInput cached = new CachedInput(false, RAW_PX);
+    ReactTextView view = newView(cached, true);
+    frameAndDraw(view, 1);
+    assertEquals(RAW_PX, view.getTextSize(), 0f); // No RN spans => search ratio 1.
+    frameAndDraw(view, WIDE);
+    assertEquals(RAW_PX, view.getTextSize(), 0f);
+    assertEquals(0, ((Spanned) view.getText()).getSpans(
+        0, TEXT.length(), rnSizeClass).length);
+    assertBasePaint(cached.layoutPaintBefore, cached.layout.getPaint());
+  }
+
+  @Test public void noRnSizeSpan_minimumUpdatesAlwaysStartAtRawBase() throws Exception {
+    CachedInput cached = new CachedInput(false, 6f);
+    ReactTextView view = newView(cached, true, 6f);
+    frameAndDraw(view, WIDE);
+    assertEquals(FLOOR_PX, view.getTextSize(), 0f);
+    view.setMinimumFontSize(0f);
+    frameAndDraw(view, WIDE);
+    assertEquals(6f, view.getTextSize(), 0f); // Must not seed from the previous 12.
+    view.setMinimumFontSize(18f);
+    frameAndDraw(view, WIDE);
+    assertEquals(18f, view.getTextSize(), 0f);
+    view.setMinimumFontSize(Float.NaN);
+    frameAndDraw(view, WIDE);
+    assertEquals(FLOOR_PX, view.getTextSize(), 0f);
+    view.setMinimumFontSize(0f);
+    frameAndDraw(view, WIDE);
+    assertEquals(6f, view.getTextSize(), 0f);
+    assertEquals(0, ((Spanned) view.getText()).getSpans(
+        0, TEXT.length(), rnSizeClass).length);
+    assertBasePaint(cached.layoutPaintBefore, cached.layout.getPaint());
+  }
+
+  @Test public void explicitMinimumForSpans_preservesRawInputAndRecoversWide() throws Exception {
+    CachedInput cached = new CachedInput();
+    ReactTextView view = newView(cached, true);
+    view.setMinimumFontSize(18f);
+    frameAndDraw(view, 1);
+    assertSize(view.getText(), 18);
+    assertEquals(18f, view.getTextSize(), 0f);
+    view.setMinimumFontSize(Float.NaN);
+    frameAndDraw(view, 1);
+    assertSize(view.getText(), FLOOR_PX);
+    frameAndDraw(view, WIDE);
+    assertSize(view.getText(), RAW_PX);
+    assertEquals(RAW_PX, view.getTextSize(), 0f);
+    assertSize(cached.text, RAW_PX);
+    assertMetadata((Spanned) view.getText(), cached);
+    assertBasePaint(cached.layoutPaintBefore, cached.layout.getPaint());
+  }
+
+  @Test public void recycleAfterFit_restoresRawSetterBase_andReusesActualView() throws Exception {
+    CachedInput old = new CachedInput();
+    ReactTextView view = newView(old, true);
+    view.setFontSize(10f);
+    frameAndDraw(view, 1);
+    view.setTextSize(TypedValue.COMPLEX_UNIT_PX, 45f);
+    frameAndDraw(view, 1);
+    assertEquals(18f, view.getTextSize(), 0f);
+    Method recycle = ReactTextView.class.getDeclaredMethod("recycleView");
+    recycle.setAccessible(true);
+    recycle.invoke(view); // Actual recycle path, including initView/applyTextAttributes.
+    assertEquals(45f, view.getTextSize(), 0f);
+    assertNull(view.getSpanned());
+    assertNull(view.getPreparedLayout());
+    assertEquals("", view.getText().toString());
+    view.setLetterSpacing(0f); // Stale font property must have been cleared by initView.
+    assertEquals(45f, view.getTextSize(), 0f);
+
+    CachedInput next = new CachedInput(false, 45f);
+    bindReusedView(view, next);
+    frameAndDraw(view, WIDE); // Recycle disabled fitting: raw base remains 45.
+    assertEquals(45f, view.getTextSize(), 0f);
+    view.setAdjustFontSizeToFit(true);
+    view.setMinimumFontSize(Float.NaN);
+    frameAndDraw(view, WIDE);
+    assertEquals(45f, view.getTextSize(), 0f);
+    view.setFontSize(20f);
+    float expected = (float) Math.ceil(
+        com.facebook.react.uimanager.PixelUtil.toPixelFromSP(20f));
+    frameAndDraw(view, WIDE);
+    assertEquals(expected, view.getTextSize(), 0f);
+    assertSame(next.text, view.getSpanned());
+    assertBasePaint(next.layoutPaintBefore, next.layout.getPaint());
+    assertBasePaint(old.layoutPaintBefore, old.layout.getPaint());
+    assertSize(old.text, RAW_PX);
+  }
+
+  @Test public void sameView_heightOnlyChange_rearmsFitFromRaw() throws Exception {
+    CachedInput cached = new CachedInput();
+    ReactTextView view = newView(cached, true);
+    frameAndDrawAtHeight(view, 1);
+    assertSize(view.getText(), FLOOR_PX);
+    frameAndDrawAtHeight(view, HEIGHT);
+    assertSize(view.getText(), RAW_PX);
+    assertEquals(RAW_PX, view.getTextSize(), 0f);
+    assertBasePaint(cached.layoutPaintBefore, cached.layout.getPaint());
+  }
+
+  @Test public void fittingDisabled_settersAndRecyclePreserveAppliedBaseAndUnits()
+      throws Exception {
+    CachedInput cached = new CachedInput();
+    ReactTextView view = newView(cached, false);
+    view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f);
+    float applied = view.getTextSize();
+    frameAndDraw(view, 1);
+    assertEquals(applied, view.getTextSize(), 0f);
+    assertSize(view.getText(), RAW_PX);
+    assertMetadata((Spanned) view.getText(), cached);
+    Method recycle = ReactTextView.class.getDeclaredMethod("recycleView");
+    recycle.setAccessible(true);
+    recycle.invoke(view);
+    assertEquals(applied, view.getTextSize(), 0f);
+    assertEquals(TypedValue.COMPLEX_UNIT_SP, view.getTextSizeUnit());
+    assertBasePaint(cached.layoutPaintBefore, cached.layout.getPaint());
+  }
+
+  private void bindReusedView(ReactTextView view, CachedInput cached) throws Exception {
+    view.setSpanned(cached.text);
+    Method setter = ReactTextView.class.getDeclaredMethod(
+        "setPreparedLayout", cached.prepared.getClass());
+    setter.setAccessible(true);
+    setter.invoke(view, cached.prepared);
+    Class<?> updateClass = Class.forName("com.facebook.react.views.text.ReactTextUpdate");
+    Constructor<?> constructor = updateClass.getDeclaredConstructor(
+        Spanned.class, int.class, int.class, int.class, int.class);
+    constructor.setAccessible(true);
+    Object update = constructor.newInstance(cached.text, -1, Gravity.START,
+        Layout.BREAK_STRATEGY_SIMPLE, Layout.JUSTIFICATION_MODE_NONE);
+    ReactTextView.class.getMethod("setText", updateClass).invoke(view, update);
+    view.updateView();
+    assertSame(cached.prepared, view.getPreparedLayout());
+  }
+
+  private static void frameAndDrawAtHeight(ReactTextView view, int height) {
+    view.measure(View.MeasureSpec.makeMeasureSpec(WIDE, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+    view.layout(0, 0, WIDE, height);
+    assertEquals(WIDE, view.getWidth());
+    assertEquals(height, view.getHeight());
+    Bitmap bitmap = Bitmap.createBitmap(64, HEIGHT, Bitmap.Config.ARGB_8888);
+    try { view.draw(new Canvas(bitmap)); }
+    finally { bitmap.recycle(); }
+    assertNotNull("Actual TextView layout must exist after draw", view.getLayout());
+  }
+
   private ReactTextView newView(CachedInput cached, boolean fit) throws Exception {
     return newView(cached, fit, RAW_PX);
   }
