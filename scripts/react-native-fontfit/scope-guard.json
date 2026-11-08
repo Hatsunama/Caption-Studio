@@ -1,0 +1,14 @@
+{
+  "version": "0.86.3",
+  "relative": "ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt",
+  "beforeSha256": "6dd95802eae01819bc96c64f920eab119c3dbac20a659e3ad8ef602eba47caf8",
+  "afterSha256": "28dc610fbb2db06fc71a57af7a4d85b3c9c741c15153843986d313c034172763",
+  "bodyOffset": 33432,
+  "originalBodyBytes": 3498,
+  "replacementBodyBytes": 4213,
+  "replacementBodySha256": "14863a352a21cfc8d154a96cda13e727a4021b7a06907f658b5cfe0679dd6d7e",
+  "prefixSha256": "230b815b35499eb332bc23a4174edbf22e080b5946ce7f69e07d95bf66a5bff8",
+  "suffixSha256": "44face34ec65f10250924504c89c041b2790cbd6b020cbd217ca691be7565a9c",
+  "originalBytes": 48024,
+  "approvedBytes": 48739
+}

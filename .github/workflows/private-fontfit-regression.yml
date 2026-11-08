@@ -10,7 +10,7 @@ permissions:
 jobs:
   native-audio:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -37,6 +37,8 @@ jobs:
           set -o pipefail
           npx expo prebuild --platform android --clean --no-install 2>&1 | tee evidence/prebuild.log
           node scripts/patch-react-native-gradle.js
+          node scripts/react-native-fontfit/repair-fontfit-source.cjs "$GITHUB_WORKSPACE"
+          node scripts/configure-react-native-source.js
           sha256sum node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt | tee evidence/rn-source.sha256
       - name: Execute actual dependency fitter regression
         env:
