@@ -37,24 +37,10 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-      - name: Install companion build JDK
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
-        with:
-          distribution: temurin
-          java-version: '21.0.13+9'
-          force-download: true
-          verify-signature: true
-          cache-jdk: false
-          check-latest: true
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
-        with:
-          distribution: temurin
-          java-version: '17.0.21+9'
-          force-download: true
-          verify-signature: true
-          cache-jdk: false
-          check-latest: true
-          cache: gradle
+      - name: Fetch and verify exact signed build JDKs
+        run: |
+          mkdir -p evidence
+          node scripts/build-toolchain/verified-java-download.mjs --install "$RUNNER_TOOL_CACHE" --receipt "$GITHUB_WORKSPACE/evidence/verified-java.json"
       - name: Harden and verify Java trust stores
         run: node scripts/harden-java-truststores.mjs --ci
 
@@ -188,6 +174,7 @@ jobs:
         with:
           name: native-release-test-reports-${{ github.sha }}
           path: |
+            evidence/verified-java.json
             android/app/build/reports/tests/testReleaseUnitTest/
             android/app/build/test-results/testReleaseUnitTest/
             modules/caption-diagnostics/android/build/reports/tests/testReleaseUnitTest/
