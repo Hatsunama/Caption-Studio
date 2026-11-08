@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 import { View } from 'react-native';
 import { resolveLayerGeometry, type LayerGeometryInput } from '@/lib/layer-geometry';
@@ -33,14 +33,35 @@ function MountedVideoLayerOverlay(props: VideoLayerOverlayProps) {
   const player = useVideoPlayer(layer.uri, (created) => configureOverlayPlayer(created, layer.includeAudio, layer.playbackRate));
   const state = overlayPlaybackState(layer, timelineMs, isPlaying, props.clips);
   const geometry = resolveLayerGeometry(props.geometry ?? layer);
+  // PRIVATE numeric-only observation; never merge or publish this diagnostic branch.
+  const probeRows = useRef(0);
+  const probe = useCallback((event: number, extra = 0) => {
+    try {
+      if (probeRows.current >= 120) return;
+      const values = [event, ++probeRows.current, performance.now(), state.seconds,
+        Number(state.playing), player.currentTime, player.duration,
+        ['idle', 'loading', 'readyToPlay', 'error'].indexOf(player.status),
+        Number(player.playing), Number(player.muted), player.playbackRate, extra];
+      console.info('CSOverlayDiag', values.map(value => Number.isFinite(value) ? value : -1).join(','));
+    } catch { /* Observation must not affect resource ownership. */ }
+  }, [player, state.playing, state.seconds]);
+
+  useEffect(() => {
+    probe(1);
+    const status = player.addListener('statusChange', () => probe(4));
+    const source = player.addListener('sourceLoad', () => probe(5));
+    return () => { probe(9); status.remove(); source.remove(); };
+  }, [player, probe]);
 
   useEffect(() => {
     configureOverlayPlayer(player, layer.includeAudio, layer.playbackRate);
   }, [layer.includeAudio, layer.playbackRate, player]);
 
   useEffect(() => {
+    probe(2);
     seekOverlayPlayer(player, state.seconds, state.playing);
-  }, [player, state.playing, state.seconds]);
+    probe(3);
+  }, [player, state.playing, state.seconds, probe]);
 
   useEffect(() => {
     if (state.playing) player.play();
@@ -54,7 +75,7 @@ function MountedVideoLayerOverlay(props: VideoLayerOverlayProps) {
       opacity: layer.opacity,
       transform: [{ rotate: `${geometry.rotation}deg` }, { scaleX: geometry.scale * geometry.scaleX }, { scaleY: geometry.scale * geometry.scaleY }],
     }}>
-      <VideoView player={player} nativeControls={false} contentFit="contain" surfaceType="textureView" style={{ width: '100%', height: '100%' }} />
+      <VideoView player={player} nativeControls={false} contentFit="contain" surfaceType="textureView" onFirstFrameRender={() => probe(6)} onLayout={() => probe(7)} style={{ width: '100%', height: '100%' }} />
     </View>
   </View>;
 }
