@@ -73,10 +73,10 @@
   "scripts": {
     "postinstall": "node ./scripts/patch-react-native-gradle.js",
     "start": "expo start",
-    "android": "expo prebuild --platform android && node ./scripts/patch-react-native-gradle.js && expo run:android",
-    "release:android": "set \"NODE_ENV=production\" && expo prebuild --platform android && node ./scripts/patch-react-native-gradle.js && cd android && gradlew.bat assembleRelease --no-daemon",
+    "android": "expo prebuild --platform android && node ./scripts/prepare-android-runtime.cjs --after-prebuild . && expo run:android",
+    "release:android": "set \"NODE_ENV=production\" && expo prebuild --platform android && node ./scripts/prepare-android-runtime.cjs --after-prebuild . && cd android && gradlew.bat assembleRelease --no-daemon",
     "release:android:migration": "npm run release:android && node ./scripts/sign-android-release.js --migration",
-    "release:play": "set \"NODE_ENV=production\" && expo prebuild --platform android && node ./scripts/patch-react-native-gradle.js && cd android && gradlew.bat bundleRelease --no-daemon",
+    "release:play": "set \"NODE_ENV=production\" && expo prebuild --platform android && node ./scripts/prepare-android-runtime.cjs --after-prebuild . && cd android && gradlew.bat bundleRelease --no-daemon",
     "verify:android-config": "node ./scripts/verify-android-release-config.js",
     "ios": "expo run:ios",
     "web": "expo start --web",

@@ -125,12 +125,14 @@ test('existing postinstall hook aligns a newly generated Android project without
       './repair-native-scroll-input': { repairNativeScrollInput() {} },
       './repair-pressable-accessibility': { repairPressableAccessibility() {} },
     };
-    runInNewContext(readFileSync(new URL('../scripts/patch-react-native-gradle.js', import.meta.url), 'utf8'), {
-      module: { filename: join(root, 'scripts', 'patch-react-native-gradle.js') },
+    const sandbox = {
+      module: { filename: join(root, 'scripts', 'patch-react-native-gradle.js'), exports: {} },
       require: id => id === './configure-android-release'
         ? { configureAndroidRelease }
         : Object.hasOwn(unrelatedRepairs, id) ? unrelatedRepairs[id] : require(id),
-    });
+    };
+    sandbox.require.main = sandbox.module;
+    runInNewContext(readFileSync(new URL('../scripts/patch-react-native-gradle.js', import.meta.url), 'utf8'), sandbox);
     assert.doesNotThrow(() => verifyAndroidReleaseConfig(root));
   });
 });

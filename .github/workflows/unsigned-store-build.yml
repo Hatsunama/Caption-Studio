@@ -44,7 +44,8 @@ jobs:
       github.actor == 'Hatsunama' &&
       github.triggering_actor == 'Hatsunama'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    # Measured all-ABI source build:94min total,82min compiling; retain room for full release gates.
+    timeout-minutes: 150
     env:
       CI: 'true'
       VERSION: ${{ inputs.version }}
@@ -112,8 +113,9 @@ jobs:
           NODE_ENV: production
         run: |
           set -euo pipefail
+          node --max-old-space-size=128 --test --test-concurrency=1 tests/build-tools/react-native-final-source.test.mjs tests/build-tools/react-native-source-settings.test.mjs tests/build-tools/react-native-source-kotlin.test.mjs tests/build-tools/react-native-hermes-source-layout.test.mjs tests/build-tools/android-runtime-preparation.test.cjs tests/build-tools/android-runtime-repeatability.test.cjs
           npx expo prebuild --platform android --clean --no-install
-          node scripts/patch-react-native-gradle.js
+          node scripts/prepare-android-runtime.cjs --after-prebuild .
           npm run verify:android-config
       - name: Behaviorally reject injected signing properties and both environment forms
         working-directory: android
@@ -134,6 +136,17 @@ jobs:
               grep -Fq 'Unsigned packaging refuses signing credential input:' "$RUNNER_TEMP/unsigned-refusal.log"
             done
           done
+      - name: Record resolved app runtime dependencies
+        working-directory: android
+        env:
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          mkdir -p ../evidence
+          sha256sum ../node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt ../node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/PreparedLayout.kt ../node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextViewManager.kt ../node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextView.java ../node_modules/react-native/ReactCommon/react/renderer/attributedstring/conversions.h ../node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java ../node_modules/react-native/gradle/libs.versions.toml ../node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts settings.gradle | tee ../evidence/rn-runtime-targets.sha256
+          ./gradlew :app:dependencyInsight --dependency react-android --configuration releaseRuntimeClasspath --init-script ../scripts/unsigned-play-release.gradle --no-daemon --console=plain 2>&1 | tee ../evidence/app-react-android-runtime.txt
+          ./gradlew :app:dependencyInsight --dependency hermes-android --configuration releaseRuntimeClasspath --init-script ../scripts/unsigned-play-release.gradle --no-daemon --console=plain 2>&1 | tee ../evidence/app-hermes-android-runtime.txt
+          ./gradlew :app:dependencyInsight --dependency kotlin-stdlib --configuration releaseRuntimeClasspath --init-script ../scripts/unsigned-play-release.gradle --no-daemon --console=plain 2>&1 | tee ../evidence/app-kotlin-stdlib-runtime.txt
       - name: Original native release lint responsibilities
         working-directory: android
         env:
@@ -143,7 +156,17 @@ jobs:
         working-directory: android
         env:
           NODE_ENV: production
-        run: ./gradlew :app:testReleaseUnitTest :caption-diagnostics:testReleaseUnitTest :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest --init-script ../scripts/unsigned-play-release.gradle --no-daemon --stacktrace --warning-mode all
+        run: ./gradlew :app:testReleaseUnitTest :caption-diagnostics:testReleaseUnitTest :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest --init-script ../scripts/unsigned-play-release.gradle --init-script ../scripts/react-native-fontfit/sdk36-test-runtime.init.gradle -Dorg.gradle.java.installations.auto-detect=false -Dorg.gradle.java.installations.auto-download=false -Dorg.gradle.java.installations.paths="$JAVA_HOME_17_X64,$JAVA_HOME_21_X64" --no-daemon --stacktrace --warning-mode all
+      - name: Retain RN source runtime and native evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rn-runtime-unsigned-store-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            evidence/
+            modules/caption-*/android/build/test-results/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Assemble unsigned APK and bundle unsigned AAB with the existing unsigned init script
         working-directory: android
         env:

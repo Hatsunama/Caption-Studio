@@ -1,0 +1,27 @@
+// Private SDK36 Robolectric harness; Android source/target Java compatibility is unchanged.
+import org.gradle.api.tasks.testing.Test
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
+import org.gradle.jvm.toolchain.JvmVendorSpec
+
+def pinnedHome = System.getenv('JAVA_HOME_21_X64')
+if (!pinnedHome || !new File(pinnedHome, 'bin/java').isFile()) {
+    throw new GradleException('Fresh verified Temurin21 is required for SDK36 tests')
+}
+allprojects { project ->
+    project.tasks.withType(Test).configureEach { task ->
+        if (project.path == ':caption-media') {
+            task.javaLauncher = project.extensions.getByType(JavaToolchainService).launcherFor {
+                languageVersion = JavaLanguageVersion.of(21)
+                vendor = JvmVendorSpec.ADOPTIUM
+            }
+            task.doFirst {
+                def metadata = task.javaLauncher.get().metadata
+                if (metadata.installationPath.asFile.canonicalFile != new File(pinnedHome).canonicalFile) {
+                    throw new GradleException('SDK36 test launcher is not the freshly verified Temurin21')
+                }
+                logger.lifecycle("SDK36_TEST_LAUNCHER major=${metadata.languageVersion} home=${metadata.installationPath}")
+            }
+        }
+    }
+}

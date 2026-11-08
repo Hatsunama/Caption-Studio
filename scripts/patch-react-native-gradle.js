@@ -5,9 +5,15 @@ const { repairReanimatedNativeProps } = require('./repair-reanimated-native-prop
 const { repairNativeScrollInput } = require('./repair-native-scroll-input');
 const { repairPressableAccessibility } = require('./repair-pressable-accessibility');
 
-const projectRoot = path.join(path.dirname(module.filename), '..');
-repairPressableAccessibility(projectRoot);
-repairNativeScrollInput(projectRoot);
-repairReanimatedNativeProps(projectRoot);
-patchAndroidDependencies(projectRoot);
-configureAndroidRelease(projectRoot);
+function patchReactNativeGradle(projectRoot) {
+  repairPressableAccessibility(projectRoot);
+  repairNativeScrollInput(projectRoot);
+  repairReanimatedNativeProps(projectRoot);
+  patchAndroidDependencies(projectRoot);
+  configureAndroidRelease(projectRoot);
+}
+
+module.exports = { patchReactNativeGradle };
+if (require.main === module) {
+  patchReactNativeGradle(path.join(path.dirname(module.filename), '..'));
+}

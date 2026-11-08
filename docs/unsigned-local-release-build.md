@@ -43,9 +43,17 @@ main dispatch can reach the actual native job.
 
 The native job retains `npm ci`, product-contract verification, production
 dependency audit, all logic tests, TypeScript, lint, Expo install checks and
-the pinned Expo doctor. It performs a clean prebuild, the existing Gradle patch
-and original native configuration verification, original release lint with the
+the pinned Expo doctor. It performs clean-input build-tool acceptance checks,
+a clean prebuild, explicit Android runtime preparation (retaining the existing
+Gradle patch operations), and native configuration verification, release lint with the
 first-party lint init script, and all four existing release unit-test tasks.
+The runtime preparation compiles the pinned RN0.86.3 sources with the reviewed
+text-fitting and cache-ownership repairs. Its source hashes and resolved
+ReactAndroid, Hermes and Kotlin runtime graph are retained. The first four-ABI
+source diagnostic build took about94 minutes; the full producer retains a
+150-minute ceiling and every existing release gate. See
+`editor-interruption-verification.md` for evidence and outstanding device checks.
+
 Both assembleRelease and bundleRelease use the unchanged unsigned init script.
 Injected property credentials and direct/Gradle-prefixed environment credentials
 must fail behaviorally for the established credential families. Failures must

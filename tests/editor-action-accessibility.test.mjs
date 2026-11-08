@@ -307,8 +307,9 @@ test('postinstall owner invokes repair first and aborts downstream work on failu
         if (failing && key === 'repairPressableAccessibility') throw Error('repair rejected');
       },
     });
-    const run = () => new Function('require', 'module', owner)(stubRequire,
-      { filename: path.join(root, 'scripts/patch-react-native-gradle.js') });
+    const module = { filename: path.join(root, 'scripts/patch-react-native-gradle.js'), exports: {} };
+    stubRequire.main = module;
+    const run = () => new Function('require', 'module', owner)(stubRequire, module);
     if (failing) assert.throws(run, /repair rejected/); else run();
     assert.equal(calls[0]?.[0], 'repairPressableAccessibility');
     assert.ok(calls.every(([, dir]) => dir === path.resolve(root)));

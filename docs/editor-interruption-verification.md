@@ -200,3 +200,55 @@ The isolated public-thumbnail comparator (`06678b4b8c25ae46c0e926402f1a94a3f22f5
 Samsung's comparator displayed burned source time6.375 at the same approximately6.385s request where the ordinary surface displayed6.500. Numeric logs confirm `resolvedPreview=0`, source360x640/8000ms/24fps: this uses the original asset, not an optimized proxy. The burned image identifies the displayed source frame; the API's estimated `actualTime=6.375` is not independent decoded-PTS evidence. See `diag066-paused-thumbnail-log.txt` and `diag066-trimmed-20261107t120808.png` at original detail. This demonstrates the public API comparison, not acceptance of the new production handshake or a general nearest-thumbnail policy for variable-rate/HDR media.
 
 The native gap candidate reuses the already generated export canvas PNG for leading, interior and trailing video gaps. Each image item has its own exact gap duration, plan-sized presentation and plan FPS, with audio removed. Source clips, separate audio-gap planning, background/compositor ordering and task-owned asset cleanup remain unchanged. A new JUnit test exercises the actual builder and canvas writer, but has not yet been compiled or run locally; the native pixel regression remains the pre-repair failure. Full checks, native CI and replacement-artifact exports must run before this candidate can be accepted.
+
+
+## 2026-11-08 source and physical follow-up — acceptance pending
+
+The combined product remains blocked for release until its exact final APK/AAB
+pass the required checks and physical verification. Diagnostic artifacts do not
+establish acceptance of the untraced product.
+
+- Product291's two-phone checks used APK SHA256
+  `41adec258d043fe0d83b74fd4e0fc417ca7f0a9bffe41e014f4228d193e749a6`.
+  Portrait and landscape sources were inspected separately. Portrait-source
+  split/extract/trim and repeated boundary playback passed on both phones; the
+  Samsung sequence needed two bounded runs. Saved drafts retained two clips,
+  one audio track, paused state and the same presented frame through both
+  landscape window directions and Home/resume. Native window rotation was
+  driven on physical devices; this is not a claim of hand-operated sensor tests.
+- The finite preview repair retains a current binding's valid SDK layout witness
+  independently of its fresh source/output receipts. It does not force play,
+  seek, replace SDK listeners, bypass readiness or add a timeout-based success.
+  Product291 retained source153 at the clipped endpoint on both phones through
+  the bounded interruption sequence.
+- PiP's earlier disappearance remains unexplained. Product291's untraced Samsung
+  control used the existing no-AAC base and an AAC overlay with audio excluded,
+  [3,6) seconds, paused at main5/overlay2. All six Home/resume/UI1/UI3 captures
+  retained actual overlay frame48. This is bounded nonreproduction, not a fix or
+  proof of correctness. No speculative PiP rendering change was introduced.
+- Toolbar repairs address compounding fit arithmetic, mutation of cached spans
+  and paint, the dropped minimumFontScale MapBuffer connection, and loss of the
+  resolved minimum during Fabric cache retagging. Real SDK36 component tests
+  reproduced20px becomingNaN in the actual retag method and drawing12px. The
+  repaired six-source candidate passed255 component tests without failures or
+  skips in run42511394177; this count includes private observer tests that are
+  not adopted into the product. Fabric's unrelated JNI loader is isolated only
+  for its stateless copy test. Physical glyph and the actual JNI route remain
+  acceptance requirements.
+- One explicit post-prebuild preparation path retains the original postinstall
+  operations, exact RN0.86.3 and Expo57, all ABIs and pinned models. Clean-input
+  build-tool tests run explicitly before preparation in five live workflows;
+  ordinary logic tests and repeat Android builds remain usable afterwards.
+  The frozen129/141 AAB reproducer stays unchanged and independent; the current
+  unsigned-store producer builds both formats from the trusted dispatch SHA.
+- The first four-ABI source diagnostic build (run42504616229) completed in
+  approximately94 minutes, including82 minutes in its APK/AAB build step. Its
+  five-source payload predates the cache-copy repair and is not a release
+  candidate. Full build gates receive a150-minute ceiling; no required test,
+  ABI, signature, identity or16KB alignment check is removed.
+
+Required next evidence: resolved ReactAndroid/Hermes source projects and Kotlin
+stdlib, actual final full-suite/native results, the exact untraced artifact's
+toolbar pixels before/after resize and interruption on both phones, and the
+existing preview/PiP/edit/save/export checks. Restore device preferences and
+return Home. Reuse canonical source media and remove newly created test exports.

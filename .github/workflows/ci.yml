@@ -30,7 +30,8 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    # Measured all-ABI source build:94min total,82min compiling; retain room for full release gates.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -77,8 +78,9 @@ jobs:
         env:
           NODE_ENV: production
         run: |
+          node --max-old-space-size=128 --test --test-concurrency=1 tests/build-tools/react-native-final-source.test.mjs tests/build-tools/react-native-source-settings.test.mjs tests/build-tools/react-native-source-kotlin.test.mjs tests/build-tools/react-native-hermes-source-layout.test.mjs tests/build-tools/android-runtime-preparation.test.cjs tests/build-tools/android-runtime-repeatability.test.cjs
           npx expo prebuild --platform android --clean --no-install
-          node ./scripts/patch-react-native-gradle.js
+          node ./scripts/prepare-android-runtime.cjs --after-prebuild .
           npm run verify:android-config
       - name: Configure ephemeral CI release signing
         shell: bash
@@ -108,6 +110,17 @@ jobs:
           } >> "$HOME/.gradle/gradle.properties"
           chmod 600 "$HOME/.gradle/gradle.properties"
 
+      - name: Record resolved app runtime dependencies
+        working-directory: android
+        env:
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          mkdir -p ../evidence
+          sha256sum ../node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt ../node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/PreparedLayout.kt ../node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextViewManager.kt ../node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextView.java ../node_modules/react-native/ReactCommon/react/renderer/attributedstring/conversions.h ../node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java ../node_modules/react-native/gradle/libs.versions.toml ../node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts settings.gradle | tee ../evidence/rn-runtime-targets.sha256
+          ./gradlew :app:dependencyInsight --dependency react-android --configuration releaseRuntimeClasspath --no-daemon --console=plain 2>&1 | tee ../evidence/app-react-android-runtime.txt
+          ./gradlew :app:dependencyInsight --dependency hermes-android --configuration releaseRuntimeClasspath --no-daemon --console=plain 2>&1 | tee ../evidence/app-hermes-android-runtime.txt
+          ./gradlew :app:dependencyInsight --dependency kotlin-stdlib --configuration releaseRuntimeClasspath --no-daemon --console=plain 2>&1 | tee ../evidence/app-kotlin-stdlib-runtime.txt
       - name: Lint Android release code
         env:
           NODE_ENV: production
@@ -118,8 +131,18 @@ jobs:
         env:
           NODE_ENV: production
         working-directory: android
-        run: ./gradlew :app:testReleaseUnitTest :caption-diagnostics:testReleaseUnitTest :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest --no-daemon --stacktrace --warning-mode all
+        run: ./gradlew :app:testReleaseUnitTest :caption-diagnostics:testReleaseUnitTest :caption-media:testReleaseUnitTest :caption-translation:testReleaseUnitTest --init-script ../scripts/react-native-fontfit/sdk36-test-runtime.init.gradle -Dorg.gradle.java.installations.auto-detect=false -Dorg.gradle.java.installations.auto-download=false -Dorg.gradle.java.installations.paths="$JAVA_HOME_17_X64,$JAVA_HOME_21_X64" --no-daemon --stacktrace --warning-mode all
 
+      - name: Retain RN source runtime and native evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rn-runtime-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            evidence/
+            modules/caption-*/android/build/test-results/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build release artifacts
         env:
           NODE_ENV: production
