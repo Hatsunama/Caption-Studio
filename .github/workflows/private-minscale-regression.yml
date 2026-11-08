@@ -42,7 +42,7 @@ jobs:
           node scripts/react-native-fontfit/install-final-sources.cjs "$GITHUB_WORKSPACE"
           node scripts/configure-react-native-source.js
           node scripts/align-react-native-source-kotlin.cjs --source-build "$GITHUB_WORKSPACE"
-          sha256sum node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/{TextLayoutManager.kt,PreparedLayout.kt,ReactTextViewManager.kt,ReactTextView.java} node_modules/react-native/ReactCommon/react/renderer/attributedstring/conversions.h | tee evidence/rn-source.sha256
+          sha256sum node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/{TextLayoutManager.kt,PreparedLayout.kt,ReactTextViewManager.kt,ReactTextView.java} node_modules/react-native/ReactCommon/react/renderer/attributedstring/conversions.h node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java | tee evidence/rn-source.sha256
       - name: Repair and test real Hermes archive extraction
         run: |
           node scripts/react-native-fontfit/repair-hermes-source-layout.cjs
@@ -103,6 +103,7 @@ jobs:
           cd android
           ./gradlew :app:dependencyInsight --dependency hermes-android --configuration releaseRuntimeClasspath --no-daemon --console=plain | tee ../evidence/app-hermes-classpath.txt
           ./gradlew :app:dependencyInsight --dependency react-android --configuration releaseRuntimeClasspath --no-daemon --console=plain | tee ../evidence/app-rn-classpath.txt
+          ./gradlew :app:dependencyInsight --dependency kotlin-stdlib --configuration releaseRuntimeClasspath --no-daemon --console=plain | tee ../evidence/app-kotlin-classpath.txt
           ./gradlew :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace --warning-mode all 2>&1 | tee ../evidence/private-source-apk-build.log
       - name: Verify private artifact identity and ABI compatibility
         shell: bash

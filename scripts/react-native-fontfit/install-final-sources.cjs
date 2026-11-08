@@ -4,7 +4,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { preflightReactNativeSource, repairReactNativeSource } = require('./immutable-rn-source.cjs');
 const sha = b => createHash('sha256').update(b).digest('hex');
-const payloadSha256 = '0bfba957c2b9ddb8ba06d7b8a4c3459f9c5a6eaf4b856feb3280443cbc726cb8';
+const payloadSha256 = 'c3e3bec85699d4967bc84d18601e2002acc8299447936adeeabec6203e319949';
 // Closed, ordered scope. No paths or hash overrides from caller or environment.
 const allowed = Object.freeze([
   'ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt',
@@ -12,12 +12,13 @@ const allowed = Object.freeze([
   'ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextViewManager.kt',
   'ReactAndroid/src/main/java/com/facebook/react/views/text/ReactTextView.java',
   'ReactCommon/react/renderer/attributedstring/conversions.h',
+  'ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java',
 ]);
 function loadPayload() {
   const bytes = fs.readFileSync(path.join(__dirname, 'source-chunks.json'));
   if (sha(bytes) !== payloadSha256) throw Error('Unapproved composite payload hash');
   const files = JSON.parse(bytes);
-  if (!Array.isArray(files) || files.length !== 5) throw Error('Invalid five-file payload scope');
+  if (!Array.isArray(files) || files.length !== 6) throw Error('Invalid six-file payload scope');
   files.forEach((f, i) => {
     if (f.relative !== allowed[i] || path.isAbsolute(f.relative) || f.relative.includes('\\') ||
         f.relative.split('/').some(p => !p || p === '.' || p === '..')) throw Error('Invalid payload path');

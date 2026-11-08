@@ -299,5 +299,19 @@
         "afterSha256": "0a7d2f8e1bd9b9f94b18068ec070b5a037fb8aec719955c56fa7a064971cb21e"
       }
     ]
+  },
+  {
+    "relative": "ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java",
+    "beforeSha256": "7d2de088ca63afa0d38764dee2667a6bd64818b65c5c153fc5cf1270adb60829",
+    "afterSha256": "171c9e4e1040bc2acee2f74057e774f4009f007069ffa135fa4388c5281597ac",
+    "chunks": [
+      {
+        "offset": 27826,
+        "length": 47,
+        "beforeSha256": "36d11c5a66c11dcd669bb9440927b39c7f7b7739cc81438716e8700c245e548d",
+        "afterSha256": "6027644a26c517eb3927e5554703a1d8d096e065268ceb3e3710bca572ee81e8",
+        "replacementUtf8": "        preparedLayout.getJustificationMode(),\n        preparedLayout.getResolvedMinimumFontSize());"
+      }
+    ]
   }
 ]

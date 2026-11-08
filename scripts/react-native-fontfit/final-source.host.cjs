@@ -59,8 +59,8 @@ function patch(t, key, replacement) {
   const old = fs[key]; fs[key] = replacement(old); t.after(() => { fs[key] = old; });
 }
 test('pins, chunk hashes, independent originals/finals and unchanged byte regions', () => {
-  assert.equal(manifest.reactNativeVersion, '0.86.3'); assert.equal(manifest.files.length, 5);
-  assert.equal(payload.length, 5);
+  assert.equal(manifest.reactNativeVersion, '0.86.3'); assert.equal(manifest.files.length, 6);
+  assert.equal(payload.length, 6);
   payload.forEach((f, i) => {
     assert.equal(f.relative, manifest.files[i].relative);
     assert.equal(sha(originals[i]), f.beforeSha256); assert.equal(sha(finals[i]), f.afterSha256);
@@ -83,49 +83,49 @@ test('pins, chunk hashes, independent originals/finals and unchanged byte region
   for (const file of ['source-manifest.json', 'source-chunks.json'])
     assert.doesNotMatch(fs.readFileSync(path.join(__dirname, file), 'utf8'), /[A-Za-z]:[\\/]/);
 });
-test('all originals -> exact five finals, one atomic rename each', t => {
+test('all originals -> exact six finals, one atomic rename each', t => {
   const f = fixture(t); let publications = 0;
   patch(t, 'renameSync', rename => (from, to) => {
     const i = f.targets.indexOf(to);
     if (i >= 0) { assert.deepEqual(fs.readFileSync(to), originals[i]); assert.deepEqual(fs.readFileSync(from), finals[i]); publications++; }
     return rename(from, to);
   });
-  assert.equal(installFinalSources(f.root), 5); assert.equal(publications, 5);
+  assert.equal(installFinalSources(f.root), 6); assert.equal(publications, 6);
   f.targets.forEach((p, i) => assert.deepEqual(fs.readFileSync(p), finals[i])); noDebris(f);
 });
 test('all final idempotence preserves bytes, identity and time', t => {
-  const f = fixture(t, Array(5).fill('final')); const before = snapshot(f);
+  const f = fixture(t, Array(6).fill('final')); const before = snapshot(f);
   for (let i = 0; i < 3; i++) assert.equal(installFinalSources(f.root), 0);
   untouched(f, before); noDebris(f);
 });
 test('mixed final/original retry publishes only original states', t => {
-  const f = fixture(t, ['final', 'original', 'final', 'original', 'final']); const before = snapshot(f);
-  assert.equal(installFinalSources(f.root), 2);
+  const f = fixture(t, ['final', 'original', 'final', 'original', 'final', 'original']); const before = snapshot(f);
+  assert.equal(installFinalSources(f.root), 3);
   f.targets.forEach((p, i) => { assert.deepEqual(fs.readFileSync(p), finals[i]); if (i % 2 === 0) assert.equal(fs.statSync(p).ino, before[i].stat.ino); }); noDebris(f);
 });
 for (const version of ['0.86.2', '0.86.4', '0.86.3-canary.1', '0.86.30', undefined])
   test('unsupported version ' + version, t => rejects(t, f => fs.writeFileSync(f.metadata, JSON.stringify({ version })), /version/i));
-test('all-final still validates version', t => rejects(t, f => fs.writeFileSync(f.metadata, '{"version":"0.86.4"}'), /version/i, Array(5).fill('final')));
+test('all-final still validates version', t => rejects(t, f => fs.writeFileSync(f.metadata, '{"version":"0.86.4"}'), /version/i, Array(6).fill('final')));
 test('broken metadata', t => rejects(t, f => fs.writeFileSync(f.metadata, '{broken'), /JSON|property|Unexpected/i));
-for (let i = 0; i < 5; i++) test('unknown file ' + i + ' preflights before ANY publication', t => rejects(t, f => fs.appendFileSync(f.targets[i], '\n// unknown\n')));
+for (let i = 0; i < 6; i++) test('unknown file ' + i + ' preflights before ANY publication', t => rejects(t, f => fs.appendFileSync(f.targets[i], '\n// unknown\n')));
 test('missing later file leaves earlier bytes unchanged', t => {
-  const f = fixture(t); const before = snapshot(f); fs.unlinkSync(f.targets[4]);
+  const f = fixture(t); const before = snapshot(f); fs.unlinkSync(f.targets[5]);
   assert.throws(() => installFinalSources(f.root), /ENOENT/);
-  for (let i = 0; i < 4; i++) assert.deepEqual(fs.readFileSync(f.targets[i]), before[i].bytes); noDebris(f);
+  for (let i = 0; i < 5; i++) assert.deepEqual(fs.readFileSync(f.targets[i]), before[i].bytes); noDebris(f);
 });
 // Tamper copied installer payloads, never the authoritative candidate.
 for (const kind of ['path traversal', 'absolute path', 'backslash path', 'duplicate path', 'missing file', 'before hash', 'final hash', 'chunk before hash', 'chunk final hash', 'chunk offset', 'chunk replacement']) {
   test('reject corrupt payload ' + kind + ' without writes', t => {
     const f = fixture(t); const dir = path.join(f.root, 'tool'); fs.mkdirSync(dir);
     for (const file of ['install-final-sources.cjs', 'immutable-rn-source.cjs', 'source-chunks.json']) fs.copyFileSync(path.join(__dirname, file), path.join(dir, file));
-    const p = JSON.parse(JSON.stringify(payload)); const c = p[4].chunks[0];
-    if (kind === 'path traversal') p[4].relative = '../escape';
-    if (kind === 'absolute path') p[4].relative = '/escape';
-    if (kind === 'backslash path') p[4].relative = p[4].relative.replaceAll('/', '\\');
-    if (kind === 'duplicate path') p[4].relative = p[0].relative;
+    const p = JSON.parse(JSON.stringify(payload)); const c = p[5].chunks[0];
+    if (kind === 'path traversal') p[5].relative = '../escape';
+    if (kind === 'absolute path') p[5].relative = '/escape';
+    if (kind === 'backslash path') p[5].relative = p[5].relative.replaceAll('/', '\\');
+    if (kind === 'duplicate path') p[5].relative = p[0].relative;
     if (kind === 'missing file') p.pop();
-    if (kind === 'before hash') p[4].beforeSha256 = '0'.repeat(64);
-    if (kind === 'final hash') p[4].afterSha256 = '0'.repeat(64);
+    if (kind === 'before hash') p[5].beforeSha256 = '0'.repeat(64);
+    if (kind === 'final hash') p[5].afterSha256 = '0'.repeat(64);
     if (kind === 'chunk before hash') c.beforeSha256 = '0'.repeat(64);
     if (kind === 'chunk final hash') c.afterSha256 = '0'.repeat(64);
     if (kind === 'chunk offset') c.offset = -1;
@@ -137,7 +137,7 @@ for (const kind of ['path traversal', 'absolute path', 'backslash path', 'duplic
   });
 }
 for (const which of ['source', 'metadata', 'package', 'modules', 'root', 'ancestor']) test('reject link/junction at ' + which, t => {
-  const f = fixture(t); const p = which === 'source' ? f.targets[4] : which === 'metadata' ? f.metadata : which === 'package' ? f.pkg : which === 'modules' ? path.dirname(f.pkg) : which === 'ancestor' ? path.dirname(f.targets[4]) : f.root;
+  const f = fixture(t); const p = which === 'source' ? f.targets[5] : which === 'metadata' ? f.metadata : which === 'package' ? f.pkg : which === 'modules' ? path.dirname(f.pkg) : which === 'ancestor' ? path.dirname(f.targets[5]) : f.root;
   const real = p + '.real'; fs.renameSync(p, real);
   if (which === 'root') t.after(() => fs.rmSync(real, { recursive: true, force: true }));
   const file = which === 'source' || which === 'metadata';
@@ -150,7 +150,7 @@ for (const which of ['source', 'metadata', 'package', 'modules', 'root', 'ancest
   }
   const before = snapshot(f); assert.throws(() => installFinalSources(f.root), /link|reparse/i); untouched(f, before);
 });
-for (const which of ['source', 'metadata']) test('real hardlink ' + which + ' rejected before writes', t => rejects(t, f => fs.linkSync(which === 'source' ? f.targets[4] : f.metadata, path.join(f.root, 'alias')), /link/i));
+for (const which of ['source', 'metadata']) test('real hardlink ' + which + ' rejected before writes', t => rejects(t, f => fs.linkSync(which === 'source' ? f.targets[5] : f.metadata, path.join(f.root, 'alias')), /link/i));
 test('foreign lock survives contention', t => {
   const f = fixture(t); const before = snapshot(f); const lock = f.targets[0] + '.repair.lock'; fs.writeFileSync(lock, 'owner');
   assert.throws(() => installFinalSources(f.root), /EEXIST|lock/); untouched(f, before); assert.equal(fs.readFileSync(lock, 'utf8'), 'owner');
@@ -183,7 +183,7 @@ for (const kind of ['publication failure', 'version change', 'source bytes', 'so
   assert.throws(() => installFinalSources(f.root), /failure|changed|hash|link|version|staged/i);
   if (kind === 'source bytes') assert.deepEqual(fs.readFileSync(f.targets[0]), Buffer.concat([originals[0], Buffer.from('// concurrent')]));
   else assert.deepEqual(fs.readFileSync(f.targets[0]), originals[0]);
-  for (let i = 1; i < 5; i++) assert.deepEqual(fs.readFileSync(f.targets[i]), before[i].bytes);
+  for (let i = 1; i < 6; i++) assert.deepEqual(fs.readFileSync(f.targets[i]), before[i].bytes);
   noDebris(f);
 });
 test('later publication failure is per-file atomic; recognized retry completes', t => {
@@ -191,13 +191,13 @@ test('later publication failure is per-file atomic; recognized retry completes',
   fs.renameSync = (from, to) => { if (to === f.targets[2]) throw Error('later publication failure'); return rename(from, to); };
   try { assert.throws(() => installFinalSources(f.root), /later publication failure/); } finally { fs.renameSync = rename; }
   f.targets.forEach((p, i) => assert.deepEqual(fs.readFileSync(p), i < 2 ? finals[i] : originals[i])); noDebris(f);
-  assert.equal(installFinalSources(f.root), 3); noDebris(f);
+  assert.equal(installFinalSources(f.root), 4); noDebris(f);
 });
 
 test('single CLI installs and repeats against a temporary package', t => {
   const { spawnSync } = require('node:child_process');
   const f = fixture(t);
-  for (const expected of [5, 0]) {
+  for (const expected of [6, 0]) {
     const result = spawnSync(process.execPath, ['--max-old-space-size=128', path.join(__dirname, 'install-final-sources.cjs'), f.root], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), { changedFiles: expected });
@@ -225,20 +225,20 @@ for (const [name, index, file, hash] of [
   fs.writeFileSync(f.targets[index], bytes);
 }, /hash|source/i));
 for (const which of ['source', 'metadata']) test('directory instead of ' + which + ' prevents any writes', t => {
-  const f = fixture(t); const before = snapshot(f); const p = which === 'source' ? f.targets[4] : f.metadata;
+  const f = fixture(t); const before = snapshot(f); const p = which === 'source' ? f.targets[5] : f.metadata;
   fs.unlinkSync(p); fs.mkdirSync(p);
   assert.throws(() => installFinalSources(f.root), /type/i);
-  for (let i = 0; i < (which === 'source' ? 4 : 5); i++) assert.deepEqual(fs.readFileSync(f.targets[i]), before[i].bytes);
+  for (let i = 0; i < (which === 'source' ? 5 : 6); i++) assert.deepEqual(fs.readFileSync(f.targets[i]), before[i].bytes);
   noDebris(f);
 });
 test('concurrent later-file identity swap after staging is preserved', t => {
   const f = fixture(t); let fired = false;
   patch(t, 'fsyncSync', sync => fd => {
     sync(fd); if (fired) return; fired = true;
-    fs.renameSync(f.targets[4], f.targets[4] + '.saved'); fs.writeFileSync(f.targets[4], originals[4]);
+    fs.renameSync(f.targets[5], f.targets[5] + '.saved'); fs.writeFileSync(f.targets[5], originals[5]);
   });
   assert.throws(() => installFinalSources(f.root), /changed/i);
-  f.targets.forEach((p, i) => assert.deepEqual(fs.readFileSync(p), i < 4 ? finals[i] : originals[i]));
+  f.targets.forEach((p, i) => assert.deepEqual(fs.readFileSync(p), i < 5 ? finals[i] : originals[i]));
   noDebris(f);
   assert.equal(installFinalSources(f.root), 1); noDebris(f);
 });
