@@ -93,9 +93,9 @@ public class ReactNativeMinimumScaleManagerRoutesTest extends ReactNativeMinimum
     ReactTextViewManager manager = new ReactTextViewManager();
     // Same instance receives a configured value and an unset update; stale scale must not survive.
     bind(manager, view, prepared, absolute, scale);
-    drawAndAssert(view, expected);
+    drawAndAssert(view, 1, expected, prepared ? 30 : expected);
     bind(manager, view, prepared, Double.NaN, null);
-    drawAndAssert(view, 12);
+    drawAndAssert(view, 1, 12, prepared ? 30 : 12);
   }
 
   private void bind(ReactTextViewManager manager, ReactTextView view, boolean prepared,
@@ -158,9 +158,9 @@ public class ReactNativeMinimumScaleManagerRoutesTest extends ReactNativeMinimum
     assertEquals(20f, (Float) value(measured, "resolvedMinimumFontSize"), 0f);
     apply(manager, view, preparedUpdate(manager, view, measured));
     assertSame("Manager receives the measured layout's spans", measuredLayout.getText(), view.getSpanned());
-    drawAndAssert(view, 1, 20);
-    drawAndAssert(view, 2, 20); // A second native frame must not lower the absolute floor.
-    drawAndAssert(view, 10000, 20); // Received span baseline is 20, not original premeasurement 30.
+    drawAndAssert(view, 1, 20, 30);
+    drawAndAssert(view, 2, 20, 30); // A second native frame must not lower the absolute floor.
+    drawAndAssert(view, 10000, 20, 30); // Received span baseline is 20, not original premeasurement 30.
     assertEquals("View fits must leave measured/cache-owned spans untouched", 20, size(measuredLayout.getText()));
 
     // A fresh, wide measurement receives original 30px spans, so it can recover 30.
@@ -168,23 +168,23 @@ public class ReactNativeMinimumScaleManagerRoutesTest extends ReactNativeMinimum
     assertEquals(30, size(((Layout) value(wide, "layout")).getText()));
     assertEquals(20f, (Float) value(wide, "resolvedMinimumFontSize"), 0f);
     apply(manager, view, preparedUpdate(manager, view, wide));
-    drawAndAssert(view, 10000, 30);
-    drawAndAssert(view, 1, 20);
-    drawAndAssert(view, 10000, 30); // Existing ownership fix restores within the received 30px baseline.
+    drawAndAssert(view, 10000, 30, 30);
+    drawAndAssert(view, 1, 20, 20);
+    drawAndAssert(view, 10000, 30, 30); // Existing ownership fix restores within the received 30px baseline.
     assertEquals(30, size(((Layout) value(wide, "layout")).getText()));
   }
 
   @Test public void preparedAndFallback_sameViewTransitions_clearPriorFloorAndScale() throws Exception {
     ReactTextView view = newView();
     ReactTextViewManager manager = new ReactTextViewManager();
-    bind(manager, view, false, Double.NaN, 0.68); drawAndAssert(view, 20);
-    bind(manager, view, true, Double.NaN, null); drawAndAssert(view, 12);
-    bind(manager, view, true, Double.NaN, 0.68); drawAndAssert(view, 20);
-    bind(manager, view, false, Double.NaN, Double.NaN); drawAndAssert(view, 12);
-    bind(manager, view, false, Double.NaN, 0.68); drawAndAssert(view, 20);
-    bind(manager, view, true, Double.NaN, Double.NaN); drawAndAssert(view, 12);
-    bind(manager, view, true, Double.NaN, 0.68); drawAndAssert(view, 20);
-    bind(manager, view, false, Double.NaN, null); drawAndAssert(view, 12);
+    bind(manager, view, false, Double.NaN, 0.68); drawAndAssert(view, 1, 20, 20);
+    bind(manager, view, true, Double.NaN, null); drawAndAssert(view, 1, 12, 30);
+    bind(manager, view, true, Double.NaN, 0.68); drawAndAssert(view, 1, 20, 30);
+    bind(manager, view, false, Double.NaN, Double.NaN); drawAndAssert(view, 1, 12, 12);
+    bind(manager, view, false, Double.NaN, 0.68); drawAndAssert(view, 1, 20, 20);
+    bind(manager, view, true, Double.NaN, Double.NaN); drawAndAssert(view, 1, 12, 30);
+    bind(manager, view, true, Double.NaN, 0.68); drawAndAssert(view, 1, 20, 30);
+    bind(manager, view, false, Double.NaN, null); drawAndAssert(view, 1, 12, 12);
 
     // Legacy six-argument callers supply no metadata: manager must clear both stale values.
     Class<?> cls = Class.forName("com.facebook.react.views.text.PreparedLayout");
@@ -196,8 +196,8 @@ public class ReactNativeMinimumScaleManagerRoutesTest extends ReactNativeMinimum
     Object input = legacy.newInstance(layout, 1, 0f, new int[0],
         Layout.BREAK_STRATEGY_SIMPLE, Layout.JUSTIFICATION_MODE_NONE);
     assertTrue(Float.isNaN((Float) value(input, "resolvedMinimumFontSize")));
-    bind(manager, view, false, 16.9, 0.68); drawAndAssert(view, 16);
-    apply(manager, view, preparedRoute(manager, view, input)); drawAndAssert(view, 12);
+    bind(manager, view, false, 16.9, 0.68); drawAndAssert(view, 1, 16, 16);
+    apply(manager, view, preparedRoute(manager, view, input)); drawAndAssert(view, 1, 12, 12);
     Field minimum = ReactTextView.class.getDeclaredField("mMinimumFontSize");
     Field scale = ReactTextView.class.getDeclaredField("mMinimumFontScale");
     minimum.setAccessible(true); scale.setAccessible(true);
@@ -275,11 +275,7 @@ public class ReactNativeMinimumScaleManagerRoutesTest extends ReactNativeMinimum
     return spans[0].getSize();
   }
 
-  private void drawAndAssert(ReactTextView view, int expected) {
-    drawAndAssert(view, 1, expected);
-  }
-
-  private void drawAndAssert(ReactTextView view, int width, int expected) {
+  private void drawAndAssert(ReactTextView view, int width, int expected, int expectedBasePaint) {
     view.measure(android.view.View.MeasureSpec.makeMeasureSpec(width, android.view.View.MeasureSpec.EXACTLY),
         android.view.View.MeasureSpec.makeMeasureSpec(200, android.view.View.MeasureSpec.EXACTLY));
     view.layout(0, 0, width, 200);
@@ -290,6 +286,17 @@ public class ReactNativeMinimumScaleManagerRoutesTest extends ReactNativeMinimum
     AbsoluteSizeSpan[] spans = displayed.getSpans(0, 1, AbsoluteSizeSpan.class);
     assertEquals(1, spans.length);
     assertEquals("Actual manager->view->draw floor", expected, spans[0].getSize());
-    if (width <= 2) assertEquals(expected, view.getPaint().getTextSize(), 0.001f);
+    // Styled runs and the TextView base paint are independent. A measured 20px
+    // span can arrive with the unchanged 30px view base; neither may poison the other.
+    // This SDK measurement checks that glyph advances actually use the requested
+    // span size, rather than merely checking a stored getSize value.
+    TextPaint glyphReference = new TextPaint();
+    glyphReference.set(view.getPaint());
+    glyphReference.setTextSize(expected);
+    assertEquals("Real styled glyph advance matches independent unstyled SDK reference",
+        Layout.getDesiredWidth(view.getText().toString(), glyphReference),
+        Layout.getDesiredWidth(view.getText(), view.getPaint()), 0.001f);
+    assertEquals("Scenario-specific base paint remains independent of styled spans",
+        expectedBasePaint, view.getPaint().getTextSize(), 0.001f);
   }
 }
