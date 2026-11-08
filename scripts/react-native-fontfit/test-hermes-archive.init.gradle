@@ -1,0 +1,17 @@
+// Private fixture test only: retain the actual installed Copy task/actions,
+// overriding only its output to an isolated RUNNER_TEMP directory.
+def destination = System.getenv('CS_HERMES_FIXTURE_OUTPUT')
+def runnerTemp = System.getenv('RUNNER_TEMP')
+if (!destination || !runnerTemp || !new File(destination).canonicalPath.startsWith(new File(runnerTemp).canonicalPath + File.separator)) {
+    throw new GradleException('Invalid private archive fixture destination')
+}
+gradle.beforeProject { project ->
+    if (project.rootProject.name == 'react-native-build-from-source' && project.path == ':packages:react-native:ReactAndroid:hermes-engine') {
+        project.afterEvaluate {
+            project.tasks.named('unzipHermes') {
+                into(new File(destination))
+                outputs.upToDateWhen { false }
+            }
+        }
+    }
+}

@@ -40,6 +40,10 @@ jobs:
           node scripts/react-native-fontfit/repair-fontfit-source.cjs "$GITHUB_WORKSPACE"
           node scripts/configure-react-native-source.js
           sha256sum node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt | tee evidence/rn-source.sha256
+      - name: Repair and test real Hermes archive extraction
+        run: |
+          node scripts/react-native-fontfit/repair-hermes-source-layout.cjs
+          node scripts/react-native-fontfit/test-hermes-archive.mjs
       - name: Execute actual dependency fitter regression
         env:
           NODE_ENV: production
