@@ -12,7 +12,7 @@ import expo.modules.video.listeners.VideoPlayerListener
 import expo.modules.video.player.VideoPlayer
 import kotlin.math.abs
 
-/** Combines reading-source identity, current-output rendering, and Expo's layout receipt.
+/** Combines fresh reading-source/current-output evidence with Expo's current-view layout receipt.
  * No metadata listener, output, SDK layout state or shutter is replaced by this observer.
  */
 @OptIn(UnstableApi::class)
@@ -25,6 +25,7 @@ internal class VideoFrameReceipt(
   private val changed: () -> Unit,
 ) : AutoCloseable {
   internal interface Hooks {
+    // Null also denotes a view whose native Player binding is no longer this player.
     fun currentView(): Any?
     fun layoutValid(): Boolean
     fun addAnalytics(listener: AnalyticsListener)
@@ -34,7 +35,9 @@ internal class VideoFrameReceipt(
   }
 
   internal class NativeHooks(private val video: VideoPlayer) : Hooks {
-    override fun currentView(): Any? = video.currentVideoView
+    override fun currentView(): Any? = video.currentVideoView?.takeIf {
+      it.playerView.player === video.player
+    }
     override fun layoutValid(): Boolean {
       val view = video.currentVideoView ?: return false
       if (view.playerView.player !== video.player) return false
@@ -57,13 +60,20 @@ internal class VideoFrameReceipt(
   private var view: Any? = null
   private var sourceFrame = false
   private var outputFrame = false
-  private var sdkFrame = false
-  private var presentedView: Any? = null
+  private var sdkLayout = false
   private fun live() = active && current()
   private fun targetCurrent() = player.currentMediaItem === installed && player.currentPosition == targetMs
-  private fun resetFrame() { view = null; sourceFrame = false; outputFrame = false; sdkFrame = false }
-  private fun reset() { resetFrame(); presentedView = null }
-  private fun bindingCurrent() = view != null && view === hooks.currentView() && targetCurrent()
+  private fun resetFrame() { sourceFrame = false; outputFrame = false }
+  private fun reset() { resetFrame(); view = null; sdkLayout = false }
+  private fun bindingCurrent(): Boolean {
+    val currentView = hooks.currentView()
+    if (currentView == null || !targetCurrent()) { reset(); return false }
+    if (view !== currentView) {
+      reset()
+      view = currentView
+    }
+    return true
+  }
   private inline fun observe(action: () -> Unit) {
     if (!live()) return
     try { action() } catch (_: Exception) {
@@ -74,35 +84,35 @@ internal class VideoFrameReceipt(
 
   private val analytics = object : AnalyticsListener {
     override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) = observe {
-      // Every analytics frame replaces the candidate, including a stale output's frame.
+      // Every analytics frame replaces source/output evidence, including stale outputs.
       // ExoPlayer 1.11 dispatches this synchronously BEFORE the current-output Player event.
-      if (presentedView !== hooks.currentView() || !targetCurrent()) presentedView = null
       resetFrame()
+      if (!bindingCurrent()) return@observe
       val periodId = eventTime.mediaPeriodId ?: return@observe
       val timeline = eventTime.timeline
       val index = timeline.getIndexOfPeriod(periodId.periodUid)
       if (index < 0 || !targetCurrent()) return@observe
       val period = timeline.getPeriod(index, Timeline.Period())
       if (timeline.getWindow(period.windowIndex, Timeline.Window()).mediaItem !== installed) return@observe
-      view = hooks.currentView() ?: return@observe
       sourceFrame = true
     }
   }
   private val outputListener = object : Player.Listener {
     override fun onRenderedFirstFrame() = observe {
-      if (!sourceFrame || !bindingCurrent()) { reset(); return@observe }
+      // Check binding before sourceFrame: even an unpaired callback can reveal a rebind.
+      if (!bindingCurrent() || !sourceFrame) { resetFrame(); return@observe }
       // Media3 only emits this callback when videoOutput == the analytics event's output.
       outputFrame = true
-      if (sdkFrame) presentedView = view
       changed()
     }
     override fun onSurfaceSizeChanged(width: Int, height: Int) = observe {
       if (!bindingCurrent()) reset()
       // Media3 reports zero dimensions when the output surface is destroyed. The view
       // can survive, but its old buffer cannot prove presentation on the new output.
-      // Keep only the paired SDK receipt: Expo may not emit it again for this item/view.
+      // Keep only the independent SDK layout witness on this same item/target/view.
+      // Expo deduplicates it even when Media3 renders again on a recreated surface.
       else if (width == 0 || height == 0) {
-        sourceFrame = false; outputFrame = false; sdkFrame = false
+        resetFrame()
       }
       changed()
     }
@@ -117,9 +127,11 @@ internal class VideoFrameReceipt(
       changed()
     }
     override fun onRenderedFirstFrame(player: VideoPlayer) = observe {
-      if (!sourceFrame || !bindingCurrent() || !hooks.layoutValid()) return@observe
-      sdkFrame = true
-      if (outputFrame) presentedView = view
+      // SDK notification is about the current view's layout, not the reading source.
+      // Its only emission may accompany a stale-source frame; accept no source/output
+      // evidence here. NativeHooks also checks the current view's Player binding.
+      if (!bindingCurrent() || !hooks.layoutValid()) return@observe
+      sdkLayout = true
       changed()
     }
   }
@@ -133,9 +145,10 @@ internal class VideoFrameReceipt(
   }
 
   // Expo emits once per item/view, even if Media3 renders another first frame after a resize.
-  // Retain only an SDK receipt already paired with a source-specific current-output frame.
-  fun isPresented(): Boolean = live() && sourceFrame && outputFrame && presentedView === view &&
-    bindingCurrent() && hooks.layoutValid()
+  // Join independent witnesses only on the same installed item/target/current view.
+  // READY remains the coordinator's gate. These callbacks do not prove target pixels.
+  fun isPresented(): Boolean = live() && bindingCurrent() && sourceFrame && outputFrame &&
+    sdkLayout && hooks.layoutValid()
 
   override fun close() {
     if (!active) return
