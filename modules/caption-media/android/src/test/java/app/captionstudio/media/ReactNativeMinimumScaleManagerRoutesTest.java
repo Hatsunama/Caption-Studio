@@ -13,6 +13,8 @@ import android.text.style.AbsoluteSizeSpan;
 import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
 import com.facebook.react.bridge.JavaOnlyMap;
+import com.facebook.react.internal.featureflags.ReactNativeFeatureFlags;
+import com.facebook.react.internal.featureflags.ReactNativeFeatureFlagsForTests;
 import com.facebook.yoga.YogaMeasureMode;
 import com.facebook.react.uimanager.ReactStylesDiffMap;
 import com.facebook.react.views.text.ReactTextView;
@@ -22,6 +24,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Method;
 import org.junit.Test;
+import org.junit.Before;
+import org.junit.After;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
@@ -33,6 +37,50 @@ import org.robolectric.annotation.GraphicsMode;
 @Config(sdk = 36, manifest = Config.NONE)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class ReactNativeMinimumScaleManagerRoutesTest extends ReactNativeMinimumScaleTestSupport {
+  private Field accessorField;
+  private Field providerField;
+  private Object priorAccessor;
+  private Object priorProvider;
+  private boolean flagsOwned;
+
+  @Before public void useOfficialJvmFeatureFlagFixture() throws Exception {
+    accessorField = ReactNativeFeatureFlags.class.getDeclaredField("accessor");
+    providerField = ReactNativeFeatureFlags.class.getDeclaredField("accessorProvider");
+    accessorField.setAccessible(true);
+    providerField.setAccessible(true);
+    priorAccessor = accessorField.get(null);
+    priorProvider = providerField.get(null);
+    flagsOwned = true;
+    // RN's own supported JVM fixture avoids loading Android JNI feature flags.
+    // The actual manager, text fitter, view, spans and native graphics remain real.
+    ReactNativeFeatureFlagsForTests.INSTANCE.setUp();
+    assertEquals("com.facebook.react.internal.featureflags.ReactNativeFeatureFlagsLocalAccessor",
+        accessorField.get(null).getClass().getName());
+  }
+
+  @After public void restorePreviousFeatureFlagObjects() throws Exception {
+    if (!flagsOwned) return;
+    try {
+      providerField.set(null, priorProvider);
+    } finally {
+      accessorField.set(null, priorAccessor);
+      flagsOwned = false;
+    }
+    assertSame(priorProvider, providerField.get(null));
+    assertSame(priorAccessor, accessorField.get(null));
+  }
+
+  @Test public void officialFlagFixture_restoresPriorObjectsAndCanBeReentered() throws Exception {
+    Object originalAccessor = priorAccessor;
+    Object originalProvider = priorProvider;
+    Object localAccessor = accessorField.get(null);
+    restorePreviousFeatureFlagObjects();
+    assertSame(originalAccessor, accessorField.get(null));
+    assertSame(originalProvider, providerField.get(null));
+    useOfficialJvmFeatureFlagFixture();
+    assertNotSame(localAccessor, accessorField.get(null));
+  }
+
   @Test public void preparedAndFallback_deliverScale_resetNaN_andAbsolutePrecedence() throws Exception {
     route(false, Double.NaN, 0.68, 20);
     route(true, Double.NaN, 0.68, 20);
