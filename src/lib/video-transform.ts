@@ -1,10 +1,19 @@
-import { resolveLayerGeometry, type LayerGeometry } from '@/lib/layer-geometry';
+import { resolveLayerGeometry, type LayerGeometry, type LayerGestureLimits } from '@/lib/layer-geometry';
 import {
   DEFAULT_VIDEO_TRANSFORM,
   type CaptionProject,
   type VideoTransform,
   type VideoTransformPatch,
 } from '@/types/project';
+
+export const VIDEO_TRANSFORM_GESTURE_LIMITS = {
+  scale: [0.05, 20],
+  scaleX: [0.001, 200],
+  scaleY: [0.001, 200],
+  // Main-video scale components own the domain. A valid fitted extent may
+  // exceed the foreground extent cap, or be smaller than its gesture floor.
+  extent: [0, Infinity],
+} as const satisfies LayerGestureLimits;
 
 export function cloneVideoTransform(transform: VideoTransform): VideoTransform {
   return {
@@ -31,9 +40,9 @@ export function mergeVideoTransform(
       x: boundedFinite(position?.x, current.position.x, -4, 4),
       y: boundedFinite(position?.y, current.position.y, -4, 4),
     },
-    scale: boundedFinite(patch.scale, current.scale, 0.05, 20),
-    scaleX: boundedFinite(patch.scaleX, current.scaleX ?? 1, 0.001, 200),
-    scaleY: boundedFinite(patch.scaleY, current.scaleY ?? 1, 0.001, 200),
+    scale: boundedFinite(patch.scale, current.scale, ...VIDEO_TRANSFORM_GESTURE_LIMITS.scale),
+    scaleX: boundedFinite(patch.scaleX, current.scaleX ?? 1, ...VIDEO_TRANSFORM_GESTURE_LIMITS.scaleX),
+    scaleY: boundedFinite(patch.scaleY, current.scaleY ?? 1, ...VIDEO_TRANSFORM_GESTURE_LIMITS.scaleY),
     rotation: normalizeDegrees(finiteOr(patch.rotation, current.rotation)),
   };
 }

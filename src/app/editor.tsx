@@ -7,7 +7,7 @@ import { editorLayerSelection, editorSelectionState, shouldOpenEditorTool, type 
 import { visualLayerVisibleAtTime } from '@/lib/visual-layer-visibility';
 import { usePreviewSceneGesture, type PreviewSceneTarget } from '@/hooks/use-preview-scene-gesture';
 import { applyPreviewSceneGeometry } from '@/lib/preview-scene-project';
-import { videoClipPreviewGeometry } from '@/lib/video-transform';
+import { VIDEO_TRANSFORM_GESTURE_LIMITS, videoClipPreviewGeometry } from '@/lib/video-transform';
 import { LayerTransformOverlay } from '@/components/editor/layer-transform-overlay';
 import { captionPreviewState, projectHasEditorLayer } from '@/lib/caption-preview';
 import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
@@ -1936,6 +1936,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     key: `video:${currentClipEntry.clip.id}`,
     selection: { kind: 'video', id: currentClipEntry.clip.id },
     geometry: activeVideoGeometry,
+    limits: VIDEO_TRANSFORM_GESTURE_LIMITS,
     order: -1,
     deletable: false,
     yieldToForeground: true,

@@ -11,6 +11,13 @@ export type LayerGeometry = Required<LayerGeometryInput>;
 export type LayerTouch = { id: number; x: number; y: number };
 export type LayerCanvas = { width: number; height: number; pageX: number; pageY: number; located?: boolean };
 export type LayerGestureMode = 'move' | 'corner' | 'left' | 'right' | 'top' | 'bottom';
+/** Optional model-owned bounds; foreground layers retain their extent domain. */
+export type LayerGestureLimits = {
+  scale?: readonly [number, number];
+  scaleX?: readonly [number, number];
+  scaleY?: readonly [number, number];
+  extent?: readonly [number, number];
+};
 
 const MINIMUM_MODEL_EXTENT = 0.001;
 
@@ -38,23 +45,24 @@ export function layerExtent(value: LayerGeometryInput) {
   };
 }
 
-export function normalizeLayerGeometry(value: LayerGeometryInput): LayerGeometry {
+export function normalizeLayerGeometry(value: LayerGeometryInput, limits?: LayerGestureLimits): LayerGeometry {
   const geometry = resolveLayerGeometry(value);
   if (![geometry.position.x, geometry.position.y, geometry.box.width, geometry.box.height, geometry.rotation]
     .every(Number.isFinite) || geometry.box.width <= 0 || geometry.box.height <= 0) {
     throw new Error('Layer geometry must contain finite positions, rotation, and positive dimensions');
   }
+  const [minimumExtent, maximumExtent] = limits?.extent ?? [MINIMUM_MODEL_EXTENT, 10];
   const box = {
-    width: clamp(geometry.box.width, MINIMUM_MODEL_EXTENT, 10),
-    height: clamp(geometry.box.height, MINIMUM_MODEL_EXTENT, 10),
+    width: clamp(geometry.box.width, minimumExtent, maximumExtent),
+    height: clamp(geometry.box.height, minimumExtent, maximumExtent),
   };
   const extent = layerExtent({ ...geometry, box });
   return {
     ...geometry,
     box,
     rotation: degrees(geometry.rotation),
-    scaleX: geometry.scaleX * Math.min(10 / Math.max(Number.EPSILON, extent.width), 1),
-    scaleY: geometry.scaleY * Math.min(10 / Math.max(Number.EPSILON, extent.height), 1),
+    scaleX: geometry.scaleX * Math.min(maximumExtent / Math.max(Number.EPSILON, extent.width), 1),
+    scaleY: geometry.scaleY * Math.min(maximumExtent / Math.max(Number.EPSILON, extent.height), 1),
     position: {
       x: clamp(geometry.position.x, -4, 4),
       y: clamp(geometry.position.y, -4, 4),
@@ -62,8 +70,8 @@ export function normalizeLayerGeometry(value: LayerGeometryInput): LayerGeometry
   };
 }
 
-export function constrainLayerGeometry(value: LayerGeometryInput, canvas: Pick<LayerCanvas, 'width' | 'height'>): LayerGeometry {
-  const constrained = normalizeLayerGeometry(value);
+export function constrainLayerGeometry(value: LayerGeometryInput, canvas: Pick<LayerCanvas, 'width' | 'height'>, limits?: LayerGestureLimits): LayerGeometry {
+  const constrained = normalizeLayerGeometry(value, limits);
   const width = Math.max(1, canvas.width);
   const height = Math.max(1, canvas.height);
   // Minimum hit targets belong to preview chrome, never to saved content extents.
@@ -99,7 +107,9 @@ const midpoint = (a: LayerTouch, b: LayerTouch) => ({ id: -1, x: (a.x + b.x) / 2
 const degrees = (value: number) => ((value + 180) % 360 + 360) % 360 - 180;
 const ordered = (touches: readonly LayerTouch[]) => touches.slice().sort((a, b) => a.id - b.id).slice(0, 2);
 
-export function createLayerGesture(initial: LayerGeometryInput) {
+export function createLayerGesture(initial: LayerGeometryInput, limits?: LayerGestureLimits) {
+  const [minimumExtent, maximumExtent] = limits?.extent ?? [MINIMUM_MODEL_EXTENT, 10];
+  const boundScale = (value: number, range?: readonly [number, number]) => range ? clamp(value, range[0], range[1]) : value;
   let current = resolveLayerGeometry(initial);
   let baseline = current;
   let points: LayerTouch[] = [];
@@ -133,19 +143,23 @@ export function createLayerGesture(initial: LayerGeometryInput) {
       // Bound the requested transform in model space before computing its pivot.
       // Reuse the normalized box minimum so repeated collapses remain positive
       // in native floats. Cap the floor at 1 to preserve smaller persisted content.
-      const minimumRatio = Math.min(1, MINIMUM_MODEL_EXTENT / Math.min(extent.width, extent.height));
-      const maximumRatio = Math.min(10 / extent.width, 10 / extent.height);
+      const minimumRatio = Math.max(Math.min(1, minimumExtent / Math.min(extent.width, extent.height)),
+        limits?.scale ? limits.scale[0] / baseline.scale : 0);
+      const maximumRatio = Math.min(maximumExtent / extent.width, maximumExtent / extent.height,
+        limits?.scale ? limits.scale[1] / baseline.scale : Infinity);
       if (next.length === 2) {
         if (!canvas.located) return current;
         const origin = midpoint(points[0], points[1]);
         const target = midpoint(next[0], next[1]);
         const initialDistance = distance(points[0], points[1]);
         if (initialDistance < 1) { rebase(next); return current; }
-        const ratio = clamp(distance(next[0], next[1]) / initialDistance, minimumRatio, maximumRatio);
+        const requestedRatio = clamp(distance(next[0], next[1]) / initialDistance, minimumRatio, maximumRatio);
+        const scale = boundScale(baseline.scale * requestedRatio, limits?.scale);
+        const ratio = limits?.scale ? scale / baseline.scale : requestedRatio;
         const rotation = angle(next[0], next[1]) - angle(points[0], points[1]);
         const x = canvas.pageX + baseline.position.x * canvas.width - origin.x;
         const y = canvas.pageY + baseline.position.y * canvas.height - origin.y;
-        current = { ...baseline, scale: baseline.scale * ratio, rotation: degrees(baseline.rotation + rotation * 180 / Math.PI),
+        current = { ...baseline, scale, rotation: degrees(baseline.rotation + rotation * 180 / Math.PI),
           position: {
             x: (target.x + ratio * (x * Math.cos(rotation) - y * Math.sin(rotation)) - canvas.pageX) / canvas.width,
             y: (target.y + ratio * (x * Math.sin(rotation) + y * Math.cos(rotation)) - canvas.pageY) / canvas.height,
@@ -161,7 +175,7 @@ export function createLayerGesture(initial: LayerGeometryInput) {
         const initialDistance = distance(center, points[0]);
         if (initialDistance === 0) { rebase(next); return current; }
         const ratio = clamp(distance(center, next[0]) / initialDistance, minimumRatio, maximumRatio);
-        current = { ...baseline, scale: baseline.scale * ratio };
+        current = { ...baseline, scale: boundScale(baseline.scale * ratio, limits?.scale) };
       } else {
         const horizontal = mode === 'left' || mode === 'right';
         const side = mode === 'left' || mode === 'top' ? -1 : 1;
@@ -171,15 +185,21 @@ export function createLayerGesture(initial: LayerGeometryInput) {
         const delta = (next[0].x - points[0].x) * axisX + (next[0].y - points[0].y) * axisY;
         const original = horizontal ? extent.width * canvas.width : extent.height * canvas.height;
         const axisExtent = horizontal ? extent.width : extent.height;
-        const ratio = clamp(1 + side * delta / original, Math.min(1, MINIMUM_MODEL_EXTENT / axisExtent), 10 / axisExtent);
+        const baselineScale = horizontal ? baseline.scaleX : baseline.scaleY;
+        const range = horizontal ? limits?.scaleX : limits?.scaleY;
+        const requestedRatio = clamp(1 + side * delta / original,
+          Math.max(Math.min(1, minimumExtent / axisExtent), range ? range[0] / baselineScale : 0),
+          Math.min(maximumExtent / axisExtent, range ? range[1] / baselineScale : Infinity));
+        const scale = boundScale(baselineScale * requestedRatio, range);
+        const ratio = range ? scale / baselineScale : requestedRatio;
         const dimension = original * ratio;
         const shift = side * (dimension - original) / 2;
         current = { ...baseline,
-          ...(horizontal ? { scaleX: baseline.scaleX * ratio } : { scaleY: baseline.scaleY * ratio }),
+          ...(horizontal ? { scaleX: scale } : { scaleY: scale }),
           position: { x: baseline.position.x + shift * axisX / canvas.width, y: baseline.position.y + shift * axisY / canvas.height },
         };
       }
-      current = constrainLayerGeometry(current, canvas);
+      current = constrainLayerGeometry(current, canvas, limits);
       return current;
     },
     end() { const wasActive = active; active = false; points = []; return wasActive ? current : undefined; },
