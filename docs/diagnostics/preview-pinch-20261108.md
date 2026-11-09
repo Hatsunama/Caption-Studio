@@ -81,3 +81,36 @@ published. A replacement final artifact needs a fresh identity, trusted-main
 build, separate local Solana/Play signing keys, and exact-artifact verification
 on both phones. Release remains blocked until that evidence exists. No raw user
 recording, phone metadata, credentials, or signing material belongs in this PR.
+
+## Paused PiP presentation follow-up (November 9)
+
+The exact CI APK from head `4ab6cd07` reproduced a separate Samsung defect:
+newly added paused PiP had its selection outline but no video pixels. Its
+resized frame appeared after Home/resume and after force-stop/draft reopen.
+The same controlled repeat-touch gesture retained the PiP owner on both phones;
+Samsung also retained the exact image and text owners in their native cases.
+These native cases used the existing landscape fixture in portrait UI. They do
+not certify other source/UI orientations, every interruption, or final store bytes.
+
+The overlay previously treated constructor preparation, a queued seek, and SDK
+readiness as sufficient presentation; target zero skipped seeking. It now reuses
+the main preview's existing source/view-owned Android presentation contract for
+an unclipped source. Preparation stays paused and muted, follows the latest
+committed clock/play intent, and aborts its own native request when retired.
+Geometry edits retain the texture view. No artificial playback, thumbnail
+fallback, dependency, model, layout, or project-format change was introduced.
+
+Change-impact review also caught milliseconds passed to an API requiring source
+duration in seconds. Realistic stored-duration and native Float/EOF fixtures now
+exercise that connection. Preparation failures reach the existing inline alert
+without replacing another error or logging private native error details; another
+PiP becoming ready cannot silently clear the failure.
+
+Evidence: the initial readiness component regressions failed 13 cases before the
+repair; the new caller/error handoff then failed 6 of 27 parent-run tests before
+its wiring was completed. All 27 final readiness/caller tests pass with a 64 MiB
+Node heap. Earlier combined main/PiP tests passed on the preceding readiness
+revision. Full required checks, type/lint validation, and runtime verification of
+these new bytes remain pending. The earlier green CI/artifact cannot certify this
+follow-up. PR #168 remains draft and release blocked. Private device captures,
+recordings, signing material, and test-tool state are excluded from the commit.

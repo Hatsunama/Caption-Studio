@@ -21,7 +21,7 @@ const clip = (id = 'a', sourceId = 'source') => ({ id, sourceId, sourceStartMs: 
 // React scheduling and the native boundary are faked. Public view frames never
 // arrive by default; all Android native presentation is controlled by holdWindow.
 // Explicit iOS/web fixtures below retain coverage of the legacy public frame gates.
-function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false, sourceDurationMs = 31000, allowGapClock = false } = {}) {
+function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false, sourceDurationMs = 31000, allowGapClock = false, pip = false } = {}) {
   const hosts = new Map(), cache = new Map(), timers = new Map(), calls = [], eofFrames = new Map();
   const gapFrames = new Map();
   const publishedFrames = new Map();
@@ -55,10 +55,10 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   };
   const appState = { currentState: 'active', addEventListener(_event, fn) {
     appStateListener = fn; return { remove() { appStateListener = undefined; } }; } };
-  const players = [0, 1].map(slot => {
+  const players = (pip ? [0, 1, 2] : [0, 1]).map(slot => {
     const listeners = new Map();
     let time = 0;
-    return { mediaItems: 0, status: 'idle', playing: false, muted: false, playbackRate: 1, volume: 1,
+    return { mediaItems: 0, status: 'idle', playing: false, muted: false, playbackRate: 1, volume: 1, holdWindow: slot === 2,
       get duration() { const full = nativeDuration === undefined ? project.sources[0]?.durationMs / 1000 : nativeDuration;
         return this.windowEndMs == null ? full : Math.min(full, Math.fround(Math.fround(this.windowEndMs) / 1000)); },
       get currentTime() { return nativeClock ? Math.fround(Math.fround(time * 1000) / 1000) : time; },
@@ -102,9 +102,10 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     } },
     react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
     'react-native': { View: 'view', Text: 'text', AppState: appState, Platform: { OS: platform } },
-    'expo-video': { VideoView: 'video', useVideoPlayer(_source, setup) {
+    'expo-video': { VideoView: 'video', useVideoPlayer(source, setup) {
       const player = players[playerCursor++]; const ref = react.useRef(false);
-      if (!ref.current) { setup(player); ref.current = true; } return player; } },
+      if (!ref.current) { if (source) { player.loadedUri = source; player.status = 'loading'; }
+        setup(player); ref.current = true; } return player; } },
     expo: { useEventListener(player, event, callback) {
       react.useEffect(() => { const sub = player.addListener(event, callback); return () => sub.remove(); }, [player, event, callback]); } },
   };
@@ -129,24 +130,31 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
         if (id.startsWith('.')) { const relative = posix.normalize(posix.join(posix.dirname(path), id));
           return id.endsWith('.json') ? JSON.parse(readFileSync(new URL(relative, root), 'utf8')) : load(relative + '.ts'); }
         if (id.startsWith('@/')) { const stem = `src/${id.slice(2)}`;
-          return load(stem + (stem.endsWith('video-transition-overlay') ? '.tsx' : '.ts')); }
+          return load(stem + (/video-(transition|layer)-overlay$/.test(stem) ? '.tsx' : '.ts')); }
         return require(id); });
     return exports;
   }
   const { useTimelineVideoController } = load('src/hooks/use-timeline-video-controller.ts');
   const { useEditorRuntimePolicy } = load('src/hooks/use-editor-runtime-policy.ts');
   const { VideoTransitionOverlay } = load('src/components/editor/video-transition-overlay.tsx');
+  const { VideoLayerOverlay } = pip ? load('src/components/editor/video-layer-overlay.tsx') : {};
   const { buildClipTimeline } = load('src/lib/video-timeline.ts');
   const project = { clips, sources: missingSource ? [] : ['source', 'other'].map(id => ({ id, uri: `file:///${id}.mp4`, displayName: id, durationMs: sourceDurationMs })) };
   function Root() {
     const policy = useEditorRuntimePolicy(blockingUi);
     transport = useTimelineVideoController(project, () => {}, policy.videoSurfacesAdmitted);
-    return jsx(VideoTransitionOverlay, { entries: buildClipTimeline(project.clips), sources: project.sources,
+    const main = jsx(VideoTransitionOverlay, { entries: buildClipTimeline(project.clips), sources: project.sources,
       timelineMs: transport.currentMs, isPlaying: transport.isPlaying, transportReady: transport.phase === 'ready',
       width, height, backgroundColor: '#000', admitted: policy.videoSurfacesAdmitted && !transport.previewResourcesSuspended,
-      visible: !transport.isGap, players, slots: transport.slots, activeSlot: transport.activeSlot,
+      visible: !transport.isGap, players: pip ? players.slice(0, 2) : players, slots: transport.slots, activeSlot: transport.activeSlot,
       currentTransform: transform, currentClipId: transport.slots[transport.activeSlot].preparedClipId,
       onFirstFrameRender: transport.markFirstFrame, setCompositeClock: transport.setCompositeClock });
+    return pip ? [main, jsx(VideoLayerOverlay, {
+      layer: { id: 'pip', uri: 'file:///pip.mp4', startMs: 0, endMs: 8000,
+        sourceStartMs: 0, sourceDurationMs: 8000, playbackRate: 1, includeAudio: false, opacity: 1 },
+      clips: [], timelineMs: transport.currentMs, isPlaying: transport.isPlaying,
+      suspended: transport.previewResourcesSuspended || !policy.videoSurfacesAdmitted,
+    })] : main;
   }
   function renderNode(node, path, seen, ancestors = []) {
     if (Array.isArray(node)) return node.forEach((child, i) => renderNode(child, `${path}/${child?.key ?? i}`, seen, ancestors));
@@ -1274,6 +1282,25 @@ test('whole Android source fences zero-frame readiness and retains its final vie
   assert.equal(h.views.find(v => v.player === player).nativePath, path);
   assert.equal(h.calls.filter(c => c[0] === 'seek').length, 0);
   assert.equal(h.calls.filter(c => c[0] === 'replace').length, 1);
+  assert.equal(h.timerCount, 0);
+});
+
+test('paused main and PiP independently require native presentation and retain both views through rotation', async t => {
+  const h = harness({ pip: true, clips: [{ ...clip(), sourceStartMs: 0 }] });
+  t.after(() => h.unmount()); await h.complete();
+  assert.equal(h.transport.phase, 'ready'); const pip = h.players[2];
+  assert.equal(h.calls.filter(c => c[0] === 'window' && c[1] === 2).length, 0,
+    'main readiness cannot certify the separate PiP source');
+  pip.status = 'readyToPlay'; pip.emit('statusChange', { status: 'readyToPlay' }); await h.settle();
+  const request = h.calls.find(c => c[0] === 'window' && c[1] === 2);
+  assert.ok(request, 'PiP must use the same native presentation contract as the main preview');
+  assert.equal(request[4], null); assert.equal(request[6], 0);
+  assert.equal(h.transport.phase, 'ready'); assert.equal(pip.playing, false);
+  const paths = h.views.map(v => v.nativePath);
+  pip.finishWindow(); await h.settle(); await h.rotate();
+  assert.deepEqual(h.views.map(v => v.nativePath), paths);
+  assert.equal(h.calls.filter(c => c[0] === 'window' && c[1] === 2).length, 1);
+  assert.equal(h.calls.some(c => c[0] === 'play'), false);
   assert.equal(h.timerCount, 0);
 });
 

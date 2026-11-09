@@ -2165,6 +2165,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
               geometry={previewGeometryFor(`layer:${layer.id}`, layer)}
               timelineMs={currentMs} isPlaying={isPlaying}
               suspended={transport.previewResourcesSuspended || !runtimePolicy.videoSurfacesAdmitted}
+              onError={(message) => setError((current) => current || message)}
             />;
             return (
               <ImageLayerOverlay
