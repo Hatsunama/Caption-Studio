@@ -56,12 +56,12 @@ for (const [key, selection] of selections) {
     h.tap();
     c.grant([point(7)], origin);
     assert.equal(c.selectedKey, key, 'first pointer must retain foreground until tap is known');
-    assert.deepEqual(h.calls.selections, [selection], 'pending overlap tap must not redundantly reselect its owner');
+    assert.deepEqual(h.calls.selections, [selection, selection], 'pending overlap tap reselects its owner to restore editor tools');
     c.end([], [point(7)]);
     assert.equal(c.selectedKey, key, 'end alone must not cycle');
     c.release(); c.release();
     assert.equal(c.selectedKey, 'main');
-    assert.deepEqual(h.calls.selections, [selection, h.main.selection]);
+    assert.deepEqual(h.calls.selections, [selection, selection, h.main.selection]);
     assert.equal(h.calls.changes.length, 0);
     h.balanced(2); h.preserved();
   });
@@ -81,7 +81,7 @@ for (const [key, selection] of selections) {
     assert.equal(h.calls.changes[0].key, key);
     assert.equal(h.calls.changes[0].selection, selection);
     near(h.calls.changes[0].geometry.scale, 2);
-    assert.deepEqual(h.calls.selections, [selection]);
+    assert.deepEqual(h.calls.selections, [selection, selection]);
     h.balanced(2); h.preserved();
   });
 
@@ -108,7 +108,7 @@ for (const [key, selection] of selections) {
     assert.equal(c.selectedKey, key);
     h.tap(); assert.equal(c.selectedKey, key);
     assert.equal(h.calls.changes.length, 0);
-    assert.deepEqual(h.calls.selections, [selection, selection]);
+    assert.deepEqual(h.calls.selections, [selection, selection, selection]);
     h.balanced(3); h.preserved();
   });
 }
@@ -172,6 +172,6 @@ for (const change of ['remove', 'move']) test(`pending overlap target ${change} 
     : [h.foreground, { ...h.main, geometry: geometry(.1, .1, .1) }] });
   c.end([], [point(7)]); c.release();
   assert.equal(c.selectedKey, h.key);
-  assert.deepEqual(h.calls.selections, [h.foreground.selection]);
+  assert.deepEqual(h.calls.selections, [h.foreground.selection, h.foreground.selection]);
   assert.equal(h.calls.changes.length, 0); h.balanced(2);
 });

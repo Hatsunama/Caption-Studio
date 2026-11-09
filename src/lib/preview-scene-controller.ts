@@ -179,7 +179,6 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
       }
       const source = interaction.target as PreviewSceneTarget<T>;
       const target = { ...source, geometry: resolveLayerGeometry(source.geometry) };
-      const alreadySelected = selectedKey === target.key;
       const gesture = interaction.mode === 'delete' ? undefined : createLayerGesture(target.geometry, target.limits);
       if (gesture && !gesture.begin(interaction.mode === 'delete' ? 'move' : interaction.mode,
         [local(first, origin)], { ...size, pageX: 0, pageY: 0, located: true })) return;
@@ -190,7 +189,7 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
         multitouch: false, tapCycleTarget };
       selectedKey = target.key;
       // Install ownership before selection can synchronously re-render the editor.
-      if (!tapCycleTarget || !alreadySelected) options.onSelect(target.selection);
+      options.onSelect(target.selection);
       if (gesture) options.onInteractionStart();
       notify();
       this.start(touches);

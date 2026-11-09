@@ -43,6 +43,18 @@ The selected main-video model range stays `.05..20`, with independent axes
 
 ## Regression evidence
 
+- Follow-up against `907629b0e8018f5834c2bb39115a9ef6af5524af`: suppressing
+  owner reselection on a pending overlap tap left Audio tools open after the
+  toolbar changed tools without clearing the selected layer. Restored selection
+  on every grant, after ownership is installed. The new test compiles the real
+  editor selection/tool callbacks with esbuild: all 12 cases failed before the
+  repair (six foreground kinds, staggered/simultaneous starts). All 260 focused
+  tests then passed serially with `--max-old-space-size=128 --import tsx`.
+  Duplicate-tap tests now assert grant/end/release state, completed identities
+  `[copy, original]`, exact raw callbacks `[copy, copy, original]`, and no geometry
+  commits. Existing pause paths remain active. Local evidence is in
+  `C:\caption_studio\crash-audit-20261106\pinch-tool-handoff-red.log`,
+  `pinch-tool-handoff-green.log`, and `pinch-tool-handoff-focused-green.log`.
 - Ownership regressions: baseline **40 failures / 1 pass**, then green after the
   repair; additional stale-candidate tests were reproduced red before correction.
 - Real controller → project setters → JSON decode/reopen tests cover all six
