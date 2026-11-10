@@ -206,9 +206,9 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
         if (current.pointers.size >= 2) break;
         if (current.pointers.has(touch.id)) continue;
         const hit = previewObjectAtPoint(targets, local(touch, current.origin), current.size);
-        // Yielding lower backgrounds act like empty canvas for a foreground owner.
+        // Lower layers cannot block a captured owner's pinch; foreign peers/front layers can.
         if (!hit || hit.key === current.target.key
-          || (hit.yieldToForeground && hit.order < current.target.order)) current.pointers.add(touch.id);
+          || hit.order < current.target.order) current.pointers.add(touch.id);
       }
       current.gesture.update(pointsFor(touches, current));
       current.lastPoints = pointsFor(touches, current);

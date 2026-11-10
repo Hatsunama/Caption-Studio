@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createPreviewSceneController } from '../src/lib/preview-scene-controller.ts';
+import { applyPreviewSceneGeometry } from '../src/lib/preview-scene-project.ts';
+import { createCaptionProject } from '../src/lib/project-factory.ts';
+import { addImageLayer } from '../src/lib/project-editor.ts';
+import { resolveLayerGeometry } from '../src/lib/layer-geometry.ts';
 
 const size = { width: 400, height: 300 };
 const origin = { pageX: 71, pageY: 129 };
@@ -18,7 +22,11 @@ const selections = [
   ['translation-cue', { kind: 'translation', id: 'fr', captionId: 'cue' }],
 ];
 
-function setup(key = 'video-overlay', selection = selections[0][1], extraTargets = []) {
+const lowerOverlay = (key = 'text', selection = selections[2][1]) => ({
+  key: `lower:${key}`, selection, geometry: geometry(0.65, 0.7, 0.4), order: 1,
+});
+
+function setup(key = 'video-overlay', selection = selections[0][1], extraTargets = [], commit = () => {}) {
   const foreground = { key, selection, geometry: geometry(), order: 2, deletable: true,
     ...(selection.kind === 'captions' ? { transformKey: 'captions' } : {}),
     ...(selection.kind === 'translation' ? { transformKey: 'translation:fr' } : {}) };
@@ -34,7 +42,7 @@ function setup(key = 'video-overlay', selection = selections[0][1], extraTargets
       configure({ selectedKey: targets.find((t) => t.selection === selection).key });
     },
     onClearSelection() { assert.fail('full-canvas main should prevent empty selection'); },
-    onChange(target, geometry) { calls.changes.push({ key: target.key, selection: target.selection, geometry }); },
+    onChange(target, geometry) { calls.changes.push({ key: target.key, selection: target.selection, geometry }); commit(target, geometry); },
     onDelete() { assert.fail('body gesture must not delete'); },
     onInteractionStart() { calls.starts++; }, onInteractionEnd() { calls.ends++; },
   };
@@ -44,11 +52,102 @@ function setup(key = 'video-overlay', selection = selections[0][1], extraTargets
   function preserved() {
     assert.deepEqual(targets, original);
     assert.deepEqual(controller.geometryFor('main', main.geometry), main.geometry);
+    for (const target of extraTargets) assert.deepEqual(controller.geometryFor(target.key, target.geometry), target.geometry);
   }
   function balanced(count) { assert.equal(calls.starts, count); assert.equal(calls.ends, count); }
   return { controller, calls, key, foreground, main, configure, tap, preserved, balanced,
     draft() { return controller.geometryFor(key, foreground.geometry); } };
 }
+
+for (const [lowerKey, lowerSelection] of selections) {
+  for (const simultaneous of [false, true]) test(`image: ${simultaneous ? 'simultaneous' : 'staggered'} pinch over lower passive ${lowerKey}`, () => {
+    const lower = lowerOverlay(lowerKey, lowerSelection);
+    const h = setup('image', selections[1][1], [lower]), c = h.controller;
+    h.tap();
+    c.grant(simultaneous ? [point(7), point(2, 300)] : [point(7)], origin);
+    if (!simultaneous) c.start([point(2, 300), point(7)]);
+    c.move([point(7, 150), point(2, 350)]);
+    assert.equal(c.selectedKey, 'image');
+    near(h.draft().scale, 2); near(h.draft().position.x, 0.375);
+    near(h.draft().position.y, 0.5); near(h.draft().rotation, 0);
+    near(h.draft().scaleX, 1); near(h.draft().scaleY, 1);
+    assert.equal(h.calls.changes.length, 0); h.preserved();
+    c.end([], [point(2, 350), point(7, 150)]); c.release(); c.release();
+    assert.equal(h.calls.changes.length, 1);
+    assert.equal(h.calls.changes[0].key, 'image');
+    assert.deepEqual(h.calls.changes[0].geometry, { ...geometry(0.375), scale: 2 });
+    assert.deepEqual(h.calls.selections, [selections[1][1], selections[1][1]]);
+    h.balanced(2); h.preserved();
+  });
+}
+
+for (const invalidation of ['cancel', 'layout', 'context']) test(`lower passive overlay pinch: ${invalidation} discards draft and recovers`, () => {
+  const h = setup('image', selections[1][1], [lowerOverlay()]), c = h.controller;
+  h.tap(); c.grant([point(7)], origin); c.start([point(7), point(2, 300)]);
+  c.move([point(7, 150), point(2, 350)]);
+  near(h.draft().scale, 2);
+  if (invalidation === 'cancel') c.cancel();
+  if (invalidation === 'layout') { c.layout({ width: 800, height: 600 }); c.layout(size); }
+  if (invalidation === 'context') h.configure({ contextKey: 'project:next' });
+  c.end([], [point(7, 150), point(2, 350)]); c.release();
+  assert.equal(h.calls.changes.length, 0); assert.equal(c.active, false);
+  assert.deepEqual(h.draft(), h.foreground.geometry); h.preserved(); h.balanced(2);
+  h.tap(); assert.equal(c.selectedKey, 'image');
+  c.grant([point(7), point(2, 300)], origin);
+  c.end([], [point(7, 150), point(2, 350)]); c.release();
+  assert.equal(h.calls.changes.length, 1); near(h.calls.changes[0].geometry.scale, 2);
+  h.balanced(4); h.preserved();
+});
+
+test('lower overlay does not hide a higher foreign hit or allow equal-order adoption', () => {
+  for (const order of [2, 3]) {
+    const foreign = { key: 'z:foreign', selection: selections[0][1], geometry: geometry(0.8), order };
+    const h = setup('image', selections[1][1], [lowerOverlay(), foreign]), c = h.controller;
+    c.grant([point(7), point(2, 320)], origin);
+    c.move([point(7, 220), point(2, 370)]);
+    near(h.draft().scale, 1); near(h.draft().position.x, 0.55);
+    c.end([point(2, 370)], [point(7, 220)]);
+    c.start([point(2, 220), point(3, 300)]);
+    c.move([point(2, 100), point(3, 390)]); c.release();
+    assert.equal(h.calls.changes.length, 1);
+    near(h.calls.changes[0].geometry.scale, 1); near(h.calls.changes[0].geometry.position.x, 0.55);
+    h.balanced(1); h.preserved();
+  }
+});
+
+test('lower overlay pinch commits only selected image geometry through the project adapter', () => {
+  let project = createCaptionProject({ id: 'lower-pinch', name: 'Lower pinch', sources: [{
+    id: 'source', uri: 'file:///main.mp4', storageMode: 'copied', displayName: 'main.mp4',
+    durationMs: 5000, width: 1920, height: 1080, rotation: 0,
+  }] });
+  project.layers.push({ id: 'text', kind: 'text', name: 'Lower text', text: 'Wide text',
+    visible: true, startMs: 0, endMs: 3000, style: { ...project.projectStyle, ...lowerOverlay().geometry } });
+  project = addImageLayer(project, { id: 'image', name: 'Image', uri: 'file:///image.png',
+    currentMs: 0, durationMs: 5000 }).project;
+  project.layers = project.layers.map(layer => layer.id === 'image' ? { ...layer, ...geometry() } : layer);
+  const original = structuredClone(project);
+  const lower = lowerOverlay();
+  lower.geometry = project.layers.find(layer => layer.id === 'text').style;
+  const h = setup('image', selections[1][1], [lower], (target, draft) => {
+    project = applyPreviewSceneGeometry(project, target, draft);
+  }), c = h.controller;
+  c.grant([point(7), point(2, 300)], origin);
+  // A third contact over the lower overlay cannot affect the captured pair.
+  c.start([point(0, 390), point(2, 300), point(7)]);
+  c.move([point(0, 20, 20), point(7, 150), point(2, 350)]);
+  near(h.draft().scale, 2); h.preserved(); assert.deepEqual(project, original);
+  c.end([], [point(0, 20, 20), point(7, 150), point(2, 350)]); c.release(); c.release();
+  assert.equal(h.calls.changes.length, 1);
+  const committed = resolveLayerGeometry(project.layers.find(layer => layer.id === 'image'));
+  assert.deepEqual(committed, { ...geometry(0.375), scale: 2 });
+  assert.deepEqual(project.layers.filter(layer => layer.id !== 'image'), original.layers.filter(layer => layer.id !== 'image'));
+  assert.deepEqual(project.clips, original.clips);
+  assert.deepEqual(project.sources, original.sources);
+  assert.deepEqual(project.canvas, original.canvas);
+  const expectedImage = { ...original.layers.find(layer => layer.id === 'image'), ...committed };
+  assert.deepEqual(project.layers.find(layer => layer.id === 'image'), expectedImage);
+  h.balanced(1); h.preserved();
+});
 
 for (const [key, selection] of selections) {
   test(`${key}: overlap cycles once on true tap release, never on grant or as geometry`, () => {
