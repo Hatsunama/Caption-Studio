@@ -99,18 +99,21 @@ for (const invalidation of ['cancel', 'layout', 'context']) test(`lower passive 
   h.balanced(4); h.preserved();
 });
 
-test('lower overlay does not hide a higher foreign hit or allow equal-order adoption', () => {
+test('lower overlay and equal/higher peers cannot block the captured owner pinch', () => {
   for (const order of [2, 3]) {
     const foreign = { key: 'z:foreign', selection: selections[0][1], geometry: geometry(0.8), order };
     const h = setup('image', selections[1][1], [lowerOverlay(), foreign]), c = h.controller;
     c.grant([point(7), point(2, 320)], origin);
     c.move([point(7, 220), point(2, 370)]);
-    near(h.draft().scale, 1); near(h.draft().position.x, 0.55);
+    near(h.draft().scale, 1.25); near(h.draft().position.x, 0.55);
     c.end([point(2, 370)], [point(7, 220)]);
+    c.end([], [point(2, 370)]);
+    const drained = structuredClone(h.draft());
     c.start([point(2, 220), point(3, 300)]);
     c.move([point(2, 100), point(3, 390)]); c.release();
     assert.equal(h.calls.changes.length, 1);
-    near(h.calls.changes[0].geometry.scale, 1); near(h.calls.changes[0].geometry.position.x, 0.55);
+    assert.deepEqual(h.calls.changes[0].geometry, drained);
+    assert.equal(h.calls.changes[0].key, 'image');
     h.balanced(1); h.preserved();
   }
 });
@@ -196,7 +199,7 @@ for (const [key, selection] of selections) {
     h.balanced(3); h.preserved();
   });
 
-  for (const foreign of [false, true]) test(`${key}: unmoved ${foreign ? 'rejected foreground' : 'background'} second finger disqualifies this and following tap cycle`, () => {
+  for (const foreign of [false, true]) test(`${key}: unmoved ${foreign ? 'peer foreground' : 'background'} second finger disqualifies this and following tap cycle`, () => {
     const other = { key: 'foreign', selection: { kind: 'image', id: 'foreign' },
       geometry: geometry(0.8), order: 3 };
     const h = setup(key, selection, foreign ? [other] : []), c = h.controller;
@@ -232,18 +235,58 @@ test('background pinch rebases reordered/reused IDs through 2 -> 1 -> 2 and keep
   h.balanced(1); h.preserved();
 });
 
-test('rejected foreign foreground cannot scale or continue the owner after its pointer drains', () => {
+test('peer foreground contact scales only the owner and cannot continue after both pointers drain', () => {
   const other = { key: 'foreign', selection: { kind: 'image', id: 'foreign' },
     geometry: geometry(0.8), order: 3 };
   const h = setup('video-overlay', selections[0][1], [other]), c = h.controller;
   c.grant([point(7)], origin); c.start([point(2, 320), point(7)]);
   c.move([point(7, 220), point(2, 370)]);
-  near(h.draft().scale, 1); near(h.draft().position.x, 0.55);
+  near(h.draft().scale, 1.25); near(h.draft().position.x, 0.55);
   c.end([point(2, 370)], [point(7, 220)]);
+  // The admitted second pointer can continue the same owner after the first lifts.
+  c.move([point(2, 350)]);
+  near(h.draft().position.x, 0.5);
+  c.end([], [point(2, 350)]);
+  const drained = structuredClone(h.draft());
   c.start([point(2, 220), point(3, 300)]);
   c.move([point(2, 100), point(3, 390)]); c.release();
   assert.equal(h.calls.changes.length, 1); assert.equal(h.calls.changes[0].key, h.key);
-  near(h.calls.changes[0].geometry.scale, 1); near(h.calls.changes[0].geometry.position.x, 0.55);
+  assert.deepEqual(h.calls.changes[0].geometry, drained);
+  h.balanced(1); h.preserved();
+});
+
+for (const invalidation of ['cancel', 'layout', 'origin', 'context', 'remove', 'replace-geometry', 'disable']) {
+  test(`peer-contact pinch: ${invalidation} discards only the owner draft and balances lifecycle`, () => {
+    const peer = { key: 'foreign', selection: { kind: 'image', id: 'foreign' }, geometry: geometry(.8), order: 3 };
+    const h = setup('video-overlay', selections[0][1], [peer]), c = h.controller;
+    c.grant([point(7)], origin); c.start([point(2, 320), point(7)]);
+    c.move([point(7, 180), point(2, 360)]);
+    near(h.draft().scale, 1.5); h.preserved();
+    if (invalidation === 'cancel') c.cancel();
+    if (invalidation === 'layout') c.layout({ width: 800, height: 600 });
+    if (invalidation === 'origin') c.locate({ ...origin, pageY: origin.pageY + 60 });
+    if (invalidation === 'context') h.configure({ contextKey: 'project:next' });
+    if (invalidation === 'remove') h.configure({ targets: [h.main, peer] });
+    if (invalidation === 'replace-geometry') h.configure({ targets: [h.main, peer, { ...h.foreground, geometry: geometry(.4) }] });
+    if (invalidation === 'disable') h.configure({ enabled: false });
+    c.end([], [point(7, 100), point(2, 390)]); c.release(); c.cancel();
+    assert.equal(c.active, false); assert.deepEqual(h.calls.changes, []);
+    assert.deepEqual(h.draft(), h.foreground.geometry); h.balanced(1); h.preserved();
+    h.configure({ targets: [h.main, h.foreground, peer], enabled: true }); c.layout(size);
+    c.grant([point(7), point(2, 320)], origin);
+    c.end([], [point(7, 180), point(2, 360)]); c.release();
+    assert.equal(h.calls.changes.length, 1); assert.equal(h.calls.changes[0].key, h.key);
+    near(h.calls.changes[0].geometry.scale, 1.5); h.balanced(2); h.preserved();
+  });
+}
+
+test('second contact outside canvas retains existing admission behavior without changing first-touch hits', () => {
+  const h = setup(), c = h.controller;
+  c.grant([point(7), point(2, 500)], origin);
+  c.move([point(7, 150), point(2, 600)]);
+  near(h.draft().scale, 1.5); near(h.draft().position.x, .375);
+  c.end([], [point(7, 150), point(2, 600)]); c.release();
+  assert.equal(h.calls.changes.length, 1); assert.equal(h.calls.changes[0].key, h.key);
   h.balanced(1); h.preserved();
 });
 

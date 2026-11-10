@@ -1,5 +1,5 @@
 import { createLayerGesture, resolveLayerGeometry, sameLayerGeometry, type LayerGeometry, type LayerGeometryInput, type LayerGestureLimits, type LayerTouch } from '@/lib/layer-geometry';
-import { previewCanvasPoint, previewInteractionAtPoint, previewObjectAtPoint, previewObjectContainsPoint, type PreviewObjectTarget, type PreviewOrigin, type PreviewSize } from '@/lib/preview-object-hit-test';
+import { previewCanvasPoint, previewInteractionAtPoint, previewObjectContainsPoint, type PreviewObjectTarget, type PreviewOrigin, type PreviewSize } from '@/lib/preview-object-hit-test';
 
 export type PreviewSceneTarget<T> = PreviewObjectTarget<T> & {
   limits?: LayerGestureLimits;
@@ -98,7 +98,7 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
   const update = (touches: readonly LayerTouch[]) => {
     if (!valid() || !owner) return;
     const current = owner;
-    // Even a rejected foreign finger makes this a multi-contact sequence, not a tap.
+    // Any additional finger makes this a multi-contact sequence, not a tap.
     if (touches.some((touch) => touch.id !== current.first.id)) current.multitouch = true;
     if (!current.gesture) {
       const first = touches.find((touch) => touch.id === current.first.id);
@@ -200,15 +200,11 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
       if (!current.gesture) { update(touches); return; }
       // Account for movement before changing pointer membership, then rebase.
       update(touches);
-      const targets = options.targets.map((target) => target.key === current.target.key
-        ? { ...target, geometry: current.geometry } : target);
       for (const touch of touches) {
         if (current.pointers.size >= 2) break;
         if (current.pointers.has(touch.id)) continue;
-        const hit = previewObjectAtPoint(targets, local(touch, current.origin), current.size);
-        // Lower layers cannot block a captured owner's pinch; foreign peers/front layers can.
-        if (!hit || hit.key === current.target.key
-          || hit.order < current.target.order) current.pointers.add(touch.id);
+        // The first pointer owns the sequence; a second joins regardless of peer hits.
+        current.pointers.add(touch.id);
       }
       current.gesture.update(pointsFor(touches, current));
       current.lastPoints = pointsFor(touches, current);

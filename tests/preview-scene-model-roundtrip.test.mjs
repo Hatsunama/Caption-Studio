@@ -26,7 +26,7 @@ function fixture(sourceSize, canvasSize, patch = {}) {
   p = setVideoClipTransform(p, p.clips[0].id, patch);
   return reopen(p); // Establish that each baseline is a valid persisted model.
 }
-function harness(initial, size, suppliedTarget, readGeometry) {
+function harness(initial, size, suppliedTarget, readGeometry, peers = []) {
   let project = initial;
   const clip = project.clips[0];
   const read = readGeometry ?? ((p) => video.videoClipPreviewGeometry(p, clip.id));
@@ -36,7 +36,7 @@ function harness(initial, size, suppliedTarget, readGeometry) {
   const calls = { commits: 0, starts: 0, ends: 0 };
   const before = JSON.stringify(initial);
   controller.layout(size);
-  controller.configure({ targets: [target], selectedKey: target.key, enabled: true,
+  controller.configure({ targets: [target, ...peers], selectedKey: target.key, enabled: true,
     onSelect() {}, onClearSelection() { assert.fail('gesture must hit its target'); }, onDelete() { assert.fail('not delete'); },
     onInteractionStart() { calls.starts++; }, onInteractionEnd() { calls.ends++; },
     onChange(t, geometry) { calls.commits++; project = applyPreviewSceneGeometry(project, t, geometry); },
@@ -107,6 +107,39 @@ for (const source of [[1080, 1920], [1920, 1080]]) for (const canvas of [[300, 5
 }
 
 const size = { width: 400, height: 300 };
+for (const simultaneous of [false, true]) for (const scale of [1, 19]) {
+  test(`main video: ${simultaneous ? 'simultaneous' : 'staggered'} second contact over higher peer preserves owner and model limits from scale ${scale}`, () => {
+    let initial = fixture([1920, 1080], [400, 300], { scale });
+    initial.layers.push({ id: 'peer', kind: 'text', name: 'Peer', text: 'Peer', visible: true,
+      startMs: 0, endMs: 5000, style: { ...initial.projectStyle,
+        position: { x: .8, y: .5 }, box: { width: .2, height: .2 }, scale: 1,
+        scaleX: 1, scaleY: 1, rotation: 0 } });
+    initial = reopen(initial);
+    const peer = { key: 'peer', selection: { kind: 'text', id: 'peer' }, order: 10,
+      geometry: resolveLayerGeometry(initial.layers.find(layer => layer.id === 'peer').style) };
+    const original = reopen(initial);
+    const h = harness(initial, size, undefined, undefined, [peer]);
+    const first = h.point(7, 80, 150), second = h.point(2, 320, 150);
+    assert.equal(previewInteractionAtPoint([h.target, peer], h.target.key, { x: 80, y: 150 }, size)?.target.key, h.target.key);
+    assert.equal(previewInteractionAtPoint([h.target, peer], h.target.key, { x: 320, y: 150 }, size)?.target.key, peer.key);
+    h.controller.grant(simultaneous ? [first, second] : [first], origin);
+    if (!simultaneous) h.controller.start([second, first]);
+    h.controller.move([h.point(2, 360, 150), h.point(7, 60, 150)]);
+    near(h.draft().scale, Math.min(scale * 1.25, 20));
+    near(h.draft().position.x, .525);
+    near(h.draft().position.y, .5);
+    assert.equal(h.controller.selectedKey, h.target.key);
+    assert.deepEqual(h.controller.geometryFor(peer.key, peer.geometry), peer.geometry);
+    const committed = h.finish();
+    for (const value of [committed, reopen(committed)]) {
+      for (const key of ['layers', 'sources', 'audioSources', 'audioClips', 'canvas', 'captions', 'captionTracks']) {
+        assert.deepEqual(value[key], original[key], key);
+      }
+    }
+    assert.deepEqual(initial, original);
+  });
+}
+
 test('main fill pinch release and JSON/schema reopen match the final draft at the scale floor', () => {
   const h = harness(fixture([1920, 1080], [400, 300], { fit: 'fill' }), size);
   pinch(h, size, 0.000001);

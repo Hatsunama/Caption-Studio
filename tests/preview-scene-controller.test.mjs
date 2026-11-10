@@ -134,17 +134,24 @@ test('pinch and rotation preserve pointer identity and rebase when one finger li
   near(h.calls.changes[0].geometry.scale, 2);
 });
 
-test('small-object pinch accepts empty canvas but never adopts a finger on another object', () => {
+test('small-object pinch accepts peer and empty canvas contacts without changing ownership', () => {
   const h = setup([target('one', 0.2), target('image', 0.8)]);
   h.controller.grant([point(7, 80)], origin);
   h.controller.start([point(7, 80), point(2, 320)]);
-  h.controller.move([point(7, 100), point(2, 340)]);
-  near(h.draft().scale, 1);
-  h.controller.end([point(2, 340)], [point(7, 100)]);
+  h.controller.move([point(7, 60), point(2, 360)]);
+  near(h.draft().scale, 1.25);
+  near(h.draft().position.x, 0.15);
+  assert.deepEqual(h.draft('image'), h.targets[1].geometry);
+  h.controller.end([point(2, 360)], [point(7, 60)]);
+  h.controller.end([], [point(2, 360)]);
   h.controller.start([point(2, 100), point(3, 110)]);
   h.controller.move([point(2, 160), point(3, 190)]);
   h.controller.release();
-  near(h.calls.changes[0].geometry.position.x, 0.25);
+  near(h.calls.changes[0].geometry.position.x, 0.15);
+  near(h.calls.changes[0].geometry.scale, 1.25);
+  assert.equal(h.calls.changes.length, 1);
+  assert.equal(h.calls.changes[0].target.key, 'one');
+  assert.deepEqual(h.draft('image'), h.targets[1].geometry);
   assert.equal(h.calls.select.length, 1);
   const second = setup([target('one', 0.2)]);
   second.controller.grant([point(7, 80)], origin);

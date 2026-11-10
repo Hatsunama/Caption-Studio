@@ -10,12 +10,13 @@ every native event or prove that every large resize in the recording is wrong.
 1. `preview-scene-controller.ts` changed the owner on the next pointer-down after
    an overlapping tap, before distinguishing another tap from a drag/pinch.
    Overlap cycling now waits for an unmoved, single-contact release. Genuine tap
-   cycling remains available. A second contact disqualifies tap cycling even when
-   that contact is rejected as a foreign foreground object.
-2. A foreground owner's second contact was rejected when it landed on the main
-   video. The controller now admits a contact over a lower target explicitly
-   marked `yieldToForeground`. Other foreground objects, extra pointers, and
-   drained contact sequences retain their existing rejection rules.
+   cycling remains available. A second contact disqualifies tap cycling.
+2. Second-contact admission incorrectly depended on which other object the
+   second finger hit. The approved contract is first-finger ownership: once an
+   object is captured, a second contact anywhere on the video preview transforms
+   that original object, including over lower, equal or higher layers. First-touch
+   selection, the two-pointer limit, draining, cancellation and invalidation still
+   govern the sequence; peer objects never acquire that captured gesture.
 3. Main-video geometry used foreground extent bounds during manipulation, then
    different numerical component bounds when saved. A draft scale of `.001`
    could become `.05` on release. Valid saved maximum/anisotropic video transforms
@@ -37,7 +38,7 @@ contain-fit letterboxing is intentional and is not classified as distortion.
 There is no layout, chrome, typography, model, dependency, permission, media
 timing, audio-policy, or project-format change. Moves stay transient until a
 single captured-identity commit; cancel/reflow/context invalidation discard the
-draft. Existing foreign-object and pointer-drain protections remain enforced.
+draft. First-touch hit testing and pointer-drain protections remain enforced.
 The selected main-video model range stays `.05..20`, with independent axes
 `.001..200`; it is not lowered to conceal a release jump.
 
@@ -108,9 +109,63 @@ PiP becoming ready cannot silently clear the failure.
 
 Evidence: the initial readiness component regressions failed 13 cases before the
 repair; the new caller/error handoff then failed 6 of 27 parent-run tests before
-its wiring was completed. All 27 final readiness/caller tests pass with a 64 MiB
-Node heap. Earlier combined main/PiP tests passed on the preceding readiness
-revision. Full required checks, type/lint validation, and runtime verification of
-these new bytes remain pending. The earlier green CI/artifact cannot certify this
-follow-up. PR #168 remains draft and release blocked. Private device captures,
-recordings, signing material, and test-tool state are excluded from the commit.
+its wiring was completed. All 27 final readiness/caller tests passed with a
+64 MiB Node heap. At `e4e7f86`, the complete Android and native-audio CI gates
+passed, and the exact CI APK displayed literal paused frame zero in a newly
+added PiP on both phones. This validates that inspected baseline, not the later
+first-finger follow-up below. Private device captures, recordings, signing
+material and test-tool state are excluded from the commit.
+
+## First-finger ownership clarification (November 10)
+
+The user physically reproduced the remaining interaction problem on Seeker and
+confirmed that the second finger may land anywhere on the video preview. Keeping
+peer-layer rejection was an incorrect requirement. Regression coverage must prove
+that the first captured object transforms while every peer remains unchanged,
+including when the second finger hits a higher or equal layer.
+
+The preceding `e4e7f86` CI APK passed native PiP, screen-text and crowded-image
+pinches on both phones. Paused first-frame checks, cancellation, rotation return,
+background/resume and cold-draft checks provide baseline evidence for that APK.
+One first Seeker watermark gesture produced no visual change despite eight
+accepted injected events; the same contacts enlarged it after Home/resume. Those
+observations do not establish its responder-level cause or prove this follow-up.
+
+The pre-repair controller failed 28 of 54 focused cases for this contract. After
+the repair, all 255 preview tests pass. Real project setters and JSON/schema
+reopen cover six foreground kinds, default watermark geometry, all peer orders,
+simultaneous/staggered contact arrival, a third ignored pointer, cancellation,
+context/layout invalidation and recovery. Four additional main-video cases
+exercise a second contact on a higher foreground peer at ordinary and maximum
+scale. A hook-level regression supplies an initiating native identifier, reversed
+touch array and live event-local origin against stale layout measurement; it
+checks watermark-only persistence and unchanged event/project payloads. This is
+mocked native-event adapter evidence, not physical-device evidence.
+
+All 120 build-tool tests and the generated product contract pass. The full local
+logic attempt ran 3,047 cases: 3,037 passed, seven failed and three existing
+POSIX-only cases skipped. Two unchanged test files exceeded the 128 MiB heap
+(`caption-merge-validation-ownership` and `scroll-public-api-types`). The other
+five failures were local tool setup: WindowsApps Bash/Python aliases and missing
+or unspecified Java test paths (`cloud-signing-retirement`, `signing-recovery`,
+`local-key-import`, and two `local-release-signing` cases). Selecting the installed
+Git Bash through the harness's existing `BASH_BIN` setting repaired the Bash
+failure; all six retirement tests pass. No assertion, skip policy, dependency or
+production signing code was weakened. Full typecheck/lint, complete CI and a
+fresh APK tested on both phones remain required; the local full run is not green.
+
+The only runtime change in this batch removes the second-contact peer veto from
+the shared controller. First-touch hit testing, selected handles, tap cycling,
+two-pointer membership, captured-identity persistence, model bounds and lifecycle
+invalidation remain authoritative. The scoped cascade through the hook, target
+construction, hit tests, setters and rendering found no additional demonstrable
+implementation defect. It does not prove the native first-add no-op is resolved.
+
+Native acceptance must include the first watermark pinch immediately after Add,
+first finger on each object with the second over higher peers and the Play
+overlay, unchanged peer/main content, release/reopen, both UI landscape directions
+and portrait/landscape source videos. Paused rotation, background/resume and cold
+reopen need the rebuilt bytes; active-pointer rotation remains an explicit gap,
+and the unsafe held-finger injection is not repeated. Earlier APK evidence cannot
+certify newer source. PR #168 stays draft and final separate-key store artifacts
+remain blocked until the mandatory verification is complete.

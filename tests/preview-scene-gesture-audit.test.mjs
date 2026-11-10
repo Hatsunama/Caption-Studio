@@ -4,7 +4,11 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
-import { constrainLayerGeometry, layerExtent } from '../src/lib/layer-geometry.ts';
+import { constrainLayerGeometry, layerExtent, resolveLayerGeometry } from '../src/lib/layer-geometry.ts';
+import { createCaptionProject } from '../src/lib/project-factory.ts';
+import { createWatermarkLayer } from '../src/lib/project-editor.ts';
+import { applyPreviewSceneGeometry } from '../src/lib/preview-scene-project.ts';
+import { videoClipPreviewGeometry } from '../src/lib/video-transform.ts';
 import { previewCanvasPoint, previewInteractionAtPoint, previewObjectAtPoint,
   previewObjectContainsPoint } from '../src/lib/preview-object-hit-test.ts';
 
@@ -145,7 +149,7 @@ test('three stickers remain independently selectable and empty canvas clears sel
   assert.equal(s.calls.changes.length, 0);
 });
 
-test('a foreign sticker finger cannot steal, scale, or continue the owning sticker gesture', () => {
+test('a peer sticker finger transforms only the first owner through hook dispatch and selection churn', () => {
   const s = scene([target('first', geometry(0.25, 0.5, 0.2, 0.2)), target('second', geometry(0.75, 0.5, 0.2, 0.2), 2)]);
   s.handlers.onResponderGrant(event([touch(7, 100, 150)]));
   s.handlers.onResponderStart(event([touch(2, 300, 150), touch(7, 100, 150)], [touch(2, 300, 150)]));
@@ -153,14 +157,119 @@ test('a foreign sticker finger cannot steal, scale, or continue the owning stick
   s.handlers.onResponderMove(event([touch(2, 350, 240), touch(7, 120, 150)]));
   s.frame();
   assert.equal(s.calls.changes.length, 0);
-  near(s.result.geometryFor('first', s.targets[0].geometry).position.x, 0.3);
-  near(s.result.geometryFor('first', s.targets[0].geometry).scale, 1);
+  const draft = plain(s.result.geometryFor('first', s.targets[0].geometry));
+  near(draft.position.x, 0.3);
+  near(draft.position.y, 0.5);
+  near(draft.scale, Math.hypot(230, 90) / 200);
+  near(draft.rotation, Math.atan2(90, 230) * 180 / Math.PI);
+  assert.deepEqual(plain(s.result.geometryFor('second', s.targets[1].geometry)), s.targets[1].geometry);
   s.handlers.onResponderEnd(event([touch(2, 350, 240)], [touch(7, 120, 150)]));
+  s.handlers.onResponderEnd(event([], [touch(2, 350, 240)]));
   s.handlers.onResponderMove(event([touch(2, 10, 10)]));
   s.handlers.onResponderRelease();
   assert.deepEqual(s.calls.changes.map((change) => change.key), ['first']);
   assert.deepEqual(s.calls.select, ['first']);
+  assert.deepEqual(s.calls.changes[0].geometry, draft);
+  assert.equal(s.calls.start, 1);
   assert.equal(s.calls.end, 1);
+});
+
+test('native grant identifier and event origin keep a default watermark owner when the higher peer touch is first', () => {
+  const canvas = { width: 360, height: 202.5 };
+  // The layout measurement is deliberately stale: falling back to it misses the watermark.
+  const liveOrigin = { pageX: origin.pageX + 80, pageY: origin.pageY + 90 };
+  const base = createCaptionProject({ id: 'native-watermark', name: 'Native watermark', sources: [{
+    id: 'source', uri: 'file:///main.mp4', storageMode: 'copied', displayName: 'main.mp4',
+    durationMs: 5000, width: 1920, height: 1080, rotation: 0,
+  }] });
+  const input = createWatermarkLayer(base, 'watermark', 5000, 'Watermark').project;
+  input.layers.push({ id: 'peer', kind: 'text', name: 'Peer', text: 'Peer', visible: true,
+    startMs: 0, endMs: 5000, style: { ...input.projectStyle, ...geometry(0.8, 0.5, 0.2, 0.2) } });
+  const original = structuredClone(input);
+  let project = input;
+  const watermark = input.layers.find((layer) => layer.id === 'watermark');
+  const peerLayer = input.layers.find((layer) => layer.id === 'peer');
+  const owner = { key: 'watermark', selection: { kind: 'text', id: watermark.id },
+    geometry: resolveLayerGeometry(watermark.style), order: 1 };
+  const peer = { key: 'z:peer', selection: { kind: 'text', id: peerLayer.id },
+    geometry: resolveLayerGeometry(peerLayer.style), order: 2 };
+  const main = { key: 'main', selection: { kind: 'video', id: input.clips[0].id },
+    geometry: videoClipPreviewGeometry(input, input.clips[0].id), order: -1, yieldToForeground: true };
+  assert.deepEqual(owner.geometry, geometry(0.5, 0.9, 0.7, 0.14));
+  const s = scene([main, owner, peer], 'main');
+  const originalTargets = structuredClone(s.targets);
+  s.result.onLayout({ nativeEvent: { layout: canvas } });
+  s.render({ onChange(item, value) {
+    s.calls.changes.push({ key: item.key, geometry: plain(value) });
+    project = applyPreviewSceneGeometry(project, item, value);
+  } });
+
+  const nativeTouch = (identifier, x, y) => ({ ...touch(identifier, x, y),
+    pageX: liveOrigin.pageX + x, pageY: liveOrigin.pageY + y });
+  const payloads = [];
+  const nativeEvent = (initiating, touches, changedTouches = touches) => {
+    const value = { nativeEvent: { ...initiating,
+      locationX: initiating.pageX - liveOrigin.pageX,
+      locationY: initiating.pageY - liveOrigin.pageY, touches, changedTouches } };
+    payloads.push({ value, original: structuredClone(value) });
+    return value;
+  };
+  const first = nativeTouch(7, 180, 182.25);
+  const second = nativeTouch(2, 288, 101.25);
+  const spreadSecond = nativeTouch(2, 342, 60.75);
+  assert.equal(previewObjectAtPoint(s.targets, { x: 288, y: 101.25 }, canvas).key, peer.key);
+  const grant = nativeEvent(first, [second, first], [first]);
+  s.handlers.onResponderGrant(grant);
+  s.render();
+  assert.deepEqual(s.calls.select, [owner.selection], 'native identifier wins over touch array order');
+  assert.equal(s.result.selectedKey, owner.key);
+  assert.deepEqual(plain(s.result.geometryFor(owner.key, owner.geometry)), owner.geometry,
+    'granting two contacts must not jump geometry');
+  s.handlers.onResponderStart(nativeEvent(second, [second, first], [second]));
+  assert.deepEqual(plain(s.result.geometryFor(owner.key, owner.geometry)), owner.geometry,
+    'repeating the second-contact start must not jump geometry');
+  s.render({ selectedKey: peer.key, targets: [...s.targets].reverse() });
+  s.handlers.onResponderMove(nativeEvent(spreadSecond, [spreadSecond, first]));
+  s.frame();
+  const draft = plain(s.result.geometryFor(owner.key, owner.geometry));
+  near(draft.scale, 1.5);
+  near(draft.position.x, 0.5);
+  near(draft.position.y, 0.9);
+  near(draft.rotation, 0);
+  near(draft.scaleX, 1);
+  near(draft.scaleY, 1);
+  assert.deepEqual(draft.box, owner.geometry.box);
+  assert.equal(s.result.selectedKey, owner.key);
+  assert.equal(s.calls.changes.length, 0, 'moves remain drafts');
+  for (const item of [peer, main]) {
+    assert.deepEqual(plain(s.result.geometryFor(item.key, item.geometry)), item.geometry);
+  }
+  assert.deepEqual(project, original, 'draft must not mutate the project');
+  s.handlers.onResponderEnd(nativeEvent(spreadSecond, [first], [spreadSecond]));
+  s.handlers.onResponderMove(nativeEvent(first, [first]));
+  assert.deepEqual(plain(s.result.geometryFor(owner.key, owner.geometry)), draft,
+    'two-to-one rebasing and stationary movement must not jump geometry');
+  s.handlers.onResponderRelease(nativeEvent(first, [], [first]));
+  s.handlers.onResponderRelease();
+  assert.deepEqual(s.calls.changes, [{ key: owner.key, geometry: draft }]);
+  assert.deepEqual(s.calls.select, [owner.selection]);
+  assert.deepEqual(s.calls.deletes, []);
+  assert.equal(s.calls.clear, 0);
+  assert.equal(s.calls.start, 1);
+  assert.equal(s.calls.end, 1);
+  const committedWatermark = project.layers.find((layer) => layer.id === watermark.id);
+  assert.deepEqual(resolveLayerGeometry(committedWatermark.style), draft);
+  assert.deepEqual(committedWatermark, { ...watermark, style: { ...watermark.style, ...draft } });
+  assert.deepEqual(project.layers.filter((layer) => layer.id !== watermark.id),
+    original.layers.filter((layer) => layer.id !== watermark.id));
+  const { layers: committedLayers, updatedAt: committedAt, ...committedRest } = project;
+  const { layers: originalLayers, updatedAt: originalAt, ...originalRest } = original;
+  assert.deepEqual(committedRest, originalRest, 'main footage, sources, and all other project data stay unchanged');
+  assert.deepEqual(input, original, 'the original source project payload stays untouched');
+  assert.deepEqual(s.targets, originalTargets, 'source scene targets stay untouched');
+  for (const payload of payloads) assert.deepEqual(payload.value, payload.original, 'native event payload stays untouched');
+  assert.deepEqual(grant.nativeEvent.touches.map((point) => point.identifier), [2, 7]);
+  s.unmount();
 });
 
 test('same-object pinch survives reversed touch order and rebases to one finger without jumping', () => {
