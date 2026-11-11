@@ -32,6 +32,10 @@ test('translation preview suspension unmounts the overlay player and restores it
     if (id === '@/lib/video-overlay-playback') return { overlayPlaybackState: () => ({
       visible: true, seconds: 1, playing: false,
     }) };
+    if (id === '@/lib/video-playback-position') return { effectiveNativeSeekTarget: seconds => seconds };
+    if (id === '@/services/video-playback-window') return { configureVideoPlaybackWindow() {
+      throw new Error('server rendering must not prepare native video');
+    } };
     throw new Error(`Unexpected dependency: ${id}`);
   } });
   const layer = { id: 'pip', uri: 'file:///pip.mp4', startMs: 0, endMs: 3000,

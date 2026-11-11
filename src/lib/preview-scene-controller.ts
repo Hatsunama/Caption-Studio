@@ -1,7 +1,8 @@
-import { createLayerGesture, resolveLayerGeometry, sameLayerGeometry, type LayerGeometry, type LayerGeometryInput, type LayerTouch } from '@/lib/layer-geometry';
-import { previewCanvasPoint, previewInteractionAtPoint, previewObjectAtPoint, previewObjectContainsPoint, type PreviewObjectTarget, type PreviewOrigin, type PreviewSize } from '@/lib/preview-object-hit-test';
+import { createLayerGesture, resolveLayerGeometry, sameLayerGeometry, type LayerGeometry, type LayerGeometryInput, type LayerGestureLimits, type LayerTouch } from '@/lib/layer-geometry';
+import { previewCanvasPoint, previewInteractionAtPoint, previewObjectContainsPoint, type PreviewObjectTarget, type PreviewOrigin, type PreviewSize } from '@/lib/preview-object-hit-test';
 
 export type PreviewSceneTarget<T> = PreviewObjectTarget<T> & {
+  limits?: LayerGestureLimits;
   deletable?: boolean;
   /** Cues keep separate hit identities but share their track's transform. */
   transformKey?: string;
@@ -35,6 +36,8 @@ type Owner<T> = {
   lastPoints: LayerTouch[];
   activationPoints: LayerTouch[];
   moved: boolean;
+  multitouch: boolean;
+  tapCycleTarget?: PreviewObjectTarget<T>;
 };
 
 /** Native-event-independent state machine. A contact sequence can own one target. */
@@ -53,14 +56,23 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
     sequence = false;
     if (!ending) return;
     ending.gesture?.end();
+    const pending = ending.tapCycleTarget;
+    const cycleTarget = pending && options.targets.find((target) => target.key === pending.key
+      && sameLayerGeometry(target.geometry, pending.geometry));
+    const tappedTarget = commit && ending.gesture && !ending.moved && !ending.multitouch && !ending.deleteArmed
+      ? cycleTarget ?? ending.target : undefined;
     try {
       if (commit && ending.deleteArmed) options.onDelete(ending.target);
       else if (commit && ending.gesture && !sameLayerGeometry(ending.target.geometry, ending.geometry)) {
         options.onChange(ending.target, resolveLayerGeometry(ending.geometry));
       }
+      if (tappedTarget && tappedTarget.key !== ending.target.key) {
+        selectedKey = tappedTarget.key;
+        options.onSelect(tappedTarget.selection);
+      }
     } finally {
-      lastTap = commit && ending.gesture && !ending.moved && !ending.deleteArmed
-        ? { key: ending.target.key, point: ending.first }
+      lastTap = tappedTarget
+        ? { key: tappedTarget.key, point: ending.first }
         : undefined;
       if (ending.gesture) options.onInteractionEnd();
       selectedKey = externalSelectedKey;
@@ -86,6 +98,8 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
   const update = (touches: readonly LayerTouch[]) => {
     if (!valid() || !owner) return;
     const current = owner;
+    // Any additional finger makes this a multi-contact sequence, not a tap.
+    if (touches.some((touch) => touch.id !== current.first.id)) current.multitouch = true;
     if (!current.gesture) {
       const first = touches.find((touch) => touch.id === current.first.id);
       if (touches.length > 1 || (first && Math.hypot(first.x - current.first.x, first.y - current.first.y) > 12)) {
@@ -143,7 +157,8 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
       const first = touches[0];
       const selected = options.targets.find((target) => target.key === selectedKey);
       const point = local(first, origin);
-      let interaction = previewInteractionAtPoint(options.targets, selectedKey, point, size, Boolean(selected?.deletable));
+      const interaction = previewInteractionAtPoint(options.targets, selectedKey, point, size, Boolean(selected?.deletable));
+      let tapCycleTarget: PreviewObjectTarget<T> | undefined;
       if (interaction?.mode === 'move' && lastTap && selectedKey === lastTap.key
         && Math.hypot(first.x - lastTap.point.x, first.y - lastTap.point.y) <= 12) {
         const candidates = options.targets
@@ -151,7 +166,8 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
           .sort((left, right) => right.order - left.order || right.key.localeCompare(left.key));
         const currentIndex = candidates.findIndex((target) => target.key === lastTap!.key);
         if (currentIndex >= 0 && candidates.length > 1) {
-          interaction = { target: candidates[(currentIndex + 1) % candidates.length], mode: 'move' };
+          // Keep the first pointer's owner until release proves this was a tap.
+          tapCycleTarget = candidates[(currentIndex + 1) % candidates.length];
         }
       }
       if (!interaction) {
@@ -163,13 +179,14 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
       }
       const source = interaction.target as PreviewSceneTarget<T>;
       const target = { ...source, geometry: resolveLayerGeometry(source.geometry) };
-      const gesture = interaction.mode === 'delete' ? undefined : createLayerGesture(target.geometry);
+      const gesture = interaction.mode === 'delete' ? undefined : createLayerGesture(target.geometry, target.limits);
       if (gesture && !gesture.begin(interaction.mode === 'delete' ? 'move' : interaction.mode,
         [local(first, origin)], { ...size, pageX: 0, pageY: 0, located: true })) return;
       owner = { target, gesture, geometry: resolveLayerGeometry(target.geometry), pointers: new Set([first.id]),
         contextKey: options.contextKey, origin: { ...origin }, size: { ...size },
         first: { ...first }, deleteArmed: interaction.mode === 'delete', drained: false,
-        lastPoints: [local(first, origin)], activationPoints: [local(first, origin)], moved: false };
+        lastPoints: [local(first, origin)], activationPoints: [local(first, origin)], moved: false,
+        multitouch: false, tapCycleTarget };
       selectedKey = target.key;
       // Install ownership before selection can synchronously re-render the editor.
       options.onSelect(target.selection);
@@ -183,14 +200,11 @@ export function createPreviewSceneController<T>(notify: () => void = () => undef
       if (!current.gesture) { update(touches); return; }
       // Account for movement before changing pointer membership, then rebase.
       update(touches);
-      const targets = options.targets.map((target) => target.key === current.target.key
-        ? { ...target, geometry: current.geometry } : target);
       for (const touch of touches) {
         if (current.pointers.size >= 2) break;
         if (current.pointers.has(touch.id)) continue;
-        const hit = previewObjectAtPoint(targets, local(touch, current.origin), current.size);
-        // Empty space can provide the second pinch finger; another object cannot.
-        if (!hit || hit.key === current.target.key) current.pointers.add(touch.id);
+        // The first pointer owns the sequence; a second joins regardless of peer hits.
+        current.pointers.add(touch.id);
       }
       current.gesture.update(pointsFor(touches, current));
       current.lastPoints = pointsFor(touches, current);

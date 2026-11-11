@@ -65,24 +65,38 @@ for (const kind of ['image', 'text']) {
       .map((item, order) => ({ key: item.id, selection: item.id, order,
         geometry: kind === 'text' ? item.style : item }));
     const selections = [];
+    const completedTaps = [];
+    const changes = [];
     let selectedKey;
     const controller = createPreviewSceneController();
     const configure = () => controller.configure({
       targets, selectedKey, enabled: true,
       onSelect(id) { selectedKey = id; selections.push(id); },
       onClearSelection() { selectedKey = undefined; },
-      onChange() {}, onDelete() {}, onInteractionStart() {}, onInteractionEnd() {},
+      onChange(...args) { changes.push(args); }, onDelete() {}, onInteractionStart() {}, onInteractionEnd() {},
     });
     controller.layout({ width: 400, height: 300 });
     configure();
     for (let tap = 0; tap < 2; tap++) {
       controller.grant([{ id: tap, x: 200, y: 150 }], { pageX: 0, pageY: 0 });
+      assert.equal(selectedKey, 'copy', 'grant must keep the duplicate selected until a completed tap');
+      assert.equal(controller.selectedKey, 'copy', 'the duplicate owns both grants');
+      assert.deepEqual(selections, tap === 0 ? ['copy'] : ['copy', 'copy'],
+        'every grant reselects its owner; original must never be selected on grant');
+      controller.end([], [{ id: tap, x: 200, y: 150 }]);
+      assert.equal(selectedKey, 'copy', 'pointer end alone must not cycle to original');
+      assert.equal(controller.selectedKey, 'copy');
+      controller.release();
+      assert.equal(selectedKey, tap === 0 ? 'copy' : 'original');
+      completedTaps.push(selectedKey);
       controller.release();
       configure();
     }
 
-    assert.deepEqual(selections, ['copy', 'original'],
+    assert.deepEqual(completedTaps, ['copy', 'original'],
       'a second tap at the same point must reach the object beneath the duplicate');
+    assert.deepEqual(selections, ['copy', 'copy', 'original'], 'exact raw callbacks include owner reselection');
+    assert.deepEqual(changes, [], 'completed taps must never commit geometry');
   });
 }
 
