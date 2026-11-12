@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { createTimelineNativePan, createTimelineNativePanDelivery, initialTimelineNativePanState } from '../src/components/editor/timeline-native-pan.ts';
 
-function fixture({ axis } = {}) {
+function fixture({ axis, holdAxis, holdMilliseconds = 350, recordBegin = false } = {}) {
   const handlers = {}, config = {}, calls = [];
   const pan = {};
   for (const name of ['manualActivation', 'runOnJS', 'maxPointers', 'blocksExternalGesture']) {
@@ -17,8 +17,8 @@ function fixture({ axis } = {}) {
   const state = { value: initialTimelineNativePanState() };
   const scrolls = [{ id: 'horizontal' }, { id: 'vertical' }];
   const callbacks = {
-    axis, prepare: () => calls.push(['prepare']), holdMilliseconds: 350,
-    begin: (dx, dy) => calls.push(['begin', dx, dy]), move: (...args) => calls.push(['move', ...args]),
+    axis, holdAxis, prepare: () => calls.push(['prepare']), holdMilliseconds,
+    begin: (...args) => calls.push(['begin', ...(recordBegin ? args : args.slice(0, 2))]), move: (...args) => calls.push(['move', ...args]),
     finish: () => calls.push(['finish']), cancel: () => calls.push(['cancel']),
   };
   createTimelineNativePan(pan, callbacks, scrolls, { state,
@@ -30,8 +30,98 @@ function fixture({ axis } = {}) {
   handlers.onTouchesDown(touch(), manager);
   const event = (dx, dy = 0, numberOfPointers = 1) => ({ absoluteX: 100 + dx, absoluteY: 200 + dy, translationX: 0, translationY: 0, numberOfPointers });
   return { handlers, config, calls, scrolls, manager, touch, event,
-    arm() { state.value = { ...state.value, startedAt: Date.now() - 400 }; } };
+    arm(milliseconds = 400) { state.value = { ...state.value, startedAt: Date.now() - milliseconds }; } };
 }
+
+test('overlay hold requires vertical intent, then delivers reorder to the existing begin', (t) => {
+  t.mock.method(Date, 'now', () => 1000);
+  const f = fixture({ holdAxis: 'vertical', recordBegin: true });
+  f.arm(350);
+  f.handlers.onTouchesMove(f.touch(0, 1), f.manager);
+  f.handlers.onTouchesMove(f.touch(7, 7), f.manager);
+  assert.deepEqual(f.calls, [['prepare']], 'elapsed hold alone or jitter cannot acquire');
+  f.handlers.onTouchesMove(f.touch(1, 20), f.manager);
+  f.handlers.onStart(f.event(1, 20));
+  assert.deepEqual(f.calls, [['prepare'], ['activate'], ['begin', 1, 20, true, 220]]);
+});
+
+test('quick overlay vertical intent yields for the entire stream, even after the hold', (t) => {
+  t.mock.method(Date, 'now', () => 1000);
+  const f = fixture({ holdAxis: 'vertical', recordBegin: true });
+  f.arm(349);
+  f.handlers.onTouchesMove(f.touch(0, 20), f.manager);
+  f.arm(800);
+  f.handlers.onTouchesMove(f.touch(0, 40), f.manager);
+  f.handlers.onTouchesMove(f.touch(60, 0), f.manager);
+  f.handlers.onStart(f.event(0, 40));
+  f.handlers.onUpdate(f.event(0, 50));
+  f.handlers.onEnd(f.event(0, 60), true);
+  f.handlers.onFinalize();
+  assert.deepEqual(f.calls, [['prepare'], ['fail']]);
+});
+
+for (const elapsed of [0, 350, 700]) {
+  test(`overlay horizontal timing remains ordinary after ${elapsed}ms`, (t) => {
+    t.mock.method(Date, 'now', () => 1000);
+    const f = fixture({ holdAxis: 'vertical', recordBegin: true });
+    f.arm(elapsed);
+    f.handlers.onTouchesMove(f.touch(20, 1), f.manager);
+    f.handlers.onStart(f.event(20, 1));
+    f.handlers.onEnd(f.event(20, 1), true); f.handlers.onFinalize();
+    assert.deepEqual(f.calls, [['prepare'], ['activate'], ['begin', 20, 1, false, 201], ['finish']]);
+  });
+}
+
+for (const stage of ['pending', 'recognized', 'active']) {
+  test(`second finger cancels overlay ${stage} acquisition without committing`, (t) => {
+    t.mock.method(Date, 'now', () => 1000);
+    const f = fixture({ holdAxis: 'vertical', recordBegin: true }); f.arm(350);
+    assert.deepEqual(f.config.maxPointers, [1]);
+    if (stage !== 'pending') f.handlers.onTouchesMove(f.touch(0, 20), f.manager);
+    if (stage === 'active') f.handlers.onStart(f.event(0, 20));
+    f.handlers.onTouchesDown(f.touch(0, 20, 2), f.manager);
+    f.handlers.onStart(f.event(0, 30));
+    f.handlers.onUpdate(f.event(0, 40, 2));
+    f.handlers.onEnd(f.event(0, 50), true); f.handlers.onFinalize();
+    assert.equal(f.calls.filter(([kind]) => kind === 'activate').length, stage === 'pending' ? 0 : 1);
+    assert.equal(f.calls.filter(([kind]) => kind === 'begin').length, stage === 'active' ? 1 : 0);
+    assert.equal(f.calls.filter(([kind]) => kind === 'cancel').length, stage === 'active' ? 1 : 0);
+    assert.ok(!f.calls.some(([kind]) => kind === 'finish' || kind === 'move'));
+    assert.equal(f.calls.at(-1)[0], 'fail');
+  });
+}
+
+test('overlay reorder delivers the release sample before finishing exactly once', (t) => {
+  t.mock.method(Date, 'now', () => 1000);
+  const f = fixture({ holdAxis: 'vertical', recordBegin: true }); f.arm(350);
+  f.handlers.onTouchesMove(f.touch(1, 20), f.manager);
+  f.handlers.onStart(f.event(1, 20));
+  f.handlers.onUpdate(f.event(2, 30));
+  f.handlers.onEnd(f.event(3, 45), true); f.handlers.onFinalize();
+  f.handlers.onEnd(f.event(3, 45), true); f.handlers.onFinalize();
+  assert.deepEqual(f.calls, [['prepare'], ['activate'], ['begin', 1, 20, true, 220],
+    ['move', 2, 30, 1, 230], ['move', 3, 45, 1, 245], ['finish']]);
+});
+
+for (const holdAxis of [undefined, 'horizontal']) {
+  for (const [dx, dy, elapsed, reorder] of [[0, 1, 350, true], [20, 0, 350, true], [20, 0, 0, false]]) {
+    test(`main clip holdAxis=${holdAxis}: (${dx},${dy}) at ${elapsed}ms preserves reorder=${reorder}`, (t) => {
+      t.mock.method(Date, 'now', () => 1000);
+      const f = fixture({ holdAxis, recordBegin: true }); f.arm(elapsed);
+      f.handlers.onTouchesMove(f.touch(dx, dy), f.manager);
+      f.handlers.onStart(f.event(dx, dy));
+      assert.deepEqual(f.calls, [['prepare'], ['activate'], ['begin', dx, dy, reorder]]);
+    });
+  }
+}
+
+test('vertical handles still acquire immediately without reorder after a long hold', (t) => {
+  t.mock.method(Date, 'now', () => 1000);
+  const f = fixture({ axis: 'vertical', recordBegin: true }); f.arm(700);
+  f.handlers.onTouchesMove(f.touch(0, 9), f.manager);
+  f.handlers.onStart(f.event(0, 9));
+  assert.deepEqual(f.calls, [['prepare'], ['activate'], ['begin', 0, 9, false, 209]]);
+});
 
 test('both native scroll recognizers wait for the shared directional decision', () => {
   const f = fixture();
@@ -150,4 +240,12 @@ test('vertical moves retain absolute pageY and finish once after the final sampl
   // begin's existing test callback only records dx/dy; move records pageY too.
   assert.deepEqual(f.calls, [['prepare'], ['activate'], ['begin', 0, 9],
     ['move', 0, 15, 1, 215], ['move', 0, 20, 1, 220], ['finish']]);
+});
+
+test('held vertical body delivery retains actual absolute pointer coordinates', () => {
+  const f = fixture({ holdAxis: 'vertical', recordBegin: true }); f.arm(400);
+  f.handlers.onTouchesMove(f.touch(1, 20), f.manager); f.handlers.onStart(f.event(1, 20));
+  f.handlers.onUpdate(f.event(2, 30)); f.handlers.onEnd(f.event(3, 45), true);
+  assert.deepEqual(f.calls, [['prepare'], ['activate'], ['begin', 1, 20, true, 220],
+    ['move', 2, 30, 1, 230], ['move', 3, 45, 1, 245], ['finish']]);
 });

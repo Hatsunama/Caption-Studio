@@ -281,7 +281,17 @@ function moveSourceVideoLayer(
   range: { startMs: number; endMs: number },
   clips: VideoClip[],
 ): VideoVisualLayer {
-  const sourceAnchors = buildClipTimeline(clips)
+  const entries = buildClipTimeline(clips);
+  const attached = attachLayerToTimeline({ ...layer, ...range,
+    sourceStartAtAnchorMs: layer.sourceStartMs }, entries, true);
+  const segments = videoOverlaySegments(layer, clips, Number.POSITIVE_INFINITY);
+  const fragmented = segments.some((segment, index) => index > 0 && segment.startMs > segments[index - 1].endMs);
+  // A continuous PiP owns its entire moved interval, including deliberate canvas
+  // gaps. Keep existing fragmented source playback when its destination has gaps.
+  if (attached.timingMode === 'source' || !fragmented) {
+    return remapVideoLayerToClips(attached, clips, clips);
+  }
+  const sourceAnchors = entries
     .filter((entry) => range.startMs < entry.endMs && range.endMs > entry.startMs)
     .map((entry) => ({ clipId: entry.clip.id,
       sourceStartMs: sourceTimeAt(entry, Math.max(range.startMs, entry.startMs)),

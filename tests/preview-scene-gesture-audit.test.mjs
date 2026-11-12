@@ -123,13 +123,13 @@ test('page conversion subtracts the measured canvas origin, including negative o
   assert.deepEqual(previewCanvasPoint(20, 40, { pageX: -10, pageY: -60 }), { x: 30, y: 100 });
 });
 
-test('overlap chooses saved scene order for the body regardless of selection or array order', () => {
+test('raw overlap follows paint order while the selected body retains interaction ownership', () => {
   const back = target('back', geometry(), 1);
   const front = target('front', geometry(), 8);
   for (const targets of [[back, front], [front, back]]) {
     assert.equal(previewObjectAtPoint(targets, { x: 200, y: 150 }, size).key, 'front');
     const hit = previewInteractionAtPoint(targets, 'back', { x: 200, y: 150 }, size, true);
-    assert.equal(hit.target.key, 'front');
+    assert.equal(hit.target.key, 'back');
     assert.equal(hit.mode, 'move');
   }
 });
