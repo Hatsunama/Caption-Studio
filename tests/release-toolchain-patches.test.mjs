@@ -12,20 +12,20 @@ const protectedRuntimeDependencies = {
   "caption-diagnostics": "file:modules/caption-diagnostics",
   "caption-media": "file:modules/caption-media",
   "caption-translation": "file:modules/caption-translation",
-  "expo": "57.0.32",
+  "expo": "57.0.33",
   "expo-asset": "57.0.21",
   "expo-audio": "~57.0.5",
-  "expo-constants": "57.0.23",
+  "expo-constants": "57.0.24",
   "expo-document-picker": "57.0.3",
   "expo-file-system": "~57.0.7",
   "expo-font": "~57.0.4",
   "expo-haptics": "~57.0.3",
   "expo-image": "~57.0.5",
-  "expo-linking": "57.0.13",
-  "expo-router": "57.0.30",
-  "expo-sharing": "57.0.25",
+  "expo-linking": "57.0.14",
+  "expo-router": "57.0.31",
+  "expo-sharing": "57.0.26",
   "expo-splash-screen": "57.0.11",
-  "expo-sqlite": "57.0.4",
+  "expo-sqlite": "57.0.5",
   "expo-status-bar": "~57.0.1",
   "expo-system-ui": "~57.0.4",
   "expo-video": "~57.0.5",
@@ -125,7 +125,8 @@ test('the reviewed SDK 57 patch graph retains every platform constraint and inte
   const { createHash } = await import('node:crypto');
   const unchanged = Object.fromEntries(Object.entries(lock.packages).filter(([name]) => name && !['node_modules/tsx', 'node_modules/zod'].includes(name)));
   // Normalize only the three independently asserted security-patch fields.
-  // Rebaseline after auditing the six SDK 57 pins and their transitive lock diff:
+  // 2026-11-12: rebaseline after independently auditing the six SDK 57 pins
+  // and exactly seven required transitive changes against published npm metadata:
   // Expo tooling, scoped fingerprint/parser security fixes, glob/PostCSS updates,
   // nested dependency placement, and deepmerge removal. Material Symbols keeps
   // its original version and integrity.
@@ -137,5 +138,5 @@ test('the reviewed SDK 57 patch graph retains every platform constraint and inte
     resolved: 'https://registry.npmjs.org/decode-uri-component/-/decode-uri-component-0.5.0.tgz',
     integrity: 'sha512-1BiQVoK8C9gUbQU6NzAtO/tkz2qOFpEObMWpcFvhx4fYnj4Oc5yzaJN/LD36ihkVUdXyh5ZekzX+yM+ty/SrPg=='
   };
-  assert.equal(createHash('sha256').update(JSON.stringify(unchanged)).digest('hex'), '82d99c4ca719932b72ce906f7111254ea4170e71dbe2041695c4114101d02bc3');
+  assert.equal(createHash('sha256').update(JSON.stringify(unchanged)).digest('hex'), 'c5279a750e4cb2b4586fa59f16417d93491e6ce2cf73fffaf150d828d9a4bb76');
 });
