@@ -7,7 +7,7 @@ import { sameModelFileIdentity } from '@/lib/model-verification-lease';
 import { alignWordsToSpeech, mergeSpeechWindows } from '@/lib/speech-alignment';
 import { requireDetectedCaptionLanguage } from '@/lib/transcription-language';
 import { removeModelArtifacts, storedModelBytes } from '@/lib/model-artifact-lifecycle';
-import { coalesceWhisperWords } from '@/lib/whisper-words';
+import { coalesceWhisperWords, type WhisperTimedSegment, type WhisperWordContribution } from '@/lib/whisper-words';
 import { timingDiagnosticNumber } from '@/lib/primary-caption-timing';
 import {
   encodeModelVerificationMarker,
@@ -101,6 +101,38 @@ export type DownloadedTranscriptionModel = {
 };
 
 let obsoleteModelsPruned = false;
+
+function rawFailureOrigins(segments: WhisperTimedSegment[], current: number | undefined, next: number | undefined) {
+  type Contributor = {
+    segmentIndex: number | null; pieceIndex: number | null; t0: number | null; t1: number | null;
+    offsetStart: number | null; offsetEnd: number | null; weight: number | null; total: number | null; used: number | null;
+    startFloor: boolean; segmentFloor: boolean; wordFloor: boolean; roundStart: boolean; roundEnd: boolean;
+  };
+  type Origin = { count: number; first: Contributor; maxEnd: Contributor | null };
+  let rawCurrent: Origin | null = null;
+  let rawNext: Origin | null = null;
+  const observe = (event: WhisperWordContribution) => {
+    if (event.wordIndex !== current && event.wordIndex !== next) return;
+    const origin = event.wordIndex === current ? rawCurrent : rawNext;
+    if (origin) origin.count += 1;
+    if (origin && !event.extendsEnd) return;
+    const contributor: Contributor = {
+      segmentIndex: timingDiagnosticNumber(event.segmentIndex), pieceIndex: timingDiagnosticNumber(event.pieceIndex),
+      t0: timingDiagnosticNumber(event.t0), t1: timingDiagnosticNumber(event.t1),
+      offsetStart: timingDiagnosticNumber(event.offsetStart), offsetEnd: timingDiagnosticNumber(event.offsetEnd),
+      weight: timingDiagnosticNumber(event.weight), total: timingDiagnosticNumber(event.total), used: timingDiagnosticNumber(event.used),
+      startFloor: event.startFloor, segmentFloor: event.segmentFloor, wordFloor: event.wordFloor,
+      roundStart: event.roundStart, roundEnd: event.roundEnd,
+    };
+    if (origin && event.attaches) origin.maxEnd = contributor;
+    else if (event.wordIndex === current) rawCurrent = { count: 1, first: contributor, maxEnd: null };
+    else rawNext = { count: 1, first: contributor, maxEnd: null };
+  };
+  // Failure-only replay of the actual implementation. Retain at most four
+  // contributors, never raw text, full segment arrays or a per-word map.
+  coalesceWhisperWords(segments, observe);
+  return { rawCurrent, rawNext };
+}
 
 function deleteModelArtifacts(directory: Directory, fileName: string) {
   removeModelArtifacts(fileName, (name) => new File(directory, name));
@@ -503,8 +535,13 @@ export async function transcribeVideoLocally(options: {
       // Production-retained RN console -> native app logging. One numeric-only
       // line at the first canonicalization throw; never serialize native results,
       // errors, outputUri or transcript content. Null denotes nonfinite/missing.
+      let raw = { rawCurrent: null, rawNext: null } as ReturnType<typeof rawFailureOrigins>;
+      try {
+        raw = rawFailureOrigins(result.segments, failure.currentOrigin?.coalescedIndex, failure.nextOrigin?.coalescedIndex);
+      } catch { /* A replay failure must preserve the quality error and cleanup. */ }
       console.warn('[asr-timing-failure-v1] ' + JSON.stringify({
         ...failure,
+        ...raw,
         decoded: {
           durationMs: timingDiagnosticNumber(extraction?.durationMs),
           pcmBytes: timingDiagnosticNumber(extraction?.pcmBytes),
