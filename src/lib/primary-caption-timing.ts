@@ -5,10 +5,68 @@ const MINIMUM_GENERATED_CUE_MS = 80;
 
 export type CaptionTimingBounds = { startMs: number; endMs: number };
 
+// Null means nonfinite/non-number (or an absent neighbor), never serialized
+// content. Keep this allowlist independent of WordToken and Error properties.
+export const timingDiagnosticNumber = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+export function timingDiagnosticInterval(word?: { startMs: number; endMs: number }) {
+  return word ? { startMs: timingDiagnosticNumber(word.startMs), endMs: timingDiagnosticNumber(word.endMs) } : null;
+}
+
+export type SourceTimingFailure = {
+  durationMs: number | null;
+  acceptedIndex: number | null;
+  acceptedCount: number;
+  previous: ReturnType<typeof timingDiagnosticInterval>;
+  current: ReturnType<typeof timingDiagnosticInterval>;
+  next: ReturnType<typeof timingDiagnosticInterval>;
+  cappedEndMs: number | null;
+  rejected: {
+    invalidDuration: boolean; invalidId: boolean; duplicateId: boolean; invalidText: boolean;
+    nonfiniteStart: boolean; nonfiniteEnd: boolean; negativeStart: boolean; startOutsideDuration: boolean;
+    nonfiniteNextStart: boolean; decreasingNextStart: boolean; nonpositiveCappedSupport: boolean;
+  };
+};
+
+function observeSourceTimingFailure(
+  observer: ((failure: SourceTimingFailure) => void) | undefined,
+  words: WordToken[], durationMs: number, index: number | null, endMs: number, ids?: Set<string>,
+) {
+  if (!observer) return;
+  // Diagnostics must never replace the original error or interfere with cleanup.
+  try {
+    const word = index === null ? undefined : words[index];
+    const next = index === null ? undefined : words[index + 1];
+    observer({
+      durationMs: timingDiagnosticNumber(durationMs), acceptedIndex: index, acceptedCount: words.length,
+      previous: timingDiagnosticInterval(index === null ? undefined : words[index - 1]),
+      current: timingDiagnosticInterval(word), next: timingDiagnosticInterval(next),
+      cappedEndMs: timingDiagnosticNumber(endMs),
+      rejected: {
+        invalidDuration: !Number.isFinite(durationMs) || durationMs <= 0,
+        invalidId: !!word && (typeof word.id !== 'string' || !word.id),
+        duplicateId: !!word && !!ids?.has(word.id),
+        invalidText: !!word && (typeof word.text !== 'string' || !word.text.trim()),
+        nonfiniteStart: !!word && !Number.isFinite(word.startMs),
+        nonfiniteEnd: !!word && !Number.isFinite(word.endMs),
+        negativeStart: !!word && word.startMs < 0,
+        startOutsideDuration: !!word && word.startMs >= durationMs,
+        nonfiniteNextStart: !!next && !Number.isFinite(next.startMs),
+        decreasingNextStart: !!word && !!next && next.startMs < word.startMs,
+        nonpositiveCappedSupport: !!word && endMs <= word.startMs,
+      },
+    });
+  } catch { /* Failure-only observation is best effort. */ }
+}
+
 // Source intervals describe the audio. Resolve overlapping ASR endpoints at
 // the next acoustic onset, without applying minimum visual cue durations.
-export function canonicalizeSourceWords(words: WordToken[], durationMs: number): WordToken[] {
+export function canonicalizeSourceWords(
+  words: WordToken[], durationMs: number, onFailure?: (failure: SourceTimingFailure) => void,
+): WordToken[] {
   if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    observeSourceTimingFailure(onFailure, words, durationMs, null, NaN);
     throw new Error('Source word timing quality failure: invalid source duration');
   }
   const ids = new Set<string>();
@@ -21,6 +79,7 @@ export function canonicalizeSourceWords(words: WordToken[], durationMs: number):
       || word.startMs < 0 || word.startMs >= durationMs
       || (next && (!Number.isFinite(next.startMs) || next.startMs < word.startMs))
       || endMs <= word.startMs) {
+      observeSourceTimingFailure(onFailure, words, durationMs, index, endMs, ids);
       throw new Error(`Source word timing quality failure for ${word.id}`);
     }
     ids.add(word.id);

@@ -8,6 +8,7 @@ import { alignWordsToSpeech, mergeSpeechWindows } from '@/lib/speech-alignment';
 import { requireDetectedCaptionLanguage } from '@/lib/transcription-language';
 import { removeModelArtifacts, storedModelBytes } from '@/lib/model-artifact-lifecycle';
 import { coalesceWhisperWords } from '@/lib/whisper-words';
+import { timingDiagnosticNumber } from '@/lib/primary-caption-timing';
 import {
   encodeModelVerificationMarker,
   modelVerificationMarkerMatches,
@@ -404,7 +405,7 @@ export async function transcribeVideoLocally(options: {
     progress: null,
     detail: 'Extracting audio on this phone',
   });
-  await CaptionMedia.extractAudioToWav(videoUri, audioFile.uri);
+  const extraction = await CaptionMedia.extractAudioToWav(videoUri, audioFile.uri);
   session?.throwIfCancelled();
   onProgress?.({
     stage: 'preparing-audio',
@@ -498,7 +499,20 @@ export async function transcribeVideoLocally(options: {
     session?.throwIfCancelled();
     if (result.isAborted) throw new Error('Transcription was cancelled');
 
-    const words = alignWordsToSpeech(coalesceWhisperWords(result.segments), speechSegments, options.durationMs);
+    const words = alignWordsToSpeech(coalesceWhisperWords(result.segments), speechSegments, options.durationMs, (failure) => {
+      // Production-retained RN console -> native app logging. One numeric-only
+      // line at the first canonicalization throw; never serialize native results,
+      // errors, outputUri or transcript content. Null denotes nonfinite/missing.
+      console.warn('[asr-timing-failure-v1] ' + JSON.stringify({
+        ...failure,
+        decoded: {
+          durationMs: timingDiagnosticNumber(extraction?.durationMs),
+          pcmBytes: timingDiagnosticNumber(extraction?.pcmBytes),
+          sampleRate: timingDiagnosticNumber(extraction?.sampleRate),
+          channelCount: timingDiagnosticNumber(extraction?.channelCount),
+        },
+      }));
+    });
     if (words.length === 0) {
       throw new Error('Speech was detected, but no reliable words were found. Try clearer audio or a different recording.');
     }
