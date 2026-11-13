@@ -1,8 +1,9 @@
 import type { WordToken } from '@/types/project';
+import { canonicalizeSourceWords } from '@/lib/primary-caption-timing';
 
 export type SpeechSegment = { t0: number; t1: number };
 
-export function alignWordsToSpeech(words: WordToken[], speech: SpeechSegment[]): WordToken[] {
+export function alignWordsToSpeech(words: WordToken[], speech: SpeechSegment[], sourceDurationMs?: number): WordToken[] {
   const windows = mergeSpeechWindows(
     speech
       .map((segment) => ({ startMs: Math.max(0, segment.t0 * 10), endMs: Math.max(0, segment.t1 * 10) }))
@@ -22,14 +23,17 @@ export function alignWordsToSpeech(words: WordToken[], speech: SpeechSegment[]):
     });
     if (!window) continue;
 
-    const previousEnd = aligned.at(-1)?.endMs ?? 0;
-    const startMs = Math.max(previousEnd, window.startMs, word.startMs);
-    const endMs = Math.max(startMs + 10, Math.min(window.endMs, word.endMs));
-    if (endMs > window.endMs + 10) continue;
+    // VAD may clip the left edge, but overlapping endpoints must never move
+    // an accepted acoustic onset or fabricate support for a minimum duration.
+    const startMs = Math.max(window.startMs, word.startMs);
+    const endMs = Math.min(window.endMs, word.endMs);
     aligned.push({ ...word, startMs, endMs });
   }
 
-  return aligned.map((word, index) => ({ ...word, id: `word-${index + 1}` }));
+  return canonicalizeSourceWords(
+    aligned.map((word, index) => ({ ...word, id: `word-${index + 1}` })),
+    sourceDurationMs ?? windows[windows.length - 1].endMs,
+  );
 }
 
 export function mergeSpeechWindows(

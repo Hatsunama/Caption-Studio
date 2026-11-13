@@ -271,7 +271,7 @@ test('one verified caption model owns generation and first-use consent', () => {
   assert.match(editor, /Alert\.alert\('Caption generation failed', message\)/);
   assert.match(pipeline, /modelId: TranscriptionModelId/);
   assert.match(workflows, /CAPTION_TRANSCRIPTION_MODEL_ID/);
-  assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint\)/);
+  assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint, source\.durationMs\)/);
   assert.match(pipeline, /CaptionMedia\.sha256\(source\.uri\)/);
   // Progress-before-native ordering is exercised by the callable audio
   // cancellation boundary regressions, rather than an exact call-string match.

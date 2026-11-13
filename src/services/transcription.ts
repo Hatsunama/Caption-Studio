@@ -498,7 +498,7 @@ export async function transcribeVideoLocally(options: {
     session?.throwIfCancelled();
     if (result.isAborted) throw new Error('Transcription was cancelled');
 
-    const words = alignWordsToSpeech(coalesceWhisperWords(result.segments), speechSegments);
+    const words = alignWordsToSpeech(coalesceWhisperWords(result.segments), speechSegments, options.durationMs);
     if (words.length === 0) {
       throw new Error('Speech was detected, but no reliable words were found. Try clearer audio or a different recording.');
     }
