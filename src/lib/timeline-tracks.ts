@@ -131,11 +131,21 @@ export function timelineTrackMembers(order: readonly string[], id: string) {
     : [id];
 }
 
+/** Destination is a row insertion index after removing the moving bundle.
+ * Crossing any row of a neighbouring bundle crosses that whole container. */
 export function moveTimelineTrack(order: readonly string[], id: string, destination: number) {
-  const index = order.indexOf(id);
-  if (index < 0 || !Number.isFinite(destination)) return [...order];
-  const next = order.filter((candidate) => candidate !== id);
-  next.splice(Math.max(0, Math.min(next.length, Math.round(destination))), 0, id);
+  const members = timelineTrackMembers(order, id);
+  if (!members.length || !Number.isFinite(destination)) return [...order];
+  const index = order.indexOf(members[0]);
+  const next = order.filter((candidate) => !members.includes(candidate));
+  let target = Math.max(0, Math.min(next.length, Math.round(destination)));
+  if (target > 0 && target < next.length) {
+    const neighbour = timelineTrackMembers(next, next[target]);
+    if (neighbour.includes(next[target - 1])) {
+      target = target < index ? next.indexOf(neighbour[0]) : next.indexOf(neighbour[neighbour.length - 1]) + 1;
+    }
+  }
+  next.splice(target, 0, ...members);
   return next;
 }
 

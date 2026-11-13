@@ -7,7 +7,7 @@ import { createTimelineNativeScrollGestures, TimelineNativeGestureContext, Timel
 import { createTimelineLinkedScroll, timelineScrollMetadata } from './timeline-linked-scroll';
 
 import { chrome } from '@/lib/ui-theme';
-import { orderedTimelineTrackIds, visualTimelineGroups, visualTimelineGroupForLayer, visualTimelineLayerIds, visualTimelineRowIds, timelineTrackMembers } from '@/lib/timeline-tracks';
+import { orderedTimelineTrackIds, visualTimelineGroups, visualTimelineGroupForLayer, visualTimelineLayerIds, visualTimelineRowIds, timelineTrackMembers, moveTimelineTrack } from '@/lib/timeline-tracks';
 import { timelineTouchIntent, type TimelineTouchIntent } from '@/lib/timeline-touch-intent';
 import { createTimelineBoundaryFeedback } from '@/lib/timeline-boundary-feedback';
 import { timelineHaptic } from '@/services/timeline-haptics';
@@ -733,8 +733,7 @@ export function LayerTimeline(props: {
       if (!origin.members.includes(candidate) && center > top + height / 2) destination++;
       top += height;
     }
-    const next = origin.order.filter((candidate) => !origin.members.includes(candidate));
-    next.splice(destination, 0, ...origin.members);
+    const next = moveTimelineTrack(origin.order, id, destination);
     if (next.some((item, index) => item !== origin.preview[index])) timelineHaptic('boundary');
     origin.preview = next;
     setTrackDrag({ id, order: origin.preview });
@@ -916,8 +915,7 @@ export function LayerTimeline(props: {
               }}
               onAccessibleMove={(direction) => {
                 const members = timelineTrackMembers(orderedTracks, id);
-                const next = orderedTracks.filter((candidate) => !members.includes(candidate));
-                next.splice(clamp(orderedTracks.indexOf(members[0]) + direction, 0, next.length), 0, ...members);
+                const next = moveTimelineTrack(orderedTracks, id, orderedTracks.indexOf(members[0]) + direction);
                 if (next.some((item, index) => item !== orderedTracks[index])) props.onReorderTrack?.(next);
               }} /> : null}
             <Pressable onPress={row.props.onPressLabel} disabled={!row.props.onPressLabel} accessibilityRole={row.props.onPressLabel ? 'button' : 'text'} accessibilityLabel={row.props.label}
