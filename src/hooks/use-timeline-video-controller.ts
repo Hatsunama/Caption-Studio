@@ -100,6 +100,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const boundaryClipIdRef = useRef<string | undefined>(undefined);
   const gapFrameRef = useRef<number | undefined>(undefined);
   const preloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pendingPreloadRef = useRef<(() => void) | undefined>(undefined);
+  const committedPreviewRef = useRef({ activeSlot, timelineMs: currentMs });
   const reloadRequestedRef = useRef(false);
   const hasPresentedFrameRef = useRef(false);
   const mountedRef = useRef(true);
@@ -179,6 +181,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const cancelScheduledPreload = () => {
     if (preloadTimeoutRef.current != null) clearTimeout(preloadTimeoutRef.current);
     preloadTimeoutRef.current = undefined;
+    pendingPreloadRef.current = undefined;
   };
 
   const abortPreparationsExcept = (clipId?: string) => {
@@ -560,14 +563,26 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const entryIndex = entriesRef.current.findIndex((candidate) => candidate.clip.id === entry.clip.id);
     const previous = entryIndex > 0 ? entriesRef.current[entryIndex - 1] : undefined;
     const visibleTransitionEndMs = previous
-      ? entry.startMs + previous.clip.transitionAfter.durationMs / 2
+      ? transitionWindowsRef.current.find(window => window.outgoing?.clipId === previous.clip.id
+        && window.incoming?.clipId === entry.clip.id)?.endMs
+        ?? entry.startMs + previous.clip.transitionAfter.durationMs / 2
       : entry.startMs;
     const timelineDelayMs = Math.max(0, visibleTransitionEndMs - timelineMs);
     if (timelineDelayMs > 0 && !playIntentRef.current) return;
     const prepare = () => {
       preloadTimeoutRef.current = undefined;
+      pendingPreloadRef.current = undefined;
       if (!mountedRef.current || !surfacesAdmittedRef.current || generation !== generationRef.current
         || activeSlotRef.current !== occupiedSlot || activeClipIdRef.current !== entry.clip.id) return;
+      // The mutable transport ref advances before React commits the retained
+      // pair's z-order. Keep the outgoing decoder intact through that commit,
+      // including any still-rendered transition tail. The timer above only
+      // schedules timeline work; it is not a presentation acknowledgement.
+      const committed = committedPreviewRef.current;
+      if (committed.activeSlot !== occupiedSlot || committed.timelineMs < visibleTransitionEndMs) {
+        pendingPreloadRef.current = prepare;
+        return;
+      }
       const runtime = slotRuntimeRef.current[standby];
       if (runtime.preparedClipId === next.clip.id
         && runtime.playbackUri === videoPlaybackUri(sourceForEntry(next))
@@ -901,6 +916,15 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       requestTargetRef.current(currentMsRef.current);
     }
   }, [retireSurfaceFrames, surfacesAdmitted, stopTransport]);
+
+  useEffect(() => {
+    // This hook and VideoTransitionOverlay consume the same editor render.
+    // Passive effects establish JS commit ordering only: Fabric may not yet
+    // have presented the native z-order on Android's main looper. Device proof
+    // is still required before claiming native presentation retirement.
+    committedPreviewRef.current = { activeSlot, timelineMs: currentMs };
+    pendingPreloadRef.current?.();
+  });
 
   return {
     player: players[activeSlot],

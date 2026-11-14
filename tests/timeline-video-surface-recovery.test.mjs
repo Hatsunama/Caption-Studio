@@ -25,9 +25,25 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   const hosts = new Map(), cache = new Map(), timers = new Map(), calls = [], eofFrames = new Map();
   const gapFrames = new Map();
   const publishedFrames = new Map();
+  const retirementTrace = [];
+  let traceRetirement = false;
   let host, cursor, dirty = true, transport, views = [], alive = true, timerId = 0, now = 0;
   let appStateListener, playerCursor = 0, blockingUi = false, width = 300, height = 200;
   const layout = [], passive = [];
+  // views and transport describe the last completed host commit, not pending
+  // useState cells. Observe native-boundary calls without inventing black pixels
+  // or deriving foreground ownership from the controller's mutable active ref.
+  function observeInstallation(operation, slot, uri) {
+    if (!traceRetirement) return;
+    retirementTrace.push({ operation, slot, uri,
+      committedActiveSlot: transport.activeSlot, committedMs: transport.currentMs,
+      committedViews: views.map(view => ({ slot: players.indexOf(view.player),
+        nativePath: view.nativePath,
+        foreground: view.ancestors.some(style => style.zIndex === 1)
+          && !view.ancestors.some(style => style.opacity === 0),
+      })),
+    });
+  }
   const effect = (queue) => (fn, deps) => {
     const i = cursor++, cell = host.cells[i] ??= {};
     if (!same(cell.deps, deps)) {
@@ -67,6 +83,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
       pause() { this.playing = false; calls.push(['pause', slot]); },
       play() { this.playing = true; calls.push(['play', slot, this.muted]); },
       async replaceAsync(uri) { calls.push(['replace', slot, uri]);
+        if (uri) observeInstallation('replaceAsync', slot, uri);
         if ((this.holdReplacement ?? holdReplacement) && uri) await new Promise(resolve => { this.finishReplacement = resolve; });
         if (uri) { this.mediaItems++; time = 0; }
         this.loadedUri = uri; this.windowEndMs = undefined;
@@ -83,6 +100,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
       async configureVideoPlaybackWindow(player, uri, requestId, endMs, targetMs, timeoutMs) {
         const slot = players.indexOf(player);
         calls.push(['window', slot, uri, requestId, endMs, timeoutMs, targetMs]);
+        observeInstallation('configureVideoPlaybackWindow', slot, uri);
         assert.equal(player.loadedUri, uri, 'SDK source must be current before configuring its window');
         assert.equal(player.playing, false); assert.equal(player.muted, true);
         assert.ok(timeoutMs > 0 && timeoutMs <= 5000);
@@ -183,6 +201,11 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   async function settle() { for (let i = 0; i < 25; i++) { await Promise.resolve(); if (dirty) render(); } return transport; }
   render();
   return { players, calls, project, render, settle, get transport() { return transport; }, get views() { return views; },
+    retirementTrace,
+    traceRetirement(value) { traceRetirement = value; },
+    // Let promise continuations/native-boundary requests run while React's next
+    // host commit is pending. No timers, fabricated view frames or render calls.
+    async drainWithoutCommit() { for (let i = 0; i < 25; i++) await Promise.resolve(); },
     async app(state) { appState.currentState = state; appStateListener(state); render(); await settle(); },
     async modal(value) { blockingUi = value; render(); await settle(); },
     async rotate() { [width, height] = [height, width]; render(); await settle(); },
@@ -251,6 +274,141 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     get timerCount() { return timers.size; },
   };
 }
+
+test('retirement observer distinguishes a hidden preload from the committed foreground', async t => {
+  const h = harness({ clips: [clip('cut-0', 'source'), clip('cut-1', 'other')] });
+  t.after(() => h.unmount()); h.traceRetirement(true); await h.complete(); h.traceRetirement(false);
+  const standby = h.retirementTrace.filter(event => event.slot === 1);
+  assert.ok(standby.some(event => event.operation === 'configureVideoPlaybackWindow'));
+  assert.ok(standby.every(event => event.committedActiveSlot === 0
+    && event.committedViews.length === 2
+    && event.committedViews.find(view => view.slot === 0).foreground
+    && !event.committedViews.find(view => view.slot === 1).foreground));
+});
+
+for (const sources of [['source', 'other'], ['other', 'source']]) {
+  test(`clean-cut ${sources.join('/')} retirement waits for foreground host commit in both slot directions`, async t => {
+    // A/B/A/B: each decoder is reused for its original URI. This still installs
+    // a fresh native playback window; replaceAsync-only spies miss that path.
+    const clips = Array.from({ length: 4 }, (_, i) => clip(`cut-${i}`, sources[i % 2]));
+    const h = harness({ clips }); t.after(() => h.unmount());
+    await h.complete(); h.transport.play(); await h.complete();
+    assert.equal(h.transport.phase, 'ready');
+    assert.equal(h.transport.activeSlot, 0);
+    assert.deepEqual(Array.from(h.transport.slots, slot => slot.preparedClipId), ['cut-0', 'cut-1']);
+    const paths = h.views.map(view => view.nativePath);
+    const beforeCommits = [];
+    h.traceRetirement(true);
+    for (const [previous, incoming, clipId] of [[0, 1, 'cut-1'], [1, 0, 'cut-2']]) {
+      const start = h.retirementTrace.length;
+      assert.equal(h.transport.activeSlot, previous);
+      h.players[previous].emit('playToEnd', {});
+      await h.drainWithoutCommit();
+      assert.equal(h.transport.activeSlot, previous, 'the previous host commit is still installed');
+      assert.deepEqual(h.views.map(view => view.nativePath), paths, 'no layout or mount change during pending commit');
+      beforeCommits.push({ previous, incoming, operations: h.retirementTrace.slice(start) });
+      h.render(); await h.complete();
+      assert.equal(h.transport.activeSlot, incoming);
+      assert.equal(h.transport.slots[incoming].preparedClipId, clipId);
+      assert.deepEqual(h.views.map(view => view.nativePath), paths, 'handoff retains both native hosts');
+    }
+    h.traceRetirement(false);
+    t.diagnostic(JSON.stringify({ beforeCommits, allInstallations: h.retirementTrace }));
+    const installations = h.retirementTrace.filter(event => event.operation === 'configureVideoPlaybackWindow');
+    assert.ok(installations.some(event => event.slot === 0) && installations.some(event => event.slot === 1),
+      'exercise actual preparation requests for both retired decoder slots');
+    const foregroundInstallations = h.retirementTrace.filter(event =>
+      event.committedViews.some(view => view.slot === event.slot && view.foreground));
+    assert.deepEqual(foregroundInstallations, [],
+      'native item replacement must wait until the retained outgoing host is no longer foreground');
+  });
+}
+
+for (const interruption of ['pause', 'superseding seek', 'rapid A/B/A', 'background', 'active error', 'unmount']) {
+  test(`pending retirement preload respects ${interruption}`, async t => {
+    const h = harness({ clips: [clip('cut-0'), clip('cut-1', 'other'), clip('cut-2')] });
+    t.after(() => h.unmount()); await h.complete();
+    h.transport.play(); await h.complete();
+    const paths = h.views.map(view => view.nativePath);
+    h.traceRetirement(true);
+    h.players[0].emit('playToEnd', {}); await h.drainWithoutCommit();
+    assert.equal(h.transport.activeSlot, 0, 'outgoing host still committed');
+    assert.deepEqual(h.retirementTrace, [], 'no installation while retirement commit is pending');
+    if (interruption === 'pause') h.transport.pause();
+    if (interruption === 'superseding seek') h.transport.seek(31000);
+    if (interruption === 'rapid A/B/A') h.transport.seek(1000);
+    if (interruption === 'background') await h.app('background');
+    if (interruption === 'active error') h.players[1].emit('statusChange', { status: 'error', error: new Error('decoder failed') });
+    if (interruption === 'unmount') h.unmount();
+    await h.drainWithoutCommit();
+    assert.deepEqual(h.retirementTrace, [], 'interrupting work cannot flush the retired preload before commit');
+    h.render(); await h.complete();
+    if (interruption === 'superseding seek') {
+      assert.equal(h.transport.activeSlot, 1);
+      assert.equal(h.transport.currentMs, 31000);
+      assert.equal(h.transport.slots[0].preparedClipId, 'cut-2', 'latest request still preloads after commit');
+      assert.ok(h.retirementTrace.some(event => event.operation === 'configureVideoPlaybackWindow' && event.slot === 0));
+      assert.deepEqual(h.retirementTrace.filter(event =>
+        event.committedViews.some(view => view.slot === event.slot && view.foreground)), []);
+    } else {
+      assert.deepEqual(h.retirementTrace, [], 'cancelled preload cannot restart on a later render');
+    }
+    if (interruption === 'rapid A/B/A') {
+      assert.equal(h.transport.activeSlot, 0);
+      assert.equal(h.transport.currentMs, 1000);
+      assert.equal(h.transport.slots[0].preparedClipId, 'cut-0', 'outgoing decoder survives the uncommitted round trip');
+    }
+    if (interruption === 'background') assert.equal(h.transport.phase, 'suspended');
+    if (interruption === 'active error') assert.equal(h.transport.phase, 'error');
+    if (interruption !== 'background' && interruption !== 'unmount') {
+      if (interruption !== 'active error') assert.equal(h.transport.phase, 'ready');
+      assert.deepEqual(h.views.map(view => view.nativePath), paths);
+    }
+    assert.equal(h.timerCount, 0);
+  });
+}
+
+test('paused clean-cut retirement releases preload after commit without starting playback', async t => {
+  const h = harness({ clips: [clip('cut-0'), clip('cut-1', 'other'), clip('cut-2')] });
+  t.after(() => h.unmount()); await h.complete(); h.traceRetirement(true);
+  h.transport.seek(31000); await h.drainWithoutCommit();
+  assert.equal(h.transport.activeSlot, 0);
+  assert.deepEqual(h.retirementTrace, []);
+  h.render(); await h.complete();
+  assert.equal(h.transport.activeSlot, 1);
+  assert.equal(h.transport.slots[0].preparedClipId, 'cut-2');
+  assert.ok(h.retirementTrace.some(event => event.operation === 'configureVideoPlaybackWindow'));
+  assert.deepEqual(h.retirementTrace.filter(event =>
+    event.committedViews.some(view => view.slot === event.slot && view.foreground)), []);
+  assert.equal(h.calls.some(call => call[0] === 'play'), false);
+  assert.equal(h.timerCount, 0);
+});
+
+test('transition retirement keeps the outgoing decoder until the tail exit commits', async t => {
+  const h = harness({ sourceDurationMs: 60000, clips: [
+    { ...clip('cut-0'), transitionAfter: { type: 'crossfade', durationMs: 1001 } },
+    clip('cut-1', 'other'), clip('cut-2'),
+  ] });
+  t.after(() => h.unmount()); await h.complete(); h.transport.play(); await h.complete();
+  h.transport.seek(30000); await h.complete();
+  assert.equal(h.transport.activeSlot, 1);
+  assert.equal(h.transport.slots[0].preparedClipId, 'cut-0');
+  const paths = h.views.map(view => view.nativePath);
+  h.traceRetirement(true);
+  await h.advance(501);
+  assert.deepEqual(h.retirementTrace, [], 'wall time cannot retire a still-committed composite');
+  h.players[1].currentTime = 1.6;
+  h.players[1].emit('timeUpdate', { currentTime: 1.6 });
+  await h.drainWithoutCommit();
+  assert.deepEqual(h.retirementTrace, [], 'clock advancement without a React commit cannot retire the tail');
+  h.render(); await h.complete();
+  assert.ok(h.transport.currentMs >= 30501);
+  assert.equal(h.transport.slots[0].preparedClipId, 'cut-2');
+  assert.ok(h.retirementTrace.some(event => event.operation === 'configureVideoPlaybackWindow' && event.slot === 0));
+  assert.deepEqual(h.retirementTrace.filter(event =>
+    event.committedViews.some(view => view.slot === event.slot && view.foreground)), []);
+  assert.deepEqual(h.views.map(view => view.nativePath), paths);
+});
 
 test('authored trailing gap still uses its canvas clock through the rounded project endpoint', async t => {
   const final = { ...clip(), sourceStartMs: 0, sourceEndMs: 6385.416666666667, gapAfterMs: 20.25 };
