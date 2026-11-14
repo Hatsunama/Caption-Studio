@@ -102,6 +102,9 @@ function mount(t, initialProject = fixture()) {
   const native = Object.fromEntries(['ActivityIndicator', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View']
     .map((name) => [name, name]));
   native.Platform = { OS: 'android', select: (options) => options.android ?? options.default };
+  native.DeviceEventEmitter = {
+    addListener: (name, callback) => ({ remove: subscribe(name, callback) }),
+  };
   native.BackHandler = {
     addEventListener: (name, callback) => ({ remove: subscribe(name, callback) }),
     exitApp: () => calls.exits.push(['exitApp']),

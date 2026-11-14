@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import test from 'node:test';
@@ -10,6 +11,11 @@ const componentPath = 'components/editor/layer-timeline.tsx';
 const exportsSuffix = '\nexports.TimedBlock = TimedBlock; exports.DirectTimelineGestureSurface = DirectTimelineGestureSurface; exports.TimelineTimingGrip = TimelineTimingGrip; exports.TimelineEdgeHandleMarker = TimelineEdgeHandleMarker;';
 
 function harness() {
+  const nativeEvents = new EventEmitter();
+  const deviceEvents = { addListener(name, callback) {
+    nativeEvents.on(name, callback);
+    return { remove: () => nativeEvents.off(name, callback) };
+  } };
   const slots = [];
   let cursor = 0;
   let result;
@@ -33,14 +39,23 @@ function harness() {
   const exports = {};
   runInNewContext(output, {
     exports, setTimeout() { return 0; }, clearTimeout() {}, requestAnimationFrame() { return 0; }, cancelAnimationFrame() {},
-    require(name) {
+    require: function load(name) {
       if (name === 'react') return react;
+      if (name === '@/hooks/use-display-rotation-invalidation') {
+        const hook = {};
+        const source = readFileSync(new URL('../src/hooks/use-display-rotation-invalidation.ts', import.meta.url), 'utf8');
+        const code = ts.transpileModule(source, {
+          compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+        }).outputText;
+        runInNewContext(code, { exports: hook, require: load });
+        return hook;
+      }
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native-reanimated') return { useSharedValue: (value) => react.useRef({ value }).current };
       if (name === '@/components/spring-scroll-view') return {
         SpringScrollView: 'ScrollView', SpringScrollGestureContext: { value: [] },
       };
-      if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PanResponder: { create: (handlers) => ({ panHandlers: handlers }) } };
+      if (name === 'react-native') return { DeviceEventEmitter: deviceEvents, View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PanResponder: { create: (handlers) => ({ panHandlers: handlers }) } };
       if (name === 'expo-image') return { Image: 'Image' };
       if (name === './timeline-linked-scroll') return requireLocal('../src/components/editor/timeline-linked-scroll.ts');
       if (name === './timeline-native-gesture') return {
