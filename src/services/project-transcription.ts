@@ -25,8 +25,8 @@ import type { SourceTranscriptionFingerprint } from '@/lib/source-transcription-
 import type { CaptionProject, SourceTranscription, WordToken } from '@/types/project';
 
 type TranscriptionCache = {
-  read: (fingerprint: SourceTranscriptionFingerprint, modelId: string) => Promise<SourceTranscription | undefined>;
-  write: (fingerprint: SourceTranscriptionFingerprint, result: SourceTranscription) => Promise<void>;
+  read: (fingerprint: SourceTranscriptionFingerprint, modelId: string, durationMs: number) => Promise<SourceTranscription | undefined>;
+  write: (fingerprint: SourceTranscriptionFingerprint, result: SourceTranscription, durationMs: number) => Promise<void>;
 };
 
 async function generateProjectCaptionsFromSources(
@@ -55,12 +55,12 @@ async function generateProjectCaptionsFromSources(
     });
     const sourceFingerprint = createSourceTranscriptionFingerprint(await CaptionMedia.sha256(source.uri));
     session?.throwIfCancelled();
-    if (!canReuseSourceTranscription(sourceResults[sourceId], modelId, sourceFingerprint) && sourceCache) {
-      const cached = await sourceCache.read(sourceFingerprint, modelId);
+    if (!canReuseSourceTranscription(sourceResults[sourceId], modelId, sourceFingerprint, source.durationMs) && sourceCache) {
+      const cached = await sourceCache.read(sourceFingerprint, modelId, source.durationMs);
       session?.throwIfCancelled();
       if (cached) sourceResults[sourceId] = cached;
     }
-    if (canReuseSourceTranscription(sourceResults[sourceId], modelId, sourceFingerprint)) {
+    if (canReuseSourceTranscription(sourceResults[sourceId], modelId, sourceFingerprint, source.durationMs)) {
       onProgress?.({
         stage: 'grouping',
         progress: 1,
@@ -93,7 +93,7 @@ async function generateProjectCaptionsFromSources(
     };
     if (sourceCache) {
       try {
-        await sourceCache.write(sourceFingerprint, sourceResults[sourceId]);
+        await sourceCache.write(sourceFingerprint, sourceResults[sourceId], source.durationMs);
       } catch (caught) {
         console.warn('Caption Studio could not checkpoint temporary timeline transcription.', caught);
       }
@@ -166,8 +166,8 @@ export async function generateProjectCaptions(
     const forwarded = [...args] as unknown as Parameters<typeof generateProjectCaptionsFromSources>;
     forwarded[0] = timelineSession.project;
     forwarded[5] = {
-      read: (fingerprint, modelId) => readTimelineTranscription(project.id, fingerprint, modelId),
-      write: (fingerprint, result) => writeTimelineTranscription(project.id, fingerprint, result),
+      read: (fingerprint, modelId, durationMs) => readTimelineTranscription(project.id, fingerprint, modelId, durationMs),
+      write: (fingerprint, result, durationMs) => writeTimelineTranscription(project.id, fingerprint, result, durationMs),
     };
     const checkpoint = args[3];
     if (checkpoint) {

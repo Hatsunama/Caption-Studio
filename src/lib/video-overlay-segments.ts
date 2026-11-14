@@ -1,4 +1,4 @@
-import { buildClipTimeline, timelineTimeAt } from '@/lib/video-timeline';
+import { projectVideoSourceSegments } from '@/lib/video-timeline';
 import type { VideoClip, VideoVisualLayer } from '@/types/project';
 
 export type VideoOverlaySegment = {
@@ -19,23 +19,5 @@ export function videoOverlaySegments(layer: VideoVisualLayer, clips: VideoClip[]
     return endMs > startMs ? [{ startMs, endMs, sourceStartMs,
       sourceEndMs: sourceStartMs + (endMs - startMs) * layer.playbackRate }] : [];
   }
-  const entries = new Map(buildClipTimeline(clips).map((entry) => [entry.clip.id, entry]));
-  let elapsedMs = 0;
-  const originMs = layer.sourceStartAtAnchorMs ?? layer.sourceStartMs;
-  const mediaEndMs = layer.mediaEndMs ?? layer.sourceDurationMs;
-  return layer.sourceAnchors.flatMap((anchor) => {
-    const entry = entries.get(anchor.clipId);
-    const rate = entry?.clip.playbackRate ?? 1;
-    const anchorElapsedMs = (anchor.sourceEndMs - anchor.sourceStartMs) / rate;
-    const startSourceMs = entry ? Math.max(anchor.sourceStartMs, entry.clip.sourceStartMs) : 0;
-    const endSourceMs = entry ? Math.min(anchor.sourceEndMs, entry.clip.sourceEndMs) : 0;
-    const sourceStartMs = originMs + (elapsedMs + (startSourceMs - anchor.sourceStartMs) / rate) * layer.playbackRate;
-    elapsedMs += anchorElapsedMs;
-    if (!entry || endSourceMs <= startSourceMs || sourceStartMs >= mediaEndMs) return [];
-    const startMs = timelineTimeAt(entry, startSourceMs);
-    const endMs = Math.min(durationMs, timelineTimeAt(entry, endSourceMs),
-      startMs + (mediaEndMs - sourceStartMs) / layer.playbackRate);
-    return endMs > startMs ? [{ startMs, endMs, sourceStartMs,
-      sourceEndMs: sourceStartMs + (endMs - startMs) * layer.playbackRate }] : [];
-  });
+  return projectVideoSourceSegments(layer, clips, durationMs);
 }

@@ -9,7 +9,7 @@ import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/pr
 import { moveVisualLayer } from '../src/lib/project-editor.ts';
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
-import { orderedTimelineTrackIds, moveTimelineTrack, setTimelineTrackOrder } from '../src/lib/timeline-tracks.ts';
+import { orderedTimelineTrackIds, moveTimelineTrack, setTimelineTrackOrder, applyTimelineStackOrder, visualTimelineRowIds } from '../src/lib/timeline-tracks.ts';
 
 const requireLocal = createRequire(import.meta.url);
 
@@ -316,9 +316,9 @@ test('a track drop commits the final pointer position even before React rerender
   const tree = h.render(p, { onReorderTrack: (order) => drops.push(Array.from(order)) });
   const handle = h.all(tree, (node) => node.type?.name === 'TimelineTrackHandle' && node.props.label === 'IMAGES')[0];
   handle.props.onStart();
-  handle.props.onMove(-1000);
+  handle.props.onMove(1000);
   handle.props.onFinish(false);
-  assert.deepEqual(drops, [['images', 'video', 'audio', 'captions']]);
+  assert.deepEqual(drops, [['captions', 'video', 'audio', 'images']]);
   assert.equal(p.timelineTrackOrder, undefined, 'preview must not mutate the project');
 });
 
@@ -362,7 +362,7 @@ test('text and watermarks pack separately without changing visual or export orde
   assert.deepEqual(buildTimelineRenderPlan(next), beforePlan);
   const h = harness();
   const rows = h.all(h.render(next), (node) => node.type?.name === 'TimelineRow');
-  assert.deepEqual(Array.from(rows, (row) => row.props.label), ['WATERMARKS', 'IMAGES', 'TEXT', 'CAPTIONS', 'AUDIO', 'VIDEO']);
+  assert.deepEqual(Array.from(rows, (row) => row.props.label), ['WATERMARKS', 'TEXT', 'IMAGES', 'CAPTIONS', 'AUDIO', 'VIDEO']);
 });
 
 test('track ordering drops stale tracks and appends new tracks once', () => {
@@ -423,6 +423,225 @@ test('items sharing a row retain individual selection and never seek on tap', ()
   const tree = h.render(p, { onSelectLayer: (id) => selected.push(id), onSeek: (time) => seeks.push(time) });
   const rows = h.all(tree, (node) => node.type?.name === 'TimelineRow' && node.props.label === 'IMAGES');
   for (const block of h.all(rows[0], (node) => node.type?.name === 'TimedBlock')) block.props.onPress();
-  assert.deepEqual(selected, ['one', 'two']);
+  assert.deepEqual(selected, ['two', 'one']);
   assert.deepEqual(seeks, []);
 });
+
+for (const ending of ['release', 'cancel', 'second finger']) test(`native held vertical item reorder uses one isolated lifecycle: ${ending}`, () => {
+  const h = harness(), calls = [], locks = [];
+  const handlers = h.exports.useTimelineTimingPanHandlers({
+    startMs: 1000, endMs: 2000, durationMs: 5000, trackWidth: 1000,
+    onPress: () => calls.push('select'), onChangeStart: () => calls.push('timing-start'),
+    onChange: () => calls.push('timing-change'), onEnd: () => calls.push('timing-end'),
+    onReorderStart: () => calls.push('reorder-start'),
+    onReorderMove: dy => calls.push(['reorder-move', dy]),
+    onReorderEnd: cancelled => calls.push(['reorder-end', cancelled]),
+  }, 'move', locked => locks.push(locked));
+  assert.equal(handlers.nativeCallbacks.holdMilliseconds, 350);
+  assert.equal(handlers.nativeCallbacks.holdAxis, 'vertical');
+  handlers.nativeCallbacks.begin(0, -20, true);
+  handlers.nativeCallbacks.move(0, -48, 1);
+  if (ending === 'release') handlers.nativeCallbacks.finish();
+  else if (ending === 'cancel') handlers.nativeCallbacks.cancel();
+  else handlers.nativeCallbacks.move(0, -60, 2);
+  handlers.nativeCallbacks.finish(); handlers.nativeCallbacks.cancel();
+  assert.deepEqual(calls, ['select', 'reorder-start', ['reorder-move', -20], ['reorder-move', -48],
+    ['reorder-end', ending !== 'release']]);
+  assert.deepEqual(locks, [true, false]);
+});
+
+test('visual move body still edits timing on a normal horizontal gesture', () => {
+  const h = harness(), calls = [];
+  const handlers = h.exports.useTimelineTimingPanHandlers({ startMs: 1000, endMs: 2000,
+    durationMs: 5000, trackWidth: 1000, onPress() {},
+    onChangeStart: () => calls.push('timing-start'), onChange: (_edge, start, end) => calls.push([start, end]),
+    onEnd: () => calls.push('timing-end'),
+    onReorderStart: () => assert.fail('horizontal gesture must not reorder'),
+    onReorderMove: () => assert.fail('horizontal gesture must not reorder'),
+    onReorderEnd: () => assert.fail('horizontal gesture must not reorder'),
+  }, 'move');
+  handlers.nativeCallbacks.begin(20, 0, false); handlers.nativeCallbacks.move(40, 0, 1); handlers.nativeCallbacks.finish();
+  assert.deepEqual(calls, ['timing-start', [1100, 2100], [1200, 2200], 'timing-end']);
+});
+
+for (const kind of ['video', 'image', 'text', 'watermark']) test(`${kind}: item vertical reorder is connected without changing timing`, () => {
+  const p = project();
+  const layers = ['a', 'b', 'c'].map(id => ({ ...image(id, 0, 1000),
+    kind: kind === 'watermark' ? 'text' : kind, text: id, watermark: kind === 'watermark' }));
+  p.layers.push(...layers);
+  const h = harness(), drops = [];
+  const tree = h.render(p, { onReorderVisualLayer: (id, index) => drops.push([id, index]) });
+  const block = h.all(tree, node => node.type?.name === 'TimedBlock' && node.props.label === 'b')[0].props;
+  assert.equal(typeof block.onReorderStart, 'function', 'the rendered object must expose the real ordering transaction');
+  block.onReorderStart(); block.onReorderMove(-1000); block.onReorderEnd(false);
+  assert.deepEqual(drops, [['b', 0]]);
+  block.onReorderEnd(false);
+  assert.equal(drops.length, 1, 'a duplicate release cannot reorder twice');
+  block.onReorderStart(); block.onReorderMove(1000); block.onReorderEnd(true);
+  assert.equal(drops.length, 1, 'cancelled reorders never commit');
+  assert.deepEqual(p.layers.slice(-3), layers, 'preview must not mutate timing or project order');
+});
+
+test('primary and dual captions can move their actual shared render container', () => {
+  const p = project(); p.layers.push(image('front', 0, 1000));
+  const cue = { id: 'cue', text: 'Primary', startMs: 0, endMs: 1000 };
+  const h = harness(), drops = [];
+  const tree = h.render(p, { captions: [cue], translationTracks: [{ id: 'es', name: 'Spanish', visible: true,
+    pairs: [{ source: cue, translation: { id: 'es-cue', status: 'ready' }, displayText: 'Spanish',
+      startMs: 0, endMs: 1000, timelineVisible: true }] }],
+    onReorderVisualLayer: (id, index) => drops.push([id, index]) });
+  for (const label of ['Primary', 'Spanish']) {
+    const block = h.all(tree, node => node.type?.name === 'TimedBlock' && node.props.label === label)[0].props;
+    assert.equal(typeof block.onReorderStart, 'function');
+    block.onReorderStart(); block.onReorderMove(-1000); block.onReorderEnd(false);
+  }
+  assert.deepEqual(drops, [['captions', 0], ['captions', 0]]);
+});
+
+test('caption row grabs and accessibility moves keep primary and translation rows together', () => {
+  const p = project(); p.layers.push(image('front', 0, 1000));
+  const h = harness(), drops = [];
+  const tree = h.render(p, { translationTracks: [{ id: 'es', name: 'Spanish', visible: true, pairs: [] }],
+    onReorderTrack: order => drops.push(Array.from(order)) });
+  const handle = h.all(tree, node => node.type?.name === 'TimelineTrackHandle' && node.props.label === 'CAPTIONS')[0].props;
+  handle.onStart(); handle.onMove(-1000); handle.onFinish(false);
+  assert.deepEqual(drops[0], ['translation:es', 'captions', 'images', 'video', 'audio']);
+  handle.onAccessibleMove(-1);
+  assert.deepEqual(drops[1], drops[0], 'one accessible move crosses a complete visual neighbour');
+});
+
+// Exercise the rendered handle itself, then the same domain application and
+// serialization used by the editor. A callback-only assertion misses no-op paint.
+for (const count of [1, 3]) for (const imagesFirst of [false, true]) {
+  const bundle = [...Array(count)].map((_, i) => 'translation:' + ['es', 'fr', 'de'][i]).reverse().concat('captions');
+  for (const moving of ['IMAGES', ...bundle.map(id => id === 'captions' ? 'CAPTIONS' : '↳ ' + id.slice(12).toUpperCase())]) {
+    for (const input of ['accessibility', 'native', 'fallback']) test(`group bundle: ${count} translations, imagesFirst=${imagesFirst}, ${moving}, ${input}`, () => {
+      const p = project(), img = image('picture', 0, 1000);
+      p.layers = imagesFirst ? [...p.layers, img] : [img, ...p.layers];
+      p.captionTracks.translations = ['es', 'fr', 'de'].slice(0, count).map(id => ({
+        id, kind: 'translation', sourceTrackId: 'captions', sourceLanguageTag: 'en', languageTag: id,
+        displayName: id, visible: true, origin: 'manual', provider: { id: 'manual' }, cues: [],
+      }));
+      const h = harness(), drops = [];
+      const tree = h.render(p, { translationTracks: p.captionTracks.translations.map(track => ({
+        id: track.id, name: track.id, visible: true, pairs: [],
+      })), onReorderTrack: order => drops.push(Array.from(order)) });
+      const node = h.all(tree, node => node.type?.name === 'TimelineTrackHandle' && node.props.label === moving)[0];
+      assert.ok(node, moving);
+      const handle = node.type(node.props);
+      const direction = (moving === 'IMAGES') === imagesFirst ? 1 : -1;
+      if (input === 'accessibility') handle.props.onAccessibilityAction({ nativeEvent: { actionName: direction > 0 ? 'increment' : 'decrement' } });
+      else {
+        // One image row, or the first adjacent subtitle row midpoint, is enough
+        // to cross; dragging a subtitle must move the whole container.
+        const dy = direction * (moving === 'IMAGES' ? 46 : (bundle.length * 42 + 46) / 2 + 1);
+        if (input === 'native') {
+          handle.props.nativeCallbacks.begin(0, dy);
+          handle.props.nativeCallbacks.finish();
+        } else {
+          handle.props.panHandlers.onPanResponderGrant({}, { dy });
+          handle.props.panHandlers.onPanResponderRelease();
+        }
+      }
+      const expected = imagesFirst ? [...bundle, 'images', 'video', 'audio'] : ['images', ...bundle, 'video', 'audio'];
+      assert.equal(drops.length, 1);
+      const changed = applyTimelineStackOrder(p, drops[0]);
+      assert.notEqual(changed, p, `emitted ${JSON.stringify(drops[0])} must change the actual paint order`);
+      assert.deepEqual(drops[0], expected, 'the destination cannot split primary and translations');
+      const saved = setTimelineTrackOrder(changed, drops[0].filter(id => id === 'video' || id === 'audio'));
+      const restored = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(saved)));
+      assert.deepEqual(visualTimelineRowIds(restored.layers, p.captionTracks.translations.map(t => t.id)), expected.slice(0, -2));
+      assert.deepEqual(buildTimelineRenderPlan(restored).layers.map(layer => layer.id),
+        imagesFirst ? ['picture', 'captions'] : ['captions', 'picture']);
+      assert.deepEqual(restored.timelineTrackOrder, ['video', 'audio']);
+      assert.deepEqual(changed.clips, p.clips);
+      assert.equal(changed.captionTracks, p.captionTracks);
+      assert.equal(changed.layers.find(layer => layer.id === 'picture'), img);
+    });
+  }
+}
+
+for (const ending of ['cancel', 'second finger', 'fallback terminate']) test(`group bundle cancellation: ${ending}`, () => {
+  const p = project(); p.layers.unshift(image('picture', 0, 1000));
+  const h = harness(), drops = [];
+  const node = h.all(h.render(p, { translationTracks: [{ id: 'es', name: 'es', visible: true, pairs: [] }],
+    onReorderTrack: order => drops.push(order) }), n => n.type?.name === 'TimelineTrackHandle' && n.props.label === 'IMAGES')[0];
+  const handle = node.type(node.props);
+  if (ending === 'fallback terminate') {
+    handle.props.panHandlers.onPanResponderGrant({}, { dy: -46 });
+    handle.props.panHandlers.onPanResponderTerminate();
+  } else {
+    handle.props.nativeCallbacks.begin(0, -46);
+    if (ending === 'cancel') handle.props.nativeCallbacks.cancel();
+    else handle.props.nativeCallbacks.move(0, -60, 2);
+  }
+  handle.props.nativeCallbacks.finish();
+  assert.deepEqual(drops, []);
+  assert.deepEqual(p.layers.map(layer => layer.id), ['picture', 'captions']);
+});
+
+test('group bundle boundaries use only available members and retain single-row ordering', () => {
+  for (const order of [[], ['video', 'audio'], ['images', 'captions'], ['images', 'translation:es']]) {
+    assert.deepEqual(moveTimelineTrack(order, 'missing', 0), order);
+    for (const id of order) assert.deepEqual(moveTimelineTrack(order, id, NaN), order);
+  }
+  assert.deepEqual(moveTimelineTrack(['images', 'captions', 'audio'], 'images', 1), ['captions', 'images', 'audio']);
+  assert.deepEqual(moveTimelineTrack(['images', 'translation:es', 'audio'], 'images', 1), ['translation:es', 'images', 'audio']);
+  const order = ['translation:fr', 'translation:es', 'captions', 'images', 'video', 'audio'];
+  assert.deepEqual(moveTimelineTrack(order, 'captions', -1), order);
+  assert.deepEqual(moveTimelineTrack(order, 'images', 3), order);
+  assert.deepEqual(moveTimelineTrack(order, 'audio', 100), order);
+  assert.deepEqual(moveTimelineTrack(order, 'video', 5), [...order.slice(0, 4), 'audio', 'video']);
+});
+
+test('group bundle handles respect missing caption containers, disabled callbacks and voice-over', () => {
+  const p = project(); p.layers = [image('picture', 0, 1000)];
+  const h = harness();
+  const tree = h.render(p, { translationTracks: [{ id: 'es', name: 'es', visible: true, pairs: [] }], onReorderTrack: undefined });
+  const nodes = h.all(tree, n => n.type?.name === 'TimelineTrackHandle');
+  assert.deepEqual(nodes.map(n => n.props.label), ['IMAGES', 'VIDEO', 'AUDIO']);
+  for (const node of nodes) {
+    const handle = node.type(node.props);
+    assert.equal(handle.props.nativeDisabled, true);
+    handle.props.onAccessibilityAction({ nativeEvent: { actionName: 'increment' } });
+    handle.props.nativeCallbacks.begin(0, 100);
+    handle.props.nativeCallbacks.finish();
+  }
+  assert.equal(h.all(h.render(p, { voiceoverMode: true }), n => n.type?.name === 'TimelineTrackHandle').length, 0);
+});
+
+for (const returnToOrigin of [false, true]) test(`group bundle drag reentry accounts for scroll offset, return=${returnToOrigin}`, () => {
+  const p = project(); p.layers.unshift(image('picture', 0, 1000));
+  const h = harness(), drops = [];
+  const tree = h.render(p, { translationTracks: [{ id: 'es', name: 'es', visible: true, pairs: [] }],
+    onReorderTrack: order => drops.push(Array.from(order)) });
+  const labels = h.all(tree, n => n.props.testID === 'timeline-track-labels')[0];
+  const scroll = y => labels.props.onScrollBeginDrag({ nativeEvent: { contentOffset: { y } } });
+  scroll(60);
+  const node = h.all(tree, n => n.type?.name === 'TimelineTrackHandle' && n.props.label === 'IMAGES')[0];
+  const handle = node.type(node.props);
+  handle.props.nativeCallbacks.begin(0, 0);
+  scroll(14);
+  handle.props.nativeCallbacks.move(0, 0, 1);
+  handle.props.nativeCallbacks.move(0, 0, 1);
+  if (returnToOrigin) {
+    scroll(60);
+    handle.props.nativeCallbacks.move(0, 0, 1);
+  }
+  handle.props.nativeCallbacks.finish(); handle.props.nativeCallbacks.finish();
+  assert.deepEqual(drops, returnToOrigin ? [] : [['images', 'translation:es', 'captions', 'video', 'audio']]);
+  assert.equal(h.haptics.filter(kind => kind === 'boundary').length, returnToOrigin ? 2 : 1);
+});
+
+for (const [moving, dy, destination] of [['B', -20, 0], ['B', 20, 2], ['A', 20, 1], ['C', -20, 1]]) {
+  test(`compressed row ranks 0,1,0: ${moving} drag ${dy}px follows stack direction`, () => {
+    const p = project();
+    p.layers = [image('C', 4000, 5000), image('B', 500, 1500), image('A', 0, 1000)];
+    const h = harness(), drops = [];
+    const tree = h.render(p, { onReorderVisualLayer: (id, index) => drops.push([id, index]) });
+    const block = h.all(tree, node => node.type?.name === 'TimedBlock' && node.props.label === moving)[0].props;
+    block.onReorderStart(); block.onReorderMove(dy); block.onReorderEnd(false);
+    assert.deepEqual(drops, [[moving, destination]], 'screen-row reuse must not reverse front/back intent');
+    assert.deepEqual(p.layers.map(item => item.id), ['C', 'B', 'A']);
+  });
+}

@@ -76,7 +76,7 @@ test('source-transcription reuse requires the same SHA-256 fingerprint and model
     words: [],
   };
 
-  assert.equal(fingerprint.digest, 'b'.repeat(64));
+  assert.equal(fingerprint.digest, '9'.repeat(64));
   assert.equal(canReuseSourceTranscription(matching, 'fast', fingerprint), true);
   assert.equal(canReuseSourceTranscription({ ...matching, sourceFingerprint: undefined }, 'fast', fingerprint), false);
   assert.equal(canReuseSourceTranscription(matching, 'retired-model', fingerprint), false);
@@ -90,8 +90,8 @@ test('source-transcription reuse requires the same SHA-256 fingerprint and model
 
 test('source-transcription cache invalidates across alignment and VAD revisions without changing media digest', () => {
   const mediaDigest = 'a'.repeat(64);
-  const previous = createSourceTranscriptionFingerprint(mediaDigest, '0'.repeat(64));
-  const current = createSourceTranscriptionFingerprint(mediaDigest, '1'.repeat(64));
+  const previous = createSourceTranscriptionFingerprint(mediaDigest, '1'.repeat(64));
+  const current = createSourceTranscriptionFingerprint(mediaDigest);
   const result = {
     language: 'en',
     modelId: 'fast',
@@ -104,6 +104,20 @@ test('source-transcription cache invalidates across alignment and VAD revisions 
   assert.equal(canReuseSourceTranscription(result, 'fast', current), false);
   assert.equal(canReuseSourceTranscription(result, 'fast', previous), true);
   assert.notEqual(createSourceTranscriptionFingerprint(mediaDigest).digest, mediaDigest);
+});
+
+test('duration-aware reuse rejects out-of-range intervals and invalid D without retiming cache words', () => {
+  const fingerprint = createSourceTranscriptionFingerprint('a'.repeat(64));
+  const result = { modelId: 'fast', sourceFingerprint: fingerprint,
+    words: [{ id: 'word', text: 'Tail', startMs: 7950, endMs: 8000 }] };
+  const original = structuredClone(result);
+  assert.equal(canReuseSourceTranscription(result, 'fast', fingerprint, 8000), true);
+  for (const duration of [7999, 7950, 0, -1, NaN, Infinity]) {
+    assert.equal(canReuseSourceTranscription(result, 'fast', fingerprint, duration), false);
+  }
+  assert.equal(canReuseSourceTranscription({ ...result, words: [] }, 'fast', fingerprint, 8000), true);
+  assert.equal(canReuseSourceTranscription({ ...result, words: [] }, 'fast', fingerprint, 0), false);
+  assert.deepEqual(result, original);
 });
 
 test('fingerprints persist canonically while legacy results remain intentionally non-reusable', () => {
@@ -143,7 +157,7 @@ test('native probing, import, and generation retain one explicit metadata and ca
   assert.match(nativeProbe, /"frameRate" to frameRate/);
   assert.match(importer, /frameRate: info\.frameRate/);
   assert.match(pipeline, /CaptionMedia\.sha256\(source\.uri\)/);
-  assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint\)/);
+  assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint, source\.durationMs\)/);
   assert.match(pipeline, /canonicalizeSourceWords\(result\.words, source\.durationMs\)/);
   assert.match(pipeline, /sourceFingerprint,[\s\S]*words: canonicalWords/);
 });

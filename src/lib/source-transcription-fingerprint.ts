@@ -4,7 +4,7 @@ import { hasCanonicalSourceWords } from '@/lib/primary-caption-timing';
 const SHA256_DIGEST_PATTERN = /^[0-9a-f]{64}$/i;
 // Bump this mask whenever alignment or VAD behavior changes. It versions the
 // cache key using the existing media hash without reading the media again.
-const ALIGNMENT_VAD_CACHE_REVISION = '1'.repeat(64);
+const ALIGNMENT_VAD_CACHE_REVISION = '3'.repeat(64);
 
 export type SourceTranscriptionFingerprint = NonNullable<SourceTranscription['sourceFingerprint']>;
 
@@ -26,9 +26,12 @@ export function canReuseSourceTranscription(
   result: SourceTranscription | undefined,
   modelId: string,
   sourceFingerprint: SourceTranscriptionFingerprint,
+  sourceDurationMs?: number,
 ) {
   return result?.modelId === modelId
     && result.sourceFingerprint?.algorithm === sourceFingerprint.algorithm
     && result.sourceFingerprint.digest === sourceFingerprint.digest
-    && hasCanonicalSourceWords(result.words);
+    && hasCanonicalSourceWords(result.words)
+    && (sourceDurationMs === undefined || (Number.isFinite(sourceDurationMs) && sourceDurationMs > 0
+      && result.words.every((word) => word.startMs < sourceDurationMs && word.endMs <= sourceDurationMs)));
 }

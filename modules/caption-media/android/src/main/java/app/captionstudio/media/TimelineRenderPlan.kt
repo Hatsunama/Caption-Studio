@@ -53,18 +53,24 @@ internal data class RenderVideoClip(
 internal data class RenderCaption(
   val id: String,
   val text: String,
-  val startMs: Long,
-  val endMs: Long,
+  val startMs: Double,
+  val endMs: Double,
   val style: RenderTextStyle,
   val words: List<RenderWord>,
-)
+) {
+  constructor(id: String, text: String, startMs: Long, endMs: Long, style: RenderTextStyle, words: List<RenderWord>) :
+    this(id, text, startMs.toDouble(), endMs.toDouble(), style, words)
+}
 
 internal data class RenderWord(
   val text: String,
-  val startMs: Long,
-  val endMs: Long,
+  val startMs: Double,
+  val endMs: Double,
   val style: RenderTextStyle,
-)
+) {
+  constructor(text: String, startMs: Long, endMs: Long, style: RenderTextStyle) :
+    this(text, startMs.toDouble(), endMs.toDouble(), style)
+}
 
 internal data class RenderTextStyle(
   val fontSource: String,
@@ -275,14 +281,14 @@ private fun parseVideoTransform(value: Map<String, Any>): VideoTransform {
 internal fun parseCaption(value: Map<String, Any>) = RenderCaption(
   id = value.string("id"),
   text = value.string("text"),
-  startMs = value.number("startMs").toLong(),
-  endMs = value.number("endMs").toLong(),
+  startMs = value.number("startMs").toDouble(),
+  endMs = value.number("endMs").toDouble(),
   style = parseTextStyle(value.map("style")),
   words = value.list("words").map { word ->
     RenderWord(
       text = word.string("text"),
-      startMs = word.number("startMs").toLong(),
-      endMs = word.number("endMs").toLong(),
+      startMs = word.number("startMs").toDouble(),
+      endMs = word.number("endMs").toDouble(),
       style = parseTextStyle(word.map("style")),
     )
   },

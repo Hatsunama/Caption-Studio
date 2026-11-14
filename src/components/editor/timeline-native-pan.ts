@@ -8,6 +8,8 @@ export type TimelineNativePanCallbacks = {
   cancel: () => void;
   prepare?: () => void;
   holdMilliseconds?: number;
+  /** Defaults to axis. A different hold axis requires resolved intent after the hold. */
+  holdAxis?: 'horizontal' | 'vertical';
   axis?: 'horizontal' | 'vertical';
 };
 
@@ -57,13 +59,13 @@ export function createTimelineNativePanDelivery(callbacks: TimelineNativePanCall
     } else if (kind === 'begin') {
       if (preparedTouch !== touchId || activeTouch) return;
       activeTouch = touchId;
-      if (callbacks.axis === 'vertical') callbacks.begin(dx, dy, reorder, pageY);
+      if ((callbacks.axis === 'vertical' || callbacks.holdAxis === 'vertical')) callbacks.begin(dx, dy, reorder, pageY);
       else callbacks.begin(dx, dy, reorder);
     } else if (kind === 'cancel') {
       if (preparedTouch === touchId) cancel();
     } else if (activeTouch === touchId) {
       if (kind === 'move') {
-        if (callbacks.axis === 'vertical') callbacks.move(dx, dy, touches, pageY);
+        if ((callbacks.axis === 'vertical' || callbacks.holdAxis === 'vertical')) callbacks.move(dx, dy, touches, pageY);
         else callbacks.move(dx, dy, touches);
       }
       else if (kind === 'finish') {
@@ -97,6 +99,7 @@ export function createTimelineNativePan(
   const { state, deliver, schedule } = runtime;
   const holdMilliseconds = callbacks.holdMilliseconds ?? 0;
   const axis = callbacks.axis ?? 'horizontal';
+  const holdAxis = callbacks.holdAxis ?? axis;
   const cancel = () => {
     'worklet';
     const current = state.value;
@@ -135,10 +138,11 @@ export function createTimelineNativePan(
       const dy = touch.absoluteY - current.originY;
       if (!Number.isFinite(dx) || !Number.isFinite(dy)) { cancel(); manager.fail(); return; }
       const intent = timelineTouchIntent(dx, dy);
-      if (intent !== 'pending' && intent !== axis) { cancel(); manager.fail(); return; }
       const held = axis === 'horizontal' && holdMilliseconds > 0 && current.holdEligible && Date.now() - current.startedAt >= holdMilliseconds;
-      if (held || intent === axis) {
-        state.value = { ...current, phase: 'recognized', reorder: held };
+      if (intent !== 'pending' && intent !== axis && !(held && intent === holdAxis)) { cancel(); manager.fail(); return; }
+      const reorder = held && (holdAxis === axis || intent === holdAxis);
+      if (reorder || intent === axis) {
+        state.value = { ...current, phase: 'recognized', reorder };
         manager.activate();
       } else if (Math.max(Math.abs(dx), Math.abs(dy)) > 8) {
         state.value = { ...current, holdEligible: false };
@@ -152,7 +156,7 @@ export function createTimelineNativePan(
       const dy = event.absoluteY - current.originY;
       if (!Number.isFinite(dx) || !Number.isFinite(dy)) { cancel(); return; }
       state.value = { ...current, phase: 'active', lastDx: dx, lastDy: dy };
-      schedule(deliver, 'begin', current.epoch, current.touchId, dx, dy, 1, current.reorder, axis === 'vertical' ? event.absoluteY : undefined);
+      schedule(deliver, 'begin', current.epoch, current.touchId, dx, dy, 1, current.reorder, (axis === 'vertical' || holdAxis === 'vertical') ? event.absoluteY : undefined);
     })
     .onUpdate((event) => {
       'worklet';
@@ -162,7 +166,7 @@ export function createTimelineNativePan(
       const dy = event.absoluteY - current.originY;
       if (event.numberOfPointers !== 1 || !Number.isFinite(dx) || !Number.isFinite(dy)) { cancel(); return; }
       state.value = { ...current, lastDx: dx, lastDy: dy };
-      schedule(deliver, 'move', current.epoch, current.touchId, dx, dy, 1, false, axis === 'vertical' ? event.absoluteY : undefined);
+      schedule(deliver, 'move', current.epoch, current.touchId, dx, dy, 1, false, (axis === 'vertical' || holdAxis === 'vertical') ? event.absoluteY : undefined);
     })
     .onEnd((event, success) => {
       'worklet';
@@ -172,7 +176,7 @@ export function createTimelineNativePan(
       const dy = event.absoluteY - current.originY;
       if (!success || !Number.isFinite(dx) || !Number.isFinite(dy)) { cancel(); return; }
       state.value = { ...current, phase: 'idle', lastDx: dx, lastDy: dy };
-      if (dx !== current.lastDx || dy !== current.lastDy) schedule(deliver, 'move', current.epoch, current.touchId, dx, dy, 1, false, axis === 'vertical' ? event.absoluteY : undefined);
+      if (dx !== current.lastDx || dy !== current.lastDy) schedule(deliver, 'move', current.epoch, current.touchId, dx, dy, 1, false, (axis === 'vertical' || holdAxis === 'vertical') ? event.absoluteY : undefined);
       schedule(deliver, 'finish', current.epoch, current.touchId);
     })
     .onTouchesUp((_event, manager) => {

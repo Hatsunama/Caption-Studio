@@ -39,11 +39,18 @@ internal fun captionAnimationClock(
   captionStartMs: Long,
   captionEndMs: Long,
   animationDurationMs: Long,
+): CaptionAnimationClock = captionAnimationClock(currentMs, captionStartMs.toDouble(), captionEndMs.toDouble(), animationDurationMs)
+
+internal fun captionAnimationClock(
+  currentMs: Long,
+  captionStartMs: Double,
+  captionEndMs: Double,
+  animationDurationMs: Long,
 ): CaptionAnimationClock {
-  val captionDurationMs = max(1L, captionEndMs - captionStartMs)
+  val captionDurationMs = max(1.0, captionEndMs - captionStartMs)
   val cycleDurationMs = max(1L, animationDurationMs)
-  val entryDurationMs = min(captionDurationMs, cycleDurationMs)
-  val elapsedMs = max(0L, currentMs - captionStartMs).toFloat()
+  val entryDurationMs = min(captionDurationMs, cycleDurationMs.toDouble()).toFloat()
+  val elapsedMs = max(0.0, currentMs.toDouble() - captionStartMs).toFloat()
   return CaptionAnimationClock(
     entryProgress = (elapsedMs / entryDurationMs).coerceIn(0f, 1f),
     phase = elapsedMs / cycleDurationMs,
@@ -218,7 +225,7 @@ internal fun captionAnimationState(
 }
 
 internal fun realTimedCaptionWords(caption: RenderCaption): List<RenderWord> {
-  if (caption.words.isEmpty() || caption.words.any { it.endMs <= it.startMs }) return emptyList()
+  if (caption.words.isEmpty() || caption.words.any { !it.startMs.isFinite() || !it.endMs.isFinite() || it.endMs <= it.startMs }) return emptyList()
   val captionUnits = CaptionTextBreaks.timingUnits(caption.text)
   val timedUnits = caption.words.flatMap(::expandTimedWord)
   if (
@@ -235,11 +242,18 @@ internal fun realTimedCaptionWords(caption: RenderCaption): List<RenderWord> {
   }
 }
 
+internal fun RenderWord.isActiveAt(timeMs: Long): Boolean = timeMs.toDouble() >= startMs && timeMs.toDouble() < endMs
+
+internal fun captionCueProgress(currentMs: Long, startMs: Double, endMs: Double): Float? {
+  if (endMs <= startMs || currentMs.toDouble() < startMs || currentMs.toDouble() >= endMs) return null
+  return (currentMs.toDouble() - startMs).toFloat() / (endMs - startMs).toFloat()
+}
+
 private data class ExpandedTimedWord(
   val key: String,
   val word: RenderWord,
-  val startMs: Long,
-  val endMs: Long,
+  val startMs: Double,
+  val endMs: Double,
 )
 
 private fun expandTimedWord(word: RenderWord): List<ExpandedTimedWord> {
@@ -249,18 +263,29 @@ private fun expandTimedWord(word: RenderWord): List<ExpandedTimedWord> {
   val totalWeight = weights.sum()
   val durationMs = word.endMs - word.startMs
   var consumedWeight = 0
-  return units.mapIndexedNotNull { index, unit ->
-    val startMs = word.startMs + (durationMs.toDouble() * consumedWeight / totalWeight).roundToLong()
-    consumedWeight += weights[index]
-    val endMs = word.startMs + (durationMs.toDouble() * consumedWeight / totalWeight).roundToLong()
-    if (endMs <= startMs) null else ExpandedTimedWord(unit.key, word, startMs, endMs)
+  val offsets = listOf(0.0) + weights.map { weight ->
+    consumedWeight += weight
+    durationMs * consumedWeight / totalWeight
+  }
+  val precise = offsets.mapIndexed { index, offset -> if (index == units.size) word.endMs else word.startMs + offset }
+  val rounded = offsets.map { word.startMs + it.roundToLong() }
+  val useRounded = units.size > 1 && rounded.last() == word.endMs &&
+    rounded.all { it >= word.startMs && it <= word.endMs } &&
+    rounded.zipWithNext().all { (start, end) -> end > start }
+  val boundaries = if (useRounded) rounded else precise
+  if (boundaries.zipWithNext().any { (start, end) -> end <= start }) return emptyList()
+  return units.mapIndexed { index, unit ->
+    ExpandedTimedWord(unit.key, word, boundaries[index], boundaries[index + 1])
   }
 }
 
 internal fun playbackTimedCaptionWords(caption: RenderCaption): List<RenderWord> {
   val aligned = realTimedCaptionWords(caption)
   if (aligned.isNotEmpty()) return aligned
-  return CaptionTextBreaks.spreadTokens(caption.text, caption.startMs, caption.endMs).map { token ->
+  if (caption.startMs % 1.0 != 0.0 || caption.endMs % 1.0 != 0.0) {
+    return realTimedCaptionWords(caption.copy(words = listOf(RenderWord(caption.text, caption.startMs, caption.endMs, caption.style))))
+  }
+  return CaptionTextBreaks.spreadTokens(caption.text, caption.startMs.toLong(), caption.endMs.toLong()).map { token ->
     RenderWord(token.text, token.startMs, token.endMs, caption.style)
   }
 }
@@ -276,7 +301,7 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
   fun prepare(styles: Iterable<RenderTextStyle>) { styles.filter { it.fontUri != null }.forEach(::typeface) }
 
   fun drawCaption(canvas: Canvas, caption: RenderCaption, timeMs: Long, outputWidth: Int, outputHeight: Int) {
-    if (timeMs !in caption.startMs until caption.endMs) return
+    if (timeMs.toDouble() < caption.startMs || timeMs.toDouble() >= caption.endMs) return
     drawText(canvas, caption, playbackTimedCaptionWords(caption), timeMs, outputWidth, outputHeight, false, false)
   }
 
@@ -333,7 +358,7 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
     }
     canvas.save()
     canvas.translate(-fitted.layout.width / 2f, -fitted.layout.height / 2f)
-    val activeIndex = words.indexOfFirst { timeMs in it.startMs until it.endMs }
+    val activeIndex = words.indexOfFirst { it.isActiveAt(timeMs) }
     fitted.draw(canvas) { run, x, y, width, baselineCenter ->
       val index = run.timedIndex
       val timed = words.getOrNull(index)
@@ -475,8 +500,8 @@ internal class TimelineTextPainter(private val context: Context) : AutoCloseable
     intensity: Float,
     scaleFactor: Float,
   ): TextAnimationState {
-    if (!active || word == null || timeMs !in word.startMs until word.endMs) return TextAnimationState()
-    val progress = ((timeMs - word.startMs).toFloat() / max(1L, word.endMs - word.startMs)).coerceIn(0f, 1f)
+    if (!active || word == null || !word.isActiveAt(timeMs)) return TextAnimationState()
+    val progress = ((timeMs.toDouble() - word.startMs).toFloat() / max(1.0, word.endMs - word.startMs).toFloat()).coerceIn(0f, 1f)
     val pulse = sin(progress * PI.toFloat())
     val eased = 1f - (1f - progress).pow(3)
     return when (id) {

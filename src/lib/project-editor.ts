@@ -29,6 +29,7 @@ import {
   translationReorderMapping,
   translationSpliceMapping,
   remapVideoLayerToClips,
+  videoSourceMapping,
 } from '@/lib/video-timeline';
 import {
   DEFAULT_CAPTION_STYLE,
@@ -230,50 +231,138 @@ export function setLayerTiming(
   const range = editProjectTimelineRange(project, selected, edge, startMs, endMs);
   if (range.startMs === selected.startMs && range.endMs === selected.endMs) return project;
   const entries = buildClipTimeline(project.clips);
-  return updateProject(project, {
-    layers: project.layers.map((layer) => {
-      if (layer.id !== layerId || layer.kind === 'captions') return layer;
-      if (layer.kind !== 'video') return attachLayerToTimeline({ ...layer, ...range }, entries, true);
-      if (layer.timingMode !== 'timeline' && layer.sourceAnchors?.length) {
-        return edge === 'move'
-          ? moveSourceVideoLayer(layer, range, project.clips)
-          : trimSourceVideoLayer(layer, range, project.clips) ?? layer;
-      }
-      const sourceStartMs = layer.sourceStartMs + (edge === 'start'
-        ? (range.startMs - layer.startMs) * layer.playbackRate : 0);
-      return attachLayerToTimeline(boundedVideoLayer({ ...layer, ...range, sourceStartMs,
-        sourceStartAtAnchorMs: sourceStartMs }), entries, true);
-    }),
+  const layers = project.layers.map((layer) => {
+    if (layer.id !== layerId || layer.kind === 'captions') return layer;
+    if (layer.kind !== 'video') return attachLayerToTimeline({ ...layer, ...range }, entries, true);
+    if (layer.timingMode !== 'timeline' && layer.sourceAnchors?.length) {
+      return edge === 'move'
+        ? moveSourceVideoLayer(layer, range, project.clips)
+        : trimSourceVideoLayer(layer, range, project.clips, edge) ?? layer;
+    }
+    const sourceStartMs = layer.sourceStartMs + (edge === 'start'
+      ? (range.startMs - layer.startMs) * layer.playbackRate : 0);
+    const bounded = boundedVideoLayer({ ...layer, ...range, sourceStartMs,
+      sourceStartAtAnchorMs: sourceStartMs });
+    return attachLayerToTimeline({ ...bounded,
+      mediaEndMs: bounded.sourceStartMs + (bounded.endMs - bounded.startMs) * bounded.playbackRate }, entries, true);
   });
+  return layers.every((layer, index) => layer === project.layers[index]) ? project : updateProject(project, { layers });
 }
 
 function trimSourceVideoLayer(
   layer: VideoVisualLayer,
   range: { startMs: number; endMs: number },
   clips: VideoClip[],
+  edge: 'start' | 'end' | 'both' = 'both',
 ): VideoVisualLayer | null {
-  const entryById = new Map(buildClipTimeline(clips).map((entry) => [entry.clip.id, entry]));
-  let elapsedMs = 0;
-  let firstMediaMs: number | undefined;
-  const sourceAnchors = layer.sourceAnchors?.flatMap((anchor) => {
+  const entries = buildClipTimeline(clips);
+  const entryById = new Map(entries.map((entry) => [entry.clip.id, entry]));
+  const original = layer.sourceAnchors ?? [];
+  let sourceMapping = videoSourceMapping(layer, clips);
+  const mediaAt = (basis: (typeof sourceMapping)[number], sourceMs: number) =>
+    basis.mediaStartMs + (sourceMs - basis.sourceStartMs) / basis.ownerRate * layer.playbackRate;
+  const retained = original.flatMap(anchor => {
     const entry = entryById.get(anchor.clipId);
-    const rate = entry?.clip.playbackRate ?? 1;
-    const anchorElapsedMs = (anchor.sourceEndMs - anchor.sourceStartMs) / rate;
-    if (!entry) { elapsedMs += anchorElapsedMs; return []; }
-    const sourceStartMs = Math.max(anchor.sourceStartMs, entry.clip.sourceStartMs,
-      sourceTimeAt(entry, Math.max(range.startMs, entry.startMs)));
-    const sourceEndMs = Math.min(anchor.sourceEndMs, entry.clip.sourceEndMs,
-      sourceTimeAt(entry, Math.min(range.endMs, entry.endMs)));
-    if (sourceEndMs > sourceStartMs && firstMediaMs === undefined) {
-      firstMediaMs = (layer.sourceStartAtAnchorMs ?? layer.sourceStartMs)
-        + (elapsedMs + (sourceStartMs - anchor.sourceStartMs) / rate) * layer.playbackRate;
-    }
-    elapsedMs += anchorElapsedMs;
-    return sourceEndMs > sourceStartMs ? [{ ...anchor, sourceStartMs, sourceEndMs }] : [];
+    if (!entry) return [];
+    const sourceStartMs = edge === 'end' || (edge !== 'both' && range.startMs <= entry.startMs) ? anchor.sourceStartMs
+      : Math.max(anchor.sourceStartMs, sourceTimeAt(entry, range.startMs));
+    const sourceEndMs = edge === 'start' || (edge !== 'both' && range.endMs >= entry.endMs) ? anchor.sourceEndMs
+      : Math.min(anchor.sourceEndMs, sourceTimeAt(entry, range.endMs));
+    if ((edge !== 'end' && range.startMs >= entry.endMs)
+      || (edge !== 'start' && range.endMs <= entry.startMs) || sourceEndMs <= sourceStartMs) return [];
+    return [{ ...anchor, sourceStartMs, sourceEndMs }];
   });
-  if (!sourceAnchors?.length || firstMediaMs === undefined) return null;
-  return remapVideoLayerToClips({ ...layer, sourceAnchors,
-    sourceStartAtAnchorMs: firstMediaMs, sourceStartMs: firstMediaMs }, clips, clips);
+  // Restore known associations before acquiring new footage. Interior holes
+  // remain holes: only a newly requested boundary interval can acquire owners.
+  const extension = (startMs: number, endMs: number, prefix: boolean) => {
+    const candidates = sourceAnchorsForRange(entries, { startMs, endMs });
+    const restored = sourceMapping.flatMap(basis => candidates.flatMap(candidate => {
+      if (candidate.clipId !== basis.clipId) return [];
+      const sourceStartMs = Math.max(candidate.sourceStartMs, basis.sourceStartMs);
+      const sourceEndMs = Math.min(candidate.sourceEndMs, basis.sourceEndMs);
+      return sourceEndMs > sourceStartMs ? [{ clipId: basis.clipId, sourceStartMs, sourceEndMs }] : [];
+    }));
+    const fullRanges = sourceMapping.flatMap(basis => {
+      const entry = entryById.get(basis.clipId);
+      return entry ? [{ startMs: timelineTimeAt(entry, basis.sourceStartMs), endMs: timelineTimeAt(entry, basis.sourceEndMs) }] : [];
+    });
+    const fullStartMs = Math.min(...fullRanges.map(item => item.startMs));
+    const fullEndMs = Math.max(...fullRanges.map(item => item.endMs));
+    const freshCandidates = sourceAnchorsForRange(entries, prefix
+      ? { startMs, endMs: Math.min(endMs, fullStartMs) }
+      : { startMs: Math.max(startMs, fullEndMs), endMs });
+    const fresh = freshCandidates.flatMap(candidate => {
+      let pieces = [candidate];
+      for (const basis of sourceMapping.filter(item => item.clipId === candidate.clipId)) {
+        pieces = pieces.flatMap(piece => basis.sourceEndMs <= piece.sourceStartMs || basis.sourceStartMs >= piece.sourceEndMs
+          ? [piece] : [ { ...piece, sourceEndMs: Math.min(piece.sourceEndMs, basis.sourceStartMs) },
+            { ...piece, sourceStartMs: Math.max(piece.sourceStartMs, basis.sourceEndMs) } ]
+            .filter(item => item.sourceEndMs > item.sourceStartMs));
+      }
+      return pieces;
+    });
+    const visible = videoOverlaySegments(layer, clips, Infinity).sort((a, b) => a.startMs - b.startMs);
+    const boundaryMediaMs = prefix ? visible[0]?.sourceStartMs : visible.at(-1)?.sourceEndMs;
+    if (boundaryMediaMs === undefined) return restored;
+    let cursor: number = boundaryMediaMs;
+    for (const candidate of prefix ? fresh.reverse() : fresh) {
+      const ownerRate = entryById.get(candidate.clipId)!.clip.playbackRate;
+      const length = (candidate.sourceEndMs - candidate.sourceStartMs) / ownerRate * layer.playbackRate;
+      const neighbor = sourceMapping.find(basis => basis.clipId === candidate.clipId &&
+        (prefix ? basis.sourceStartMs === candidate.sourceEndMs : basis.sourceEndMs === candidate.sourceStartMs));
+      if (neighbor) cursor = mediaAt(neighbor, prefix ? candidate.sourceEndMs : candidate.sourceStartMs);
+      const mediaStartMs: number = prefix ? Math.max(0, cursor - length) : cursor;
+      if (prefix) candidate.sourceStartMs = candidate.sourceEndMs - (cursor - mediaStartMs) / layer.playbackRate * ownerRate;
+      if (candidate.sourceEndMs <= candidate.sourceStartMs) continue;
+      sourceMapping.push({ ...candidate, mediaStartMs, ownerRate });
+      cursor = prefix ? mediaStartMs : mediaStartMs + length;
+    }
+    return restored.concat(fresh.filter(item => item.sourceEndMs > item.sourceStartMs));
+  };
+  const prefix = edge !== 'end' && range.startMs < layer.startMs ? extension(range.startMs, layer.startMs, true) : [];
+  const suffix = edge !== 'start' && range.endMs > layer.endMs ? extension(layer.endMs, range.endMs, false) : [];
+  // Keep association order (media order) independent of timeline order.
+  sourceMapping = sourceMapping.sort((a, b) => a.mediaStartMs - b.mediaStartMs).reduce<typeof sourceMapping>((merged, item) => {
+    const previous = merged.at(-1);
+    if (previous?.clipId === item.clipId && previous.sourceEndMs === item.sourceStartMs
+      && Math.abs(mediaAt(previous, item.sourceStartMs) - item.mediaStartMs) < 1e-7) previous.sourceEndMs = item.sourceEndMs;
+    else merged.push({ ...item });
+    return merged;
+  }, []);
+  const sourceAnchors = sourceMapping.flatMap(basis => [...prefix, ...retained, ...suffix].flatMap(anchor => {
+    if (anchor.clipId !== basis.clipId) return [];
+    const sourceStartMs = Math.max(anchor.sourceStartMs, basis.sourceStartMs);
+    const sourceEndMs = Math.min(anchor.sourceEndMs, basis.sourceEndMs);
+    return sourceEndMs > sourceStartMs ? [{ clipId: anchor.clipId, sourceStartMs, sourceEndMs }] : [];
+  }).sort((a, b) => a.sourceStartMs - b.sourceStartMs).reduce<NonNullable<VideoVisualLayer['sourceAnchors']>>((merged, item) => {
+    const previous = merged.at(-1);
+    if (previous?.clipId === item.clipId && previous.sourceEndMs >= item.sourceStartMs) previous.sourceEndMs = Math.max(previous.sourceEndMs, item.sourceEndMs);
+    else merged.push({ ...item });
+    return merged;
+  }, []));
+  if (!sourceAnchors.length) return null;
+  const selectedEnd = Math.max(...sourceMapping.flatMap(basis => sourceAnchors.filter(anchor => anchor.clipId === basis.clipId
+    && anchor.sourceStartMs < basis.sourceEndMs && anchor.sourceEndMs > basis.sourceStartMs)
+    .map(anchor => mediaAt(basis, Math.min(anchor.sourceEndMs, basis.sourceEndMs)))));
+  const mediaEndMs = edge === 'start' ? layer.mediaEndMs : Math.min(layer.sourceDurationMs,
+    range.endMs > layer.endMs ? selectedEnd : Math.min(layer.mediaEndMs ?? layer.sourceDurationMs, selectedEnd));
+  const trimmed = remapVideoLayerToClips({ ...layer, sourceAnchors, sourceMapping, mediaEndMs }, clips, clips);
+  if (trimmed.timelineVisible === false || trimmed.endMs - trimmed.startMs < 80) return null;
+  const before = videoOverlaySegments(layer, clips, Infinity);
+  const after = videoOverlaySegments(trimmed, clips, Infinity);
+  if ((range.startMs < layer.startMs || range.endMs > layer.endMs) && JSON.stringify(before) === JSON.stringify(after)) return layer;
+
+  return trimmed;
+}
+
+function sourceAnchorsForRange(
+  entries: ReturnType<typeof buildClipTimeline>,
+  range: { startMs: number; endMs: number },
+) {
+  return entries.filter((entry) => range.startMs < entry.endMs && range.endMs > entry.startMs)
+    .map((entry) => ({ clipId: entry.clip.id,
+      sourceStartMs: sourceTimeAt(entry, Math.max(range.startMs, entry.startMs)),
+      sourceEndMs: sourceTimeAt(entry, Math.min(range.endMs, entry.endMs)) }));
 }
 
 function moveSourceVideoLayer(
@@ -281,13 +370,19 @@ function moveSourceVideoLayer(
   range: { startMs: number; endMs: number },
   clips: VideoClip[],
 ): VideoVisualLayer {
-  const sourceAnchors = buildClipTimeline(clips)
-    .filter((entry) => range.startMs < entry.endMs && range.endMs > entry.startMs)
-    .map((entry) => ({ clipId: entry.clip.id,
-      sourceStartMs: sourceTimeAt(entry, Math.max(range.startMs, entry.startMs)),
-      sourceEndMs: sourceTimeAt(entry, Math.min(range.endMs, entry.endMs)) }));
+  const entries = buildClipTimeline(clips);
+  const attached = attachLayerToTimeline({ ...layer, sourceMapping: undefined, ...range,
+    sourceStartAtAnchorMs: layer.sourceStartMs }, entries, true);
+  const segments = videoOverlaySegments(layer, clips, Number.POSITIVE_INFINITY);
+  const fragmented = segments.some((segment, index) => index > 0 && segment.startMs > segments[index - 1].endMs);
+  // A continuous PiP owns its entire moved interval, including deliberate canvas
+  // gaps. Keep existing fragmented source playback when its destination has gaps.
+  if (attached.timingMode === 'source' || !fragmented) {
+    return remapVideoLayerToClips(attached, clips, clips);
+  }
+  const sourceAnchors = sourceAnchorsForRange(entries, range);
   if (!sourceAnchors.length) return layer;
-  return remapVideoLayerToClips({ ...layer, sourceAnchors,
+  return remapVideoLayerToClips({ ...layer, sourceMapping: undefined, sourceAnchors,
     sourceStartAtAnchorMs: layer.sourceStartMs }, clips, clips);
 }
 
@@ -307,10 +402,11 @@ export function setVideoLayer(project: CaptionProject, layerId: string, patch: P
       if (layer.id !== layerId || layer.kind !== 'video') return layer;
       const merged = { ...layer, ...patch, ...(patch.sourceStartMs === undefined ? {}
         : { sourceStartAtAnchorMs: patch.sourceStartMs, mediaEndMs: patch.mediaEndMs }) };
-      const bounded = { ...boundedVideoLayer(merged), ...normalizeLayerGeometry(merged) };
-      if (patch.startMs === undefined && patch.endMs === undefined && patch.sourceStartMs === undefined
-        && patch.sourceDurationMs === undefined && patch.playbackRate === undefined) return bounded;
-      return attachLayerToTimeline({ ...bounded, sourceStartAtAnchorMs: bounded.sourceStartMs },
+      const changesTiming = patch.startMs !== undefined || patch.endMs !== undefined || patch.sourceStartMs !== undefined
+        || patch.sourceDurationMs !== undefined || patch.playbackRate !== undefined;
+      const bounded = { ...boundedVideoLayer(merged, changesTiming ? undefined : project.clips), ...normalizeLayerGeometry(merged) };
+      if (!changesTiming) return bounded;
+      return attachLayerToTimeline({ ...bounded, sourceMapping: undefined, sourceStartAtAnchorMs: bounded.sourceStartMs },
         buildClipTimeline(project.clips), true);
     }),
   });
@@ -320,12 +416,13 @@ export function setVideoLayerPlaybackRate(project: CaptionProject, layerId: stri
   if (!Number.isFinite(rate) || rate < 0.25 || rate > 4) throw new Error('Video overlay playback rate must be between 0.25 and 4.');
   const layer = project.layers.find((candidate) => candidate.id === layerId && candidate.kind === 'video');
   if (!layer || layer.kind !== 'video') return project;
-  if (layer.timingMode !== 'timeline' && layer.sourceAnchors?.length) {
+  if (layer.timingMode !== 'timeline'
+    && (layer.sourceAnchors !== undefined || layer.sourceMapping !== undefined)) {
     const duration = sourceDurationMs ?? layer.sourceDurationMs;
     const mediaEndMs = Math.min(layer.mediaEndMs ?? Math.max(layer.sourceStartMs,
       ...videoOverlaySegments(layer, project.clips, Number.POSITIVE_INFINITY).map((segment) => segment.sourceEndMs)), duration);
     const ownerById = new Map(buildClipTimeline(project.clips).map((entry) => [entry.clip.id, entry.clip]));
-    const sourceAnchors = layer.sourceAnchors.flatMap((anchor) => {
+    const sourceAnchors = (layer.sourceAnchors ?? []).flatMap((anchor) => {
       const owner = ownerById.get(anchor.clipId);
       if (!owner) return [];
       const sourceStartMs = Math.max(anchor.sourceStartMs, owner.sourceStartMs);
@@ -333,10 +430,14 @@ export function setVideoLayerPlaybackRate(project: CaptionProject, layerId: stri
       return sourceEndMs > sourceStartMs ? [{ ...anchor, sourceStartMs, sourceEndMs }] : [];
     });
     if (!sourceAnchors.length) return project;
+    const mappingOriginMs = layer.sourceMapping?.[0]?.mediaStartMs ?? layer.sourceStartMs;
     return updateProject(project, {
       layers: project.layers.map((candidate) => candidate.id === layerId
         ? remapVideoLayerToClips({ ...layer, playbackRate: rate, sourceDurationMs: duration,
-            sourceAnchors, sourceStartAtAnchorMs: layer.sourceStartMs, mediaEndMs }, project.clips, project.clips)
+            sourceAnchors,
+            ...(layer.sourceMapping ? { sourceMapping: videoSourceMapping(layer, project.clips).map(item => ({ ...item,
+              mediaStartMs: mappingOriginMs + (item.mediaStartMs - mappingOriginMs) / layer.playbackRate * rate })) } : {}),
+            sourceStartAtAnchorMs: layer.sourceStartMs, mediaEndMs }, project.clips, project.clips)
         : candidate),
     });
   }
@@ -349,13 +450,22 @@ export function setVideoLayerPlaybackRate(project: CaptionProject, layerId: stri
   });
 }
 
-function boundedVideoLayer(layer: VideoVisualLayer): VideoVisualLayer {
+function boundedVideoLayer(layer: VideoVisualLayer, clips?: VideoClip[]): VideoVisualLayer {
   if (!Number.isFinite(layer.sourceDurationMs) || layer.sourceDurationMs <= 0
     || !Number.isFinite(layer.sourceStartMs) || layer.sourceStartMs >= layer.sourceDurationMs
     || (layer.mediaEndMs !== undefined && (!Number.isFinite(layer.mediaEndMs)
       || layer.mediaEndMs < 0 || layer.mediaEndMs > layer.sourceDurationMs))
     || !Number.isFinite(layer.playbackRate) || layer.playbackRate < 0.25 || layer.playbackRate > 4) {
     throw new Error('Video overlay requires a valid source duration, source start and playback rate.');
+  }
+  if (!Number.isFinite(layer.startMs) || !Number.isFinite(layer.endMs) || layer.endMs < layer.startMs) {
+    throw new Error('Video overlay must have at least 80 ms of playable media.');
+  }
+  // Source owners determine the sparse timeline span; sourceStartMs is only its
+  // first projected frame. A contiguous cap would consume gaps/reordered owners.
+  // Keep empty owner selections as hidden tombstones rather than reattaching.
+  if (clips && layer.timingMode !== 'timeline' && layer.sourceAnchors !== undefined) {
+    return remapVideoLayerToClips(layer, clips, clips);
   }
   const startMs = layer.sourceStartMs < 0
     ? layer.startMs - layer.sourceStartMs / layer.playbackRate : layer.startMs;
@@ -488,7 +598,11 @@ export function duplicateVisualLayer(project: CaptionProject, layerId: string, d
   const layer = project.layers[index];
   if (!layer || project.layers.length >= 5_000 || layer.kind === 'captions' || (layer.kind === 'text' && layer.watermark)
     || project.layers.some((candidate) => candidate.id === duplicateId)) return undefined;
-  const duplicate = { ...layer, id: duplicateId, name: `${layer.name} copy` };
+  const duplicate = { ...layer, id: duplicateId, name: `${layer.name} copy`,
+    ...(layer.kind === 'video' && layer.sourceMapping ? {
+      sourceMapping: layer.sourceMapping.map(item => ({ ...item })),
+      sourceAnchors: layer.sourceAnchors?.map(item => ({ ...item })),
+    } : {}) };
   const layers = [...project.layers];
   layers.splice(index + 1, 0, duplicate);
   return { project: updateProject(project, { layers }), layer: duplicate };
@@ -951,13 +1065,7 @@ function attachLayerToTimeline<T extends TextVisualLayer | ImageVisualLayer | Vi
   if (coveredUntilMs < layer.endMs) {
     return { ...layer, timingMode: 'timeline', sourceAnchors: undefined };
   }
-  const sourceAnchors = entries
-    .filter((entry) => layer.startMs < entry.endMs && layer.endMs > entry.startMs)
-    .map((entry) => ({
-      clipId: entry.clip.id,
-      sourceStartMs: sourceTimeAt(entry, Math.max(layer.startMs, entry.startMs)),
-      sourceEndMs: sourceTimeAt(entry, Math.min(layer.endMs, entry.endMs)),
-    }));
+  const sourceAnchors = sourceAnchorsForRange(entries, layer);
   return {
     ...layer,
     timingMode: 'source',
@@ -974,8 +1082,10 @@ function reanchorVisualLayersAfterSplit(
   sourceSplitMs: number,
 ) {
   return layers.map((layer) => {
-    if (layer.kind === 'captions' || !layer.sourceAnchors?.length) return layer;
-    const sourceAnchors = layer.sourceAnchors.flatMap((anchor) => {
+    // Retained VIDEO associations outlive the active selection and still own IDs.
+    if (layer.kind === 'captions' || (!layer.sourceAnchors?.length
+      && !(layer.kind === 'video' && layer.sourceMapping !== undefined))) return layer;
+    const sourceAnchors = (layer.sourceAnchors ?? []).flatMap((anchor) => {
       if (anchor.clipId !== previousClipId) return [anchor];
       if (anchor.sourceEndMs <= sourceSplitMs) return [{ ...anchor, clipId: leftClipId }];
       if (anchor.sourceStartMs >= sourceSplitMs) return [{ ...anchor, clipId: rightClipId }];
@@ -984,7 +1094,15 @@ function reanchorVisualLayersAfterSplit(
         { ...anchor, clipId: rightClipId, sourceStartMs: sourceSplitMs },
       ];
     });
-    return { ...layer, sourceAnchors };
+    const sourceMapping = layer.kind === 'video' ? layer.sourceMapping?.flatMap(anchor => {
+      if (anchor.clipId !== previousClipId) return [{ ...anchor }];
+      if (anchor.sourceEndMs <= sourceSplitMs) return [{ ...anchor, clipId: leftClipId }];
+      if (anchor.sourceStartMs >= sourceSplitMs) return [{ ...anchor, clipId: rightClipId }];
+      return [ { ...anchor, clipId: leftClipId, sourceEndMs: sourceSplitMs },
+        { ...anchor, clipId: rightClipId, sourceStartMs: sourceSplitMs,
+          mediaStartMs: anchor.mediaStartMs + (sourceSplitMs - anchor.sourceStartMs) / anchor.ownerRate * layer.playbackRate } ];
+    }) : undefined;
+    return { ...layer, sourceAnchors, ...(sourceMapping ? { sourceMapping } : {}) };
   });
 }
 
@@ -997,10 +1115,10 @@ function remapVisualLayers(
   const entryByClipId = new Map(entries.map((entry) => [entry.clip.id, entry]));
   return layers.map((layer) => {
     if (layer.kind === 'captions' || layer.timingMode === 'timeline') return layer;
+    if (layer.kind === 'video') return remapVideoLayerToClips(layer, clips, referenceClips);
     // Empty anchors are also the tombstone of a deleted owner. Never splice
     // those hidden layers away or attach them to unrelated replacement footage.
     if (!layer.sourceAnchors?.length) return layer;
-    if (layer.kind === 'video') return remapVideoLayerToClips(layer, clips, referenceClips);
     const survivingAnchors = layer.sourceAnchors.filter((anchor) => entryByClipId.has(anchor.clipId));
     const visibleRanges = survivingAnchors.flatMap((anchor) => {
       const entry = entryByClipId.get(anchor.clipId);
