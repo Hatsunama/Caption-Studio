@@ -472,11 +472,12 @@ export function remapVideoLayerToClips(
   clips: VideoClip[],
   referenceClips: VideoClip[],
 ): VideoVisualLayer {
-  if (layer.timingMode === 'timeline' || !layer.sourceAnchors?.length) return layer;
+  if (layer.timingMode === 'timeline'
+    || (layer.sourceAnchors === undefined && layer.sourceMapping === undefined)) return layer;
   const mapping = videoSourceMapping(layer, clips, referenceClips);
   const ids = new Set(clips.map(clip => clip.id));
   const segments = projectVideoSourceSegments(layer, clips, Infinity, referenceClips);
-  const sourceAnchors = layer.sourceAnchors.filter(anchor => ids.has(anchor.clipId));
+  const sourceAnchors = (layer.sourceAnchors ?? []).filter(anchor => ids.has(anchor.clipId));
   const sourceMapping = layer.sourceMapping ? mapping.filter(anchor => ids.has(anchor.clipId)) : undefined;
   // Deletion must retain the offsets of surviving fragments, including interior owners.
   const removed = mapping.some(anchor => !ids.has(anchor.clipId));
@@ -512,7 +513,8 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
     if (layer.kind === 'captions') return layer;
     // A timeline-owned overlay has no footage owner; changing a clip's speed must not retime it.
     if (layer.kind === 'video' && layer.timingMode === 'timeline') return layer;
-    if (layer.kind === 'video' && layer.timingMode !== 'timeline' && layer.sourceAnchors?.length) {
+    if (layer.kind === 'video' && layer.timingMode !== 'timeline'
+      && (layer.sourceAnchors !== undefined || layer.sourceMapping !== undefined)) {
       return remapVideoLayerToClips(layer, nextClips, project.clips);
     }
     const startMs = mapTime(layer.startMs);

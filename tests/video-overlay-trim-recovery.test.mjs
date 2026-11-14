@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCaptionProject } from '../src/lib/project-factory.ts';
+import { createCaptionProject, createVideoClip } from '../src/lib/project-factory.ts';
 import { addVideoLayer, setVideoLayer, splitVideoClip, reorderVideoClip, setLayerTiming, splitVisualLayer, duplicateVisualLayer, setVideoClipGap, trimVideoClip, setVideoLayerPlaybackRate, deleteVideoClip, addImageLayer, createTextLayer } from '../src/lib/project-editor.ts';
 import { setClipPlaybackRate } from '../src/lib/video-timeline.ts';
 import { videoOverlaySegments } from '../src/lib/video-overlay-segments.ts';
 import { overlayPlaybackState } from '../src/lib/video-overlay-playback.ts';
 import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
+import { buildTimelineAudioRenderPlan } from '../src/lib/timeline-audio-render-plan.ts';
 import { decodePersistedProject } from '../src/lib/project-codec.ts';
+import { serializeProjectSnapshot, decodeVersionTwoProject } from '../src/lib/project-schema.ts';
 import { applyPreviewSceneGeometry } from '../src/lib/preview-scene-project.ts';
 import { resolveLayerGeometry } from '../src/lib/layer-geometry.ts';
 
@@ -23,6 +25,181 @@ const layer = (p, id = 'pip') => p.layers.find(l => l.id === id);
 const segments = (p, id = 'pip') => videoOverlaySegments(layer(p, id), p.clips, Infinity)
   .map(s => [s.startMs, s.endMs, s.sourceStartMs, s.sourceEndMs]);
 const saved = p => decodePersistedProject(JSON.stringify(p));
+
+function strictSaved(p) {
+  const snapshot = serializeProjectSnapshot(p);
+  const strict = decodeVersionTwoProject(JSON.parse(snapshot));
+  assert.deepEqual(layer(strict), layer(saved(p)));
+  return decodePersistedProject(snapshot);
+}
+
+function selectionOnA() {
+  let p = fixture({ currentMs: 3000, sourceStartMs: 500, owners: 2 });
+  p = strictSaved(setLayerTiming(p, 'pip', 'end', 3000, 4000));
+  assert.deepEqual(layer(p).sourceAnchors.map(a => a.clipId), [p.clips[0].id]);
+  assert.deepEqual(layer(p).sourceMapping.map(a => a.clipId), p.clips.map(c => c.id));
+  return p;
+}
+
+function checkHidden(p, id = 'pip') {
+  assert.equal(layer(p, id).timelineVisible, false);
+  if (p.clips.length) checkChain(p, [], id);
+  else {
+    assert.deepEqual(segments(p, id), []);
+    assert.throws(() => buildTimelineRenderPlan(p), /^Error: Add timed content before exporting\.$/);
+    assert.deepEqual(buildTimelineAudioRenderPlan(p).audioClips, []);
+  }
+  for (const ms of [0, 500, 1500, 3000, 3999, 5000, 7999]) {
+    const state = overlayPlaybackState(layer(p, id), ms, true, p.clips);
+    assert.equal(state.visible, false);
+    assert.equal(state.playing, false);
+  }
+}
+
+test('empty selection retains hidden B mapping through split and strict serialization', () => {
+  let p = selectionOnA();
+  const [a, b] = p.clips.map(c => c.id);
+  p = strictSaved(deleteVideoClip(p, a).project);
+  assert.deepEqual(layer(p).sourceAnchors, []);
+  assert.deepEqual(layer(p).sourceMapping.map(m => m.clipId), [b]);
+  checkHidden(p);
+  p = splitVideoClip(p, b, 1000, 'hidden-left', 'hidden-right').project;
+  p = strictSaved(p);
+  assert.deepEqual(layer(p).sourceMapping, [
+    { clipId: 'hidden-left', sourceStartMs: 0, sourceEndMs: 1000, mediaStartMs: 1500, ownerRate: 1 },
+    { clipId: 'hidden-right', sourceStartMs: 1000, sourceEndMs: 2000, mediaStartMs: 2500, ownerRate: 1 },
+  ]);
+  assert.deepEqual(layer(p).sourceAnchors, []);
+  checkHidden(p);
+});
+
+test('hidden B deletion shortcut removes retained mapping after deleting A', () => {
+  let p = selectionOnA();
+  const b = p.clips[1].id;
+  p = strictSaved(deleteVideoClip(p, p.clips[0].id).project);
+  p = deleteVideoClip(p, b).project;
+  p = strictSaved(p);
+  assert.deepEqual(layer(p).sourceMapping, []);
+  assert.deepEqual(layer(p).sourceAnchors, []);
+  checkHidden(p);
+});
+
+test('hidden split survivors retain frame offsets through deletion, rates, duplication and geometry', () => {
+  let p = selectionOnA();
+  const [a, b] = p.clips.map(c => c.id);
+  p = strictSaved(deleteVideoClip(p, a).project);
+  p = strictSaved(splitVideoClip(p, b, 1000, 'hidden-left', 'hidden-right').project);
+  p = strictSaved(deleteVideoClip(p, 'hidden-left').project);
+  const survivor = [{ clipId: 'hidden-right', sourceStartMs: 1000, sourceEndMs: 2000,
+    mediaStartMs: 2500, ownerRate: 1 }];
+  assert.deepEqual(layer(p).sourceMapping, survivor);
+  const before = structuredClone(p);
+  p = strictSaved(setClipPlaybackRate(p, 'hidden-right', 2));
+  assert.deepEqual(layer(p).sourceMapping, [{ ...survivor[0], ownerRate: 2 }]);
+  checkHidden(p);
+  p = strictSaved(setClipPlaybackRate(p, 'hidden-right', 1));
+  assert.deepEqual(layer(p), layer(before));
+  assert.equal(setVideoLayerPlaybackRate(p, 'pip', 2), p, 'empty selection cannot be reattached by speed');
+  assert.equal(setLayerTiming(p, 'pip', 'end', 0, 8000), p);
+  assert.equal(splitVisualLayer(p, 'pip', 3500, 'visual-left', 'visual-right'), null);
+  p = strictSaved(duplicateVisualLayer(p, 'pip', 'copy').project);
+  assert.notEqual(layer(p, 'copy').sourceMapping, layer(p).sourceMapping);
+  assert.notEqual(layer(p, 'copy').sourceMapping[0], layer(p).sourceMapping[0]);
+  const copied = structuredClone(layer(p, 'copy'));
+  p = strictSaved(setVideoLayer(p, 'pip', { rotation: 25, position: { x: 0.3, y: 0.4 } }));
+  assert.deepEqual(layer(p).sourceMapping, survivor);
+  assert.deepEqual(layer(p, 'copy'), copied);
+  p = strictSaved(trimVideoClip(p, 'hidden-right', 'end', 1500).project);
+  p = strictSaved(trimVideoClip(p, 'hidden-right', 'end', 4000).project);
+  checkHidden(p);
+  checkHidden(p, 'copy');
+  p = strictSaved(deleteVideoClip(p, 'hidden-right').project);
+  for (const id of ['pip', 'copy']) {
+    assert.deepEqual(layer(p, id).sourceMapping, []);
+    assert.deepEqual(layer(p, id).sourceAnchors, []);
+    checkHidden(p, id);
+  }
+  assert.deepEqual(before.sources, p.sources);
+  assert.deepEqual(before.audioClips, p.audioClips);
+});
+
+test('hidden B split and partial deletion keep surviving selected A recoverable at exact media offsets', () => {
+  let p = selectionOnA();
+  const a = p.clips[0].id;
+  p = strictSaved(splitVideoClip(p, p.clips[1].id, 5000, 'b-left', 'b-right').project);
+  checkChain(p, [[3000, 4000, 500, 1500]]);
+  p = strictSaved(deleteVideoClip(p, 'b-left').project);
+  assert.deepEqual(layer(p).sourceMapping.map(m => [m.clipId, m.mediaStartMs]), [[a, 500], ['b-right', 2500]]);
+  p = strictSaved(setLayerTiming(p, 'pip', 'end', 3000, 7000));
+  checkChain(p, [[3000, 4000, 500, 1500], [4000, 7000, 2500, 5500]]);
+  const recovered = structuredClone(p);
+  p = strictSaved(trimVideoClip(p, 'b-right', 'start', 3500).project);
+  p = strictSaved(trimVideoClip(p, 'b-right', 'start', 1000).project);
+  checkChain(p, segments(recovered));
+  assert.deepEqual(layer(p).sourceMapping, layer(recovered).sourceMapping);
+});
+
+test('deleting hidden B while A remains selected drops only B and does not change A frames', () => {
+  let p = selectionOnA();
+  const a = p.clips[0].id;
+  const before = segments(p);
+  p = strictSaved(deleteVideoClip(p, p.clips[1].id).project);
+  assert.deepEqual(layer(p).sourceMapping, [{ clipId: a, sourceStartMs: 3000, sourceEndMs: 4000,
+    mediaStartMs: 500, ownerRate: 1 }]);
+  checkChain(p, before);
+});
+
+for (const legacy of [false, true]) test(`deleted selection stays detached from replacement footage, legacy ${legacy}`, () => {
+  let p = strictSaved(deleteVideoClip(selectionOnA(), 'clip-main0-0').project);
+  if (legacy) delete layer(p).sourceMapping;
+  p = strictSaved(p);
+  const replacement = createVideoClip(p.sources[0], 99);
+  // Match appendVideosToProject's clip insertion, reusing even the retired media.
+  p = strictSaved({ ...p, clips: [...p.clips, replacement] });
+  p = strictSaved(reorderVideoClip(p, replacement.id, 0).project);
+  p = strictSaved(setClipPlaybackRate(p, replacement.id, 2));
+  p = strictSaved(splitVideoClip(p, replacement.id, 1000, 'replacement-left', 'replacement-right').project);
+  p = strictSaved(setVideoLayer(p, 'pip', { opacity: 0.6 }));
+  assert.equal(setVideoLayerPlaybackRate(p, 'pip', 2), p);
+  assert.deepEqual(layer(p).sourceAnchors, []);
+  assert.deepEqual(layer(p).sourceMapping?.map(m => m.clipId), legacy ? undefined : ['clip-main1-1']);
+  checkHidden(p);
+  p = strictSaved(deleteVideoClip(p, 'clip-main1-1').project);
+  assert.deepEqual(layer(p).sourceMapping, legacy ? undefined : []);
+  checkHidden(p);
+});
+
+test('legacy VIDEO without retained mapping keeps selected frames through main split and deletion', () => {
+  let p = fixture({ currentMs: 3000, sourceStartMs: 500, owners: 2 });
+  assert.equal(layer(p).sourceMapping, undefined);
+  const a = p.clips[0].id;
+  p = strictSaved(splitVideoClip(p, p.clips[1].id, 5000, 'legacy-left', 'legacy-right').project);
+  checkChain(p, [[3000, 4000, 500, 1500], [4000, 5000, 1500, 2500], [5000, 6000, 2500, 3500]]);
+  assert.equal(layer(p).sourceMapping, undefined);
+  p = strictSaved(deleteVideoClip(p, 'legacy-left').project);
+  assert.deepEqual(layer(p).sourceAnchors.map(m => m.clipId), [a, 'legacy-right']);
+  checkChain(p, [[3000, 4000, 500, 1500], [4000, 5000, 2500, 3500]]);
+});
+
+test('multiple retained hidden owners update rate offsets and split IDs independently of empty selection', () => {
+  let p = strictSaved(setLayerTiming(threeOwners(), 'pip', 'end', 3000, 6000));
+  const [a, b, c] = p.clips.map(clip => clip.id);
+  p = strictSaved(deleteVideoClip(p, a).project);
+  const before = structuredClone(layer(p).sourceMapping);
+  assert.deepEqual(before.map(m => [m.clipId, m.mediaStartMs]), [[b, 4000], [c, 10000]]);
+  p = strictSaved(setClipPlaybackRate(p, b, 2));
+  assert.deepEqual(layer(p).sourceMapping.map(m => [m.clipId, m.mediaStartMs, m.ownerRate]),
+    [[b, 4000, 2], [c, 7000, 1]]);
+  checkHidden(p);
+  p = strictSaved(setClipPlaybackRate(p, b, 1));
+  assert.deepEqual(layer(p).sourceMapping, before);
+  p = strictSaved(splitVideoClip(p, b, 2000, 'b-left', 'b-right').project);
+  p = strictSaved(deleteVideoClip(p, 'b-left').project);
+  assert.deepEqual(layer(p).sourceMapping.map(m => [m.clipId, m.mediaStartMs]),
+    [['b-right', 6000], [c, 10000]]);
+  assert.deepEqual(layer(p).sourceAnchors, []);
+  checkHidden(p);
+});
 
 function samsungReorderedRecovery() {
   let p = fixture({ currentMs: 0, sourceStartMs: 0 });
@@ -179,6 +356,8 @@ function checkChain(p, expected, id = 'pip') {
     expected.map(s => s.slice(0, 3)));
   assert.deepEqual(plan.audioClips.filter(c => c.id.startsWith(`overlay-audio:${id}`))
     .map(c => [c.startMs, c.sourceStartMs, c.sourceEndMs]), expected.map(s => [s[0], s[2], s[3]]));
+  assert.deepEqual(buildTimelineAudioRenderPlan(p).audioClips.filter(c => c.id === `overlay-audio:${id}`)
+    .map(c => [c.timelineStartMs, c.timelineEndMs, c.sourceStartMs, c.sourceEndMs]), expected);
   for (const [start, end, source] of expected) {
     const ms = (start + end) / 2;
     const state = overlayPlaybackState(layer(p, id), ms, true, p.clips);

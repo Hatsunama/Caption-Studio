@@ -416,12 +416,13 @@ export function setVideoLayerPlaybackRate(project: CaptionProject, layerId: stri
   if (!Number.isFinite(rate) || rate < 0.25 || rate > 4) throw new Error('Video overlay playback rate must be between 0.25 and 4.');
   const layer = project.layers.find((candidate) => candidate.id === layerId && candidate.kind === 'video');
   if (!layer || layer.kind !== 'video') return project;
-  if (layer.timingMode !== 'timeline' && layer.sourceAnchors?.length) {
+  if (layer.timingMode !== 'timeline'
+    && (layer.sourceAnchors !== undefined || layer.sourceMapping !== undefined)) {
     const duration = sourceDurationMs ?? layer.sourceDurationMs;
     const mediaEndMs = Math.min(layer.mediaEndMs ?? Math.max(layer.sourceStartMs,
       ...videoOverlaySegments(layer, project.clips, Number.POSITIVE_INFINITY).map((segment) => segment.sourceEndMs)), duration);
     const ownerById = new Map(buildClipTimeline(project.clips).map((entry) => [entry.clip.id, entry.clip]));
-    const sourceAnchors = layer.sourceAnchors.flatMap((anchor) => {
+    const sourceAnchors = (layer.sourceAnchors ?? []).flatMap((anchor) => {
       const owner = ownerById.get(anchor.clipId);
       if (!owner) return [];
       const sourceStartMs = Math.max(anchor.sourceStartMs, owner.sourceStartMs);
@@ -1081,8 +1082,10 @@ function reanchorVisualLayersAfterSplit(
   sourceSplitMs: number,
 ) {
   return layers.map((layer) => {
-    if (layer.kind === 'captions' || !layer.sourceAnchors?.length) return layer;
-    const sourceAnchors = layer.sourceAnchors.flatMap((anchor) => {
+    // Retained VIDEO associations outlive the active selection and still own IDs.
+    if (layer.kind === 'captions' || (!layer.sourceAnchors?.length
+      && !(layer.kind === 'video' && layer.sourceMapping !== undefined))) return layer;
+    const sourceAnchors = (layer.sourceAnchors ?? []).flatMap((anchor) => {
       if (anchor.clipId !== previousClipId) return [anchor];
       if (anchor.sourceEndMs <= sourceSplitMs) return [{ ...anchor, clipId: leftClipId }];
       if (anchor.sourceStartMs >= sourceSplitMs) return [{ ...anchor, clipId: rightClipId }];
@@ -1112,10 +1115,10 @@ function remapVisualLayers(
   const entryByClipId = new Map(entries.map((entry) => [entry.clip.id, entry]));
   return layers.map((layer) => {
     if (layer.kind === 'captions' || layer.timingMode === 'timeline') return layer;
+    if (layer.kind === 'video') return remapVideoLayerToClips(layer, clips, referenceClips);
     // Empty anchors are also the tombstone of a deleted owner. Never splice
     // those hidden layers away or attach them to unrelated replacement footage.
     if (!layer.sourceAnchors?.length) return layer;
-    if (layer.kind === 'video') return remapVideoLayerToClips(layer, clips, referenceClips);
     const survivingAnchors = layer.sourceAnchors.filter((anchor) => entryByClipId.has(anchor.clipId));
     const visibleRanges = survivingAnchors.flatMap((anchor) => {
       const entry = entryByClipId.get(anchor.clipId);
