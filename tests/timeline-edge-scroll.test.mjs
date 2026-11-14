@@ -286,6 +286,24 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
     get scrubStarts() { return scrubStarts; },
     get timingStarts() { return timingStarts; },
     get timingEnds() { return timingEnds; },
+    get marker() {
+      const found = [];
+      function walk(element) {
+        if (!element?.props) return;
+        const style = Object.assign({}, ...[element.props.style].flat(Infinity).filter(Boolean));
+        if (style.backgroundColor === '#FF5267' && style.width === 2) found.push(style);
+        for (const child of [element.props.children].flat(Infinity)) walk(child);
+      }
+      walk(tree);
+      assert.equal(found.length, 1, 'rendered pink playhead line');
+      const style = found[0];
+      return { ...style, x: (style.left === '50%' ? native.viewport / 2 : style.left) + style.marginLeft + style.width / 2 };
+    },
+    get trackOrigin() {
+      const container = horizontal.props.children;
+      const ruler = this.find('TimelineRuler');
+      return container.props.style.marginLeft + container.props.style.width - ruler.trackWidth - native.viewport / 2;
+    },
     findAll(name) {
       const found = [];
       function walk(element) {
@@ -369,6 +387,61 @@ function cueHarness() {
 
 function tick(h, count = 60) { for (let i = 0; i < count; i++) h.tickIntervals(); }
 
+for (const direction of [-1, 1]) {
+  test(`held marker follows acknowledged edge scroll exactly in direction ${direction}`, () => {
+    const h = harness({ durationMs: 120000, currentMs: 60000, selectedLayerId: 'captions', selectedCaptionId: 'held',
+      layers: [{ id: 'captions', kind: 'captions' }],
+      captions: [{ id: 'held', text: 'held cue', startMs: 60000, endMs: 61000 }], onSelectCaption() {},
+    }, { fullBinding: true });
+    try {
+      h.ready();
+      const owner = h.find('TimedBlock'), pan = h.mountItemPan(owner), edge = direction === 1 ? 360 : 0;
+      const clockOffset = h.native.x;
+      assert.equal(h.marker.x, 180);
+      pan.start(); pan.move(edge);
+      const before = h.marker.x, offset = h.native.x, commands = h.commands.length;
+      h.holdAcknowledgements(); tick(h, 3);
+      assert.ok(h.commands.length > commands, 'real spring binding dispatches edge command');
+      assert.equal(h.marker.x, before, 'unacknowledged command cannot move marker');
+      h.acknowledge();
+      const delta = h.native.x - offset;
+      assert.ok(delta * direction > 0, 'receipt changes the offset in the requested direction');
+      assert.ok(Math.abs(h.marker.x - (before - delta)) < 1e-6, 'marker moves by exactly the acknowledged pixel delta');
+      const liveOwner = h.find('TimedBlock');
+      assert.equal(liveOwner.playheadMs, 60000, 'snap clock remains fixed during hold');
+      assert.ok(liveOwner.getFeedbackBoundaries().includes(60000), 'haptic boundary shares that clock');
+      assert.ok(Math.abs(h.marker.x - (h.trackOrigin + liveOwner.playheadMs / liveOwner.durationMs * liveOwner.trackWidth - h.native.x)) < 1e-6,
+        'rendered marker identifies the same track time as snapping and feedback');
+      assert.equal(h.props.currentMs, 60000); assert.deepEqual(h.seeks, []); assert.equal(h.scrubStarts, 0);
+      h.releaseAcknowledgements(); pan.finish(edge);
+      assert.equal(h.marker.left, '50%', 'release restores original centered presentation');
+      assert.equal(h.marker.x, 180); assert.equal(h.native.x, clockOffset, 'release follows the unchanged clock');
+      h.update({ currentMs: 62000 });
+      assert.equal(h.marker.x, 180); assert.ok(h.native.x > clockOffset, 'ordinary clock follow still scrolls');
+      h.horizontal.onScrollBeginDrag();
+      h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: h.native.x + 16 }, layoutMeasurement: { width: 360 }, contentSize: { width: h.native.content } } });
+      h.flush();
+      assert.equal(h.marker.left, '50%', 'ordinary scrubbing retains centered marker');
+      assert.equal(h.scrubStarts, 1); assert.equal(h.seeks.length, 1, 'only the explicit scrub seeks');
+    } finally { h.close(); }
+  });
+}
+
+test('generation-rejected edge commands leave the held marker at its acknowledged location', () => {
+  const { h, pan } = cueHarness();
+  try {
+    pan.start(); pan.move(360);
+    const before = h.marker.x, commands = h.commands.length;
+    h.rejectNextCommand(); tick(h, 3);
+    assert.equal(h.commands.length, commands, 'production generation guard rejects dispatch');
+    assert.equal(h.marker.x, before);
+    h.activate(); tick(h, 3);
+    assert.ok(h.native.x > 0);
+    assert.ok(Math.abs(h.marker.x - (before - h.native.x)) < 1e-6, 'accepted receipts resume marker movement');
+    assert.deepEqual(h.seeks, []);
+  } finally { h.close(); }
+});
+
 test('native held cue at the right edge keeps moving through actual scroll acknowledgements without another pointer event', () => {
   const { h, owner, pan } = cueHarness();
   try {
@@ -442,6 +515,8 @@ test('main-video long-press reorder reaches both ends without releasing the same
     const active = h.findAll('VideoClipBlock').find(item => item.clip.id === 'clip-0');
     assert.equal(active.clipIndex, 39, 'reorder progression includes acknowledged scroll, rather than dx alone');
     assert.equal(active.reordering, true); assert.deepEqual(h.seeks, []);
+    assert.equal(h.marker.left, '50%', 'equal-width reorder tiles are not a linear time track');
+    assert.equal(h.marker.x, 180, 'filmstrip preserves the ordinary centered presentation');
     pan.move(0); tick(h, 900);
     assert.equal(h.findAll('VideoClipBlock').find(item => item.clip.id === 'clip-0').clipIndex, 0,
       'the same held drag can travel all the way back to the beginning');

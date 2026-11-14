@@ -189,6 +189,11 @@ export function LayerTimeline(props: {
     }))),
   ])), [displayTranslationTracks]);
   const leadingPadding = Math.max(0, viewportWidth / 2 - LABEL_WIDTH);
+  // Held timing keeps the clock (and snap/feedback target) fixed while native
+  // receipts move the track. Filmstrip tiles do not use a linear time scale.
+  const playheadLeft = gestureLock && !reorderMode
+    ? leadingPadding + LABEL_WIDTH + timelineScrollOffset(props.currentMs, duration, trackWidth) - viewportScrollX
+    : '50%';
   const visibleTrackBounds = useMemo(() => timelineVisibleTrackBounds(viewportScrollX, viewportWidth, trackWidth, leadingPadding + LABEL_WIDTH),
     [viewportScrollX, viewportWidth, trackWidth, leadingPadding]);
   const captionPage = useMemo(() => timelineCuePage(captionIndex, duration, trackWidth, visibleTrackBounds,
@@ -989,7 +994,7 @@ export function LayerTimeline(props: {
           </View>
         </View>
       </View> : null}
-      <View pointerEvents="none" style={{ position: 'absolute', left: '50%', top: 36, bottom: 0, width: 2, marginLeft: -1, backgroundColor: '#FF5267' }}>
+      <View pointerEvents="none" style={{ position: 'absolute', left: playheadLeft, top: 36, bottom: 0, width: 2, marginLeft: -1, backgroundColor: '#FF5267' }}>
         <View style={{ position: 'absolute', left: -7, top: 0, width: 0, height: 0, borderLeftWidth: 8, borderRightWidth: 8, borderTopWidth: 11, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: '#FF5267' }} />
       </View>
       <Pressable accessibilityRole="button" accessibilityLabel="Add videos to the end of the timeline" onPress={props.onAddVideos} style={{ position: 'absolute', right: 8, top: 2, width: 34, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: '#64D2FF' }}>
