@@ -148,7 +148,7 @@ test('CLI valid invocation completes and helper errors set nonzero exit status',
 test('base export adaptation preserves CLI postinstall order/root and first-error propagation; import is inert', () => {
   const filename = path.join(repo, 'scripts/patch-react-native-gradle.js');
   const source = fs.readFileSync(filename, 'utf8');
-  const names = ['repairPressableAccessibility', 'repairNativeScrollInput', 'repairReanimatedNativeProps', 'patchAndroidDependencies', 'configureAndroidRelease'];
+  const names = ['patchWhisperWordBoundaries', 'repairPressableAccessibility', 'repairNativeScrollInput', 'repairReanimatedNativeProps', 'patchAndroidDependencies', 'configureAndroidRelease'];
   for (const main of [false, true]) for (const fail of [false, true]) {
     const calls = [], mod = { filename, exports: {} };
     const req = id => id === 'node:path' ? path : new Proxy({}, { get: (_, name) => root => {

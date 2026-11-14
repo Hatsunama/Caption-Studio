@@ -142,7 +142,7 @@ export function buildTimelineRenderPlan(
   for (const caption of captionsEnabled ? project.captions : []) {
     if (caption.timelineVisible === false || !caption.text.trim()
       || (caption.styleOverride?.opacity ?? project.projectStyle.opacity ?? 1) <= 0) continue;
-    const interval = boundedInterval(caption.startMs, caption.endMs, durationMs);
+    const interval = preciseCaptionInterval(caption.startMs, caption.endMs, durationMs);
     if (!interval) continue;
     captions.push({
       id: caption.id,
@@ -152,7 +152,7 @@ export function buildTimelineRenderPlan(
       words: caption.wordIds.flatMap((wordId) => {
         const word = wordsById.get(wordId);
         if (!word) return [];
-        const wordInterval = boundedInterval(
+        const wordInterval = preciseCaptionInterval(
           Math.max(word.startMs, interval.startMs),
           Math.min(word.endMs, interval.endMs),
           durationMs,
@@ -169,7 +169,7 @@ export function buildTimelineRenderPlan(
 
   for (const pair of captionsEnabled ? exportCaptionPairs(project, allowIncompleteTranslations) : []) {
     if ((pair.style.opacity ?? 1) <= 0) continue;
-    const interval = boundedInterval(pair.startMs, pair.endMs, durationMs);
+    const interval = preciseCaptionInterval(pair.startMs, pair.endMs, durationMs);
     if (!interval) continue;
     captions.push({ id: pair.translation.id, text: pair.displayText, ...interval,
       style: renderStyle(pair.style), words: [] });
@@ -369,6 +369,12 @@ function outputDimensions(project: CaptionProject, activeSources: CaptionProject
 function even(value: number) {
   const bounded = Math.max(2, Math.min(3840, Math.round(value)));
   return bounded % 2 === 0 ? bounded : bounded - 1;
+}
+
+function preciseCaptionInterval(startMs: number, endMs: number, durationMs: number) {
+  const start = Math.max(0, startMs);
+  const end = Math.min(durationMs, endMs);
+  return end > start ? { startMs: start, endMs: end } : undefined;
 }
 
 function boundedInterval(startMs: number, endMs: number, durationMs: number) {

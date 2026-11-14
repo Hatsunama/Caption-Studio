@@ -43,13 +43,13 @@ class TimelineTextPainterAnimationTest {
     assertTrue(realTimedCaptionWords(validCaption.copy(words = listOf(RenderWord("different", 1_000, 1_500, style)))).isEmpty())
     val spread = playbackTimedCaptionWords(validCaption.copy(text = "real timing extra", words = emptyList()))
     assertEquals(3, spread.size)
-    assertEquals(1_000L, spread.first().startMs)
-    assertEquals(1_500L, spread.last().endMs)
+    assertEquals(1_000.0, spread.first().startMs, 0.0)
+    assertEquals(1_500.0, spread.last().endMs, 0.0)
     assertTrue(spread.all { it.endMs > it.startMs })
     val rounded = playbackTimedCaptionWords(
       RenderCaption("spread", "a b c", 0L, 1_000L, style, emptyList()),
     )
-    assertEquals(listOf(0L to 333L, 333L to 667L, 667L to 1_000L), rounded.map { it.startMs to it.endMs })
+    assertEquals(listOf(0.0 to 333.0, 333.0 to 667.0, 667.0 to 1_000.0), rounded.map { it.startMs to it.endMs })
   }
 
   @Test
@@ -84,7 +84,7 @@ class TimelineTextPainterAnimationTest {
       listOf(RenderWord("𠮷好", 100L, 300L, style)),
     )
     assertEquals(
-      listOf("𠮷" to (100L to 200L), "好" to (200L to 300L)),
+      listOf("𠮷" to (100.0 to 200.0), "好" to (200.0 to 300.0)),
       realTimedCaptionWords(caption).map { it.text to (it.startMs to it.endMs) },
     )
   }

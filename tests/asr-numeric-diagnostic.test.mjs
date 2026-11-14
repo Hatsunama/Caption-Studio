@@ -11,42 +11,47 @@ const secret = 'PRIVATE transcript file:///private/project.wav word-id';
 const secretToken = ' PRIVATE_file:///private/project.wav_word-id';
 const prefix = '[asr-timing-failure-v1]';
 
-test('actual service distinguishes raw zero, positive equal spans, and weighted rounding', async () => {
-  const fixtures = [
-    [{ text: ' a', t0: 400, t1: 400 }, { text: ' b', t0: 400, t1: 400 }],
-    [{ text: ' a', t0: 400, t1: 401 }, { text: ' b', t0: 400, t1: 401 }],
-    [{ text: ' a b ' + 'c'.repeat(99), t0: 400, t1: 401 }],
-  ];
-  const outputs = [], origins = [];
-  for (const segments of fixtures) {
-    const h = harness({ segments });
-    outputs.push(h.load('@/lib/whisper-words').coalesceWhisperWords(segments).slice(0, 2));
-    await assert.rejects(h.run(), { message: 'Source word timing quality failure for word-1' });
-    const d = payload(h);
-    assert.deepEqual(d.currentOrigin.before, { startMs: 4000, endMs: 4010 });
-    assert.deepEqual(d.nextOrigin.before, d.currentOrigin.before);
-    assert.ok(d.rawCurrent, 'missing decisive native provenance');
-    assert.ok(d.rawNext);
-    origins.push([d.rawCurrent, d.rawNext]);
-    cleaned(h);
-  }
-  assert.deepEqual(outputs[0], outputs[1]);
-  assert.deepEqual(outputs[1], outputs[2]);
-  assert.equal(origins[0][0].first.t1, 400);
-  assert.equal(origins[0][0].first.segmentFloor, true);
-  assert.equal(origins[1][0].first.t1, 401);
-  assert.equal(origins[1][0].first.segmentFloor, false);
-  assert.equal(origins[2][1].first.segmentIndex, 0);
-  assert.equal(origins[2][1].first.pieceIndex, 1);
-  assert.equal(origins[2][1].first.total, 101);
-  assert.equal(origins[2][1].first.used, 1);
-  assert.equal(origins[2][1].first.offsetStart, 3);
-  assert.equal(origins[2][1].first.offsetEnd, 4);
-  assert.equal(origins[2][1].first.weight, 1);
-  assert.equal(origins[2][1].first.roundStart, true);
-  assert.equal(origins[2][1].first.wordFloor, true);
-  assert.notDeepEqual(origins[0], origins[1]);
-  assert.notDeepEqual(origins[1], origins[2]);
+test('raw zero parents fail before alignment without leaking text and clean resources', async () => {
+  const h = harness({ segments: [{ text: secretToken, t0: 400, t1: 400 }] });
+  await assert.rejects(h.run(), { message: 'Whisper segment timing quality failure at segment 0' });
+  assert.deepEqual(h.logs, []);
+  cleaned(h);
+});
+
+test('positive equal spans retain decisive native failure provenance', async () => {
+  const segments = [{ text: ' a', t0: 400, t1: 401 }, { text: ' b', t0: 400, t1: 401 }];
+  const h = harness({ segments });
+  await assert.rejects(h.run(), { message: 'Source word timing quality failure for word-1' });
+  const d = payload(h);
+  assert.deepEqual(d.currentOrigin.before, { startMs: 4000, endMs: 4010 });
+  assert.deepEqual(d.nextOrigin.before, d.currentOrigin.before);
+  assert.ok(d.rawCurrent, 'missing decisive native provenance');
+  assert.ok(d.rawNext);
+  assert.equal(d.rawCurrent.first.t1, 401);
+  assert.equal(d.rawCurrent.first.segmentFloor, false);
+  assert.equal(d.rawNext.first.segmentIndex, 1);
+  cleaned(h);
+});
+
+test('weighted fractional support succeeds and reports actual allocation operations', async () => {
+  const segments = [{ text: ' a b ' + 'c'.repeat(99), t0: 400, t1: 401 }];
+  const h = harness({ segments }), observations = [];
+  const words = h.load('@/lib/whisper-words').coalesceWhisperWords(segments, e => observations.push(e));
+  assert.deepEqual((await h.run()).words, words);
+  assert.deepEqual(h.logs, []);
+  assert.equal(words[0].endMs, 4000 + 10 / 101);
+  assert.equal(words[1].endMs, 4000 + 20 / 101);
+  assert.equal(words[2].endMs, 4010);
+  const origin = observations[1];
+  assert.equal(origin.segmentIndex, 0);
+  assert.equal(origin.pieceIndex, 1);
+  assert.equal(origin.total, 101);
+  assert.equal(origin.used, 1);
+  assert.equal(origin.offsetStart, 3);
+  assert.equal(origin.offsetEnd, 4);
+  assert.equal(origin.weight, 1);
+  assert.ok(observations.every(e => !e.startFloor && !e.segmentFloor && !e.wordFloor && !e.roundStart && !e.roundEnd));
+  cleaned(h);
 });
 
 // Execute the actual service and timing modules; replace only native IO and
@@ -205,15 +210,12 @@ test('first canonical throw exposes all predicates and bounded neighboring numbe
   assert.ok(!JSON.stringify(d).includes('PRIVATE'));
 });
 
-test('zero clipped support reports the real alignment rejection without changing its message', () => {
+test('short support entirely outside VAD is filtered without a rejection or warning', () => {
   const h = harness(), snapshots = [];
   const align = h.load('@/lib/speech-alignment').alignWordsToSpeech;
-  assert.throws(() => align([{ id: secret, text: secret, startMs: 795, endMs: 800 }],
-    [{ t0: 80, t1: 100 }], 8000, d => snapshots.push(d)), { message: 'Source word timing quality failure for word-1' });
-  assert.equal(snapshots.length, 1);
-  assert.equal(snapshots[0].currentOrigin.before.startMs, 795);
-  assert.deepEqual(snapshots[0].currentOrigin.after, { startMs: 800, endMs: 800 });
-  assert.equal(snapshots[0].rejected.nonpositiveCappedSupport, true);
+  assert.deepEqual(align([{ id: secret, text: secret, startMs: 795, endMs: 800 }],
+    [{ t0: 80, t1: 100 }], 8000, d => snapshots.push(d)), []);
+  assert.deepEqual(snapshots, []);
   assert.equal(h.logs.length, 0, 'library has no logging side effect');
 });
 
@@ -334,10 +336,10 @@ test('cancellation after native completion is silent and releases all resources'
   assert.ok(h.events.indexOf('asr-release') < h.events.indexOf('delete'));
 });
 
-test('Samsung-shaped word-11 rejection connects accepted/coalesced ordinals to raw segment indices', async () => {
+test('Samsung-shaped positive equal-onset word-11 rejection connects accepted/coalesced ordinals to raw segment indices', async () => {
   const segments = [{ text: ' [noise]', t0: 0, t1: 0 },
     ...Array.from({ length: 10 }, (_, i) => ({ text: secretToken, t0: i * 20, t1: i * 20 + 10 })),
-    { text: secretToken, t0: 400, t1: 400 }, { text: secretToken, t0: 400, t1: 401 },
+    { text: secretToken, t0: 400, t1: 401 }, { text: secretToken, t0: 400, t1: 401 },
     ...Array.from({ length: 13 }, (_, i) => ({ text: secretToken, t0: 500 + i * 10, t1: 509 + i * 10 })),
   ];
   const h = harness({ segments, speech: [{ t0: 0, t1: 320 }, { t0: 385, t1: 694 }], loggerThrows: true });
@@ -351,7 +353,7 @@ test('Samsung-shaped word-11 rejection connects accepted/coalesced ordinals to r
   assert.deepEqual(d.nextOrigin.before, d.currentOrigin.before);
   assert.equal(d.rawCurrent.first.segmentIndex, 11);
   assert.equal(d.rawNext.first.segmentIndex, 12);
-  assert.equal(d.rawCurrent.first.t1, 400);
+  assert.equal(d.rawCurrent.first.t1, 401);
   assert.equal(d.rawNext.first.t1, 401);
   assert.equal(d.rawCurrent.maxEnd, null);
   assert.equal(d.rawNext.maxEnd, null);
@@ -360,10 +362,10 @@ test('Samsung-shaped word-11 rejection connects accepted/coalesced ordinals to r
 
 test('two contributors bound each word while counting every contribution and keeping the first max-end tie', async () => {
   const segments = [
-    { text: ' a', t0: 400, t1: 400 },
+    { text: ' a', t0: 400, t1: 401 },
     { text: 'x', t0: 400, t1: 403 },
     ...Array.from({ length: 20 }, () => ({ text: 'z', t0: 400, t1: 403 })),
-    { text: ' b', t0: 400, t1: 400 },
+    { text: ' b', t0: 400, t1: 401 },
     { text: 'y', t0: 400, t1: 404 },
   ];
   const h = harness({ segments, loggerThrows: true });
@@ -405,31 +407,24 @@ test('literal coalescer outputs and exceptions are invariant with silent, record
   const fixtures = [
     { segments: [], expected: [], contributions: 0 },
     { segments: [{ text: ' [noise]', t0: 0, t1: 1 }], expected: [], contributions: 0 },
-    { segments: [{ text: ' (', t0: -1, t1: 0 }, { text: 'hello', t0: 0, t1: 10 },
+    { segments: [{ text: ' (', t0: 0, t1: 1 }, { text: 'hello', t0: 1, t1: 10 },
       { text: ' !', t0: 10, t1: 20 }], contributions: 3,
       expected: [{ id: 'word-1', text: '(hello!', startMs: 0, endMs: 200 }] },
     { segments: [{ text: ' e\u0301\u00a0中ไทย 한😀', t0: 400, t1: 401 }], contributions: 7,
       expected: [
-        { id: 'word-1', text: 'é', startMs: 4000, endMs: 4010 },
-        { id: 'word-2', text: '中', startMs: 4001, endMs: 4011 },
-        { id: 'word-3', text: 'ไ', startMs: 4003, endMs: 4013 },
-        { id: 'word-4', text: 'ท', startMs: 4004, endMs: 4014 },
-        { id: 'word-5', text: 'ย', startMs: 4006, endMs: 4016 },
-        { id: 'word-6', text: '한', startMs: 4007, endMs: 4017 },
-        { id: 'word-7', text: '😀', startMs: 4009, endMs: 4019 },
+        { id: 'word-1', text: 'é', startMs: 4000, endMs: 4001 },
+        { id: 'word-2', text: '中', startMs: 4001, endMs: 4003 },
+        { id: 'word-3', text: 'ไ', startMs: 4003, endMs: 4004 },
+        { id: 'word-4', text: 'ท', startMs: 4004, endMs: 4006 },
+        { id: 'word-5', text: 'ย', startMs: 4006, endMs: 4007 },
+        { id: 'word-6', text: '한', startMs: 4007, endMs: 4009 },
+        { id: 'word-7', text: '😀', startMs: 4009, endMs: 4010 },
       ] },
     { segments: [{ text: ' a b ' + 'c'.repeat(99), t0: 400, t1: 401 }], contributions: 3,
       expected: [
-        { id: 'word-1', text: 'a', startMs: 4000, endMs: 4010 },
-        { id: 'word-2', text: 'b', startMs: 4000, endMs: 4010 },
-        { id: 'word-3', text: 'c'.repeat(99), startMs: 4000, endMs: 4010 },
-      ] },
-    { segments: [{ text: ' a', t0: NaN, t1: Infinity }], contributions: 1,
-      expected: [{ id: 'word-1', text: 'a', startMs: NaN, endMs: NaN }] },
-    { segments: [{ text: ' a', t0: 400, t1: 400 }, { text: ' b', t0: 400, t1: 400 }],
-      contributions: 2, expected: [
-        { id: 'word-1', text: 'a', startMs: 4000, endMs: 4010 },
-        { id: 'word-2', text: 'b', startMs: 4000, endMs: 4010 },
+        { id: 'word-1', text: 'a', startMs: 4000, endMs: 4000 + 10 / 101 },
+        { id: 'word-2', text: 'b', startMs: 4000 + 10 / 101, endMs: 4000 + 20 / 101 },
+        { id: 'word-3', text: 'c'.repeat(99), startMs: 4000 + 20 / 101, endMs: 4010 },
       ] },
     { segments: [{ text: ' a', t0: 400, t1: 401 }, { text: ' b', t0: 400, t1: 401 }],
       contributions: 2, expected: [
@@ -451,6 +446,21 @@ test('literal coalescer outputs and exceptions are invariant with silent, record
       assert.equal(typeof event.pieceIndex, 'number');
       assert.ok(Object.values(event).every(value => typeof value === 'number' || typeof value === 'boolean'));
     }
+  }
+  for (const segments of [
+    [{ text: ' a', t0: NaN, t1: Infinity }],
+    [{ text: ' a', t0: 400, t1: 400 }, { text: ' b', t0: 400, t1: 400 }],
+    [{ text: ' (', t0: -1, t1: 0 }],
+  ]) {
+    const observations = [];
+    let throwingCalls = 0;
+    for (const observer of [undefined, e => observations.push(e),
+      () => { throwingCalls += 1; throw new Error(secret); }]) {
+      assert.throws(() => coalesce(segments, observer),
+        { message: 'Whisper segment timing quality failure at segment 0' });
+    }
+    assert.deepEqual(observations, []);
+    assert.equal(throwingCalls, 0);
   }
   for (const [segments, message] of [
     [[{ text: null, t0: 0, t1: 1 }], "Cannot read properties of null (reading 'replace')"],

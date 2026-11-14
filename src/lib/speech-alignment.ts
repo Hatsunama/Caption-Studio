@@ -13,7 +13,7 @@ export type AlignedTimingFailure = SourceTimingFailure & {
 type SpeechWindow = { startMs: number; endMs: number };
 
 function selectedWindow(word: WordToken, windows: SpeechWindow[]) {
-  const duration = Math.max(10, word.endMs - word.startMs);
+  const duration = word.endMs - word.startMs;
   const midpoint = word.startMs + duration / 2;
   return windows.find((candidate) => {
     const overlap = Math.max(0, Math.min(word.endMs, candidate.endMs) - Math.max(word.startMs, candidate.startMs));

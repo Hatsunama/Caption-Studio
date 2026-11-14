@@ -76,7 +76,7 @@ test('source-transcription reuse requires the same SHA-256 fingerprint and model
     words: [],
   };
 
-  assert.equal(fingerprint.digest, '8'.repeat(64));
+  assert.equal(fingerprint.digest, '9'.repeat(64));
   assert.equal(canReuseSourceTranscription(matching, 'fast', fingerprint), true);
   assert.equal(canReuseSourceTranscription({ ...matching, sourceFingerprint: undefined }, 'fast', fingerprint), false);
   assert.equal(canReuseSourceTranscription(matching, 'retired-model', fingerprint), false);
