@@ -7,6 +7,8 @@ import { videoOverlaySegments } from '../src/lib/video-overlay-segments.ts';
 import { overlayPlaybackState } from '../src/lib/video-overlay-playback.ts';
 import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
 import { decodePersistedProject } from '../src/lib/project-codec.ts';
+import { applyPreviewSceneGeometry } from '../src/lib/preview-scene-project.ts';
+import { resolveLayerGeometry } from '../src/lib/layer-geometry.ts';
 
 function fixture({ currentMs = 1000, sourceStartMs = 500, rate = 1, owners = 1, playbackRate = 1 } = {}) {
   let project = createCaptionProject({ id: 'trim-recovery', name: 'Recovery', sources: Array.from({ length: owners }, (_, i) => ({
@@ -21,6 +23,155 @@ const layer = (p, id = 'pip') => p.layers.find(l => l.id === id);
 const segments = (p, id = 'pip') => videoOverlaySegments(layer(p, id), p.clips, Infinity)
   .map(s => [s.startMs, s.endMs, s.sourceStartMs, s.sourceEndMs]);
 const saved = p => decodePersistedProject(JSON.stringify(p));
+
+function samsungReorderedRecovery() {
+  let p = fixture({ currentMs: 0, sourceStartMs: 0 });
+  p = setLayerTiming(p, 'pip', 'end', 0, 4000);
+  p = setLayerTiming(p, 'pip', 'move', 2000, 6000);
+  p = splitVideoClip(p, p.clips[0].id, 4000, 'main-left', 'main-right').project;
+  p = reorderVideoClip(p, 'main-right', 0).project;
+  p = saved(setLayerTiming(p, 'pip', 'start', 1000, 8000));
+  return saved(setLayerTiming(p, 'pip', 'start', 0, 8000));
+}
+
+test('Samsung reordered PiP position edit retains the restored 0..8s sparse projection', () => {
+  const p = samsungReorderedRecovery();
+  const expected = [[6000, 8000, 0, 2000], [0, 2000, 2000, 4000]];
+  checkChain(p, expected);
+  assert.equal(layer(p).sourceStartMs, 2000);
+  const moved = setVideoLayer(p, 'pip', { position: { x: 0.3, y: 0.4 } });
+  assert.equal(layer(moved).endMs, 8000);
+  assert.equal(layer(moved).startMs, 0);
+  assert.deepEqual(layer(moved).sourceAnchors, layer(p).sourceAnchors);
+  assert.deepEqual(layer(moved).sourceMapping, layer(p).sourceMapping);
+  checkChain(saved(moved), expected);
+});
+
+for (const patch of [
+  { position: { x: 0.2, y: 0.3 } }, { box: { width: 0.4, height: 0.2 } },
+  { rotation: 35 }, { scale: 1.4, scaleX: 0.8, scaleY: 1.2 },
+  { opacity: 0.4 }, { visible: false }, { includeAudio: false }, { name: 'Moved PiP' },
+]) test(`restored sparse PiP ${Object.keys(patch)} patch preserves timing and selected frames`, () => {
+  const p = samsungReorderedRecovery();
+  const before = JSON.stringify(p);
+  const edited = setVideoLayer(p, 'pip', patch);
+  const restored = saved(edited);
+  for (const key of ['startMs', 'endMs', 'sourceStartMs', 'sourceStartAtAnchorMs', 'sourceDurationMs',
+    'playbackRate', 'sourceMapping', 'sourceAnchors', 'mediaEndMs', 'timingMode', 'timelineVisible']) {
+    assert.deepEqual(layer(edited)[key], layer(p)[key], key);
+    assert.deepEqual(layer(restored)[key], layer(p)[key], `saved ${key}`);
+  }
+  for (const [key, value] of Object.entries(patch)) assert.deepEqual(layer(restored)[key], value);
+  assert.deepEqual(segments(restored), segments(p));
+  const plan = buildTimelineRenderPlan(restored);
+  const picture = plan.layers.filter(l => l.id === 'pip');
+  const audio = plan.audioClips.filter(c => c.id.startsWith('overlay-audio:pip'));
+  assert.deepEqual(picture.map(l => [l.startMs, l.endMs, l.sourceStartMs]),
+    patch.visible === false ? [] : segments(p).map(s => s.slice(0, 3)));
+  assert.deepEqual(audio.map(c => [c.startMs, c.sourceStartMs, c.sourceEndMs]),
+    patch.visible === false || patch.includeAudio === false ? [] : segments(p).map(s => [s[0], s[2], s[3]]));
+  assert.equal(JSON.stringify(p), before, 'editing must not mutate the original ownership');
+});
+
+test('preview gesture commit uses the current source projection, including a stale cached envelope', () => {
+  const p = samsungReorderedRecovery();
+  const geometry = resolveLayerGeometry(layer(p));
+  // Ownership remains authoritative even if an older edit left a shortened cache.
+  layer(p).endMs = 6000;
+  const edited = applyPreviewSceneGeometry(p, {
+    key: 'video-overlay:pip', order: 0, deletable: true,
+    selection: { kind: 'video-overlay', id: 'pip' }, geometry,
+  }, { ...geometry, position: { x: 0.25, y: 0.35 } });
+  assert.equal(layer(edited).endMs, 8000);
+  assert.deepEqual(layer(edited).position, { x: 0.25, y: 0.35 });
+  checkChain(saved(edited), [[6000, 8000, 0, 2000], [0, 2000, 2000, 4000]]);
+});
+
+for (const legacy of [false, true]) for (const rate of [0.5, 1.5, 2])
+  test(`geometry preserves sparse recovery at owner rate ${rate}, legacy mapping ${legacy}`, () => {
+    let p = fixture({ currentMs: 3000, sourceStartMs: 500, owners: 2 });
+    p = setVideoClipGap(p, p.clips[1].id, 1000).project;
+    if (legacy) delete layer(p).sourceMapping;
+    p = setClipPlaybackRate(p, p.clips[0].id, rate);
+    const before = segments(p);
+    const anchors = structuredClone(layer(p).sourceAnchors);
+    p = saved(setVideoLayer(p, 'pip', { rotation: 20 }));
+    assert.deepEqual(layer(p).sourceAnchors, anchors);
+    checkChain(p, before);
+    p = saved(setVideoLayerPlaybackRate(p, 'pip', 1.5));
+    const capped = segments(p);
+    p = saved(setVideoLayer(p, 'pip', { position: { x: 0.4, y: 0.6 } }));
+    checkChain(p, capped);
+    p = saved(setVideoLayerPlaybackRate(p, 'pip', 1));
+    checkChain(p, before);
+  });
+
+test('geometry preserves a capped selection and hidden owner associations until recovery', () => {
+  let p = samsungReorderedRecovery();
+  p = saved(setLayerTiming(p, 'pip', 'end', 0, 7000));
+  const bound = layer(p).mediaEndMs;
+  const before = segments(p);
+  p = trimVideoClip(p, 'main-left', 'end', 1000).project;
+  const hidden = structuredClone(layer(p).sourceAnchors);
+  assert.equal(segments(p).length, 1);
+  p = saved(setVideoLayer(p, 'pip', { box: { width: 0.5, height: 0.3 } }));
+  assert.deepEqual(layer(p).sourceAnchors, hidden);
+  assert.equal(layer(p).mediaEndMs, bound);
+  p = saved(trimVideoClip(p, 'main-left', 'end', 4000).project);
+  checkChain(p, before);
+});
+
+test('fully hidden and deleted owner selections remain hidden through geometry edits', () => {
+  let p = fixture();
+  const owner = p.clips[0].id;
+  const before = segments(p);
+  p = trimVideoClip(p, owner, 'start', 5000).project;
+  const anchors = structuredClone(layer(p).sourceAnchors);
+  assert.equal(layer(p).timelineVisible, false);
+  p = saved(setVideoLayer(p, 'pip', { position: { x: 0.2, y: 0.7 } }));
+  assert.equal(layer(p).timelineVisible, false);
+  assert.deepEqual(layer(p).sourceAnchors, anchors);
+  p = saved(trimVideoClip(p, owner, 'start', 0).project);
+  checkChain(p, before);
+  p = deleteVideoClip(p, owner).project;
+  const tombstone = structuredClone(layer(p));
+  p = setVideoLayer(p, 'pip', { rotation: 10 });
+  assert.equal(layer(p).timelineVisible, false);
+  assert.deepEqual(layer(p).sourceAnchors, tombstone.sourceAnchors);
+  assert.deepEqual(segments(p), []);
+});
+
+test('timeline ownership and explicit time/source changes retain contiguous availability limits', () => {
+  const p = samsungReorderedRecovery();
+  const independent = setVideoLayer(p, 'pip', { timingMode: 'timeline', sourceAnchors: undefined, sourceMapping: undefined });
+  assert.equal(layer(independent).endMs, 6000);
+  assert.deepEqual(segments(independent), [[0, 6000, 2000, 8000]]);
+  const moved = saved(setVideoLayer(independent, 'pip', { position: { x: 0.2, y: 0.3 } }));
+  assert.deepEqual(segments(moved), segments(independent));
+  for (const patch of [{ endMs: 20000 }, { sourceStartMs: 7000, endMs: 8000 },
+    { sourceDurationMs: 5000 }, { playbackRate: 2 }]) {
+    const edited = setVideoLayer(p, 'pip', patch);
+    const l = layer(edited);
+    assert.ok(l.endMs <= l.startMs + (l.sourceDurationMs - l.sourceStartMs) / l.playbackRate);
+    assert.equal(l.sourceMapping, undefined);
+    for (const s of segments(saved(edited))) assert.ok(s[3] <= l.sourceDurationMs);
+  }
+});
+
+test('owner-aware geometry still rejects invalid media scalars, timing and geometry', () => {
+  const p = samsungReorderedRecovery();
+  for (const patch of [{ sourceDurationMs: NaN }, { sourceDurationMs: 3000 }, { sourceStartMs: Infinity }, { playbackRate: 0 },
+    { mediaEndMs: Infinity }, { mediaEndMs: 8001 }, { startMs: NaN }, { endMs: Infinity },
+    { startMs: 100, endMs: 110 }, { position: { x: NaN, y: 0.5 } },
+    { box: { width: 0, height: 0.2 } }, { rotation: Infinity }, { scaleX: -1 }]) {
+    assert.throws(() => setVideoLayer(p, 'pip', { position: { x: 0.2, y: 0.3 }, ...patch }));
+  }
+  // A cosmetic patch must validate the existing media metadata too.
+  const invalid = structuredClone(p);
+  layer(invalid).playbackRate = NaN;
+  assert.throws(() => setVideoLayer(invalid, 'pip', { opacity: 0.5 }));
+});
+
 function checkChain(p, expected, id = 'pip') {
   assert.deepEqual(segments(p, id), expected);
   const plan = buildTimelineRenderPlan(p);

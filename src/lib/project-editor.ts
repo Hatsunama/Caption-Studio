@@ -402,9 +402,10 @@ export function setVideoLayer(project: CaptionProject, layerId: string, patch: P
       if (layer.id !== layerId || layer.kind !== 'video') return layer;
       const merged = { ...layer, ...patch, ...(patch.sourceStartMs === undefined ? {}
         : { sourceStartAtAnchorMs: patch.sourceStartMs, mediaEndMs: patch.mediaEndMs }) };
-      const bounded = { ...boundedVideoLayer(merged), ...normalizeLayerGeometry(merged) };
-      if (patch.startMs === undefined && patch.endMs === undefined && patch.sourceStartMs === undefined
-        && patch.sourceDurationMs === undefined && patch.playbackRate === undefined) return bounded;
+      const changesTiming = patch.startMs !== undefined || patch.endMs !== undefined || patch.sourceStartMs !== undefined
+        || patch.sourceDurationMs !== undefined || patch.playbackRate !== undefined;
+      const bounded = { ...boundedVideoLayer(merged, changesTiming ? undefined : project.clips), ...normalizeLayerGeometry(merged) };
+      if (!changesTiming) return bounded;
       return attachLayerToTimeline({ ...bounded, sourceMapping: undefined, sourceStartAtAnchorMs: bounded.sourceStartMs },
         buildClipTimeline(project.clips), true);
     }),
@@ -448,13 +449,22 @@ export function setVideoLayerPlaybackRate(project: CaptionProject, layerId: stri
   });
 }
 
-function boundedVideoLayer(layer: VideoVisualLayer): VideoVisualLayer {
+function boundedVideoLayer(layer: VideoVisualLayer, clips?: VideoClip[]): VideoVisualLayer {
   if (!Number.isFinite(layer.sourceDurationMs) || layer.sourceDurationMs <= 0
     || !Number.isFinite(layer.sourceStartMs) || layer.sourceStartMs >= layer.sourceDurationMs
     || (layer.mediaEndMs !== undefined && (!Number.isFinite(layer.mediaEndMs)
       || layer.mediaEndMs < 0 || layer.mediaEndMs > layer.sourceDurationMs))
     || !Number.isFinite(layer.playbackRate) || layer.playbackRate < 0.25 || layer.playbackRate > 4) {
     throw new Error('Video overlay requires a valid source duration, source start and playback rate.');
+  }
+  if (!Number.isFinite(layer.startMs) || !Number.isFinite(layer.endMs) || layer.endMs < layer.startMs) {
+    throw new Error('Video overlay must have at least 80 ms of playable media.');
+  }
+  // Source owners determine the sparse timeline span; sourceStartMs is only its
+  // first projected frame. A contiguous cap would consume gaps/reordered owners.
+  // Keep empty owner selections as hidden tombstones rather than reattaching.
+  if (clips && layer.timingMode !== 'timeline' && layer.sourceAnchors !== undefined) {
+    return remapVideoLayerToClips(layer, clips, clips);
   }
   const startMs = layer.sourceStartMs < 0
     ? layer.startMs - layer.sourceStartMs / layer.playbackRate : layer.startMs;
