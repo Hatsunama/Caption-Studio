@@ -103,7 +103,7 @@ test('release commits once even when the owner offers cancellation rollback', ()
   assert.deepEqual(calls, ['start', 'commit']);
 });
 
-test('edge extension requires a real stationary dwell and resumes from the playhead without jumping', () => {
+test('edge extension passes the playhead spatially without waiting or jumping', () => {
   let now = 0;
   const changes = [];
   const gesture = createTimelineTimingGesture({ now: () => now });
@@ -112,25 +112,30 @@ test('edge extension requires a real stationary dwell and resumes from the playh
   gesture.move(60, 0);
   assert.equal(changes.at(-1).endMs, 2_300, 'ordinary extension remains continuous');
 
-  gesture.move(105, 0);
+  gesture.move(100, 0);
   assert.equal(changes.at(-1).endMs, 2_500, 'crossing the playhead snaps to it');
+
+  gesture.move(103, 0);
+  assert.equal(changes.at(-1).endMs, 2_500, 'three logical pixels remain softly captured');
+  gesture.move(103.25, 0);
+  assert.equal(changes.at(-1).endMs, 2_501.25, 'fractional motion beyond the band releases immediately');
 
   for (const [time, dx] of [[100, 120], [200, 140], [300, 160], [400, 180]]) {
     now = time;
     gesture.move(dx, 0);
-    assert.equal(changes.at(-1).endMs, 2_500, 'continuous movement cannot masquerade as a pause');
+    assert.equal(changes.at(-1).endMs, 2_500 + (dx - 103) * 5, 'continuous movement passes through without a pause');
   }
 
   now = 700;
   gesture.move(180, 0);
-  assert.equal(changes.at(-1).endMs, 2_500, 'a stationary dwell arms release without moving the edge');
+  assert.equal(changes.at(-1).endMs, 2_885, 'stationary time cannot change the applied timing');
 
   now = 710;
   gesture.move(184, 0);
-  assert.equal(changes.at(-1).endMs, 2_520, 'post-dwell motion is rebased at the playhead');
+  assert.equal(changes.at(-1).endMs, 2_905, 'later motion continues without rebasing');
 
   gesture.move(194, 0);
-  assert.equal(changes.at(-1).endMs, 2_570, 'movement remains continuous after release');
+  assert.equal(changes.at(-1).endMs, 2_955, 'movement remains continuous after release');
 });
 
 test('a start edge uses the same playhead detent in either drag direction', () => {
@@ -138,14 +143,14 @@ test('a start edge uses the same playhead detent in either drag direction', () =
   const changes = [];
   const gesture = createTimelineTimingGesture({ now: () => now });
   gesture.begin(owner(changes, { startMs: 3_000, endMs: 4_000 }), 'start');
-  gesture.move(-105, 0);
+  gesture.move(-100, 0);
   assert.equal(changes.at(-1).startMs, 2_500);
   now = 300;
-  gesture.move(-105, 0);
+  gesture.move(-103, 0);
   assert.equal(changes.at(-1).startMs, 2_500);
   now = 310;
   gesture.move(-109, 0);
-  assert.equal(changes.at(-1).startMs, 2_480);
+  assert.equal(changes.at(-1).startMs, 2_470, 'only motion beyond three logical pixels contributes');
 });
 
 test('moving a whole timeline item never snaps to the playhead', () => {
