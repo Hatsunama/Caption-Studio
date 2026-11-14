@@ -47,6 +47,7 @@ import { normalizeLayerGeometry } from '@/lib/layer-geometry';
 import { hasCanonicalSourceWords } from '@/lib/primary-caption-timing';
 import { applyCaptionMergeDraft } from '@/lib/caption-merge';
 import { videoOverlaySegments } from '@/lib/video-overlay-segments';
+import { visualTimelineTrackId } from '@/lib/timeline-tracks';
 
 export function setCaptionTexts(project: CaptionProject, changes: CaptionTextChanges) {
   const changed = applyCaptionTextChanges(project.captions, changes);
@@ -475,6 +476,27 @@ function boundedVideoLayer(layer: VideoVisualLayer, clips?: VideoClip[]): VideoV
   return { ...layer, startMs, endMs, sourceStartMs };
 }
 
+/** Join the front of the frontmost current same-kind group. First-of-kind
+ * additions keep their creator's fallback; tombstones never select a group. */
+function insertNewVisualLayer(
+  layers: CaptionProject['layers'],
+  layer: Exclude<CaptionProject['layers'][number], { kind: 'captions' }>,
+  fallbackIndex = layers.length,
+) {
+  const baseId = visualTimelineTrackId(layer);
+  let insertion = fallbackIndex;
+  for (let index = layers.length - 1; index >= 0; index -= 1) {
+    const candidate = layers[index];
+    if (candidate.kind !== 'captions' && candidate.timelineVisible !== false && visualTimelineTrackId(candidate) === baseId) {
+      insertion = index + 1;
+      break;
+    }
+  }
+  const next = [...layers];
+  next.splice(insertion, 0, layer);
+  return next;
+}
+
 export function createTextLayer(project: CaptionProject, id: string, currentMs: number, durationMs: number) {
   const extentMs = timelineArtifactEditLimit(project, durationMs);
   const startMs = Number.isFinite(currentMs) ? Math.max(0,
@@ -498,9 +520,7 @@ export function createTextLayer(project: CaptionProject, id: string, currentMs: 
     }),
   }, buildClipTimeline(project.clips));
   const firstImage = project.layers.findIndex((item) => item.kind === 'image');
-  const insertion = firstImage < 0 ? project.layers.length : firstImage;
-  const layers = [...project.layers];
-  layers.splice(insertion, 0, layer);
+  const layers = insertNewVisualLayer(project.layers, layer, firstImage < 0 ? project.layers.length : firstImage);
   return { project: updateProject(project, { layers }), layer };
 }
 
@@ -515,8 +535,7 @@ export function createWatermarkLayer(project: CaptionProject, id: string, durati
     style: mergeStyle(DEFAULT_CAPTION_STYLE, { fontSize: 30, opacity: 0.3, position: { x: 0.5, y: 0.9 }, box: { width: 0.7, height: 0.14 }, shadow: { opacity: 0, blur: 0 }, animation: { id: 'none' } }),
   }, buildClipTimeline(project.clips));
   const firstImage = project.layers.findIndex((item) => item.kind === 'image');
-  const layers = [...project.layers];
-  layers.splice(firstImage < 0 ? layers.length : firstImage, 0, layer);
+  const layers = insertNewVisualLayer(project.layers, layer, firstImage < 0 ? project.layers.length : firstImage);
   return { project: updateProject(project, { layers }), layer };
 }
 
@@ -547,7 +566,7 @@ export function addImageLayer(project: CaptionProject, options: {
     rotation: 0,
     opacity: 1,
   }, buildClipTimeline(project.clips));
-  return { project: updateProject(project, { layers: [...project.layers, layer] }), layer };
+  return { project: updateProject(project, { layers: insertNewVisualLayer(project.layers, layer) }), layer };
 }
 
 export function addVideoLayer(project: CaptionProject, options: {
@@ -570,7 +589,7 @@ export function addVideoLayer(project: CaptionProject, options: {
     includeAudio: options.includeAudio ?? false,
     position: { x: 0.5, y: 0.5 }, box: { width: 0.34, height: 0.24 }, rotation: 0, opacity: 1,
   }), buildClipTimeline(project.clips));
-  return { project: updateProject(project, { layers: [...project.layers, layer] }), layer };
+  return { project: updateProject(project, { layers: insertNewVisualLayer(project.layers, layer) }), layer };
 }
 
 export function moveVisualLayer(project: CaptionProject, layerId: string, direction: -1 | 1) {
