@@ -70,6 +70,15 @@ function scene(initialTargets, selectedKey) {
     cancelAnimationFrame(id) { frames.delete(id); },
     require(name) {
       if (name === 'react') return react;
+      if (name === '@/hooks/use-display-rotation-invalidation') {
+        const hook = {};
+        const source = readFileSync(new URL('../src/hooks/use-display-rotation-invalidation.ts', import.meta.url), 'utf8');
+        runInNewContext(ts.transpileModule(source, { compilerOptions: {
+          target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
+        } }).outputText, { exports: hook, require: name => name === 'react' ? react
+          : { DeviceEventEmitter: { addListener: () => ({ remove() {} }) } } });
+        return hook;
+      }
       if (name.startsWith('@/lib/')) return requireLocal('../src/lib/' + name.slice(6) + '.ts');
       throw new Error('Unexpected runtime dependency: ' + name);
     },

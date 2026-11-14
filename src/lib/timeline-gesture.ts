@@ -9,12 +9,14 @@ export const TIMELINE_PLAYHEAD_RELEASE_PX = 3;
 
 export type TimelineTrackBounds = { left: number; right: number };
 
-/** Only external viewport/zoom changes invalidate touch coordinates. Draft
+/** Only external viewport/zoom/rotation changes invalidate touch coordinates. Draft
  * duration and reorder filmstrip changes must not cancel their own gesture. */
 export function createTimelineGestureGeometry(initial: { viewportWidth: number; scale: number }) {
   let geometry = { ...initial };
   const listeners = new Set<() => void>();
+  const invalidate = () => { for (const cancel of [...listeners]) cancel(); };
   return {
+    invalidate,
     subscribe(cancel: () => void) {
       listeners.add(cancel);
       return () => { listeners.delete(cancel); };
@@ -23,7 +25,7 @@ export function createTimelineGestureGeometry(initial: { viewportWidth: number; 
       const updated = { ...geometry, ...next };
       if (updated.viewportWidth === geometry.viewportWidth && updated.scale === geometry.scale) return false;
       geometry = updated;
-      for (const cancel of [...listeners]) cancel();
+      invalidate();
       return true;
     },
   };

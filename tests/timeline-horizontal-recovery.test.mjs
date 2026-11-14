@@ -29,6 +29,11 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
   let slots = [];
   const primarySlots = slots, childSlots = [], modules = new Map(), jobs = [], commands = [], seeks = [], changes = [];
   const springSlots = [], rnJobs = [];
+  const deviceListeners = new Map();
+  const deviceEvents = { addListener(event, listener) {
+    deviceListeners.set(listener, event);
+    return { remove: () => deviceListeners.delete(listener) };
+  } };
   const appStateListeners = new Map();
   const appState = { currentState: 'active', addEventListener(event, listener) {
     assert.ok(['change', 'blur', 'focus'].includes(event)); appStateListeners.set(listener, event);
@@ -115,7 +120,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
         if (id === 'react/jsx-runtime') return { jsx, jsxs: jsx };
         if (id === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'NativeScrollView',
           StyleSheet: { flatten: style => Object.assign({}, ...[style].flat(Infinity).filter(Boolean)) },
-          AppState: appState,
+          AppState: appState, DeviceEventEmitter: deviceEvents,
           AccessibilityInfo: { addEventListener: () => ({ remove() {} }),
             isReduceMotionEnabled: () => ({ then: resolve => resolve(false) }) },
           Platform: { OS: platform }, PanResponder: { create: panHandlers => ({ panHandlers }) },
@@ -203,6 +208,13 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
   function expectedContent() { return horizontal.props.contentContainerStyle.width; }
   render(); flush();
   return { native, commands, seeks, changes, flush, layout, content, expectedContent,
+    rotate() {
+      for (const [listener, event] of [...deviceListeners]) if (event === 'namedOrientationDidChange') {
+        listener({ name: 'landscape-primary', rotationDegrees: -90, isLandscape: true });
+      }
+      flush();
+    },
+    get deviceListenerCount() { return deviceListeners.size; },
     tickIntervals() { for (const fn of [...intervals.values()]) fn(); flush(); },
     get intervalCount() { return intervals.size; },
     captureAppStateListeners: (event = 'change') => [...appStateListeners].filter(([, type]) => type === event).map(([listener]) => listener),
@@ -291,6 +303,26 @@ function aligned(h) {
   assert.equal(h.native.x, Math.min(1, Math.max(0, h.props.currentMs / h.props.durationMs)) * track);
   assert.deepEqual(h.seeks, [], 'passive geometry must never change transport time');
 }
+
+test('full timeline mount receives same-size rotation through the real hook and retires scrub ownership', () => {
+  const h = harness({ currentMs: 4000 });
+  try {
+    h.ready(); assert.equal(h.deviceListenerCount, 1);
+    h.horizontal.onTouchStart({ nativeEvent: { touches: [{}] } });
+    h.horizontal.onScrollBeginDrag();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    const prefix = [...h.seeks], width = h.native.viewport;
+    h.rotate(); assert.equal(h.native.viewport, width);
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 133 } } }); h.flush();
+    assert.deepEqual(h.seeks, prefix, 'rotation rejects old-origin scroll samples');
+    h.replayEffects(); assert.equal(h.deviceListenerCount, 1);
+    h.horizontal.onTouchStart({ nativeEvent: { touches: [{}] } });
+    h.horizontal.onScrollBeginDrag();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 100 } } }); h.flush();
+    assert.equal(h.seeks.length, prefix.length + 1, 'a fresh contact can seek');
+  } finally { h.close(); }
+  assert.equal(h.deviceListenerCount, 0);
+});
 
 for (const ending of ['completed', 'blur', 'background']) {
   for (const target of [0, 20, 7060]) test(`repeated scrub: ${ending} then external clock advance seeks the same ${target}ms during a fresh drag`, () => {

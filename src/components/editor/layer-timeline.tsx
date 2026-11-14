@@ -5,6 +5,7 @@ import { SpringScrollView as ScrollView, SpringScrollGestureContext } from '@/co
 import { Image } from 'expo-image';
 import { createTimelineNativeScrollGestures, TimelineNativeGestureContext, TimelineNativeGeometryContext, TimelineNativeGestureView, TimelineNativeScrollView } from './timeline-native-gesture';
 import { createTimelineLinkedScroll, timelineScrollMetadata } from './timeline-linked-scroll';
+import { useDisplayRotationInvalidation } from '@/hooks/use-display-rotation-invalidation';
 
 import { chrome } from '@/lib/ui-theme';
 import { orderedTimelineTrackIds, visualTimelineGroups, visualTimelineGroupForLayer, visualTimelineLayerIds, visualTimelineRowIds, timelineTrackMembers, moveTimelineTrack } from '@/lib/timeline-tracks';
@@ -169,6 +170,15 @@ export function LayerTimeline(props: {
   const [visibleCenterX, setVisibleCenterX] = useState(0);
   const lastScrubMsRef = useRef<number | undefined>(undefined);
   const pinch = useRef({ distance: 0, scale: effectiveScale });
+  useDisplayRotationInvalidation(useCallback(() => {
+    gestureGeometry.invalidate();
+    invalidatedScrollTouchRef.current = true;
+    if (scrubEndTimer.current) clearTimeout(scrubEndTimer.current);
+    scrubEndTimer.current = null;
+    scrubbingRef.current = false;
+    selectionOwnsViewportRef.current = false;
+    pinch.current.distance = 0;
+  }, [gestureGeometry]));
   const captionIndex = useMemo(() => indexTimelineCues(displayCaptions), [displayCaptions]);
   const translationIndexes = useMemo(() => new Map(displayTranslationTracks.map((track) => [track.id,
     indexTimelineCues(track.pairs.filter((pair) => pair.timelineVisible).map((pair) => ({
