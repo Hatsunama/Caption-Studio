@@ -16,7 +16,9 @@ source = source.replace('PanResponder: { create: panHandlers => ({ panHandlers }
   ['onResponderRelease', 'onPanResponderRelease'], ['onResponderTerminate', 'onPanResponderTerminate'],
   ['onResponderTerminationRequest', 'onPanResponderTerminationRequest'],
 ].map(([key, callback]) => [key, event => config[callback]?.(event, event.testMovement)])) }) }`);
-source = source.replace('{ exports, clearTimeout, setTimeout,', '{ exports, Date, clearTimeout, setTimeout,');
+const timerBindings = '{ exports, clearTimeout: cancelTimeout, setTimeout: scheduleTimeout,';
+assert.equal(source.split(timerBindings).length - 1, 1, 'inject the controlled clock into the actual host VM timer bindings');
+source = source.replace(timerBindings, '{ exports, Date, clearTimeout: cancelTimeout, setTimeout: scheduleTimeout,');
 source = source.replace('const pan = wrapper.props.gesture.handlers, calls = [];', 'const pan = wrapper.props.gesture?.handlers ?? {}, calls = [];');
 source = source.replace('return { calls,', `return { calls, wrapper,
   replay() {
