@@ -1,0 +1,485 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createCaptionProject } from '../src/lib/project-factory.ts';
+import { addVideoLayer, setVideoLayer, splitVideoClip, reorderVideoClip, setLayerTiming, splitVisualLayer, duplicateVisualLayer, setVideoClipGap, trimVideoClip, setVideoLayerPlaybackRate, deleteVideoClip, addImageLayer, createTextLayer } from '../src/lib/project-editor.ts';
+import { setClipPlaybackRate } from '../src/lib/video-timeline.ts';
+import { videoOverlaySegments } from '../src/lib/video-overlay-segments.ts';
+import { overlayPlaybackState } from '../src/lib/video-overlay-playback.ts';
+import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
+import { decodePersistedProject } from '../src/lib/project-codec.ts';
+
+function fixture({ currentMs = 1000, sourceStartMs = 500, rate = 1, owners = 1, playbackRate = 1 } = {}) {
+  let project = createCaptionProject({ id: 'trim-recovery', name: 'Recovery', sources: Array.from({ length: owners }, (_, i) => ({
+    id: `main${i}`, uri: `file:///main${i}.mp4`, storageMode: 'copied', displayName: 'main.mp4',
+    durationMs: 8000 / owners, width: 360, height: 640, rotation: 0,
+  })) });
+  if (rate !== 1) project = setClipPlaybackRate(project, project.clips[0].id, rate);
+  return addVideoLayer(project, { id: 'pip', name: 'PiP', uri: 'file:///cs-horizontal-samsung.mp4',
+    currentMs, durationMs: 8000 / rate, sourceStartMs, sourceDurationMs: 8000, playbackRate, includeAudio: true }).project;
+}
+const layer = (p, id = 'pip') => p.layers.find(l => l.id === id);
+const segments = (p, id = 'pip') => videoOverlaySegments(layer(p, id), p.clips, Infinity)
+  .map(s => [s.startMs, s.endMs, s.sourceStartMs, s.sourceEndMs]);
+const saved = p => decodePersistedProject(JSON.stringify(p));
+function checkChain(p, expected, id = 'pip') {
+  assert.deepEqual(segments(p, id), expected);
+  const plan = buildTimelineRenderPlan(p);
+  assert.deepEqual(plan.layers.filter(l => l.id === id).map(l => [l.startMs, l.endMs, l.sourceStartMs]),
+    expected.map(s => s.slice(0, 3)));
+  assert.deepEqual(plan.audioClips.filter(c => c.id.startsWith(`overlay-audio:${id}`))
+    .map(c => [c.startMs, c.sourceStartMs, c.sourceEndMs]), expected.map(s => [s[0], s[2], s[3]]));
+  for (const [start, end, source] of expected) {
+    const ms = (start + end) / 2;
+    const state = overlayPlaybackState(layer(p, id), ms, true, p.clips);
+    assert.equal(state.visible, true);
+    assert.ok(Math.abs(state.seconds * 1000 - (source + (ms - start) * layer(p, id).playbackRate)) < 1e-6);
+  }
+  assert.equal(layer(p, id).timingMode, 'source');
+}
+
+test('native 8s end-add, move left 3000, right extension restores available media through preview/export', () => {
+  const initial = fixture({ currentMs: 8000, sourceStartMs: 0 });
+  assert.deepEqual(segments(initial), [[7920, 8000, 0, 80]]);
+  const moved = setLayerTiming(initial, 'pip', 'move', 4920, 5000);
+  assert.deepEqual(segments(moved), [[4920, 5000, 0, 80]]);
+  const extended = setLayerTiming(moved, 'pip', 'end', 4920, 8000);
+  checkChain(saved(extended), [[4920, 8000, 0, 3080]]);
+  checkChain(setLayerTiming(extended, 'pip', 'start', 0, 8000), [[4920, 8000, 0, 3080]]);
+});
+
+for (const rate of [0.5, 1, 1.5, 2]) test(`trim/restore both edges, move and persisted clone with owner rate ${rate}`, () => {
+  const original = fixture({ rate });
+  const end = layer(original).endMs;
+  let p = setLayerTiming(original, 'pip', 'start', 1250, end);
+  p = saved(setLayerTiming(p, 'pip', 'end', 1250, end - 250));
+  p = setLayerTiming(p, 'pip', 'start', 1000, end - 250);
+  p = saved(setLayerTiming(p, 'pip', 'end', 1000, end));
+  checkChain(p, [[1000, end, 500, 500 + end - 1000]]);
+  const copy = duplicateVisualLayer(p, 'pip', 'clone').project;
+  const moved = setLayerTiming(copy, 'clone', 'move', 500, end - 500);
+  checkChain(moved, [[500, end - 500, 500, 500 + end - 1000]], 'clone');
+  assert.deepEqual(layer(moved), layer(p));
+  for (const key of ['clips', 'sources', 'captions', 'captionTracks', 'audioClips']) assert.deepEqual(p[key], saved(original)[key]);
+  assert.deepEqual(p.layers.map(l => l.id), original.layers.map(l => l.id));
+  for (const key of ['position', 'box', 'opacity', 'rotation', 'uri', 'playbackRate']) assert.deepEqual(layer(p)[key], layer(original)[key]);
+});
+
+test('available source duration bounds explicit extension; previous selection can grow repeatedly', () => {
+  let p = fixture({ sourceStartMs: 7000 });
+  checkChain(setLayerTiming(p, 'pip', 'end', 1000, 8000), [[1000, 2000, 7000, 8000]]);
+  p = fixture();
+  layer(p).mediaEndMs = 2000;
+  for (let i = 0; i < 3; i++) {
+    p = setLayerTiming(p, 'pip', 'end', 1000, 1500);
+    p = saved(setLayerTiming(p, 'pip', 'end', 1000, 8000));
+    checkChain(p, [[1000, 8000, 500, 7500]]);
+    assert.equal(layer(p).mediaEndMs, 7500);
+  }
+});
+
+test('explicitly resizing a split selects more media without changing its sibling', () => {
+  const split = splitVisualLayer(fixture(), 'pip', 2000, 'left', 'right');
+  assert.ok(split);
+  let p = setLayerTiming(split.project, 'left', 'end', 1000, 1500);
+  p = saved(setLayerTiming(p, 'left', 'end', 1000, 8000));
+  checkChain(p, [[1000, 8000, 500, 7500]], 'left');
+  assert.deepEqual(layer(p, 'right'), layer(saved(split.project), 'right'));
+});
+
+test('fragmented PiP recovers within boundary owners without consuming their gap', () => {
+  let p = fixture({ currentMs: 3000, sourceStartMs: 500, owners: 2 });
+  p = setVideoClipGap(p, p.clips[1].id, 1000).project;
+  const before = segments(p);
+  p = setLayerTiming(p, 'pip', 'start', 3250, layer(p).endMs);
+  p = setLayerTiming(p, 'pip', 'end', 3250, layer(p).endMs - 250);
+  p = saved(setLayerTiming(p, 'pip', 'start', 3000, layer(p).endMs));
+  p = saved(setLayerTiming(p, 'pip', 'end', 3000, before.at(-1)[1]));
+  checkChain(p, before);
+  assert.equal(overlayPlaybackState(layer(p), 4500, true, p.clips).visible, false);
+  assert.deepEqual(layer(p).sourceAnchors.map(a => a.clipId), p.clips.map(c => c.id));
+  const ownerTrim = trimVideoClip(p, p.clips[0].id, 'start', 200).project;
+  checkChain(trimVideoClip(ownerTrim, p.clips[0].id, 'start', 0).project, before);
+});
+
+test('invalid/no-op timing and minimum interval preserve valid source ownership', () => {
+  const p = fixture();
+  assert.equal(setLayerTiming(p, 'missing', 'end', 0, 8000), p);
+  assert.equal(setLayerTiming(p, 'pip', 'end', NaN, NaN), p);
+  assert.equal(setLayerTiming(p, 'pip', 'start', 1000, 4000), p);
+  const short = setLayerTiming(p, 'pip', 'end', 1000, -Infinity);
+  assert.equal(short, p);
+  checkChain(setLayerTiming(p, 'pip', 'end', 1000, -100), [[1000, 1080, 500, 580]]);
+});
+
+
+test('split selects its last frame; manual extension preserves earlier fragments and sibling', () => {
+  let p = fixture({ currentMs: 3000, sourceStartMs: 500, owners: 2 });
+  p = setVideoClipGap(p, p.clips[1].id, 1000).project;
+  const split = splitVisualLayer(p, 'pip', 6000, 'left', 'right');
+  assert.ok(split);
+  checkChain(saved(split.project), [[3000, 4000, 500, 1500], [5000, 6000, 1500, 2500]], 'left');
+  assert.equal(split.left.mediaEndMs, 2500);
+  const shrunk = setLayerTiming(split.project, 'left', 'end', 3000, 5500);
+  checkChain(setLayerTiming(shrunk, 'left', 'end', 3000, 9000),
+    [[3000, 4000, 500, 1500], [5000, 9000, 1500, 5500]], 'left');
+  assert.deepEqual(layer(shrunk, 'right'), layer(split.project, 'right'));
+});
+
+test('PiP trim leaves independent images, text, captions, audio and primary footage intact', () => {
+  let p = fixture();
+  p = addImageLayer(p, { id: 'image', name: 'Image', uri: 'file:///image.png', currentMs: 0, durationMs: 8000 }).project;
+  p = createTextLayer(p, 'text', 0, 8000).project;
+  p.layers.find(l => l.id === 'image').timingMode = 'timeline';
+  p.layers.find(l => l.id === 'text').timingMode = 'timeline';
+  p.captions = [{ id: 'cue', text: 'Existing caption', startMs: 0, endMs: 1000, timingMode: 'timeline', wordIds: [] }];
+  p.audioClips = [{ id: 'wav', sourceId: 'wav-source', sourceStartMs: 0, sourceEndMs: 8000, startMs: 0, playbackRate: 1, volume: 1 }];
+  const before = structuredClone(p);
+  const edited = setLayerTiming(setLayerTiming(p, 'pip', 'start', 1250, 4000), 'pip', 'end', 1250, 7000);
+  for (const key of Object.keys(before).filter(k => !['layers', 'updatedAt'].includes(k))) assert.deepEqual(edited[key], before[key]);
+  assert.deepEqual(edited.layers.filter(l => l.id !== 'pip'), before.layers.filter(l => l.id !== 'pip'));
+  assert.deepEqual(edited.layers.map(l => l.id), before.layers.map(l => l.id));
+});
+
+
+for (const playbackRate of [0.5, 1.5, 2]) test(`overlay rate ${playbackRate} recovers original frames after both edge trims`, () => {
+  const original = fixture({ rate: 1.5, playbackRate });
+  let p = setLayerTiming(original, 'pip', 'start', 1250, 4000);
+  p = setLayerTiming(p, 'pip', 'end', 1250, 3750);
+  p = saved(setLayerTiming(p, 'pip', 'start', 1000, 3750));
+  p = saved(setLayerTiming(p, 'pip', 'end', 1000, 4000));
+  checkChain(p, segments(original));
+});
+
+test('explicit end extension reacquires current footage without filling the owner gap', () => {
+  let p = fixture({ currentMs: 3000, owners: 2 });
+  p = setVideoClipGap(p, p.clips[1].id, 1000).project;
+  p = saved(setLayerTiming(p, 'pip', 'end', 3000, 4500));
+  const currentOwners = p.clips.map(c => c.id);
+  p = setLayerTiming(p, 'pip', 'end', 3000, 9000);
+  assert.deepEqual(layer(p).sourceAnchors.map(a => a.clipId), currentOwners);
+  checkChain(p, [[3000, 4000, 500, 1500], [5000, 9000, 1500, 5500]]);
+});
+
+// Explicit range changes select available media; automatic remapping retains selection.
+test('explicit end restore reacquires the still-present original owner across a gap', () => {
+  let p = fixture({ currentMs: 3000, sourceStartMs: 0, owners: 2 });
+  p = setVideoClipGap(p, p.clips[1].id, 1000).project;
+  p = saved(setLayerTiming(p, 'pip', 'end', 3000, 7000));
+  const original = segments(p);
+  p = saved(setLayerTiming(p, 'pip', 'end', 3000, 4500));
+  checkChain(p, [[3000, 4000, 0, 1000]]);
+  checkChain(saved(setLayerTiming(p, 'pip', 'end', 3000, 7000)), original);
+});
+
+test('explicit end extension selects beyond a prior speed selection', () => {
+  let p = setVideoLayerPlaybackRate(fixture({ sourceStartMs: 0 }), 'pip', 2);
+  const start = layer(p).startMs;
+  p = saved(setLayerTiming(p, 'pip', 'end', start, 5000));
+  checkChain(p, [[1000, 5000, 0, 8000]]);
+  assert.equal(layer(p).mediaEndMs, 8000);
+});
+
+for (const edge of ['start', 'end']) test(`editing ${edge} preserves latent ownership at the opposite edge`, () => {
+  const original = fixture({ sourceStartMs: 1000 });
+  const owner = original.clips[0].id;
+  let p = trimVideoClip(original, owner, edge === 'end' ? 'start' : 'end', edge === 'end' ? 1500 : 3000).project;
+  p = saved(setLayerTiming(p, 'pip', edge, edge === 'start' ? 1250 : layer(p).startMs,
+    edge === 'end' ? layer(p).endMs - 250 : layer(p).endMs));
+  p = saved(trimVideoClip(p, owner, edge === 'end' ? 'start' : 'end', edge === 'end' ? 0 : 8000).project);
+  checkChain(p, edge === 'end' ? [[1000, 3750, 1000, 3750]] : [[1250, 4000, 1250, 4000]]);
+});
+
+for (const timingMode of ['timeline', undefined]) test(`explicit non-source selection replaces stale cap (${timingMode})`, () => {
+  let p = fixture({ sourceStartMs: 0 });
+  Object.assign(layer(p), { timingMode, sourceAnchors: undefined, mediaEndMs: 1000 });
+  p = saved(setLayerTiming(p, 'pip', 'end', 1000, 6000));
+  assert.deepEqual(segments(p), [[1000, 6000, 0, 5000]]);
+  assert.equal(layer(p).mediaEndMs, 5000);
+  assert.equal(layer(p).timingMode, timingMode === 'timeline' ? 'timeline' : 'source');
+});
+
+test('a media-zero clamped extension and hidden layer preserve history identity', () => {
+  const p = fixture({ sourceStartMs: 0 });
+  assert.equal(setLayerTiming(p, 'pip', 'start', 0, 4000), p);
+  const hidden = trimVideoClip(p, p.clips[0].id, 'end', 500).project;
+  assert.equal(layer(hidden).timelineVisible, false);
+  assert.equal(setLayerTiming(hidden, 'pip', 'end', 0, 8000), hidden);
+});
+
+for (const edge of ['start', 'end']) test(`editing ${edge} preserves a fully hidden opposite owner`, () => {
+  let p = fixture({ currentMs: 3000, sourceStartMs: 500, owners: 2 });
+  p = setVideoClipGap(p, p.clips[1].id, 1000).project;
+  p = setLayerTiming(p, 'pip', 'end', 3000, 7000);
+  const owner = p.clips[edge === 'end' ? 0 : 1].id;
+  p = trimVideoClip(p, owner, edge === 'end' ? 'end' : 'start', edge === 'end' ? 2000 : 3000).project;
+  p = saved(setLayerTiming(p, 'pip', edge, edge === 'start' ? 3250 : layer(p).startMs,
+    edge === 'end' ? layer(p).endMs - 250 : layer(p).endMs));
+  p = saved(trimVideoClip(p, owner, edge === 'end' ? 'end' : 'start', edge === 'end' ? 4000 : 0).project);
+  checkChain(p, edge === 'end' ? [[3000, 4000, 500, 1500], [5000, 6750, 1500, 3250]]
+    : [[3250, 4000, 750, 1500], [5000, 7000, 1500, 3500]]);
+});
+
+test('explicit expansion preserves deliberate interior fragment holes', () => {
+  let p = fixture({ currentMs: 1000, sourceStartMs: 1000 });
+  const owner = p.clips[0].id;
+  layer(p).sourceAnchors = [
+    { clipId: owner, sourceStartMs: 1000, sourceEndMs: 2000 },
+    { clipId: owner, sourceStartMs: 3000, sourceEndMs: 4000 },
+  ];
+  p = saved(setLayerTiming(p, 'pip', 'end', 1000, 6000));
+  checkChain(p, [[1000, 2000, 1000, 2000], [3000, 6000, 2000, 5000]]);
+  p = saved(setLayerTiming(p, 'pip', 'start', 500, 6000));
+  checkChain(p, [[500, 2000, 500, 2000], [3000, 6000, 2000, 5000]]);
+  assert.equal(overlayPlaybackState(layer(p), 2500, true, p.clips).visible, false);
+});
+
+for (const rate of [0.5, 1.5, 2]) for (const playbackRate of [0.5, 1.5, 2])
+  test(`whole-owner recovery across gaps: owner ${rate}, overlay ${playbackRate}`, () => {
+    let p = fixture({ currentMs: 4000 / rate - 1000, sourceStartMs: 0, owners: 2, rate, playbackRate });
+    p = setVideoClipGap(p, p.clips[1].id, 1000).project;
+    const original = segments(p);
+    assert.equal(original.length, 2);
+    p = saved(setLayerTiming(p, 'pip', 'end', 0, original[0][1] + 500));
+    p = saved(setLayerTiming(p, 'pip', 'end', 0, original.at(-1)[1]));
+    checkChain(p, original);
+  });
+
+test('deleted owners stay detached through automatic trim/restore and speed remapping', () => {
+  let p = fixture({ currentMs: 3000, sourceStartMs: 0, owners: 2 });
+  const removed = p.clips[1].id;
+  p = deleteVideoClip(p, removed).project;
+  const original = segments(p);
+  p = trimVideoClip(p, p.clips[0].id, 'start', 500).project;
+  p = trimVideoClip(p, p.clips[0].id, 'start', 0).project;
+  p = setClipPlaybackRate(setClipPlaybackRate(p, p.clips[0].id, 2), p.clips[0].id, 1);
+  checkChain(saved(p), original);
+  assert.ok(!layer(p).sourceAnchors.some(a => a.clipId === removed));
+});
+
+test('split selection survives automatic owner trim/restore and reversible speed edits', () => {
+  const split = splitVisualLayer(fixture(), 'pip', 2000, 'left', 'right');
+  let p = split.project;
+  const before = segments(p, 'left');
+  p = trimVideoClip(p, p.clips[0].id, 'start', 1500).project;
+  p = trimVideoClip(p, p.clips[0].id, 'start', 0).project;
+  p = setClipPlaybackRate(setClipPlaybackRate(p, p.clips[0].id, 2), p.clips[0].id, 1);
+  checkChain(saved(p), before, 'left');
+  assert.equal(layer(p, 'left').mediaEndMs, 1500);
+  assert.deepEqual(layer(saved(p), 'right'), layer(saved(split.project), 'right'));
+});
+
+for (const edge of ['start', 'end']) test(`split explicitly bounds both halves after owner ${edge} trim`, () => {
+  let p = fixture({ sourceStartMs: 1000 });
+  p = trimVideoClip(p, p.clips[0].id, edge, edge === 'start' ? 1500 : 3000).project;
+  const splitMs = (layer(p).startMs + layer(p).endMs) / 2;
+  const split = splitVisualLayer(p, 'pip', splitMs, 'left', 'right');
+  assert.ok(split);
+  const before = ['left', 'right'].map(id => segments(split.project, id));
+  p = trimVideoClip(split.project, p.clips[0].id, edge, edge === 'start' ? 0 : 8000).project;
+  const offset = edge === 'start' ? 1500 : 0;
+  for (const [i, id] of ['left', 'right'].entries()) checkChain(saved(p), before[i].map(s => [s[0] + offset, s[1] + offset, s[2], s[3]]), id);
+});
+
+for (const rate of [0.5, 1.5, 2]) test(`explicit head restore reacquires a removed first owner at rate ${rate}`, () => {
+  let p = fixture({ currentMs: 4000 / rate - 1000, sourceStartMs: 0, owners: 2, rate });
+  p = setVideoClipGap(p, p.clips[1].id, 1000).project;
+  const original = segments(p);
+  p = saved(setLayerTiming(p, 'pip', 'start', original[1][0] + 250, layer(p).endMs));
+  assert.equal(layer(p).sourceAnchors.length, 1);
+  p = saved(setLayerTiming(p, 'pip', 'start', original[0][0], layer(p).endMs));
+  checkChain(p, original);
+});
+
+test('available-media-end clamped extension preserves history identity', () => {
+  const p = fixture({ sourceStartMs: 7000 });
+  assert.equal(setLayerTiming(p, 'pip', 'end', layer(p).startMs, 8000), p);
+});
+
+
+test('actual factory reordered owners preserve exact frames through partial and whole head recovery', () => {
+  let p = createCaptionProject({ id: 'reordered-root', name: 'Reordered', sources: ['a', 'b'].map(id => ({
+    id, uri: `file:///${id}.mp4`, storageMode: 'copied', displayName: `${id}.mp4`,
+    durationMs: 4000, width: 360, height: 640, rotation: 0,
+  })) });
+  p = addVideoLayer(p, { id: 'pip', name: 'PiP', uri: 'file:///pip.mp4', currentMs: 3000,
+    durationMs: 8000, sourceStartMs: 0, sourceDurationMs: 8000, playbackRate: 1, includeAudio: true }).project;
+  p = reorderVideoClip(p, p.clips[1].id, 0).project;
+  const before = [[7000, 8000, 0, 1000], [0, 2000, 1000, 3000]];
+  checkChain(p, before);
+  for (const start of [1000, 2500]) {
+    const trimmed = saved(setLayerTiming(p, 'pip', 'start', start, 8000));
+    checkChain(trimmed, start === 1000 ? [[7000, 8000, 0, 1000], [1000, 2000, 2000, 3000]] : [[7000, 8000, 0, 1000]]);
+    checkChain(saved(setLayerTiming(trimmed, 'pip', 'start', 0, 8000)), before);
+  }
+});
+
+
+function threeOwners(rate = 1) {
+  let p = createCaptionProject({ id: 'three', name: 'Three', sources: ['a', 'b', 'c'].map(id => ({
+    id, uri: `file:///${id}.mp4`, storageMode: 'copied', displayName: `${id}.mp4`,
+    durationMs: 6000, width: 360, height: 640, rotation: 0,
+  })) });
+  for (const owner of p.clips) p = setClipPlaybackRate(p, owner.id, rate);
+  p = addVideoLayer(p, { id: 'pip', name: 'PiP', uri: 'file:///pip.mp4', currentMs: 3000 / rate,
+    durationMs: 30000, sourceStartMs: 1000, sourceDurationMs: 30000, includeAudio: true }).project;
+  return setLayerTiming(p, 'pip', 'end', 3000 / rate, 15000 / rate);
+}
+function reorderOwners(p, order) {
+  const ids = p.clips.map(c => c.id);
+  for (const [index, owner] of order.entries()) p = reorderVideoClip(p, ids[owner], index)?.project ?? p;
+  return saved(p);
+}
+function assertFrames(actual, expected) {
+  assert.equal(actual.length, expected.length);
+  for (let i = 0; i < actual.length; i++) for (let j = 0; j < 4; j++)
+    assert.ok(Math.abs(actual[i][j] - expected[i][j]) < 1e-7, `${actual[i]} != ${expected[i]}`);
+}
+for (const rate of [0.5, 1.5, 2]) for (const order of [[1, 2, 0], [2, 0, 1], [2, 1, 0]])
+  for (const edge of ['start', 'end']) for (const whole of [false, true])
+    test(`three owners ${order}, rate ${rate}, ${edge}, whole ${whole}: selective frames and recovery`, () => {
+      const initial = threeOwners(rate);
+      const p = reorderOwners(initial, order);
+      const before = segments(p);
+      const chronological = [...before].sort((a, b) => a[0] - b[0]);
+      const boundary = edge === 'start' ? chronological[0] : chronological.at(-1);
+      const cut = edge === 'start' ? (whole ? boundary[1] + 100 : boundary[0] + 200)
+        : (whole ? boundary[0] - 100 : boundary[1] - 200);
+      const expected = before.flatMap(s => {
+        const start = edge === 'start' ? Math.max(s[0], cut) : s[0];
+        const end = edge === 'end' ? Math.min(s[1], cut) : s[1];
+        return end > start ? [[start, end, s[2] + start - s[0], s[3] - (s[1] - end)]] : [];
+      });
+      const trimmed = saved(setLayerTiming(p, 'pip', edge, edge === 'start' ? cut : layer(p).startMs,
+        edge === 'end' ? cut : layer(p).endMs));
+      assertFrames(segments(trimmed), expected);
+      checkChain(trimmed, segments(trimmed));
+      const restored = saved(setLayerTiming(trimmed, 'pip', edge, layer(p).startMs, layer(p).endMs));
+      assertFrames(segments(restored), before);
+      checkChain(restored, segments(restored));
+      // A different main owner rate changes automatic elapsed consumption and remains reversible.
+      const owner = restored.clips[1].id;
+      const sped = saved(setClipPlaybackRate(restored, owner, rate === 2 ? 1 : 2));
+      const back = saved(setClipPlaybackRate(sped, owner, rate));
+      assertFrames(segments(back), before);
+    });
+
+test('retained mapping survives main split, deletion and hidden-owner trim restore after reorder', () => {
+  let p = reorderOwners(threeOwners(), [2, 0, 1]);
+  p = saved(setLayerTiming(p, 'pip', 'start', layer(p).startMs + 200, layer(p).endMs));
+  const before = segments(p);
+  const owner = p.clips[1].id;
+  p = splitVideoClip(p, owner, 10500, 'main-left', 'main-right').project;
+  const divided = segments(p);
+  assert.equal(divided.length, before.length + 1);
+  checkChain(saved(p), divided);
+  p = trimVideoClip(p, 'main-right', 'start', 5000).project;
+  p = saved(trimVideoClip(p, 'main-right', 'start', 4500).project);
+  assertFrames(segments(p), divided);
+  const deleted = p.clips[0].id;
+  p = saved(deleteVideoClip(p, deleted).project);
+  assert.ok(!layer(p).sourceMapping.some(a => a.clipId === deleted));
+  assert.ok(!layer(p).sourceAnchors.some(a => a.clipId === deleted));
+  const survivors = segments(p);
+  p = saved(setClipPlaybackRate(setClipPlaybackRate(p, p.clips[0].id, 2), p.clips[0].id, 1));
+  assertFrames(segments(p), survivors);
+  checkChain(p, segments(p));
+});
+
+test('reordered sparse selection overlay speed is saveable and reversible without expanding selected bound', () => {
+  let p = reorderOwners(threeOwners(), [2, 0, 1]);
+  p = saved(setLayerTiming(p, 'pip', 'start', 1000, layer(p).endMs));
+  const before = segments(p), bound = layer(p).mediaEndMs;
+  const sped = saved(setVideoLayerPlaybackRate(p, 'pip', 2));
+  assert.equal(layer(sped).mediaEndMs, bound);
+  const back = saved(setVideoLayerPlaybackRate(sped, 'pip', 1));
+  assertFrames(segments(back), before);
+});
+
+test('new association basis remains independent when a duplicate is edited', () => {
+  const p = setLayerTiming(threeOwners(), 'pip', 'start', 3500, 15000);
+  const before = structuredClone(p);
+  const copy = duplicateVisualLayer(p, 'pip', 'copy').project;
+  assert.notEqual(layer(copy, 'copy').sourceMapping, layer(p).sourceMapping);
+  assert.notEqual(layer(copy, 'copy').sourceMapping[0], layer(p).sourceMapping[0]);
+  const edited = setLayerTiming(copy, 'copy', 'end', 3500, 10000);
+  assert.deepEqual(p, before);
+  assert.deepEqual(layer(edited), layer(p));
+});
+
+
+for (const edge of ['start', 'end']) test(`reordered association with a gap and interior hole preserves ${edge} survivors`, () => {
+  let p = threeOwners();
+  p = setVideoClipGap(p, p.clips[1].id, 1000).project;
+  // Author a sparse legacy association to exercise conversion without invented frames.
+  delete layer(p).sourceMapping;
+  layer(p).sourceAnchors = [
+    { clipId: p.clips[0].id, sourceStartMs: 3000, sourceEndMs: 4000 },
+    { clipId: p.clips[0].id, sourceStartMs: 5000, sourceEndMs: 6000 },
+    { clipId: p.clips[1].id, sourceStartMs: 0, sourceEndMs: 4000 },
+    { clipId: p.clips[2].id, sourceStartMs: 0, sourceEndMs: 3000 },
+  ];
+  p = reorderOwners(p, [1, 2, 0]);
+  const before = segments(p);
+  const start = layer(p).startMs, end = layer(p).endMs;
+  const trimmed = saved(setLayerTiming(p, 'pip', edge, edge === 'start' ? start + 250 : start,
+    edge === 'end' ? end - 250 : end));
+  const expected = before.map(s => edge === 'start' && s[0] === start ? [s[0] + 250, s[1], s[2] + 250, s[3]]
+    : edge === 'end' && s[1] === end ? [s[0], s[1] - 250, s[2], s[3] - 250] : s);
+  assertFrames(segments(trimmed), expected);
+  const restored = saved(setLayerTiming(trimmed, 'pip', edge, start, end));
+  assertFrames(segments(restored), before);
+  checkChain(restored, segments(restored));
+});
+
+for (const edge of ['start', 'end']) test(`reordered edit preserves a fully main-hidden opposite owner while editing ${edge}`, () => {
+  let p = reorderOwners(threeOwners(), [2, 1, 0]);
+  const hiddenOwner = p.clips[edge === 'end' ? 0 : 2].id;
+  const before = segments(p);
+  const originalBoundary = edge === 'start' ? layer(p).startMs : layer(p).endMs;
+  p = trimVideoClip(p, hiddenOwner, edge === 'end' ? 'start' : 'end', edge === 'end' ? 5000 : 2000).project;
+  assert.equal(segments(p).length, before.length - 1);
+  p = saved(setLayerTiming(p, 'pip', edge, edge === 'start' ? layer(p).startMs + 250 : layer(p).startMs,
+    edge === 'end' ? layer(p).endMs - 250 : layer(p).endMs));
+  p = saved(trimVideoClip(p, hiddenOwner, edge === 'end' ? 'start' : 'end', edge === 'end' ? 0 : 6000).project);
+  const expected = before.map(s => edge === 'start' && s[0] === originalBoundary ? [s[0] + 250, s[1], s[2] + 250, s[3]]
+    : edge === 'end' && s[1] === originalBoundary ? [s[0], s[1] - 250, s[2], s[3] - 250] : s);
+  assertFrames(segments(p), expected);
+  checkChain(p, segments(p));
+});
+
+for (const edge of ['start', 'end', 'move', 'both']) test(`source mapping timing rejects nonfinite ${edge} and preserves the 80ms minimum`, () => {
+  const p = setLayerTiming(threeOwners(), 'pip', 'start', 3500, 15000);
+  assert.equal(setLayerTiming(p, 'pip', edge, NaN, Infinity), p);
+  assert.equal(setLayerTiming(p, 'pip', edge, -Infinity, NaN), p);
+  const shortened = setLayerTiming(p, 'pip', 'end', layer(p).startMs, layer(p).startMs + 1);
+  assert.equal(layer(shortened).endMs - layer(shortened).startMs, 80);
+});
+
+
+test('explicit source patch and moving a mapped PiP discard the old association basis', () => {
+  const p = setLayerTiming(threeOwners(), 'pip', 'start', 3500, 15000);
+  const patched = saved(setVideoLayer(p, 'pip', { startMs: 1000, endMs: 2000, sourceStartMs: 300 }));
+  checkChain(patched, [[1000, 2000, 300, 1300]]);
+  assert.equal(layer(patched).sourceMapping, undefined);
+  const moved = saved(setLayerTiming(p, 'pip', 'move', 1000, 12500));
+  assert.equal(layer(moved).sourceMapping, undefined);
+  checkChain(moved, [[1000, 6000, 1500, 6500], [6000, 12000, 6500, 12500], [12000, 12500, 12500, 13000]]);
+});
+
+
+test('visual split of reordered mapping preserves exact frame selections and independent recovery', () => {
+  const p = reorderOwners(threeOwners(), [2, 0, 1]);
+  const split = splitVisualLayer(p, 'pip', 10000, 'left', 'right');
+  assert.ok(split);
+  const expectedLeft = [[9000, 10000, 1000, 2000], [0, 3000, 10000, 13000]];
+  const expectedRight = [[10000, 12000, 2000, 4000], [12000, 18000, 4000, 10000]];
+  checkChain(saved(split.project), expectedLeft, 'left');
+  checkChain(saved(split.project), expectedRight, 'right');
+  const owner = split.project.clips[1].id;
+  let restored = trimVideoClip(split.project, owner, 'end', 4000).project;
+  restored = saved(trimVideoClip(restored, owner, 'end', 6000).project);
+  checkChain(restored, expectedLeft, 'left');
+  checkChain(restored, expectedRight, 'right');
+  const edited = saved(setLayerTiming(restored, 'left', 'end', 0, 9500));
+  assert.deepEqual(layer(edited, 'right'), layer(saved(restored), 'right'));
+});

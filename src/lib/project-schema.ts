@@ -10,7 +10,7 @@ import { emptyCaptionTrackCollection, normalizedTranslationFailureReason, synchr
 import { sameCaptionLanguageFamily } from '@/lib/caption-languages';
 import { hydrateVideoTransition } from '@/lib/video-transitions';
 import { DEFAULT_VIDEO_FRAME_RATE } from '@/lib/video-source-metadata';
-import { MINIMUM_CLIP_TIMELINE_MS } from '@/lib/video-timeline';
+import { MINIMUM_CLIP_TIMELINE_MS, projectVideoSourceSegments } from '@/lib/video-timeline';
 import { assertProjectSnapshotSize, MAX_PROJECT_CAPTIONS } from '@/lib/project-capacity';
 import {
   DEFAULT_CAPTION_STYLE,
@@ -136,9 +136,40 @@ export function decodeVersionTwoProject(candidate: Record<string, unknown>): Cap
   });
   layers.forEach((layer) => {
     if (layer.kind === 'captions') return;
-    layer.sourceAnchors?.forEach((anchor) => {
+    (layer.kind === 'video' ? [...(layer.sourceAnchors ?? []), ...(layer.sourceMapping ?? [])] : layer.sourceAnchors)?.forEach((anchor) => {
       if (!clipIds.has(anchor.clipId)) throw new Error('A project visual layer references an unknown video clip');
     });
+    if (layer.kind === 'video' && layer.sourceMapping !== undefined) {
+      if (layer.timingMode === 'timeline') throw new Error('A timeline video cannot retain source mapping');
+      const byOwner = new Map<string, NonNullable<VideoVisualLayer['sourceMapping']>>();
+      for (const item of layer.sourceMapping) {
+        const owner = clips.find(clip => clip.id === item.clipId)!;
+        const source = sources.find(source => source.id === owner.sourceId)!;
+        if (item.sourceEndMs > source.durationMs) throw new Error('Video source mapping exceeds owner media');
+        const intervals = byOwner.get(item.clipId) ?? [];
+        intervals.push(item);
+        byOwner.set(item.clipId, intervals);
+      }
+      for (const intervals of byOwner.values()) {
+        intervals.sort((a, b) => a.sourceStartMs - b.sourceStartMs);
+        if (intervals.some((item, index) => index > 0 && intervals[index - 1].sourceEndMs > item.sourceStartMs))
+          throw new Error('Video source mapping has contradictory owner intervals');
+      }
+      for (const anchor of layer.sourceAnchors ?? []) {
+        let covered = anchor.sourceStartMs;
+        for (const item of byOwner.get(anchor.clipId) ?? []) {
+          if (item.sourceStartMs > covered) break;
+          if (item.sourceEndMs > covered) covered = item.sourceEndMs;
+        }
+        if (covered < anchor.sourceEndMs) throw new Error('Video selection exceeds its retained mapping');
+      }
+      // The full association can be latent beyond the available media after a
+      // rate edit. Validate the selected output through the same projection.
+      const projected = projectVideoSourceSegments(layer, clips, Infinity);
+      if (projected.some(segment => segment.sourceStartMs < 0 || segment.sourceEndMs > layer.sourceDurationMs + 1e-7)
+        || (layer.timelineVisible !== false && !projected.length))
+        throw new Error('Video selection has invalid mapped media bounds');
+    }
   });
   return {
     schemaVersion: 2,
@@ -737,6 +768,16 @@ function decodeVideoLayer(layer: Record<string, unknown>, index: number): VideoV
     mediaEndMs: layer.mediaEndMs === undefined ? undefined
       : finiteNumber(layer.mediaEndMs, `video layer ${index + 1} selected media end`, 0, sourceDurationMs),
     playbackRate: finiteNumber(layer.playbackRate, `video layer ${index + 1} playback rate`, 0.25, 4),
+    ...(layer.sourceMapping === undefined ? {} : { sourceMapping: decodeArray(layer.sourceMapping,
+      `video layer ${index + 1} source mapping`, 5_000, (raw, mappingIndex) => {
+        const label = `video layer ${index + 1} source mapping ${mappingIndex + 1}`;
+        const item = record(raw, label);
+        const anchor = decodeSourceAnchors([item], label)![0];
+        if (anchor.sourceEndMs <= anchor.sourceStartMs) throw new Error(`${label} must have positive duration.`);
+        return { ...anchor,
+          mediaStartMs: finiteNumber(item.mediaStartMs, `${label} media start`, 0, Number.MAX_SAFE_INTEGER),
+          ownerRate: finiteNumber(item.ownerRate, `${label} owner rate`, 0.25, 4) };
+      }) }),
     includeAudio: booleanValue(layer.includeAudio, `video layer ${index + 1} include audio`),
   };
 }

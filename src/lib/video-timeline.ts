@@ -422,6 +422,50 @@ export function rippleTimedContent(project: CaptionProject, cutStartMs: number, 
   };
 }
 
+/** Materialize the legacy ordered basis without changing its selected output. */
+export function videoSourceMapping(layer: VideoVisualLayer, clips: VideoClip[], referenceClips = clips) {
+  const owners = new Map(referenceClips.concat(clips).map(clip => [clip.id, clip]));
+  let elapsedMs = 0;
+  let rateDeltaMs = 0;
+  return (layer.sourceMapping ?? layer.sourceAnchors?.map(anchor => {
+    const ownerRate = owners.get(anchor.clipId)?.playbackRate ?? 1;
+    const mediaStartMs = (layer.sourceStartAtAnchorMs ?? layer.sourceStartMs) + elapsedMs * layer.playbackRate;
+    elapsedMs += (anchor.sourceEndMs - anchor.sourceStartMs) / ownerRate;
+    return { ...anchor, mediaStartMs, ownerRate };
+  }) ?? []).map(anchor => {
+    const ownerRate = owners.get(anchor.clipId)?.playbackRate ?? anchor.ownerRate;
+    const mediaStartMs = anchor.mediaStartMs + rateDeltaMs * layer.playbackRate;
+    rateDeltaMs += (anchor.sourceEndMs - anchor.sourceStartMs) * (1 / ownerRate - 1 / anchor.ownerRate);
+    return { ...anchor, mediaStartMs, ownerRate };
+  });
+}
+
+/** Authoritative VIDEO projection shared by remapping, preview, audio and export. */
+export function projectVideoSourceSegments(layer: VideoVisualLayer, clips: VideoClip[], durationMs: number,
+  referenceClips = clips) {
+  const entries = new Map(buildClipTimeline(clips).map(entry => [entry.clip.id, entry]));
+  const mapping = videoSourceMapping(layer, clips, referenceClips);
+  const selectionByOwner = new Map<string, NonNullable<VideoVisualLayer['sourceAnchors']>>();
+  for (const anchor of layer.sourceAnchors ?? []) {
+    const selection = selectionByOwner.get(anchor.clipId) ?? [];
+    selection.push(anchor);
+    selectionByOwner.set(anchor.clipId, selection);
+  }
+  return mapping.flatMap(basis => (selectionByOwner.get(basis.clipId) ?? []).flatMap(anchor => {
+    const entry = entries.get(anchor.clipId);
+    if (!entry || anchor.clipId !== basis.clipId) return [];
+    const ownerStartMs = Math.max(anchor.sourceStartMs, basis.sourceStartMs, entry.clip.sourceStartMs);
+    const ownerEndMs = Math.min(anchor.sourceEndMs, basis.sourceEndMs, entry.clip.sourceEndMs);
+    if (ownerEndMs <= ownerStartMs) return [];
+    const mediaStartMs = basis.mediaStartMs + (ownerStartMs - basis.sourceStartMs) / entry.clip.playbackRate * layer.playbackRate;
+    const startMs = timelineTimeAt(entry, ownerStartMs);
+    const endMs = Math.min(durationMs, timelineTimeAt(entry, ownerEndMs),
+      startMs + ((layer.mediaEndMs ?? layer.sourceDurationMs) - mediaStartMs) / layer.playbackRate);
+    return endMs > startMs ? [{ startMs, endMs, sourceStartMs: mediaStartMs,
+      sourceEndMs: mediaStartMs + (endMs - startMs) * layer.playbackRate }] : [];
+  }));
+}
+
 /** Keep an overlay's picture and optional audio on the same source interval after its owner changes. */
 export function remapVideoLayerToClips(
   layer: VideoVisualLayer,
@@ -429,52 +473,21 @@ export function remapVideoLayerToClips(
   referenceClips: VideoClip[],
 ): VideoVisualLayer {
   if (layer.timingMode === 'timeline' || !layer.sourceAnchors?.length) return layer;
-  const entries = buildClipTimeline(clips);
-  const entryById = new Map(entries.map((entry) => [entry.clip.id, entry]));
-  const referenceById = new Map(referenceClips.map((clip) => [clip.id, clip]));
-  const survivingAnchors = layer.sourceAnchors.filter((anchor) => entryById.has(anchor.clipId));
-  const baseSourceStartMs = layer.sourceStartAtAnchorMs ?? layer.sourceStartMs;
-  let elapsedMs = 0;
-  let earliest: { timelineMs: number; elapsedMs: number } | undefined;
-  const visibleRanges: { startMs: number; endMs: number }[] = [];
-  for (const anchor of layer.sourceAnchors) {
-    const entry = entryById.get(anchor.clipId);
-    const rate = validPlaybackRate(entry?.clip.playbackRate ?? referenceById.get(anchor.clipId)?.playbackRate ?? 1);
-    if (entry) {
-      const sourceStartMs = Math.max(anchor.sourceStartMs, entry.clip.sourceStartMs);
-      const sourceEndMs = Math.min(anchor.sourceEndMs, entry.clip.sourceEndMs);
-      if (sourceEndMs > sourceStartMs) {
-        const startMs = timelineTimeAt(entry, sourceStartMs);
-        const mediaStartMs = baseSourceStartMs
-          + (elapsedMs + (sourceStartMs - anchor.sourceStartMs) / rate) * layer.playbackRate;
-        const endMs = Math.min(timelineTimeAt(entry, sourceEndMs),
-          startMs + Math.max(0, (layer.mediaEndMs ?? layer.sourceDurationMs) - mediaStartMs) / layer.playbackRate);
-        if (endMs > startMs) visibleRanges.push({ startMs, endMs });
-        if (endMs > startMs && (!earliest || startMs < earliest.timelineMs)) {
-          earliest = { timelineMs: startMs, elapsedMs: elapsedMs + (sourceStartMs - anchor.sourceStartMs) / rate };
-        }
-      }
-    }
-    elapsedMs += (anchor.sourceEndMs - anchor.sourceStartMs) / rate;
-  }
-  if (!earliest) {
-    const firstSurvivor = layer.sourceAnchors.findIndex((anchor) => entryById.has(anchor.clipId));
-    const removedPrefixMs = firstSurvivor < 0 ? 0 : layer.sourceAnchors.slice(0, firstSurvivor)
-      .reduce((sum, anchor) => sum + (anchor.sourceEndMs - anchor.sourceStartMs)
-        / validPlaybackRate(referenceById.get(anchor.clipId)?.playbackRate ?? 1), 0);
-    const sourceStartAtAnchorMs = baseSourceStartMs + removedPrefixMs * layer.playbackRate;
-    return { ...layer, sourceAnchors: survivingAnchors, timelineVisible: false,
-      sourceStartMs: sourceStartAtAnchorMs, sourceStartAtAnchorMs };
-  }
-  const retainedPrefixMs = layer.sourceAnchors.slice(0, layer.sourceAnchors.findIndex((anchor) => entryById.has(anchor.clipId)))
-    .reduce((sum, anchor) => sum + (anchor.sourceEndMs - anchor.sourceStartMs)
-      / validPlaybackRate(referenceById.get(anchor.clipId)?.playbackRate ?? 1), 0);
-  const sourceStartMs = baseSourceStartMs + earliest.elapsedMs * layer.playbackRate;
-  const startMs = Math.min(...visibleRanges.map((range) => range.startMs));
-  const endMs = Math.max(...visibleRanges.map((range) => range.endMs));
-  return { ...layer, sourceAnchors: survivingAnchors, startMs, endMs,
-    timelineVisible: sourceStartMs < (layer.mediaEndMs ?? layer.sourceDurationMs) && endMs - startMs >= 80,
-    sourceStartMs, sourceStartAtAnchorMs: baseSourceStartMs + retainedPrefixMs * layer.playbackRate };
+  const mapping = videoSourceMapping(layer, clips, referenceClips);
+  const ids = new Set(clips.map(clip => clip.id));
+  const segments = projectVideoSourceSegments(layer, clips, Infinity, referenceClips);
+  const sourceAnchors = layer.sourceAnchors.filter(anchor => ids.has(anchor.clipId));
+  const sourceMapping = layer.sourceMapping ? mapping.filter(anchor => ids.has(anchor.clipId)) : undefined;
+  // Deletion must retain the offsets of surviving fragments, including interior owners.
+  const removed = mapping.some(anchor => !ids.has(anchor.clipId));
+  const retained = sourceMapping ?? (removed ? mapping.filter(anchor => ids.has(anchor.clipId)) : undefined);
+  const earliest = segments.reduce<(typeof segments)[number] | undefined>((first, segment) =>
+    !first || segment.startMs < first.startMs ? segment : first, undefined);
+  if (!earliest) return { ...layer, sourceAnchors, ...(retained ? { sourceMapping: retained } : {}), timelineVisible: false };
+  const startMs = earliest.startMs;
+  const endMs = Math.max(...segments.map(segment => segment.endMs));
+  return { ...layer, sourceAnchors, ...(retained ? { sourceMapping: retained } : {}), startMs, endMs,
+    sourceStartMs: earliest.sourceStartMs, timelineVisible: endMs - startMs >= 80 };
 }
 
 export function setClipPlaybackRate(project: CaptionProject, clipId: string, playbackRate: number) {
