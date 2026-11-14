@@ -2,12 +2,13 @@ import type { Gesture } from 'react-native-gesture-handler';
 import { timelineTouchIntent } from '@/lib/timeline-touch-intent';
 
 export type TimelineNativePanCallbacks = {
-  begin: (dx: number, dy: number, reorder?: boolean, pageY?: number) => void;
-  move: (dx: number, dy: number, touches: number, pageY?: number) => void;
+  begin: (dx: number, dy: number, reorder?: boolean, pageY?: number, pageX?: number) => void;
+  move: (dx: number, dy: number, touches: number, pageY?: number, pageX?: number) => void;
   finish: () => void;
   cancel: () => void;
   prepare?: () => void;
   holdMilliseconds?: number;
+  trackPointerX?: boolean;
   /** Defaults to axis. A different hold axis requires resolved intent after the hold. */
   holdAxis?: 'horizontal' | 'vertical';
   axis?: 'horizontal' | 'vertical';
@@ -34,7 +35,7 @@ export function initialTimelineNativePanState(): TimelineNativePanState {
 
 type DeliveryEvent = 'prepare' | 'begin' | 'move' | 'finish' | 'cancel';
 type Deliver = (kind: DeliveryEvent, epoch: number, touchId: number,
-  dx?: number, dy?: number, touches?: number, reorder?: boolean, pageY?: number) => void;
+  dx?: number, dy?: number, touches?: number, reorder?: boolean, pageY?: number, pageX?: number) => void;
 
 /** Invalidate RN ownership before queued UI work arrives. The UI copy also
  * stops recognition, so neither side can revive an invalidated touch. */
@@ -50,7 +51,7 @@ export function createTimelineNativePanDelivery(callbacks: TimelineNativePanCall
     if (wasActive) callbacks.cancel();
   };
   const invalidate = () => { epoch += 1; cancel(); return epoch; };
-  const dispatch: Deliver = (kind, eventEpoch, touchId, dx = 0, dy = 0, touches = 1, reorder = false, pageY) => {
+  const dispatch: Deliver = (kind, eventEpoch, touchId, dx = 0, dy = 0, touches = 1, reorder = false, pageY, pageX) => {
     if (!mounted || eventEpoch !== epoch) return;
     if (kind === 'prepare') {
       cancel();
@@ -59,13 +60,15 @@ export function createTimelineNativePanDelivery(callbacks: TimelineNativePanCall
     } else if (kind === 'begin') {
       if (preparedTouch !== touchId || activeTouch) return;
       activeTouch = touchId;
-      if ((callbacks.axis === 'vertical' || callbacks.holdAxis === 'vertical')) callbacks.begin(dx, dy, reorder, pageY);
+      if (callbacks.trackPointerX) callbacks.begin(dx, dy, reorder, pageY, pageX);
+      else if ((callbacks.axis === 'vertical' || callbacks.holdAxis === 'vertical')) callbacks.begin(dx, dy, reorder, pageY);
       else callbacks.begin(dx, dy, reorder);
     } else if (kind === 'cancel') {
       if (preparedTouch === touchId) cancel();
     } else if (activeTouch === touchId) {
       if (kind === 'move') {
-        if ((callbacks.axis === 'vertical' || callbacks.holdAxis === 'vertical')) callbacks.move(dx, dy, touches, pageY);
+        if (callbacks.trackPointerX) callbacks.move(dx, dy, touches, pageY, pageX);
+        else if ((callbacks.axis === 'vertical' || callbacks.holdAxis === 'vertical')) callbacks.move(dx, dy, touches, pageY);
         else callbacks.move(dx, dy, touches);
       }
       else if (kind === 'finish') {
@@ -100,6 +103,7 @@ export function createTimelineNativePan(
   const holdMilliseconds = callbacks.holdMilliseconds ?? 0;
   const axis = callbacks.axis ?? 'horizontal';
   const holdAxis = callbacks.holdAxis ?? axis;
+  const trackPointerX = callbacks.trackPointerX ?? false;
   const cancel = () => {
     'worklet';
     const current = state.value;
@@ -156,7 +160,7 @@ export function createTimelineNativePan(
       const dy = event.absoluteY - current.originY;
       if (!Number.isFinite(dx) || !Number.isFinite(dy)) { cancel(); return; }
       state.value = { ...current, phase: 'active', lastDx: dx, lastDy: dy };
-      schedule(deliver, 'begin', current.epoch, current.touchId, dx, dy, 1, current.reorder, (axis === 'vertical' || holdAxis === 'vertical') ? event.absoluteY : undefined);
+      schedule(deliver, 'begin', current.epoch, current.touchId, dx, dy, 1, current.reorder, (axis === 'vertical' || holdAxis === 'vertical') ? event.absoluteY : undefined, trackPointerX ? event.absoluteX : undefined);
     })
     .onUpdate((event) => {
       'worklet';
@@ -166,7 +170,7 @@ export function createTimelineNativePan(
       const dy = event.absoluteY - current.originY;
       if (event.numberOfPointers !== 1 || !Number.isFinite(dx) || !Number.isFinite(dy)) { cancel(); return; }
       state.value = { ...current, lastDx: dx, lastDy: dy };
-      schedule(deliver, 'move', current.epoch, current.touchId, dx, dy, 1, false, (axis === 'vertical' || holdAxis === 'vertical') ? event.absoluteY : undefined);
+      schedule(deliver, 'move', current.epoch, current.touchId, dx, dy, 1, false, (axis === 'vertical' || holdAxis === 'vertical') ? event.absoluteY : undefined, trackPointerX ? event.absoluteX : undefined);
     })
     .onEnd((event, success) => {
       'worklet';
@@ -176,7 +180,7 @@ export function createTimelineNativePan(
       const dy = event.absoluteY - current.originY;
       if (!success || !Number.isFinite(dx) || !Number.isFinite(dy)) { cancel(); return; }
       state.value = { ...current, phase: 'idle', lastDx: dx, lastDy: dy };
-      if (dx !== current.lastDx || dy !== current.lastDy) schedule(deliver, 'move', current.epoch, current.touchId, dx, dy, 1, false, (axis === 'vertical' || holdAxis === 'vertical') ? event.absoluteY : undefined);
+      if (dx !== current.lastDx || dy !== current.lastDy) schedule(deliver, 'move', current.epoch, current.touchId, dx, dy, 1, false, (axis === 'vertical' || holdAxis === 'vertical') ? event.absoluteY : undefined, trackPointerX ? event.absoluteX : undefined);
       schedule(deliver, 'finish', current.epoch, current.touchId);
     })
     .onTouchesUp((_event, manager) => {

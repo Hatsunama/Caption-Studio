@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import ts from 'typescript';
 import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
@@ -11,6 +11,15 @@ import { moveVisualLayer } from '../src/lib/project-editor.ts';
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 import { buildTimelineRenderPlan } from '../src/lib/export-render-plan.ts';
 import { orderedTimelineTrackIds, moveTimelineTrack, setTimelineTrackOrder, applyTimelineStackOrder, visualTimelineRowIds } from '../src/lib/timeline-tracks.ts';
+
+const openHarnesses = new Set();
+afterEach(() => {
+  const failures = [];
+  for (const close of [...openHarnesses]) {
+    try { close(); } catch (error) { failures.push(error); }
+  }
+  if (failures.length) throw new AggregateError(failures, 'harness cleanup failed');
+});
 
 const requireLocal = createRequire(import.meta.url);
 
@@ -28,6 +37,21 @@ function image(id, startMs, endMs, extra = {}) {
 }
 
 function harness() {
+  const timers = new Set(), cleanups = new Set();
+  const cancelTimeout = timer => { clearTimeout(timer); timers.delete(timer); };
+  const scheduleTimeout = (fn, delay, ...args) => {
+    const timer = setTimeout(() => { timers.delete(timer); fn(...args); }, delay);
+    timers.add(timer); return timer;
+  };
+  function close() {
+    openHarnesses.delete(close);
+    try { for (const cleanup of cleanups) cleanup(); }
+    finally {
+      for (const timer of timers) clearTimeout(timer);
+      timers.clear(); cleanups.clear(); nativeEvents.removeAllListeners();
+    }
+  }
+  openHarnesses.add(close);
   const nativeEvents = new EventEmitter();
   const deviceEvents = { addListener(name, callback) {
     nativeEvents.on(name, callback);
@@ -40,7 +64,11 @@ function harness() {
   const react = {
     Fragment: 'Fragment', createContext: (value) => ({ value, Provider: 'Provider' }),
     useContext: (context) => context.value, useMemo: (factory) => factory(),
-    useCallback: (callback) => callback, useEffect: (effect) => effects.push(effect),
+    useCallback: (callback) => callback, useEffect: (effect) => effects.push(() => {
+      const cleanup = effect();
+      if (typeof cleanup === 'function') cleanups.add(cleanup);
+      return cleanup;
+    }),
     useRef: (value) => { const ref = { current: value }; refs.push(ref); return ref; },
     useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
   };
@@ -49,7 +77,7 @@ function harness() {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   const exports = {};
-  runInNewContext(output, { exports, setTimeout, clearTimeout, requestAnimationFrame: () => 0, cancelAnimationFrame() {},
+  runInNewContext(output, { exports, setTimeout: scheduleTimeout, clearTimeout: cancelTimeout, requestAnimationFrame: () => 0, cancelAnimationFrame() {},
     require: function load(name) {
       if (name === 'react') return react;
       if (name === '@/hooks/use-display-rotation-invalidation') {
@@ -102,7 +130,7 @@ function harness() {
     };
     return exports.LayerTimeline(props);
   }
-  return { exports, all, render, refs, effects, haptics };
+  return { exports, all, render, refs, effects, haptics, close };
 }
 
 test('the blank trailing area belongs to the existing vertical lane scroll surface', () => {
@@ -199,10 +227,10 @@ test('video gap movement observes boundaries and cancellation stops further feed
   const node = h.exports.VideoMoveGrip({ startMs: 1000, endMs: 2000, leadingGapMs: 0, clipIndex: 1, clipCount: 2,
     bodyLeft: 0, bodyWidth: 100, trackWidth: 1000, durationMs: 5000, label: 'clip', getFeedbackBoundaries: () => [2500],
     onPress() {}, onGestureLock() {}, onGapPreview() {}, onGestureCancel() {}, onGapCommit() {} });
-  node.props.panHandlers.onPanResponderGrant({}, { dx: 110, dy: 0 });
+  node.props.panHandlers.onPanResponderGrant({ nativeEvent: { touches: [{ pageX: 210, pageY: 10 }] } }, { dx: 110, dy: 0, moveX: 210 });
   assert.deepEqual(h.haptics, ['boundary']);
   node.props.panHandlers.onPanResponderTerminate();
-  node.props.panHandlers.onPanResponderMove({}, { dx: 10, dy: 0 });
+  node.props.panHandlers.onPanResponderMove({ nativeEvent: { touches: [{ pageX: 110, pageY: 10 }] } }, { dx: 10, dy: 0, moveX: 110 });
   assert.deepEqual(h.haptics, ['boundary']);
 });
 
@@ -318,7 +346,7 @@ test('native touch termination discards staged video gap', () => {
     onGestureCancel() { calls.push('cancel'); }, onReorderCancel() { calls.push('cancel'); },
   });
   node.props.panHandlers.onPanResponderGrant();
-  node.props.panHandlers.onPanResponderMove({}, { dx: 30, dy: 0 });
+  node.props.panHandlers.onPanResponderMove({ nativeEvent: { touches: [{ pageX: 130, pageY: 10 }] } }, { dx: 30, dy: 0, moveX: 130 });
   node.props.panHandlers.onPanResponderTerminate();
   assert.deepEqual(calls, ['cancel']);
 });

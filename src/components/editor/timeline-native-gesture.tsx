@@ -1,3 +1,4 @@
+import type { TimelineEdgeScroll } from '@/lib/timeline-edge-scroll';
 import { SpringScrollView } from '@/components/spring-scroll-view';
 import { createContext, useContext, useEffect, useLayoutEffect, useState, type ComponentPropsWithRef } from 'react';
 import { AppState, Platform, ScrollView, View, type PanResponderInstance, type ViewProps } from 'react-native';
@@ -9,7 +10,7 @@ import { createTimelineNativePan, createTimelineNativePanDelivery, initialTimeli
 
 type NativeScrolls = ReturnType<typeof Gesture.Native>[];
 export const TimelineNativeGestureContext = createContext<NativeScrolls>([]);
-export const TimelineNativeGeometryContext = createContext<{ subscribe: (cancel: () => void) => () => void } | undefined>(undefined);
+export const TimelineNativeGeometryContext = createContext<{ subscribe: (cancel: () => void) => () => void; edgeScroll?: TimelineEdgeScroll } | undefined>(undefined);
 
 function synchronizeNativePan(state: SharedValue<TimelineNativePanState>, epoch: number, mounted: boolean) {
   'worklet';

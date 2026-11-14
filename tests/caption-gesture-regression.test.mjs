@@ -186,12 +186,33 @@ test('video trim handles use the same timing gesture controller as every other e
 
 test('selected video trim handles stay visible outside clipped artwork', () => {
   const source = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
-  const videoBlock = source.slice(source.indexOf('function VideoClipBlock'), source.indexOf('function ClipFrameThumb'));
-  const shell = videoBlock.slice(videoBlock.indexOf('<View\n      style={{'), videoBlock.indexOf('<View\n        pointerEvents="none"'));
-  const artwork = videoBlock.slice(videoBlock.indexOf('<View\n        pointerEvents="none"'), videoBlock.indexOf('<VideoMoveGrip'));
-
-  assert.match(shell, /overflow:\s*'visible'/);
-  assert.match(artwork, /overflow:\s*'hidden'/);
+  const ast = ts.createSourceFile(componentPath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const component = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'VideoClipBlock');
+  assert.ok(component?.body, 'inspect the actual VideoClipBlock declaration');
+  const returned = component.body.statements.find(ts.isReturnStatement);
+  let shell = returned?.expression;
+  while (shell && ts.isParenthesizedExpression(shell)) shell = shell.expression;
+  assert.ok(shell && ts.isJsxElement(shell), 'the returned node is the video shell');
+  assert.equal(shell.openingElement.tagName.getText(ast), 'View');
+  const artwork = shell.children.find(node => ts.isJsxElement(node)
+    && node.openingElement.tagName.getText(ast) === 'View'
+    && node.openingElement.attributes.properties.some(attribute => ts.isJsxAttribute(attribute)
+      && attribute.name.getText(ast) === 'pointerEvents'
+      && ts.isStringLiteral(attribute.initializer) && attribute.initializer.text === 'none'));
+  assert.ok(artwork, 'clipped artwork is a direct child of the shell');
+  function overflow(node) {
+    const style = node.openingElement.attributes.properties.find(attribute => ts.isJsxAttribute(attribute)
+      && attribute.name.getText(ast) === 'style');
+    const expression = style?.initializer?.expression;
+    assert.ok(expression && ts.isObjectLiteralExpression(expression), 'the actual node has an inline style');
+    const property = expression.properties.find(property => ts.isPropertyAssignment(property)
+      && property.name.getText(ast) === 'overflow');
+    assert.ok(property && ts.isStringLiteral(property.initializer), 'overflow is explicit on this node');
+    return property.initializer.text;
+  }
+  assert.equal(overflow(shell), 'visible');
+  assert.equal(overflow(artwork), 'hidden');
+  const videoBlock = component.getText(ast);
   assert.match(videoBlock, /const showTrimGrips = props\.selected && !props\.reordering && !props\.filmstrip/);
   assert.match(videoBlock, /<VideoTrimGrip \{\.\.\.props\} side="start" gripLeft=\{handleLayout\.startGripLeft\}/);
   assert.match(videoBlock, /<VideoTrimGrip \{\.\.\.props\} side="end" gripLeft=\{handleLayout\.endGripLeft\}/);

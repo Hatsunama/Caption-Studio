@@ -3,8 +3,18 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import ts from 'typescript';
+
+// Register before initial rendering so assertion failures also retire each host.
+const openHarnesses = new Set();
+afterEach(() => {
+  const failures = [];
+  for (const close of [...openHarnesses]) {
+    try { close(); } catch (error) { failures.push(error); }
+  }
+  if (failures.length) throw new AggregateError(failures, 'harness cleanup failed');
+});
 
 const root = fileURLToPath(new URL('../src/', import.meta.url));
 const compiled = new Map();
@@ -23,7 +33,19 @@ function code(file) {
 // production command interceptor/controller. Only host layout/clamping and the
 // hook scheduler are doubles: these schedules are contracts, not device traces.
 function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform = 'android', manualIntervals = false } = {}) {
+  let closed = false;
   let cursor = 0, dirty = false, tree, effects = [], horizontal, outer, first = true;
+  const timeouts = new Set(), liveIntervals = new Set();
+  const scheduleTimeout = (fn, delay, ...args) => {
+    const timer = setTimeout(() => { timeouts.delete(timer); if (!closed) fn(...args); }, delay);
+    timeouts.add(timer); return timer;
+  };
+  const cancelTimeout = timer => { clearTimeout(timer); timeouts.delete(timer); };
+  const scheduleInterval = (fn, delay, ...args) => {
+    const timer = setInterval(() => { if (!closed) fn(...args); }, delay);
+    liveIntervals.add(timer); return timer;
+  };
+  const cancelInterval = timer => { clearInterval(timer); liveIntervals.delete(timer); };
   const intervals = new Map(); let intervalSequence = 0;
   let scrubStarts = 0, timingStarts = 0, timingEnds = 0;
   let slots = [];
@@ -56,6 +78,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
       const i = cursor++;
       const slot = slots[i] ??= { value: typeof initial === 'function' ? initial() : initial };
       return [slot.value, update => {
+        if (closed) return;
         const value = typeof update === 'function' ? update(slot.value) : update;
         if (!Object.is(slot.value, value)) { slot.value = value; dirty = true; }
       }];
@@ -112,9 +135,9 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
   function load(file) {
     if (modules.has(file)) return modules.get(file);
     const exports = {}; modules.set(file, exports);
-    runInNewContext(code(file), { exports, clearTimeout, setTimeout,
-      clearInterval: manualIntervals ? id => intervals.delete(id) : clearInterval,
-      setInterval: manualIntervals ? fn => { intervals.set(++intervalSequence, fn); return intervalSequence; } : setInterval,
+    runInNewContext(code(file), { exports, clearTimeout: cancelTimeout, setTimeout: scheduleTimeout,
+      clearInterval: manualIntervals ? id => intervals.delete(id) : cancelInterval,
+      setInterval: manualIntervals ? fn => { intervals.set(++intervalSequence, fn); return intervalSequence; } : scheduleInterval,
       performance: { now: () => 1 }, require(id) {
         if (id === 'react') return hooks;
         if (id === 'react/jsx-runtime') return { jsx, jsxs: jsx };
@@ -151,7 +174,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
   const { interceptSpringScrollCommands } = load(resolve(root, 'components/spring-scroll-gesture.ts'));
   const state = shared({ alive: false, epoch: 0, axis: policy.createScrollSpringAxisState() });
   const node = { scrollTo() { assert.fail('must use production generation guard'); }, scrollToEnd() {},
-    getNativeScrollRef: () => node };
+    getNativeScrollRef: () => node, measureInWindow: callback => callback(0, 0, native.viewport, 200) };
   const controller = fullBinding ? undefined : createScrollSpringController({ state, owner: shared(0), offset: shared(0), id: 1,
     nativeOffset: shared(0), getAnimatedRef: () => () => node, getContentRef: () => () => ({}),
     presentationVersion: shared(0), gesture: gesture() });
@@ -160,6 +183,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
   const restore = fullBinding ? () => {} : interceptSpringScrollCommands(node, () => node, () => native.generation, controller.command);
   if (!fullBinding) controller.activate(1, true);
   function render() {
+    if (closed) return;
     slots = primarySlots; cursor = 0; dirty = false;
     tree = LayerTimeline(props);
     function walk(element) {
@@ -189,6 +213,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
     while (effects.length) effects.shift()();
   }
   function flush(runJobs = true, runRN = true) {
+    if (closed) return;
     for (let i = 0; i < 40; i++) {
       if (runJobs) while (jobs.length) jobs.shift()();
       if (runJobs && runRN) while (rnJobs.length) rnJobs.shift()();
@@ -206,6 +231,24 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
     (fullBinding ? springHost : horizontal).props.onContentSizeChange?.(width, 200);
   }
   function expectedContent() { return horizontal.props.contentContainerStyle.width; }
+  function close() {
+    if (closed) return;
+    closed = true;
+    openHarnesses.delete(close);
+    try {
+      committedRef?.(null);
+      for (const store of [primarySlots, springSlots, ...childSlots]) for (const slot of store) slot?.cleanup?.();
+      assert.equal(intervals.size, 0, 'production unmount cleanup must retire every manual interval');
+    } finally {
+      restore();
+      for (const timer of timeouts) clearTimeout(timer);
+      for (const timer of liveIntervals) clearInterval(timer);
+      timeouts.clear(); liveIntervals.clear(); intervals.clear();
+      jobs.length = 0; rnJobs.length = 0; acknowledgements.length = 0; effects.length = 0;
+      dirty = false;
+    }
+  }
+  openHarnesses.add(close);
   render(); flush();
   return { native, commands, seeks, changes, flush, layout, content, expectedContent,
     rotate() {
@@ -292,7 +335,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
     },
     get pendingRN() { return rnJobs.length; },
     deliverRN() { assert.ok(rnJobs.length); rnJobs.shift()(); flush(true, false); },
-    close() { committedRef?.(null); restore(); for (const store of [primarySlots, springSlots, ...childSlots]) for (const slot of store) slot?.cleanup?.(); },
+    close,
   };
 }
 
