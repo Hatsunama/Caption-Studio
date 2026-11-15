@@ -328,3 +328,26 @@ Health and real ancestor-clipping controls were added; all13 original observer
 methods/assertions remain. No production guard, visibility implementation or
 fake grant changed. This is a fixture repair hypothesis awaiting hosted evidence,
 not a native GREEN claim. The new suite has15 methods across API24/28.
+
+## Proven Robolectric legacy-window cause
+
+The ae8 raw health report disproves ancestor layout as the complete explanation:
+both views are attached, shown, share a token and have positive global rectangles,
+but every ancestor reports windowVisibility=8 (GONE). All30 new observer cases
+therefore fail the fixture health precondition before exercising a lease.
+The381889-byte artifact14152692035 has parent-verified SHA-256
+e2da99e92b1dbc29d64021543f5c446487e5bfaf99ba9633dd28d98d890fde0b.
+
+Robolectric4.16.1 ShadowWindowManagerGlobal.java, addToDisplay lines463-470,
+explicitly documents that legacy graphics omits ADD_FLAG_APP_VISIBLE by default.
+Its supported migration property is robolectric.areWindowsMarkedVisible=true.
+Pinned source: https://raw.githubusercontent.com/robolectric/robolectric/robolectric-4.16.1/shadows/framework/src/main/java/org/robolectric/shadows/ShadowWindowManagerGlobal.java
+Android9 ViewRootImpl sets mAppVisible from that add flag, and getHostVisibility
+returns GONE when it is absent. This agrees with the actual hosted diagnostics.
+
+Only this test class now opts into the framework migration in JUnit Before and
+restores the exact prior property (including absence) in After. The production
+visibility predicate is unchanged. A negative control uses the default hidden
+framework window with a shown/attached/measured/alpha1 view and confirms it is
+still rejected. All prior assertions and API24/28 coverage remain;16 methods
+produce32 expected cases. Native hosted execution must establish GREEN.

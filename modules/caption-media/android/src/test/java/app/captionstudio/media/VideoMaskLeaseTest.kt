@@ -8,6 +8,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import org.junit.Assert.*
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -22,6 +24,20 @@ import java.time.Duration
 @Config(sdk = [24, 28], manifest = Config.NONE)
 @LooperMode(LooperMode.Mode.PAUSED)
 class VideoMaskLeaseTest {
+  private var previousWindowVisibilityProperty: String? = null
+
+  @Before fun markFrameworkTestWindowsVisible() {
+    previousWindowVisibilityProperty = System.getProperty("robolectric.areWindowsMarkedVisible")
+    // Robolectric 4.16.1 legacy graphics omits ADD_FLAG_APP_VISIBLE by default.
+    // Opt into its documented migration instead of bypassing Android visibility.
+    System.setProperty("robolectric.areWindowsMarkedVisible", "true")
+  }
+
+  @After fun restoreFrameworkWindowVisibility() {
+    val previous = previousWindowVisibilityProperty
+    if (previous == null) System.clearProperty("robolectric.areWindowsMarkedVisible")
+    else System.setProperty("robolectric.areWindowsMarkedVisible", previous)
+  }
   private class Binding(var node: View) : VideoMaskLease.Binding {
     var source: Any? = Any()
     var surface: Any? = Any()
@@ -131,6 +147,34 @@ class VideoMaskLeaseTest {
     override fun close() { owner.close(); drain(); activity.pause().stop().destroy() }
   }
 
+  @Test fun hiddenFrameworkWindowFailsVisibilityEvenWithShownAttachedMeasuredView() {
+    System.setProperty("robolectric.areWindowsMarkedVisible", "false")
+    val activity = Robolectric.buildActivity(Activity::class.java).create()
+    try {
+      val context = activity.get()
+      val root = FrameLayout(context)
+      val view = View(context)
+      context.setContentView(root, FrameLayout.LayoutParams(100, 100))
+      root.addView(view, FrameLayout.LayoutParams(100, 100))
+      activity.start().postCreate(null).resume().visible()
+      shadowOf(Looper.getMainLooper()).idle()
+      val decor = context.window.decorView
+      decor.measure(
+        View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(480, View.MeasureSpec.EXACTLY)
+      )
+      decor.layout(0, 0, 320, 480)
+      assertTrue(view.isAttachedToWindow)
+      assertTrue(view.isShown)
+      assertEquals(View.GONE, view.windowVisibility)
+      assertTrue(view.getGlobalVisibleRect(Rect()))
+      assertEquals(1f, view.alpha)
+      assertFalse("A hidden window must fail the unchanged production predicate", VideoMaskLease.effectivelyVisible(view))
+    } finally {
+      activity.pause().stop().destroy()
+      System.setProperty("robolectric.areWindowsMarkedVisible", "true")
+    }
+  }
   @Test fun fixtureHasAttachedLaidOutWindowAndActuallyVisiblePeer() = Fixture().use { f ->
     f.assertHealthy()
     f.parent.alpha = 1f
