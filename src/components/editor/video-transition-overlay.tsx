@@ -129,21 +129,25 @@ function SynchronizedComposite(props: Props & {
   const { activeSlot, frame, isPlaying, onUnavailable, outgoingSlot, incomingSlot, transportReady, players, slots, setCompositeClock } = props;
   const latestPlayersRef = useRef(players);
   const latestActiveSlotRef = useRef(activeSlot);
+  const latestSetCompositeClockRef = useRef(setCompositeClock);
 
   useEffect(() => {
     latestPlayersRef.current = players;
     latestActiveSlotRef.current = activeSlot;
-  }, [players, activeSlot]);
+    latestSetCompositeClockRef.current = setCompositeClock;
+  }, [players, activeSlot, setCompositeClock]);
 
   useEffect(() => () => {
-    setCompositeClock();
+    latestSetCompositeClockRef.current();
     latestPlayersRef.current.forEach((player, slot) => {
       if (slot !== latestActiveSlotRef.current) {
         player.muted = true;
         player.pause();
       }
     });
-  }, [setCompositeClock]);
+    // Parent callbacks can change every clock render. Only retiring this keyed
+    // composite may pause its standby player; otherwise every tick forces a seek.
+  }, []);
 
   useEffect(() => {
     try {
