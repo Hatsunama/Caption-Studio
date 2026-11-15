@@ -7,6 +7,11 @@ import type { AudioExtractionResult, AudioPeaksResult, AudioTrackExtractionResul
 export type { TimelineVideoExportProgress } from './CaptionMedia.types';
 
 declare class CaptionMediaModule extends NativeModule<Record<never, never>> {
+  /** Native alpha exclusion; independent of source-frame preparation. Android only. */
+  acquireVideoMaskLease(player: VideoPlayer, peer: VideoPlayer, requestId: number, generation: number, requireHiddenAncestor: boolean): Promise<void>;
+  commitVideoMaskLease(player: VideoPlayer, requestId: number, generation: number): Promise<void>;
+  cancelVideoMaskLease(player: VideoPlayer, requestId: number): Promise<void>;
+  disposeVideoMaskLease(player: VideoPlayer, requestId: number): Promise<void>;
   /** Android: approved local source (null end means full), paused at truncated targetMs; resolves after READY and presentation on the current SDK view. */
   configureVideoPlaybackWindow(
     player: VideoPlayer,

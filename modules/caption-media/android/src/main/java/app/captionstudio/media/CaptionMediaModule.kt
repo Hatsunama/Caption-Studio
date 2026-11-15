@@ -51,6 +51,7 @@ class CaptionMediaModule : Module() {
   private val audioExtractionEpoch = AtomicLong(0L)
   private val videoDocuments = lazy { LinkedVideoDocuments(context) }
   private val videoPlaybackWindow = VideoPlaybackWindow()
+  private val videoMaskLease = VideoMaskLease()
 
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
@@ -58,8 +59,25 @@ class CaptionMediaModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("CaptionMedia")
 
+    AsyncFunction("acquireVideoMaskLease") { player: VideoPlayer, peer: VideoPlayer, id: Double, generation: Double, hidden: Boolean, promise: Promise ->
+      videoMaskLease.acquire(player, peer, id, generation, hidden) { code ->
+        if (code == null) promise.resolve(null) else promise.reject(code, "Video masking did not complete", null)
+      }
+    }
+    AsyncFunction("commitVideoMaskLease") { player: VideoPlayer, id: Double, generation: Double, promise: Promise ->
+      videoMaskLease.commit(player, id, generation) { code ->
+        if (code == null) promise.resolve(null) else promise.reject(code, "Video masking was superseded", null)
+      }
+    }
+    AsyncFunction("cancelVideoMaskLease") { player: VideoPlayer, id: Double -> videoMaskLease.cancel(player, id) }
+    AsyncFunction("disposeVideoMaskLease") { player: VideoPlayer, id: Double -> videoMaskLease.dispose(player, id) }
+
+    OnActivityEntersBackground { videoMaskLease.suspend() }
+    OnActivityEntersForeground { videoMaskLease.resume() }
+
     AsyncFunction("configureVideoPlaybackWindow") { player: VideoPlayer, expectedUri: String, requestId: Double, endMs: Double?, targetMs: Double, timeoutMs: Double, promise: Promise ->
       videoPlaybackWindow.configure(player, expectedUri, requestId, endMs, targetMs, timeoutMs) { code ->
+        if (code == null) videoMaskLease.prepared(player, requestId)
         if (code == null) promise.resolve(null)
         else promise.reject(code, "Video playback window preparation did not complete", null)
       }
@@ -229,6 +247,7 @@ class CaptionMediaModule : Module() {
     }
 
     OnDestroy {
+      videoMaskLease.close()
       videoPlaybackWindow.close()
       TimelineAudioRenderer.cancel()
       audioExtractionEpoch.incrementAndGet()

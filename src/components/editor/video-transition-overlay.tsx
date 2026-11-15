@@ -1,6 +1,6 @@
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import {
   buildVideoTransitionPreviewWindows,
@@ -107,7 +107,7 @@ function TimelineVideoPair(props: Props & { composite?: Composite; concealed: bo
             transform={source?.transform ?? props.currentTransform}
             width={props.width}
             height={props.height}
-            opacity={effect?.opacity}
+            opacity={composite ? effect?.opacity : Platform.OS === 'android' && slot !== props.activeSlot ? 0 : undefined}
             effectStyle={composite
               ? [{ zIndex: incoming ? 1 : 0 }, effect?.style]
               : { zIndex: slot === props.activeSlot ? 1 : 0, backgroundColor: props.backgroundColor }}

@@ -2,7 +2,7 @@ import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project
 import { buildVideoTransitionPreviewWindows, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
 import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
 import { desiredVideoPlaybackWindowEnd } from '@/lib/video-playback-window';
-import { configureVideoPlaybackWindow } from '@/services/video-playback-window';
+import { acquireVideoMaskLease, configureVideoPlaybackWindow, disposeVideoMaskLease } from '@/services/video-playback-window';
 import { videoPlaybackUri } from '@/lib/video-playback-source';
 import { acknowledgesPlaybackPosition, effectiveNativeSeekTarget } from '@/lib/video-playback-position';
 import { useEventListener } from 'expo';
@@ -42,6 +42,7 @@ type SlotRuntime = TimelineVideoSlot & {
   renderGate: 'disarmed' | 'loading' | 'awaitingPosition' | 'awaitingFrame' | 'ready';
   preparation?: AbortController;
   preparationTask?: Promise<SlotIndex>;
+  sourceMutation?: Promise<void>;
   preparingTimelineMs?: number;
   preparingWindowEndMs?: number;
   // null is unknown; undefined is a confirmed full-source item.
@@ -102,6 +103,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const preloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pendingPreloadRef = useRef<(() => void) | undefined>(undefined);
   const committedPreviewRef = useRef({ activeSlot, timelineMs: currentMs });
+  const maskRequestIdsRef = useRef<[number, number]>([0, 0]);
   const reloadRequestedRef = useRef(false);
   const hasPresentedFrameRef = useRef(false);
   const mountedRef = useRef(true);
@@ -405,7 +407,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const token = nextPrepareToken(runtime.prepareToken);
     runtime.prepareToken = token;
     const sourceChanged = forceReload || runtime.playbackUri !== uri
-      || runtime.sourceId !== source.id || runtime.appliedWindowEndMs !== windowEndMs;
+      || runtime.sourceId !== source.id || runtime.appliedWindowEndMs !== windowEndMs
+      || runtime.sourceMutation != null;
 
     runtime.sourceId = source.id;
     runtime.playbackUri = uri;
@@ -417,13 +420,41 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.readiness = 'preparing';
     publishSlots();
 
+    let mask: Awaited<ReturnType<typeof acquireVideoMaskLease>> | undefined;
+    const invalidateCancelledCache = () => {
+      if (runtime.prepareToken !== token) return;
+      runtime.firstFrameReady = false;
+      runtime.playbackUri = undefined;
+      runtime.appliedWindowEndMs = null;
+    };
+    preparation.signal.addEventListener('abort', invalidateCancelledCache, { once: true });
     try {
+      if (Platform.OS === 'android') {
+        maskRequestIdsRef.current[slot] = token;
+        mask = await acquireVideoMaskLease(player, playerForSlot(slot === 0 ? 1 : 0), token,
+          generationRef.current + 1, hasPresentedFrameRef.current && slot !== activeSlotRef.current, preparation.signal);
+        if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
+        // An aborted loader does not cancel Expo's queued mainQueue replacement.
+        // Keep this native lease while draining that mutation before starting another.
+        if (runtime.sourceMutation) await waitForSourceMutation(runtime.sourceMutation, preparation.signal);
+        if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
+      }
       player.pause();
       player.muted = true;
       if (sourceChanged) {
         runtime.firstFrameReady = false;
         publishSlots();
-        await loadPlayableVideoSource(player, uri, 15_000, preparation.signal);
+        await loadPlayableVideoSource(Platform.OS === 'android' ? {
+          get status() { return player.status; },
+          addListener: (event, listener) => player.addListener(event, listener),
+          replaceAsync: (replacementUri) => {
+            const task = player.replaceAsync(replacementUri);
+            runtime.sourceMutation = task;
+            const clear = () => { if (runtime.sourceMutation === task) runtime.sourceMutation = undefined; };
+            void task.then(clear, clear);
+            return task;
+          },
+        } : player, uri, 15_000, preparation.signal);
         if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
         // Android's installed contract stays unknown until owned native presentation.
         runtime.appliedWindowEndMs = Platform.OS === 'android' ? null : undefined;
@@ -480,6 +511,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       if (performance.now() >= frameDeadline) throw new Error('The video did not render a frame in time. Try loading it again.');
       player.pause();
+      if (mask) await mask.commit();
+      if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       runtime.readiness = 'ready';
       runtime.renderGate = 'ready';
       publishSlots();
@@ -500,6 +533,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       }
       throw error;
     } finally {
+      preparation.signal.removeEventListener('abort', invalidateCancelledCache);
+      mask?.cancel();
       preparation.abort();
       if (runtime.preparation === preparation) runtime.preparation = undefined;
     }
@@ -886,6 +921,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   useEventListener(playerB, 'statusChange', ({ status, error }) => onStatusChange(1, status, error));
 
   useEffect(() => {
+    const maskRequestIds = maskRequestIdsRef.current;
     mountedRef.current = true;
     requestTargetRef.current(0);
     return () => {
@@ -900,10 +936,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       generationRef.current += 1;
       boundaryClipIdRef.current = undefined;
       retireSurfaceFrames();
+      if (Platform.OS === 'android') players.forEach((player, slot) =>
+        disposeVideoMaskLease(player, maskRequestIds[slot]));
       cancelGapClock();
       cancelScheduledPreload();
     };
-  }, [retireSurfaceFrames]);
+  }, [players, retireSurfaceFrames]);
 
   useLayoutEffect(() => {
     if (!surfacesAdmitted || translationSuspensionRef.current) {
@@ -957,6 +995,22 @@ function abortError() {
   const error = new Error('Video preparation was superseded.');
   error.name = 'AbortError';
   return error;
+}
+
+function waitForSourceMutation(task: Promise<void>, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true; clearTimeout(timeout); signal.removeEventListener('abort', abort);
+      if (error) reject(error); else resolve();
+    };
+    const abort = () => finish(abortError());
+    const timeout = setTimeout(() => finish(new Error('The previous SDK replacement has not finished.')), 15000);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    void task.then(() => finish(), () => finish());
+  });
 }
 
 function nextPrepareToken(previous: number) {

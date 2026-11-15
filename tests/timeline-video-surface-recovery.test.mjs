@@ -26,6 +26,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   const gapFrames = new Map();
   const publishedFrames = new Map();
   const retirementTrace = [];
+  let heldNativeOwner;
   let traceRetirement = false;
   let host, cursor, dirty = true, transport, views = [], alive = true, timerId = 0, now = 0;
   let appStateListener, playerCursor = 0, blockingUi = false, width = 300, height = 200;
@@ -36,6 +37,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   function observeInstallation(operation, slot, uri) {
     if (!traceRetirement) return;
     retirementTrace.push({ operation, slot, uri,
+      heldNativeOwner,
       committedActiveSlot: transport.activeSlot, committedMs: transport.currentMs,
       committedViews: views.map(view => ({ slot: players.indexOf(view.player),
         nativePath: view.nativePath,
@@ -97,6 +99,32 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = {
     'caption-media': { __esModule: true, default: {
+      async acquireVideoMaskLease(player, peer, requestId, generation, requireHiddenAncestor) {
+        calls.push(['maskAcquire', players.indexOf(player), requestId, generation, requireHiddenAncestor]);
+        assert.notEqual(player, peer);
+        player.maskRequest = requestId;
+        player.maskGeneration = generation;
+        if (player.holdMaskAcquire || heldNativeOwner?.slot === players.indexOf(player)) {
+          await new Promise((resolve, reject) => { player.grantMask = resolve; player.failMask = reject; });
+        }
+        if (player.cancelledMask >= requestId || player.maskRequest !== requestId) throw Object.assign(new Error('stale mask'), { name: 'AbortError' });
+        player.nativeLeaseGrant = requestId;
+      },
+      async commitVideoMaskLease(player, requestId, generation) {
+        assert.equal(player.nativeLeaseGrant, requestId);
+        assert.equal(player.maskGeneration, generation);
+        if (player.holdMaskCommit) await new Promise(resolve => { player.finishMaskCommit = resolve; });
+        if (player.cancelledMask >= requestId) throw Object.assign(new Error('stale mask'), { name: 'AbortError' });
+        calls.push(['maskCommit', players.indexOf(player), requestId]);
+      },
+      async cancelVideoMaskLease(player, requestId) {
+        player.cancelledMask = Math.max(player.cancelledMask ?? 0, requestId);
+        calls.push(['maskCancel', players.indexOf(player), requestId]);
+      },
+      async disposeVideoMaskLease(player, requestId) {
+        calls.push(['maskDispose', players.indexOf(player), requestId]);
+        player.cancelledMask = Math.max(player.cancelledMask ?? 0, requestId);
+      },
       async configureVideoPlaybackWindow(player, uri, requestId, endMs, targetMs, timeoutMs) {
         const slot = players.indexOf(player);
         calls.push(['window', slot, uri, requestId, endMs, timeoutMs, targetMs]);
@@ -201,8 +229,22 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   async function settle() { for (let i = 0; i < 25; i++) { await Promise.resolve(); if (dirty) render(); } return transport; }
   render();
   return { players, calls, project, render, settle, get transport() { return transport; }, get views() { return views; },
+    maskService: load('src/services/video-playback-window.ts'),
     retirementTrace,
     traceRetirement(value) { traceRetirement = value; },
+    // Independent native-boundary fixture: later React renders must not advance
+    // this snapshot. Its native lease is released only by an explicit fixture grant.
+    holdNativeOwnership() {
+      const slot = transport.activeSlot;
+      heldNativeOwner = { slot, nativeViewEpoch: transport.slots[slot].nativeViewEpoch,
+        nativePath: views.find(view => view.player === players[slot]).nativePath };
+      return heldNativeOwner;
+    },
+    async nativeLeaseGrant(slot) {
+      assert.ok(players[slot].grantMask, 'an actual lease request must be pending');
+      players[slot].grantMask();
+      await settle();
+    },
     // Let promise continuations/native-boundary requests run while React's next
     // host commit is pending. No timers, fabricated view frames or render calls.
     async drainWithoutCommit() { for (let i = 0; i < 25; i++) await Promise.resolve(); },
@@ -274,6 +316,132 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     get timerCount() { return timers.size; },
   };
 }
+
+for (const previous of [0, 1]) {
+  for (const sources of [['source', 'other', 'source', 'other'], ['source', 'source', 'other', 'other']]) {
+    test(`native ownership held across React commit blocks retirement: slot ${previous}, ${sources.join('/')}`, async t => {
+      const h = harness({ clips: sources.map((source, i) => clip(`cut-${i}`, source)) });
+      t.after(() => h.unmount());
+      await h.complete(); h.transport.play(); await h.complete();
+      if (previous === 1) {
+        h.players[0].emit('playToEnd', {}); await h.complete();
+      }
+      assert.equal(h.transport.activeSlot, previous);
+      const nativeOwner = h.holdNativeOwnership();
+      h.traceRetirement(true);
+      h.players[previous].emit('playToEnd', {});
+      await h.drainWithoutCommit();
+      assert.deepEqual(h.retirementTrace, [], 'pending React commit retains the outgoing source');
+      h.render(); await h.complete();
+      assert.equal(h.transport.activeSlot, 1 - previous, 'React has committed the incoming owner');
+      const mutations = h.retirementTrace.filter(event => event.slot === nativeOwner.slot);
+      const currentView = h.views.find(view => view.player === h.players[previous]);
+      assert.deepEqual({ mutations, epoch: h.transport.slots[previous].nativeViewEpoch, path: currentView.nativePath },
+        { mutations: [], epoch: nativeOwner.nativeViewEpoch, path: nativeOwner.nativePath },
+        'React commit alone cannot authorize source replacement, playback-window installation, or rekey of the held native owner');
+    });
+  }
+}
+
+for (const previous of [0, 1]) {
+  for (const sources of [['source', 'other', 'source', 'other'], ['source', 'source', 'other', 'other']]) {
+    test(`explicit nativeLeaseGrant permits protected retirement: slot ${previous}, ${sources.join('/')}`, async t => {
+      const h = harness({ clips: sources.map((source, i) => clip(`grant-${i}`, source)) });
+      t.after(() => h.unmount()); await h.complete(); h.transport.play(); await h.complete();
+      if (previous === 1) { h.players[0].emit('playToEnd', {}); await h.complete(); }
+      h.holdNativeOwnership(); h.traceRetirement(true);
+      h.players[previous].emit('playToEnd', {}); await h.complete();
+      assert.deepEqual(h.retirementTrace, []);
+      await h.nativeLeaseGrant(previous); await h.complete();
+      assert.ok(h.retirementTrace.some(event => event.slot === previous && event.operation === 'configureVideoPlaybackWindow'));
+      assert.ok(h.calls.some(call => call[0] === 'maskCommit' && call[1] === previous));
+      assert.equal(h.transport.activeSlot, 1 - previous);
+      assert.equal(h.transport.phase, 'ready');
+    });
+  }
+}
+
+for (const interruption of ['seek', 'background', 'unmount', 'failure', 'timeout']) {
+  test(`native lease pending ${interruption} ignores a stale grant without retiring the owner`, async t => {
+    const h = harness({ clips: ['source', 'other', 'source'].map((source, i) => clip(`cancel-${i}`, source)) });
+    t.after(() => h.unmount()); await h.complete(); h.transport.play(); await h.complete();
+    const owner = h.holdNativeOwnership(); h.traceRetirement(true);
+    h.players[0].emit('playToEnd', {}); await h.complete();
+    const lateGrant = h.players[owner.slot].grantMask;
+    assert.equal(typeof lateGrant, 'function');
+    if (interruption === 'seek') { h.transport.seek(35000); await h.settle(); }
+    if (interruption === 'background') await h.app('background');
+    if (interruption === 'unmount') { h.unmount(); await h.settle(); }
+    if (interruption === 'failure') { h.players[owner.slot].failMask(new Error('native mask rejected')); await h.settle(); }
+    if (interruption === 'timeout') await h.advance(5000);
+    lateGrant(); await h.settle();
+    assert.deepEqual(h.retirementTrace.filter(event => event.slot === owner.slot), []);
+    assert.notEqual(h.transport.slots[owner.slot].readiness, 'ready');
+    assert.ok(h.calls.some(call => call[0] === 'maskCancel' && call[1] === owner.slot));
+  });
+}
+
+test('cancellation after native grant invalidates standby cache before late frame preparation can be reused', async t => {
+  const h = harness({ clips: ['source', 'other', 'source'].map((source, i) => clip(`dirty-${i}`, source)) });
+  t.after(() => h.unmount()); await h.complete(); h.transport.play(); await h.complete();
+  h.holdNativeOwnership(); h.traceRetirement(true);
+  h.players[0].emit('playToEnd', {}); await h.complete();
+  h.players[0].holdWindow = true;
+  await h.nativeLeaseGrant(0);
+  const lateWindow = h.players[0].finishWindow;
+  const grantedId = h.players[0].nativeLeaseGrant;
+  assert.equal(typeof lateWindow, 'function');
+  h.transport.seek(35000); await h.settle();
+  assert.equal(h.transport.slots[0].firstFrameReady, false);
+  assert.ok(h.transport.slots[0].playbackUri === undefined || h.transport.slots[0].prepareToken > grantedId,
+    'the cancelled cache is cleared; a later ungranted request may publish its own desired URI');
+  lateWindow(); await h.settle();
+  assert.equal(h.transport.slots[0].firstFrameReady, false);
+  assert.ok(h.calls.some(call => call[0] === 'maskCancel' && call[1] === 0 && call[2] === grantedId));
+  assert.equal(h.calls.some(call => call[0] === 'maskCommit' && call[1] === 0 && call[2] === grantedId), false);
+  h.players[0].holdWindow = false;
+  const replacements = h.calls.filter(call => call[0] === 'replace' && call[1] === 0).length;
+  h.transport.seek(65000); await h.settle();
+  await h.nativeLeaseGrant(0); await h.complete();
+  assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.activeSlot, 0);
+  assert.ok(h.calls.filter(call => call[0] === 'replace' && call[1] === 0).length > replacements);
+});
+
+for (const phase of ['acquire', 'commit']) {
+  for (const reason of ['abort', 'timeout']) {
+    test(`real mask service ${phase} ${reason} settles once and ignores late native resolution`, async t => {
+      const h = harness({ clips: [] }); t.after(() => h.unmount()); await h.settle();
+      const player = h.players[0], signalOwner = new AbortController();
+      player.holdMaskAcquire = phase === 'acquire'; player.holdMaskCommit = phase === 'commit';
+      const acquisition = h.maskService.acquireVideoMaskLease(player, h.players[1], 1, 1, false, signalOwner.signal);
+      let lease;
+      const task = phase === 'acquire' ? acquisition : (lease = await acquisition).commit();
+      let settlements = 0;
+      const outcome = task.then(() => { settlements++; return undefined; }, error => { settlements++; return error; });
+      await h.settle();
+      const late = phase === 'acquire' ? player.grantMask : player.finishMaskCommit;
+      assert.equal(typeof late, 'function');
+      if (reason === 'abort') { signalOwner.abort(); await h.settle(); }
+      else await h.advance(5000);
+      const error = await outcome;
+      assert.ok(error instanceof Error);
+      if (reason === 'abort') assert.equal(error.name, 'AbortError');
+      else assert.match(error.message, /timed out/);
+      assert.equal(h.timerCount, 0);
+      late(); await h.settle(); signalOwner.abort(); lease?.cancel();
+      assert.equal(settlements, 1);
+      assert.equal(h.calls.filter(call => call[0] === 'maskCancel').length, 1);
+      assert.equal(h.calls.some(call => call[0] === 'maskCommit'), false);
+    });
+  }
+}
+
+test('empty timeline translation and cleanup make no native window or mask calls', async () => {
+  const h = harness({ clips: [] }); await h.settle();
+  const suspension = h.transport.suspendForTranslation(); await h.settle(); await suspension.ready;
+  await suspension.restore(); await h.settle(); h.unmount(); await h.settle();
+  assert.equal(h.calls.some(call => call[0] === 'window' || call[0].startsWith('mask')), false);
+});
 
 test('retirement observer distinguishes a hidden preload from the committed foreground', async t => {
   const h = harness({ clips: [clip('cut-0', 'source'), clip('cut-1', 'other')] });
@@ -485,7 +653,7 @@ test('independent app harnesses keep clocks, native calls and teardown isolated'
 });
 
 test('load-time frame plus an unrelated position 115ms away cannot certify preparation', async t => {
-  const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+  const h = harness({ holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
   await h.frame(0); // Source load has not completed and no target has been assigned.
   h.players[0].holdWindow = true;
   h.players[0].finishReplacement(); await h.settle();
@@ -523,7 +691,7 @@ test('iOS legacy: position listener precedes target assignment, including a sync
 });
 
 test('replacement is paused and muted before native load begins', async t => {
-  const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+  const h = harness({ holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
   assert.ok(h.calls.findIndex(call => call[0] === 'pause') < h.calls.findIndex(call => call[0] === 'replace'));
   assert.equal(h.players[0].muted, true);
 });
@@ -950,7 +1118,7 @@ test('background cancels in-flight frame preparation, stays silent, and replaces
 });
 
 test('an interrupted source replacement is not cached as loaded; its late completion cannot activate transport', async t => {
-  const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+  const h = harness({ holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
   const finishOld = h.players[0].finishReplacement;
   await h.app('background'); finishOld(); await h.settle();
   assert.equal(h.transport.phase, 'suspended'); assert.equal(h.calls.some(call => call[0] === 'play'), false);
@@ -1160,7 +1328,7 @@ for (const interruption of ['native failure', 'cancel', 'new target']) {
 
 
 test('SDK ready precedes native presentation; ACK retains the consumed view without another seek', async t => {
-  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount());
+  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
   h.players[0].holdWindow = true;
   await h.settle(); assert.equal(h.calls.some(c => c[0] === 'window'), false);
   h.players[0].finishReplacement(); await h.settle();
@@ -1192,7 +1360,7 @@ test('same URI trim change and untrim reload full source through SDK', async t =
 
 
 test('native window, position and frame share five seconds after SDK readiness', async t => {
-  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount());
+  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
   h.players[0].holdWindow = true;
   await h.advance(6000); assert.notEqual(h.transport.phase, 'error', 'SDK load has its own existing timeout');
   h.players[0].finishReplacement(); await h.settle();
@@ -1206,7 +1374,7 @@ test('native window, position and frame share five seconds after SDK readiness',
 for (const sourceDurationMs of [31000, 60000]) {
   for (const reason of ['timeout', 'failure', 'background', 'translation', 'changed trim']) {
     test(`native window ${sourceDurationMs} ${reason} retires its cache and ignores late completion`, async t => {
-      const h = harness({ sourceDurationMs, holdReplacement: true }); t.after(() => h.unmount());
+      const h = harness({ sourceDurationMs, holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
       const player = h.players[0]; player.holdWindow = true;
       player.finishReplacement(); await h.settle();
       const late = player.finishWindow, id = h.calls.find(c => c[0] === 'window')[3];
@@ -1398,7 +1566,7 @@ test('finite endpoint uses SDK Long-to-Float milliseconds before Float division'
 
 for (const sourceDurationMs of [31000, 60000]) {
   test(`rotation retains Android ${sourceDurationMs} SDK view during presentation and after ACK`, async t => {
-    const h = harness({ sourceDurationMs, holdReplacement: true }); t.after(() => h.unmount());
+    const h = harness({ sourceDurationMs, holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
     const player = h.players[0]; player.holdWindow = true;
     player.finishReplacement(); await h.settle();
     const path = h.views.find(v => v.player === player).nativePath;
@@ -1420,7 +1588,7 @@ for (const sourceDurationMs of [31000, 60000]) {
 
 test('whole Android source fences zero-frame readiness and retains its final view and target', async t => {
   const h = harness({ holdReplacement: true, clips: [{ ...clip(), sourceStartMs: 0 }] });
-  t.after(() => h.unmount());
+  t.after(() => h.unmount()); await h.settle();
   const player = h.players[0]; player.holdWindow = true;
   player.finishReplacement(); await h.settle();
   const request = h.calls.find(c => c[0] === 'window');
@@ -1465,14 +1633,15 @@ test('paused main and PiP independently require native presentation and retain b
 for (const sourceDurationMs of [31000, 60000]) {
   test(`superseding target while SDK replacement is pending waits for a loaded source: ${sourceDurationMs}`, async t => {
     const h = harness({ holdReplacement: true, sourceDurationMs });
-    t.after(() => h.unmount());
+    t.after(() => h.unmount()); await h.settle();
     const player = h.players[0], finishOld = player.finishReplacement;
     h.transport.seek(3000); await h.settle();
     assert.equal(h.calls.filter(call => call[0] === 'window').length, 0,
       'a desired URI is not proof that the SDK has installed it');
     assert.notEqual(h.transport.phase, 'error');
-    const finishCurrent = player.finishReplacement;
+    assert.equal(player.finishReplacement, finishOld, 'replacement mutations serialize while the lease stays masked');
     finishOld(); await h.settle();
+    const finishCurrent = player.finishReplacement;
     if (finishCurrent !== finishOld) {
       assert.equal(h.calls.filter(call => call[0] === 'window').length, 0,
         'a retired SDK completion cannot certify its replacement');
@@ -1484,3 +1653,16 @@ for (const sourceDurationMs of [31000, 60000]) {
     assert.equal(h.calls.some(call => call[0] === 'play'), false);
   });
 }
+
+test('cleanup disposes the latest actual native mask ID after repeated preparations', async t => {
+  const h = harness({ clips: ['source', 'other', 'source', 'other'].map((source, i) => clip(`dispose-${i}`, source)) });
+  t.after(() => h.unmount());
+  await h.complete(); h.transport.play(); await h.complete();
+  h.players[0].emit('playToEnd', {}); await h.complete();
+  h.players[1].emit('playToEnd', {}); await h.complete();
+  const latest = [0, 1].map(slot => h.calls.filter(call => call[0] === 'maskAcquire' && call[1] === slot).at(-1)[2]);
+  assert.ok(latest.some(id => id > 1), 'exercise a renewed native lease, not just mount-time IDs');
+  h.unmount(); await h.settle();
+  assert.deepEqual(h.calls.filter(call => call[0] === 'maskDispose').map(call => call.slice(1)),
+    [[0, latest[0]], [1, latest[1]]], 'cleanup must dispose the actual lease IDs without snapshotting initial numbers');
+});
