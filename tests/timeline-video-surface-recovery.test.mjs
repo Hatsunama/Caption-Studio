@@ -194,7 +194,8 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
       width, height, backgroundColor: '#000', admitted: policy.videoSurfacesAdmitted && !transport.previewResourcesSuspended,
       visible: !transport.isGap, players: pip ? players.slice(0, 2) : players, slots: transport.slots, activeSlot: transport.activeSlot,
       currentTransform: transform, currentClipId: transport.slots[transport.activeSlot].preparedClipId,
-      onFirstFrameRender: transport.markFirstFrame, setCompositeClock: transport.setCompositeClock });
+      onFirstFrameRender: transport.markFirstFrame, setCompositeClock: transport.setCompositeClock,
+      retireComposite: transport.retireComposite });
     return pip ? [main, jsx(VideoLayerOverlay, {
       layer: { id: 'pip', uri: 'file:///pip.mp4', startMs: 0, endMs: 8000,
         sourceStartMs: 0, sourceDurationMs: 8000, playbackRate: 1, includeAudio: false, opacity: 1 },
@@ -316,6 +317,60 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     get timerCount() { return timers.size; },
   };
 }
+
+for (const previous of [0, 1]) for (const playing of [false, true]) for (const muted of [false, true]) test(
+  `simultaneous composite exit and controller slot change preserves owner: slot ${previous}, playing=${playing}, muted=${muted}`, async t => {
+  const outgoing = { ...clip('out', 'source'), transitionAfter: { type: 'crossfade', durationMs: 1000 } };
+  const clips = [outgoing, { ...clip('in', 'other'), muted }];
+  if (previous === 1) clips.unshift(clip('lead', 'other'));
+  const h = harness({ clips, sourceDurationMs: 60000 });
+  t.after(() => h.unmount());
+  await h.complete();
+  if (previous === 1) { h.transport.seek(30000); await h.complete(); }
+  const boundary = previous === 1 ? 60000 : 30000;
+  h.transport.seek(boundary - 250); await h.complete();
+  if (playing) { h.transport.play(); await h.complete(); }
+  assert.equal(h.transport.activeSlot, previous);
+  assert.ok(h.players.every(player => player.playing === playing), 'production composite follows transport intent');
+  assert.equal(h.players[1 - previous].muted, true, 'incoming starts as muted standby');
+  h.calls.length = 0;
+  // No intervening render: activate the prepared incoming slot and leave the
+  // transition window in the same host commit that removes the composite.
+  h.transport.seek(boundary + 1000);
+  await h.drainWithoutCommit();
+  assert.equal(h.transport.activeSlot, previous, 'published transport is still the old commit');
+  assert.equal(h.players[1 - previous].playing, playing, 'controller activated incoming before commit');
+  assert.equal(h.players[1 - previous].muted, muted, 'controller restored incoming clip audio');
+  h.render(); await h.settle();
+  assert.equal(h.transport.activeSlot, 1 - previous);
+  assert.equal(h.transport.currentMs, boundary + 1000);
+  assert.equal(h.transport.phase, 'ready');
+  assert.equal(h.transport.player.muted, muted, 'retirement must preserve the controller audio owner');
+  assert.equal(h.transport.player.playing, playing, 'retirement must preserve the controller playback owner');
+  assert.equal(h.players[previous].muted, true, 'retired standby is muted');
+  assert.equal(h.players[previous].playing, false, 'retired standby is paused');
+  assert.ok(!h.calls.some(call => call[0] === 'pause' && call[1] === 1 - previous), 'cleanup never pauses the new owner');
+});
+
+test('controller composite retirement clears its clock without cancelling playback intent', async t => {
+  const outgoing = { ...clip('out'), transitionAfter: { type: 'crossfade', durationMs: 1000 } };
+  const h = harness({ clips: [outgoing, clip('in', 'other')], sourceDurationMs: 60000 });
+  t.after(() => h.unmount()); await h.complete();
+  h.transport.seek(29750); await h.complete();
+  h.transport.play(); await h.complete();
+  assert.ok(h.players.every(player => player.playing));
+  h.transport.retireComposite();
+  assert.equal(h.players[1].playing, false);
+  assert.equal(h.players[1].muted, true);
+  assert.equal(h.players[0].playing, true);
+  assert.equal(h.players[0].muted, false);
+  // A slightly older native sample is clamped to 29.75s by a live composite
+  // clock. Retirement must restore ordinary source-to-timeline conversion.
+  h.players[0].emit('timeUpdate', { currentTime: 30.7 });
+  await h.settle();
+  assert.equal(h.transport.currentMs, 29700, 'no stale synchronized clock after retirement');
+  assert.equal(h.transport.isPlaying, true);
+});
 
 for (const previous of [0, 1]) {
   for (const sources of [['source', 'other', 'source', 'other'], ['source', 'source', 'other', 'other']]) {

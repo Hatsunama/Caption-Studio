@@ -175,6 +175,18 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const playerForSlot = (slot: SlotIndex) => players[slot];
 
+  const retireComposite = useCallback(() => {
+    compositeClockRef.current = undefined;
+    // Activation updates this ref before the render that may remove the
+    // composite. Its last mounted props can still describe the previous owner.
+    players.forEach((player, slot) => {
+      if (slot !== activeSlotRef.current) {
+        player.muted = true;
+        player.pause();
+      }
+    });
+  }, [players]);
+
   const cancelGapClock = () => {
     if (gapFrameRef.current != null) cancelAnimationFrame(gapFrameRef.current);
     gapFrameRef.current = undefined;
@@ -970,6 +982,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     slots,
     activeSlot,
     markFirstFrame,
+    retireComposite,
     setCompositeClock: (clock?: CompositeClock) => { compositeClockRef.current = clock; },
     hasPresentedFrame,
     currentMs,

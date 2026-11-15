@@ -72,7 +72,13 @@ function createHarness(type, reverse = false, platform = 'android') {
     slots: order.map((preparedClipId, i) => ({ preparedClipId, prepareToken: 10 + i, nativeViewEpoch: 100 + i, firstFrameReady: true, readiness: 'ready' })),
     activeSlot: reverse ? 1 : 0, currentTransform: clips[0].transform, currentClipId: 'out',
     onFirstFrameRender(slot, token) { calls.push(['frame', slot, token]); },
-    setCompositeClock(clock) { calls.push(['clock', clock]); } };
+    setCompositeClock(clock) { calls.push(['clock', clock]); },
+    retireComposite() {
+      props.setCompositeClock();
+      players.forEach((player, slot) => {
+        if (slot !== props.activeSlot) { player.muted = true; player.pause(); }
+      });
+    } };
   function walk(node, path, seen, nativeSeen) {
     if (Array.isArray(node)) return node.map((child, i) => walk(child, `${path}/${child?.key ?? i}`, seen, nativeSeen));
     if (!node || typeof node !== 'object') return node;

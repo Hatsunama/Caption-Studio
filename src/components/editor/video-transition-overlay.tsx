@@ -32,6 +32,7 @@ type Props = {
   currentClipId?: string;
   onFirstFrameRender: (slot: 0 | 1, nativeViewEpoch: number) => void;
   setCompositeClock: (clock?: { key: string; slot: 0 | 1; prepareToken: number }) => void;
+  retireComposite: () => void;
 };
 
 const fill: ViewStyle = { position: 'absolute', inset: 0 };
@@ -127,24 +128,14 @@ function SynchronizedComposite(props: Props & {
   onUnavailable: () => void;
 }) {
   const { activeSlot, frame, isPlaying, onUnavailable, outgoingSlot, incomingSlot, transportReady, players, slots, setCompositeClock } = props;
-  const latestPlayersRef = useRef(players);
-  const latestActiveSlotRef = useRef(activeSlot);
-  const latestSetCompositeClockRef = useRef(setCompositeClock);
+  const latestRetireCompositeRef = useRef(props.retireComposite);
 
   useEffect(() => {
-    latestPlayersRef.current = players;
-    latestActiveSlotRef.current = activeSlot;
-    latestSetCompositeClockRef.current = setCompositeClock;
-  }, [players, activeSlot, setCompositeClock]);
+    latestRetireCompositeRef.current = props.retireComposite;
+  }, [props.retireComposite]);
 
   useEffect(() => () => {
-    latestSetCompositeClockRef.current();
-    latestPlayersRef.current.forEach((player, slot) => {
-      if (slot !== latestActiveSlotRef.current) {
-        player.muted = true;
-        player.pause();
-      }
-    });
+    latestRetireCompositeRef.current();
     // Parent callbacks can change every clock render. Only retiring this keyed
     // composite may pause its standby player; otherwise every tick forces a seek.
   }, []);

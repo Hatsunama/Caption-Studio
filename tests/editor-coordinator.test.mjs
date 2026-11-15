@@ -324,6 +324,7 @@ function mount(initialProject = fixture()) {
   };
   const transport = {
     currentMs: 600, isPlaying: false, player: 'a', phase: 'ready', isGap: false,
+    retireComposite() {},
     pause() { transport.isPlaying = false; calls.pauses += 1; dirty = true; },
     play() { transport.isPlaying = true; calls.plays += 1; dirty = true; },
     seek(ms) { transport.currentMs = ms; dirty = true; },
@@ -916,6 +917,7 @@ test('translation resource suspension detaches the actual editor main preview an
   const h = mount(), original = h.project;
   h.transport.currentMs = 2180; h.render();
   const preview = () => h.all(node => node.type === 'VideoTransitionOverlay')[0].props;
+  assert.equal(preview().retireComposite, h.transport.retireComposite, 'editor forwards controller retirement authority');
   for (const [state, suspended, admitted] of [
     ['active', false, true], ['active', true, false], ['active', false, true],
     ['background', true, false], ['background', false, false], ['active', false, true],

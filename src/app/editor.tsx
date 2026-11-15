@@ -2109,6 +2109,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             currentClipId={currentClipEntry?.clip.id}
             onFirstFrameRender={transport.markFirstFrame}
             setCompositeClock={transport.setCompositeClock}
+            retireComposite={transport.retireComposite}
           />
           {timelineLayers.map((layer) => {
             if (!layer.visible) return null;
