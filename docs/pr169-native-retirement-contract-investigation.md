@@ -307,3 +307,24 @@ assertion. Active/composite/iOS/web alpha and retained-host checks span every
 existing recipe. Parent execution passes112 transition cases and4 integrity cases.
 No production file, dependency or lint configuration changed in this follow-up.
 Native compilation and fresh exact-APK runtime evidence are still required.
+
+## Native fixture window follow-up
+
+Native76ef CI compiled the production code and ran269 cases. All20 failures are
+in the new26-case observer suite: ordinary fixtures never receive a grant; the
+shared-concealment and cancellation controls pass. Parent downloaded the334475-byte
+raw report artifact14152232603 and verified SHA-256
+27cd03ceb518ba57bbc1b7b243eb9f1f92c0fc37e5fcb0b0b716bb69282d81b5.
+Actual XML totals match26 cases,20 failures,0 errors/skips. This does not identify
+the exact failed visibility predicate and does not establish a product defect.
+
+The fixture previously made an empty activity visible, then installed content and
+measured only its leaf root. Robolectric4.16.1 setup() already calls visible();
+Android clips visible rectangles through all window ancestors. The revised
+fixture installs its explicit100x100 content before attachment and measures/layouts
+from the320x480 decor. Preflight assertions now expose actual attachment, token,
+window, ancestor dimensions, global rectangles and alpha before any lease request.
+Health and real ancestor-clipping controls were added; all13 original observer
+methods/assertions remain. No production guard, visibility implementation or
+fake grant changed. This is a fixture repair hypothesis awaiting hosted evidence,
+not a native GREEN claim. The new suite has15 methods across API24/28.

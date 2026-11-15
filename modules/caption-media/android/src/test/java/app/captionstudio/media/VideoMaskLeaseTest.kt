@@ -1,8 +1,11 @@
 package app.captionstudio.media
 
 import android.app.Activity
+import android.graphics.Rect
+import android.os.Build
 import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import org.junit.Assert.*
 import org.junit.Test
@@ -37,7 +40,7 @@ class VideoMaskLeaseTest {
     fun rebind(view: View) { node = view; observers.toList().forEach { it() } }
   }
   private class Fixture : AutoCloseable {
-    val activity = Robolectric.buildActivity(Activity::class.java).setup().visible()
+    val activity = Robolectric.buildActivity(Activity::class.java).create()
     val context = activity.get()
     val root = FrameLayout(context)
     val parent = FrameLayout(context)
@@ -49,13 +52,70 @@ class VideoMaskLeaseTest {
     val peer = Binding(incoming)
     val replies = mutableListOf<String?>()
     init {
-      context.setContentView(root)
+      context.setContentView(root, FrameLayout.LayoutParams(100, 100))
       root.addView(parent, FrameLayout.LayoutParams(100, 100))
       parent.addView(outgoing, FrameLayout.LayoutParams(100, 100))
       root.addView(incoming, FrameLayout.LayoutParams(100, 100))
-      root.measure(View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY))
-      root.layout(0, 0, 100, 100)
+      // setup() already calls visible(): install content before the window is attached.
+      activity.start().postCreate(null).resume().visible()
+      drain()
+      // Android clips global visible rects through EVERY ancestor, including the
+      // window content/decor. Laying out just root leaves that chain uncontrolled.
+      val decor = context.window.decorView
+      decor.measure(
+        View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(480, View.MeasureSpec.EXACTLY)
+      )
+      decor.layout(0, 0, 320, 480)
       parent.alpha = 0f
+      assertHealthy()
+    }
+    fun diagnostics(): String = buildString {
+      append("sdk=${Build.VERSION.SDK_INT} window=${context.window.attributes} ")
+      append("sameToken=${outgoing.windowToken === incoming.windowToken}")
+      for ((name, view) in listOf("outgoing" to outgoing, "incoming" to incoming)) {
+        append("\n$name:")
+        var node: View? = view
+        while (node != null) {
+          val rect = Rect()
+          val visibleRect = node.getGlobalVisibleRect(rect)
+          append("\n  ${node.javaClass.simpleName}(id=${node.id})")
+          append(" attached=${node.isAttachedToWindow} token=${node.windowToken}")
+          append(" shown=${node.isShown} visibility=${node.visibility}")
+          append(" windowVisibility=${node.windowVisibility} alpha=${node.alpha}")
+          append(" measured=${node.measuredWidth}x${node.measuredHeight}")
+          append(" bounds=[${node.left},${node.top},${node.right},${node.bottom}]")
+          append(" globalVisible=$visibleRect rect=$rect")
+          if (node is ViewGroup) {
+            append(" clipChildren=${node.clipChildren} clipToPadding=${node.clipToPadding}")
+          }
+          node = node.parent as? View
+        }
+      }
+    }
+    fun assertHealthy() {
+      val details = diagnostics()
+      for (view in listOf(outgoing, incoming)) {
+        assertTrue("Fixture must attach both views: $details", view.isAttachedToWindow)
+        assertNotNull("Fixture must have a window token: $details", view.windowToken)
+        assertTrue("Fixture must show both views (independent of alpha): $details", view.isShown)
+        assertEquals("Fixture window must be visible: $details", View.VISIBLE, view.windowVisibility)
+        val rect = Rect()
+        assertTrue("Fixture must have an unclipped global rect: $details", view.getGlobalVisibleRect(rect))
+        assertFalse("Fixture global rect must be nonempty: $details", rect.isEmpty)
+        var node: View? = view
+        while (node != null) {
+          assertTrue("Fixture must measure/layout every ancestor: $details",
+            node.measuredWidth > 0 && node.measuredHeight > 0 && node.width > 0 && node.height > 0)
+          node = node.parent as? View
+        }
+      }
+      assertSame("Fixture views must share a window: $details", outgoing.windowToken, incoming.windowToken)
+      assertEquals("Outgoing starts unmasked: $details", 1f, outgoing.alpha)
+      assertEquals("Only outgoing's parent starts concealed: $details", 0f, parent.alpha)
+      assertTrue("Outgoing must have a concealed ancestor: $details", VideoMaskLease.ancestorMasked(outgoing))
+      assertFalse("Outgoing must be effectively hidden by alpha: $details", binding.visible())
+      assertTrue("Peer must pass the production visibility predicate: $details", peer.visible())
     }
     fun drain() = shadowOf(Looper.getMainLooper()).idle()
     fun draw() { root.viewTreeObserver.dispatchOnPreDraw() }
@@ -69,6 +129,33 @@ class VideoMaskLeaseTest {
       return result
     }
     override fun close() { owner.close(); drain(); activity.pause().stop().destroy() }
+  }
+
+  @Test fun fixtureHasAttachedLaidOutWindowAndActuallyVisiblePeer() = Fixture().use { f ->
+    f.assertHealthy()
+    f.parent.alpha = 1f
+    assertTrue("Revealed outgoing must be effectively visible: ${f.diagnostics()}", f.binding.visible())
+    assertTrue("Incoming must remain effectively visible: ${f.diagnostics()}", f.peer.visible())
+    assertTrue(f.replies.isEmpty())
+  }
+
+  @Test fun clippedPeerCannotAuthorizeGrantUntilInsideVisibleAncestors() = Fixture().use { f ->
+    // Keep attachment, size and alpha intact; only actual ancestor clipping changes.
+    f.incoming.translationX = (f.root.width + 100).toFloat()
+    val details = f.diagnostics()
+    assertTrue("Clipped peer must remain attached: $details", f.incoming.isAttachedToWindow)
+    assertTrue("Clipped peer must remain shown: $details", f.incoming.isShown)
+    assertEquals("Clipped peer must retain alpha: $details", 1f, f.incoming.alpha)
+    assertFalse("Android must reject the clipped global rect: $details", f.incoming.getGlobalVisibleRect(Rect()))
+    assertFalse("Production predicate must reject ancestor clipping: $details", f.peer.visible())
+    f.acquire(); f.draw()
+    assertTrue(f.replies.isEmpty())
+    assertEquals(1f, f.outgoing.alpha)
+    f.incoming.translationX = 0f
+    assertTrue("Restored peer must be effectively visible: ${f.diagnostics()}", f.peer.visible())
+    f.draw()
+    assertEquals(listOf<String?>(null), f.replies)
+    assertEquals(0f, f.outgoing.alpha)
   }
 
   @Test fun grantOwnsAlphaAcrossAncestorRevealUntilNativePreparationCheckpoint() = Fixture().use { f ->
