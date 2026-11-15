@@ -147,6 +147,20 @@ class VideoMaskLeaseTest {
     override fun close() { owner.close(); drain(); activity.pause().stop().destroy() }
   }
 
+  @Test fun supportedOffCanvasPeerDoesNotBlockMaskedDecoderPreparation() {
+    // Schema2 and resolveVideoTransform retain legal positions as far as +/-4.
+    // An attached, ready alpha1 peer can therefore be intentionally clipped.
+    for (direction in listOf(-1f, 1f)) Fixture().use { f ->
+      f.incoming.translationX = direction * (f.root.width + 100)
+      assertTrue(f.incoming.isAttachedToWindow)
+      assertEquals(View.VISIBLE, f.incoming.windowVisibility)
+      assertEquals(1f, f.incoming.alpha)
+      assertFalse(f.incoming.getGlobalVisibleRect(Rect()))
+      f.acquire(); f.draw()
+      assertEquals("Intentional canvas clipping must not strand the next decoder", listOf<String?>(null), f.replies)
+      assertEquals(0f, f.outgoing.alpha)
+    }
+  }
   @Test fun hiddenFrameworkWindowFailsVisibilityEvenWithShownAttachedMeasuredView() {
     System.setProperty("robolectric.areWindowsMarkedVisible", "false")
     val activity = Robolectric.buildActivity(Activity::class.java).create()
