@@ -70,15 +70,16 @@ export function VideoTransitionOverlay(props: Props) {
     ? { frame, outgoingSlot: compositeState.outgoingSlot as 0 | 1, incomingSlot: compositeState.incomingSlot as 0 | 1 }
     : undefined;
   const compositeUnavailable = frame?.mode === 'composite' && !composite;
+  const { admitted, isPlaying, players, retireComposite, activeSlot, slots, timelineMs } = props;
   useEffect(() => {
     if (compositeUnavailable) {
       // The notice conceals the unavailable pair, but the admitted ordinary
       // owner must still deliver its real decoder clock through this window.
-      props.players.forEach(player => { player.muted = true; player.volume = 0; });
-      props.retireComposite(props.admitted && transitionReady && props.isPlaying);
+      players.forEach(player => { player.muted = true; player.volume = 0; });
+      retireComposite(admitted && transitionReady && isPlaying);
     }
-  }, [compositeUnavailable, props.admitted, props.isPlaying, props.players, props.retireComposite,
-    props.activeSlot, props.slots, props.timelineMs, transitionReady]);
+  }, [compositeUnavailable, admitted, isPlaying, players, retireComposite,
+    activeSlot, slots, timelineMs, transitionReady]);
   if (!props.admitted) return null;
   return (
     <View collapsable={false} pointerEvents="none" style={[fill, transitionReady && compositeState ? { backgroundColor } : undefined]}>

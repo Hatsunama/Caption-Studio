@@ -219,7 +219,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       }
     });
     if (canRestore && !preserveOrdinaryOwner) {
-      const player = players[active];
+      const player = playerForSlot(active);
       try {
         if (ownsClock) {
           applyClipToSlot(active, entry, currentMsRef.current);
