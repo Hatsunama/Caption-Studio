@@ -130,8 +130,8 @@ class VideoMaskLeaseTest {
       assertEquals("Outgoing starts unmasked: $details", 1f, outgoing.alpha)
       assertEquals("Only outgoing's parent starts concealed: $details", 0f, parent.alpha)
       assertTrue("Outgoing must have a concealed ancestor: $details", VideoMaskLease.ancestorMasked(outgoing))
-      assertFalse("Outgoing must be effectively hidden by alpha: $details", binding.visible())
-      assertTrue("Peer must pass the production visibility predicate: $details", peer.visible())
+      assertFalse("Outgoing must be ineligible through ancestor alpha: $details", binding.presentationEligible())
+      assertTrue("Peer must pass the production eligibility predicate: $details", peer.presentationEligible())
     }
     fun drain() = shadowOf(Looper.getMainLooper()).idle()
     fun draw() { root.viewTreeObserver.dispatchOnPreDraw() }
@@ -183,7 +183,7 @@ class VideoMaskLeaseTest {
       assertEquals(View.GONE, view.windowVisibility)
       assertTrue(view.getGlobalVisibleRect(Rect()))
       assertEquals(1f, view.alpha)
-      assertFalse("A hidden window must fail the unchanged production predicate", VideoMaskLease.effectivelyVisible(view))
+      assertFalse("A hidden window must remain ineligible for presentation", VideoMaskLease.eligibleForPresentation(view))
     } finally {
       activity.pause().stop().destroy()
       System.setProperty("robolectric.areWindowsMarkedVisible", "true")
@@ -192,28 +192,39 @@ class VideoMaskLeaseTest {
   @Test fun fixtureHasAttachedLaidOutWindowAndActuallyVisiblePeer() = Fixture().use { f ->
     f.assertHealthy()
     f.parent.alpha = 1f
-    assertTrue("Revealed outgoing must be effectively visible: ${f.diagnostics()}", f.binding.visible())
-    assertTrue("Incoming must remain effectively visible: ${f.diagnostics()}", f.peer.visible())
+    assertTrue("Revealed outgoing must be eligible for presentation: ${f.diagnostics()}", f.binding.presentationEligible())
+    assertTrue("Incoming must remain eligible for presentation: ${f.diagnostics()}", f.peer.presentationEligible())
     assertTrue(f.replies.isEmpty())
   }
 
-  @Test fun clippedPeerCannotAuthorizeGrantUntilInsideVisibleAncestors() = Fixture().use { f ->
-    // Keep attachment, size and alpha intact; only actual ancestor clipping changes.
+  @Test fun intentionallyClippedPairAllowsMaskedPreparationOnlyWithEligiblePeer() = Fixture().use { f ->
+    // Both clips may intentionally sit outside the canvas; retirement still needs
+    // ancestor concealment and an eligible peer, independent of onscreen pixels.
+    f.outgoing.translationX = -(f.root.width + 100).toFloat()
     f.incoming.translationX = (f.root.width + 100).toFloat()
     val details = f.diagnostics()
     assertTrue("Clipped peer must remain attached: $details", f.incoming.isAttachedToWindow)
     assertTrue("Clipped peer must remain shown: $details", f.incoming.isShown)
     assertEquals("Clipped peer must retain alpha: $details", 1f, f.incoming.alpha)
     assertFalse("Android must reject the clipped global rect: $details", f.incoming.getGlobalVisibleRect(Rect()))
-    assertFalse("Production predicate must reject ancestor clipping: $details", f.peer.visible())
+    assertFalse("Retiree must also be intentionally clipped: $details", f.outgoing.getGlobalVisibleRect(Rect()))
+    assertTrue("Clipped peer must remain eligible for presentation: $details", f.peer.presentationEligible())
+    f.incoming.alpha = 0f
+    assertFalse("Clipping must not bypass the peer alpha guard", f.peer.presentationEligible())
     f.acquire(); f.draw()
     assertTrue(f.replies.isEmpty())
     assertEquals(1f, f.outgoing.alpha)
-    f.incoming.translationX = 0f
-    assertTrue("Restored peer must be effectively visible: ${f.diagnostics()}", f.peer.visible())
+    f.incoming.alpha = 1f
+    assertTrue("Restoring alpha must restore eligibility while clipped", f.peer.presentationEligible())
+    assertFalse(f.incoming.getGlobalVisibleRect(Rect()))
+    assertFalse(f.outgoing.getGlobalVisibleRect(Rect()))
     f.draw()
     assertEquals(listOf<String?>(null), f.replies)
     assertEquals(0f, f.outgoing.alpha)
+    assertEquals(listOf("E_VIDEO_MASK_STALE"), f.commit())
+    f.owner.prepared(f.key, 1.0)
+    assertEquals(listOf<String?>(null), f.commit())
+    assertEquals(1f, f.outgoing.alpha)
   }
 
   @Test fun grantOwnsAlphaAcrossAncestorRevealUntilNativePreparationCheckpoint() = Fixture().use { f ->

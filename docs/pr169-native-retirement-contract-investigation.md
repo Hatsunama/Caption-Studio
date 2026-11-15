@@ -351,3 +351,64 @@ visibility predicate is unchanged. A negative control uses the default hidden
 framework window with a shown/attached/measured/alpha1 view and confirms it is
 still rejected. All prior assertions and API24/28 coverage remain;16 methods
 produce32 expected cases. Native hosted execution must establish GREEN.
+
+## Hosted window result and off-canvas compatibility RED
+
+Parent verified native run43692678293 at25c46b1 against its authenticated raw
+artifact14153816119 (292007 bytes, SHA-256
+1f94ea019f9cab6a7b4e0a32f359e425b705bc7c53c4ad4d0a7a5a5cf51af05f).
+Actual XML counts match275 testcases across44 suites,0 failure/error/skip;
+32 observer cases cover API24 and28. The framework-window migration repairs
+the test fixture without replacing the production predicate. The commercial
+25c run was cancelled during Android lint by the next push; no APK was produced.
+
+The follow-up found a compatibility error in the new media admission predicate.
+Project mutation and schema2 permit normalized video positions -4..4. Parent
+executed edits and serialize/decode for two distinct source clips at both x=-4
+and x=4; positions, source bounds and rates survive unchanged. Global canvas
+clipping therefore cannot by itself mean that an otherwise ready peer is absent.
+The new native positive test intentionally translates that attached/shown/alpha1
+peer outside its ancestors, confirms no global visible rectangle and asks for
+retiring-decoder exclusion. On unmodified product code it fails on BOTH API24
+and28: no grant, expected [null]. All275 previous native cases still pass.
+
+Parent verified run43694967984 at e942a56 using artifact14154306845 (300047
+bytes, SHA-256 fd4647c182096cd1905b137ed487f467502ebd70364441870d3f566b3af0df3c).
+All277 actual XML cases match declared totals; exactly those2 new cases fail.
+This proves the admission-policy mismatch in the real native owner. Its full
+physical-device symptom remains unverified. A centered target can change its
+transform before activation, so this is not evidence that every ordinary cut
+fails; consecutive valid off-canvas clips remain a compatibility obligation.
+
+The repair must distinguish presentation eligibility from actual onscreen pixels.
+It must preserve window/attachment/measurement/ancestor alpha and visibility,
+current SDK player/view/TextureView binding, surface availability, native frame
+checkpoint, generation, cancellation, background and persistent mask ownership.
+It must not clamp persisted geometry or alter touch safety. Private device input
+checks continue to require visible unobstructed touch areas. No production
+geometry, schema, feature, dependency, model or signing change is authorized here.
+
+Impact trace: persisted transform -> active preview container -> native peer
+eligibility -> retiree mask -> source/window preparation -> unchanged independent
+frame receipt -> transport readiness. VideoFrameReceipt.NativeHooks.layoutValid
+checks SDK player/surface/aspect validity and has no global clipping predicate.
+PiP does not acquire the main-pair lease; export and saved geometry are unchanged.
+A rebuilt exact APK still requires both-phone cut, interruption and recovery checks.
+
+The bounded repair removes only the global-visible-rectangle admission condition
+and names the remaining predicate presentationEligible/eligibleForPresentation.
+The obsolete clipping-rejection test now proves two clipped clips can prepare,
+while alpha-zero peers still wait and a missing checkpoint still rejects commit.
+The initial positive RED and hidden-window/lifecycle controls remain. Parent
+review traced all predicate callers and found no other consumer or second policy.
+The existing frame receipt, source mutation serialization and native mask cleanup
+are unchanged. Persisted positions/source times/rates and the separate input
+safety guards are unchanged. This intentionally changes only the mistaken new
+admission policy; it is not a geometry or appearance change.
+
+Parent reran157 controller,11 transition model,7 native-adapter,2 audio-ownership
+and6 integrity/schema cases under the single-process128MiB/768MiB-free gate.
+All pass, as does the product contract. The prepared UI port independently passes
+8 offline groups with no loader/context/network/device execution or receipt seal.
+These are behavioral/static evidence, not native GREEN or APK acceptance.
+Complete unchanged hosted checks and actual two-phone pixels remain mandatory.

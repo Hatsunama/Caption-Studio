@@ -6,7 +6,8 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 
 import { createCaptionProject } from '../src/lib/project-factory.ts';
-import { splitVideoClip } from '../src/lib/project-editor.ts';
+import { setVideoClipTransform, splitVideoClip } from '../src/lib/project-editor.ts';
+import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
 
 test('splitting video is topology-only for subtitle identity, text, timing, and word references', () => {
   const source = { id: 'source', uri: 'content://video/source', storageMode: 'linked', displayName: 'source.mp4', durationMs: 6_000, width: 1080, height: 1920, rotation: 0 };
@@ -180,4 +181,17 @@ test('preparation identities advance monotonically and reject invalid or exhaust
   ]) {
     assert.throws(() => nextPrepareToken(invalid), /preparation request identity was exhausted/);
   }
+});
+
+for (const x of [-4, 4]) test(`accepted off-canvas main-video positions survive edits and draft recovery: ${x}`, () => {
+  const sources = ['landscape', 'portrait'].map((id, i) => ({ id, uri: `file:///${id}.mp4`, storageMode: 'copied', displayName: `${id}.mp4`, durationMs: 8000,
+    width: i ? 360 : 640, height: i ? 640 : 360, rotation: 0 }));
+  let project = createCaptionProject({ id: `offcanvas-${x}`, name: 'Synthetic compatibility fixture', sources });
+  const ids = project.clips.map(clip => clip.id);
+  for (const id of ids) project = setVideoClipTransform(project, id, { position: { x, y: .5 } });
+  const recovered = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(project)));
+  assert.deepEqual(recovered.clips.map(clip => clip.id), ids);
+  assert.deepEqual(recovered.clips.map(clip => clip.transform.position), [{ x, y: .5 }, { x, y: .5 }]);
+  assert.deepEqual(recovered.clips.map(clip => [clip.sourceStartMs, clip.sourceEndMs, clip.playbackRate]), [[0, 8000, 1], [0, 8000, 1]],
+    'fixing preview admission must not clamp saved geometry or change the clip timeline');
 });

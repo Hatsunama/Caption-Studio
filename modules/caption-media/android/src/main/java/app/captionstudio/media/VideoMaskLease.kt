@@ -2,7 +2,6 @@ package app.captionstudio.media
 
 import android.os.Handler
 import android.os.Looper
-import android.graphics.Rect
 import android.view.View
 import android.view.ViewTreeObserver
 import android.view.TextureView
@@ -24,7 +23,7 @@ internal class VideoMaskLease : AutoCloseable {
     fun item(): Any?
     fun output(): Any?
     fun preparedState(): Any?
-    fun visible(): Boolean = effectivelyVisible(view())
+    fun presentationEligible(): Boolean = eligibleForPresentation(view())
     fun listen(changed: () -> Unit, released: () -> Unit): AutoCloseable
   }
 
@@ -38,8 +37,8 @@ internal class VideoMaskLease : AutoCloseable {
     override fun item(): Any? = ref.get()?.player?.currentMediaItem
     override fun output(): Any? = ref.get()?.currentVideoView?.playerView?.videoSurfaceView
       ?.let { (it as? TextureView)?.takeIf { texture -> texture.isAvailable }?.surfaceTexture }
-    override fun visible(): Boolean = ref.get()?.currentVideoView?.let {
-      view() === it && effectivelyVisible(it.playerView.videoSurfaceView)
+    override fun presentationEligible(): Boolean = ref.get()?.currentVideoView?.let {
+      view() === it && eligibleForPresentation(it.playerView.videoSurfaceView)
     } ?: false
     override fun preparedState(): Any? = ref.get()?.let {
       if (it.player.playerError != null || it.player.playbackState != Player.STATE_READY ||
@@ -241,7 +240,7 @@ internal class VideoMaskLease : AutoCloseable {
       val other = peer?.view()
       if (hidden && (other == null || other === view || !other.isAttachedToWindow ||
           other.windowToken !== view.windowToken || !ancestorMasked(view) ||
-          (peer?.visible() != true && !sharedConcealment(view, other)))) return
+          (peer?.presentationEligible() != true && !sharedConcealment(view, other)))) return
       // Own the actual SDK VideoView alpha across promise delivery, source install,
       // Fabric updates and synchronous target changes. SDK only writes its texture CHILD alpha.
       mask(view)
@@ -321,9 +320,11 @@ internal class VideoMaskLease : AutoCloseable {
       }
       return false
     }
-    internal fun effectivelyVisible(view: View?): Boolean {
+    // Intentional canvas clipping does not relinquish presentation ownership.
+    // Eligibility is independent of whether Android reports any onscreen pixels.
+    internal fun eligibleForPresentation(view: View?): Boolean {
       if (view == null || !view.isAttachedToWindow || !view.isShown || view.windowVisibility != View.VISIBLE ||
-        view.width <= 0 || view.height <= 0 || !view.getGlobalVisibleRect(Rect())) return false
+        view.width <= 0 || view.height <= 0) return false
       var node: View? = view
       while (node != null) {
         if (node.alpha <= 0f || node.visibility != View.VISIBLE) return false
