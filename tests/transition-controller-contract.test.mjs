@@ -182,3 +182,39 @@ test('composite callback churn does not reseek and cleanup preserves a newer see
     assert.equal(h.transport.isPlaying, true);
   } finally { h.unmount(); }
 });
+
+test('pending fallback retirement never touches players after unmount', async () => {
+  const clips = [clip('out'), clip('in')]; clips[0].transitionAfter = { type: 'crossfade', durationMs: 1000 };
+  const h = harness({ clips, sourceDurationMs: 8000 });
+  try {
+    await h.complete(); h.transport.seek(3750); await h.complete(); h.transport.play(); await h.complete();
+    const standby = 1 - h.transport.activeSlot;
+    h.players[standby].play = () => { throw new Error('synthetic transition renderer unavailable'); };
+    h.players[standby].playing = false;
+    await h.rotate();
+    h.transport.pause(); await h.complete();
+    h.transport.play(); h.render();
+    h.unmount();
+    const mutations = () => h.calls.filter(call => ['play', 'pause', 'seek'].includes(call[0]));
+    const before = mutations().length;
+    await h.settle();
+    assert.equal(mutations().length, before, 'completed target must not access disposed players');
+  } finally { h.unmount(); }
+});
+
+test('ordinary fallback play failure enters actionable source recovery without an uncaught exception', async () => {
+  const clips = [clip('out'), clip('in')]; clips[0].transitionAfter = { type: 'crossfade', durationMs: 1000 };
+  const h = harness({ clips, sourceDurationMs: 8000 });
+  try {
+    await h.complete(); h.transport.seek(3750); await h.complete(); h.transport.play(); await h.complete();
+    const active = h.transport.activeSlot;
+    h.players[active].playing = false;
+    h.players[active].play = () => { throw new Error('synthetic active decoder play failure'); };
+    assert.doesNotThrow(() => h.transport.retireComposite());
+    await h.settle();
+    assert.equal(h.transport.phase, 'error');
+    assert.equal(h.transport.isPlaying, false);
+    assert.match(h.transport.sourceFailure.detail, /active decoder play failure/);
+    assert.ok(h.players.every(player => player.muted && !player.playing));
+  } finally { h.unmount(); }
+});

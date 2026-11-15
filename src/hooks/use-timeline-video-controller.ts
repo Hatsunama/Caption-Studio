@@ -220,12 +220,18 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     });
     if (canRestore && !preserveOrdinaryOwner) {
       const player = players[active];
-      if (ownsClock) {
-        applyClipToSlot(active, entry, currentMsRef.current);
+      try {
+        if (ownsClock) {
+          applyClipToSlot(active, entry, currentMsRef.current);
+        }
+        player.volume = playbackVolume(entry, currentMsRef.current);
+        player.muted = entry.clip.muted || player.volume <= 0;
+        // Intent authorizes playback; the native command is idempotent.
+        player.play();
+      } catch (error) {
+        const source = projectRef.current.sources.find(candidate => candidate.id === entry.clip.sourceId);
+        failSource(source ?? { id: entry.clip.sourceId, uri: runtime.playbackUri ?? '', displayName: 'Source video' }, error);
       }
-      player.volume = playbackVolume(entry, currentMsRef.current);
-      player.muted = entry.clip.muted || player.volume <= 0;
-      if (!player.playing) player.play();
     }
   };
 
@@ -816,7 +822,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     }).finally(() => {
       processingRef.current = undefined;
       if (desiredRef.current && mountedRef.current) void drainTargetsRef.current();
-      else if (pendingOrdinaryRestoreRef.current && !compositeClockRef.current) retireComposite();
+      else if (mountedRef.current && pendingOrdinaryRestoreRef.current && !compositeClockRef.current) retireComposite();
     });
     processingRef.current = operation;
     return operation;

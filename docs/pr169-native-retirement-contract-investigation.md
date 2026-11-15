@@ -561,6 +561,13 @@ The four muted/unmuted, before/after-cut cases pass after the guard, together wi
 the explicit backward-seek control. A same-batch test that required a frozen active
 player was updated to require silence, a paused standby, unchanged native epochs
 and forward navigation instead. Interruption and stale-callback assertions remain.
+The first combined hosted suite passes3973 cases with9 platform skips and fails
+one existing source guard against reading native `player.playing` in the controller.
+The guard is unchanged: fallback uses authoritative play intent and an idempotent
+play command. Final cleanup regressions also reproduce two player calls after
+unmount and an uncaught active-player play failure. A mounted-lifetime guard and
+the existing actionable source-error path repair those cases. All19 focused
+controller cases and the unchanged source guard pass afterward; full CI is rerun.
 
 Acceptance still requires the full hosted checks on the final combined commit,
 review of the actual diff, and cold-start checks of that exact APK on Samsung and
