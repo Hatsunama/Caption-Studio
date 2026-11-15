@@ -114,8 +114,8 @@ test('full-source clips advance visible tail and head without frozen frames', ()
   assert.equal(videoTransitionPreviewFrameAt(windows, 4_299).outgoingSourceTimeMs, 4_000);
   assert.equal(videoTransitionPreviewFrameAt(windows, 4_000).incomingSourceTimeMs, 150);
   assert.deepEqual(videoTransitionPlaybackTargets(videoTransitionPreviewFrameAt(windows, 4_000), 0, 1, 1), [
-    { slot: 0, sourceTimeMs: 3_850, playbackRate: 0.5, muted: true },
-    { slot: 1, sourceTimeMs: 150, playbackRate: 0.5, muted: false },
+    { slot: 0, sourceTimeMs: 3_850, playbackRate: 0.5, muted: false, volume: Math.cos(Math.PI / 4) },
+    { slot: 1, sourceTimeMs: 150, playbackRate: 0.5, muted: false, volume: Math.sin(Math.PI / 4) },
   ]);
 });
 
@@ -138,15 +138,15 @@ test('an EOF tail uses native export playable bounds without changing the compos
   assert.deepEqual([window.startMs, window.boundaryMs, window.endMs], [12_675, 13_000, 13_325]);
   assert.equal(window.unavailableReason, undefined);
   assert.deepEqual(videoTransitionPlaybackTargets(videoTransitionPreviewFrameAt(windows, window.startMs), 0, 1, 0), [
-    { slot: 0, sourceTimeMs: 7_675, playbackRate: 0.5, muted: false },
-    { slot: 1, sourceTimeMs: 2_675, playbackRate: 1, muted: true },
+    { slot: 0, sourceTimeMs: 7_675, playbackRate: 0.5, muted: false, volume: 1 },
+    { slot: 1, sourceTimeMs: 2_675, playbackRate: 1, muted: true, volume: 0 },
   ]);
   const lastFrame = videoTransitionPreviewFrameAt(windows, window.endMs - 1);
   assert.equal(lastFrame.outgoingSourceTimeMs, 8_000, 'keep the native rounded source clock');
   // TimelineVideoExporter.ManagedRetriever.frame clamps decoding to durationMs - 1.
   assert.deepEqual(videoTransitionPlaybackTargets(lastFrame, 1, 0, 0), [
-    { slot: 1, sourceTimeMs: 7_999, playbackRate: 0.5, muted: true },
-    { slot: 0, sourceTimeMs: 3_324, playbackRate: 1, muted: false },
+    { slot: 1, sourceTimeMs: 7_999, playbackRate: 0.5, muted: false, volume: Math.cos((649 / 650) * Math.PI / 2) },
+    { slot: 0, sourceTimeMs: 3_324, playbackRate: 1, muted: false, volume: Math.sin((649 / 650) * Math.PI / 2) },
   ], 'a paused or resynchronized preview must not seek the outgoing player to EOF');
   assert.equal(videoTransitionPreviewFrameAt(windows, window.endMs), undefined);
   assert.equal(transitionTimelineTimeAt(windows, 'A2', 13_000, 7_999, window.key), 13_323);
@@ -285,12 +285,12 @@ test('both playback targets follow native source clocks through hidden handles',
   );
   const frame = videoTransitionPreviewFrameAt(windows, 4_250);
   assert.deepEqual(videoTransitionPlaybackTargets(frame, 0, 1, 0), [
-    { slot: 0, sourceTimeMs: 5_250, playbackRate: 1, muted: false },
-    { slot: 1, sourceTimeMs: 1_250, playbackRate: 1, muted: true },
+    { slot: 0, sourceTimeMs: 5_250, playbackRate: 1, muted: false, volume: Math.cos(3 * Math.PI / 8) },
+    { slot: 1, sourceTimeMs: 1_250, playbackRate: 1, muted: false, volume: Math.sin(3 * Math.PI / 8) },
   ]);
   assert.deepEqual(videoTransitionPlaybackTargets(frame, 1, 0, 0), [
-    { slot: 1, sourceTimeMs: 5_250, playbackRate: 1, muted: true },
-    { slot: 0, sourceTimeMs: 1_250, playbackRate: 1, muted: false },
+    { slot: 1, sourceTimeMs: 5_250, playbackRate: 1, muted: false, volume: Math.cos(3 * Math.PI / 8) },
+    { slot: 0, sourceTimeMs: 1_250, playbackRate: 1, muted: false, volume: Math.sin(3 * Math.PI / 8) },
   ]);
 });
 

@@ -123,6 +123,45 @@ const compositeRecipes = ['crossfade', 'push-left', 'push-right', 'push-up', 'pu
   'split-horizontal', 'split-vertical', 'iris-circle', 'iris-diamond',
   'fold-horizontal', 'fold-vertical', 'zoom-in', 'zoom-out', 'spin'];
 
+for (const platform of ['android', 'ios', 'web']) for (const recipe of compositeRecipes) {
+  test(`composite alpha owner: ${platform}, ${recipe}`, () => {
+    for (const reverse of [false, true]) {
+      const h = createHarness(recipe, reverse, platform);
+      try {
+        h.render();
+        const identities = () => h.videos().map(v => [...v.ancestors, v].map(node => node.id));
+        const ids = identities();
+        const check = () => {
+          assert.deepEqual(identities(), ids, 'video and every wrapper survive entry, phase changes and exit');
+          const owners = h.videos().map(v => v.ancestors[2]);
+          for (const owner of owners) {
+            const fractional = owner.style.opacity > 0 && owner.style.opacity < 1;
+            assert.equal(owner.props.needsOffscreenAlphaCompositing === true,
+              platform === 'android' && fractional,
+              'only the Android fractional-opacity layer opts into group alpha');
+          }
+          for (const node of [...h.nodes('view'), ...h.videos()]) {
+            assert.notEqual(node.props.renderToHardwareTextureAndroid, true, 'no persistent hardware texture');
+            if (!owners.some(owner => owner.id === node.id)) {
+              assert.notEqual(node.props.needsOffscreenAlphaCompositing, true, 'group alpha belongs only to the opacity owner');
+            }
+          }
+        };
+        check(); // Ordinary playback, including the hidden Android standby.
+        for (const phase of [0, .025, .25, .5, .75, .975, 1]) {
+          h.phase(phase);
+          check(); // Includes zero alpha and the opaque outgoing layer.
+        }
+        h.phase(.5); check(); // Re-enter after the end boundary.
+        h.render({ timelineMs: 3000 }); check();
+      } finally {
+        h.unmount();
+      }
+    }
+    // Mocked host props prove the opt-in contract, not Android GPU pixel output.
+  });
+}
+
 for (const reverse of [false, true]) for (const activeSlot of [0, 1]) {
   test(`crossfade host ancestor presentation: reverse=${reverse}, active=${activeSlot}`, t => {
     const h = createHarness('crossfade', reverse); t.after(() => h.unmount());
@@ -141,10 +180,15 @@ for (const reverse of [false, true]) for (const activeSlot of [0, 1]) {
       const a = presentation(outgoing), b = presentation(incoming);
       assert.equal(a.alpha, 1, 'outgoing host has no effective JS ancestor concealment');
       assert.equal(b.alpha, phase, 'incoming host effective alpha equals recipe phase');
-      assert.equal(a.backgrounds.length, 1);
-      assert.equal(b.backgrounds.length, 1);
+      assert.equal(a.backgrounds.length, 2, 'common stage plus opaque outgoing input matte');
+      assert.equal(b.backgrounds.length, 2, 'common stage plus opaque incoming input matte');
       assert.equal(a.backgrounds[0].id, b.backgrounds[0].id, 'background belongs to common stage behind both layers');
       assert.equal(a.backgrounds[0].style.backgroundColor, '#123456');
+      assert.notEqual(a.backgrounds[1].id, b.backgrounds[1].id, 'each input owns its full frame matte');
+      for (const video of [outgoing, incoming]) {
+        assert.equal(video.ancestors[2].style.backgroundColor, undefined, 'elevated wrapper stays background free');
+        assert.equal(video.ancestors[4].style.backgroundColor, '#123456', 'matte is inside clipping and outside user transform');
+      }
       assert.ok(h.videos().every(v => v.props.surfaceType === 'textureView' && v.props.useExoShutter === false));
       assert.deepEqual(h.videos().map(v => v.id), ids);
       trace.push({ phase, outgoingAlpha: a.alpha, incomingAlpha: b.alpha,

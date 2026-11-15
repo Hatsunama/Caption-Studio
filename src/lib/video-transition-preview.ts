@@ -1,9 +1,11 @@
 import { effectiveVideoTransition, videoTransitionPreviewKind, videoTransitionUsesCompositeMedia } from '@/lib/video-transitions';
 import { videoPlaybackUri } from '@/lib/video-playback-source';
+import { transitionClipPlaybackVolume } from '@/lib/video-transition-audio';
 import type { ClipTimelineEntry } from '@/lib/video-timeline';
 import type { ProjectVideoSource, VideoTransform, VideoTransitionType } from '@/types/project';
 
 export type TransitionPreviewSource = {
+  entry: ClipTimelineEntry;
   clipId: string;
   sourceId: string;
   uri: string;
@@ -110,6 +112,7 @@ export function buildVideoTransitionPreviewWindows(
         ...base,
         key: `${base.key}:${outgoingSource.id}:${outgoingSource.uri}:${incomingSource.id}:${incomingSource.uri}`,
         outgoing: {
+          entry,
           clipId: entry.clip.id,
           sourceId: entry.clip.sourceId,
           uri: videoPlaybackUri(outgoingSource),
@@ -120,6 +123,7 @@ export function buildVideoTransitionPreviewWindows(
           transform: entry.clip.transform,
         },
         incoming: {
+          entry: incomingEntry,
           clipId: incomingEntry.clip.id,
           sourceId: incomingEntry.clip.sourceId,
           uri: videoPlaybackUri(incomingSource),
@@ -190,7 +194,7 @@ export function videoTransitionPlaybackTargets(
   frame: VideoTransitionPreviewFrame,
   outgoingSlot: 0 | 1,
   incomingSlot: 0 | 1,
-  activeSlot: 0 | 1,
+  _activeSlot: 0 | 1,
 ) {
   if (!frame.outgoing || !frame.incoming
     || frame.outgoingSourceTimeMs == null || frame.incomingSourceTimeMs == null) return [];
@@ -199,13 +203,15 @@ export function videoTransitionPlaybackTargets(
       slot: outgoingSlot,
       sourceTimeMs: playableSourceTime(frame.outgoing, frame.outgoingSourceTimeMs),
       playbackRate: frame.outgoing.playbackRate,
-      muted: outgoingSlot !== activeSlot,
+      volume: transitionClipPlaybackVolume(frame.outgoing.entry, frame.startMs + frame.phase * frame.durationMs, frame),
+      muted: transitionClipPlaybackVolume(frame.outgoing.entry, frame.startMs + frame.phase * frame.durationMs, frame) <= 0,
     },
     {
       slot: incomingSlot,
       sourceTimeMs: playableSourceTime(frame.incoming, frame.incomingSourceTimeMs),
       playbackRate: frame.incoming.playbackRate,
-      muted: incomingSlot !== activeSlot,
+      volume: transitionClipPlaybackVolume(frame.incoming.entry, frame.startMs + frame.phase * frame.durationMs, frame),
+      muted: transitionClipPlaybackVolume(frame.incoming.entry, frame.startMs + frame.phase * frame.durationMs, frame) <= 0,
     },
   ];
 }

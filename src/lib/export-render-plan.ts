@@ -1,4 +1,5 @@
 import { audibleVideoOverlaysWithin } from '@/lib/audible-video-overlays';
+import { resolveCanvasColor, toAndroidArgbColor } from '@/lib/canvas-color';
 import { videoOverlaySegments } from '@/lib/video-overlay-segments';
 import { projectRenderDuration } from '@/lib/project-timeline';
 import { audibleAudioClipsWithin } from '@/lib/audio-timeline';
@@ -225,7 +226,7 @@ export function buildTimelineRenderPlan(
     width,
     height,
     frameRate,
-    backgroundColor: project.canvas.backgroundColor,
+    backgroundColor: resolveCanvasColor(project.canvas.backgroundColor),
     burnCaptions: project.export.burnCaptions,
     videoTransform: compatibilityVideoTransform,
     clips: entries.map((entry, index) => {
@@ -305,14 +306,14 @@ export function serializeStyle(style: CaptionStyle, resolvedFontUris: ResolvedFo
     fontSize: style.fontSize,
     fontWeight: style.fontWeight,
     italic: style.italic,
-    textColor: style.textColor,
+    textColor: toAndroidArgbColor(style.textColor),
     ...(style.opacity === undefined ? {} : { opacity: style.opacity }),
-    secondaryTextColor: style.secondaryTextColor,
+    secondaryTextColor: toAndroidArgbColor(style.secondaryTextColor),
     textTreatment: style.textTreatment,
-    activeWordColor: style.activeWordColor,
-    stroke: { ...style.stroke },
-    shadow: { ...style.shadow },
-    background: { ...style.background },
+    activeWordColor: toAndroidArgbColor(style.activeWordColor),
+    stroke: { ...style.stroke, color: toAndroidArgbColor(style.stroke.color) },
+    shadow: { ...style.shadow, color: toAndroidArgbColor(style.shadow.color) },
+    background: { ...style.background, color: toAndroidArgbColor(style.background.color) },
     alignment: style.alignment,
     letterSpacing: style.letterSpacing,
     lineHeight: style.lineHeight,

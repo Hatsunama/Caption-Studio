@@ -1,5 +1,6 @@
 import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project-timeline';
 import { buildVideoTransitionPreviewWindows, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
+import { transitionClipPlaybackVolume } from '@/lib/video-transition-audio';
 import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
 import { desiredVideoPlaybackWindowEnd } from '@/lib/video-playback-window';
 import { acquireVideoMaskLease, configureVideoPlaybackWindow, disposeVideoMaskLease } from '@/services/video-playback-window';
@@ -12,7 +13,6 @@ import { Platform } from 'react-native';
 
 import {
   buildClipTimeline,
-  clipPlaybackVolume,
   sourceTimeAt,
   timelineTimeAt,
   type ClipTimelineEntry,
@@ -93,6 +93,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const phaseRef = useRef<TransportPhase>(initialPhase);
   const activeSlotRef = useRef<SlotIndex>(0);
   const compositeClockRef = useRef<CompositeClock | undefined>(undefined);
+  const pendingOrdinaryRestoreRef = useRef(false);
   const activeClipIdRef = useRef<string | undefined>(undefined);
   const slotRuntimeRef = useRef<[SlotRuntime, SlotRuntime]>([createSlotRuntime(0, 0), createSlotRuntime(0, 0)]);
   const desiredRef = useRef<Target | undefined>(undefined);
@@ -179,17 +180,54 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const playerForSlot = (slot: SlotIndex) => players[slot];
 
-  const retireComposite = useCallback(() => {
+  const playbackVolume = (entry: ClipTimelineEntry, timelineMs: number) => {
+    const window = transitionWindowsRef.current.find(candidate => timelineMs >= candidate.startMs && timelineMs <= candidate.endMs
+      && (candidate.outgoing?.clipId === entry.clip.id || candidate.incoming?.clipId === entry.clip.id));
+    // Ordinary activation has no authority to reveal composite audio before the
+    // retained pair is ready. SynchronizedComposite installs both gains together.
+    if (window?.mode === 'composite' && timelineMs < window.endMs) return 0;
+    return transitionClipPlaybackVolume(entry, timelineMs, window);
+  };
+
+  const retireComposite = (allowOrdinaryPlayback = true) => {
+    const clock = compositeClockRef.current;
     compositeClockRef.current = undefined;
-    // Activation updates this ref before the render that may remove the
-    // composite. Its last mounted props can still describe the previous owner.
+    const restoreAfterProcessing = pendingOrdinaryRestoreRef.current && !processingRef.current;
+    pendingOrdinaryRestoreRef.current = allowOrdinaryPlayback && Boolean(processingRef.current);
+    const active = activeSlotRef.current;
+    const runtime = slotRuntimeRef.current[active];
+    const entry = entriesRef.current.find(candidate => candidate.clip.id === activeClipIdRef.current);
+    const ordinaryReady = allowOrdinaryPlayback && mountedRef.current && surfacesAdmittedRef.current
+      && !translationSuspensionRef.current && phaseRef.current === 'ready'
+      && !processingRef.current && !runtime.preparation && runtime.readiness === 'ready' && runtime.firstFrameReady
+      && entry && runtime.preparedClipId === entry.clip.id;
+    const canRestore = ordinaryReady && playIntentRef.current;
+    const ownsClock = clock?.slot === active && clock.prepareToken === runtime.prepareToken;
+    const insideComposite = transitionWindowsRef.current.some(window => window.mode === 'composite'
+      && currentMsRef.current >= window.startMs && currentMsRef.current < window.endMs);
+    // Ordinary activation may have installed a new owner before the old keyed
+    // component unmounts. Preserve that owner's existing paused/audio state.
+    const preserveOrdinaryOwner = ordinaryReady && !insideComposite && !ownsClock && !restoreAfterProcessing;
+    // Retire against current ownership, not the outgoing composite's last props.
+    // Only the retiring clock's current preparation may rebase source time.
+    // New target processing/ownership must retain its own position and rate.
     players.forEach((player, slot) => {
-      if (slot !== activeSlotRef.current) {
+      if (slot !== active || (!canRestore && !preserveOrdinaryOwner)) {
         player.muted = true;
+        player.volume = 0;
         player.pause();
       }
     });
-  }, [players]);
+    if (canRestore && !preserveOrdinaryOwner) {
+      const player = players[active];
+      if (ownsClock) {
+        applyClipToSlot(active, entry, currentMsRef.current);
+      }
+      player.volume = playbackVolume(entry, currentMsRef.current);
+      player.muted = entry.clip.muted || player.volume <= 0;
+      if (!player.playing) player.play();
+    }
+  };
 
   const cancelGapClock = () => {
     if (gapFrameRef.current != null) cancelAnimationFrame(gapFrameRef.current);
@@ -214,11 +252,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     boundaryClipIdRef.current = undefined;
     cancelGapClock();
     cancelScheduledPreload();
-    players.forEach((player) => player.pause());
+    players.forEach((player) => { player.muted = true; player.volume = 0; player.pause(); });
     if (mountedRef.current) setIsPlaying(false);
   }, [players]);
 
   const retireSurfaceFrames = useCallback(() => {
+    players.forEach(player => { player.muted = true; player.volume = 0; player.pause(); });
     slotRuntimeRef.current.forEach((runtime) => {
       runtime.preparation?.abort();
       // Retire callbacks and async continuations before publishing new surfaces.
@@ -238,7 +277,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     hasPresentedFrameRef.current = false;
     if (mountedRef.current) setHasPresentedFrameState(false);
     publishSlots();
-  }, [publishSlots]);
+  }, [players, publishSlots]);
 
   const suspendForTranslation = useCallback(() => {
     if (translationSuspensionRef.current && !translationSuspensionRef.current.restored) {
@@ -579,8 +618,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const applyClipToSlot = (slot: SlotIndex, entry: ClipTimelineEntry, timelineMs: number) => {
     const media = playerForSlot(slot);
     media.playbackRate = entry.clip.playbackRate;
-    media.muted = entry.clip.muted;
-    media.volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
+    media.volume = playbackVolume(entry, timelineMs);
+    media.muted = entry.clip.muted || media.volume <= 0;
     const windowEndMs = slotRuntimeRef.current[slot].appliedWindowEndMs;
     const timeSeconds = effectiveNativeSeekTarget(
       Math.min(sourceTimeAt(entry, timelineMs), windowEndMs ?? Infinity) / 1_000, (windowEndMs ?? sourceForEntry(entry).durationMs) / 1_000, media.duration, Platform.OS,
@@ -664,8 +703,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     activeClipIdRef.current = entry.clip.id;
     boundaryClipIdRef.current = undefined;
     player.playbackRate = entry.clip.playbackRate;
-    player.muted = entry.clip.muted;
-    player.volume = clipPlaybackVolume(entry.clip, 0);
+    player.volume = playbackVolume(entry, entry.startMs);
+    player.muted = entry.clip.muted || player.volume <= 0;
     publishSlots();
     setCurrentMs(entry.startMs);
     setSourceFailure(undefined);
@@ -777,6 +816,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     }).finally(() => {
       processingRef.current = undefined;
       if (desiredRef.current && mountedRef.current) void drainTargetsRef.current();
+      else if (pendingOrdinaryRestoreRef.current && !compositeClockRef.current) retireComposite();
     });
     processingRef.current = operation;
     return operation;
@@ -788,6 +828,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const requestTarget = (timelineMs: number) => {
     compositeClockRef.current = undefined;
+    players.forEach(player => { player.muted = true; player.volume = 0; });
     cancelScheduledPreload();
     const targetMs = clamp(timelineMs, 0, projectTimelineDuration(projectRef.current));
     const segment = projectTimelineSegmentAt(projectRef.current, targetMs, entriesRef.current);
@@ -895,21 +936,29 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
           advanceFrom(entry);
           return;
         }
-        // Both decoders already follow this composite. Transfer transport/audio
+        // Both decoders already follow this composite. Transfer transport
         // ownership without ordinary activation pausing or re-seeking either leg.
-        playerForSlot(slot).muted = true;
         setActiveSlot(incomingSlot);
         activeClipIdRef.current = next.clip.id;
         boundaryClipIdRef.current = undefined;
         compositeClockRef.current = { key: window.key, slot: incomingSlot,
           prepareToken: slotRuntimeRef.current[incomingSlot].prepareToken };
-        playerForSlot(incomingSlot).muted = next.clip.muted;
         ownerSlot = incomingSlot;
         ownerEntry = next;
         preloadNext(next, incomingSlot, transitionMs);
       }
       setCurrentMs(transitionMs);
-      playerForSlot(ownerSlot).volume = clipPlaybackVolume(ownerEntry.clip, transitionMs - ownerEntry.startMs);
+      // Update both gains on the authoritative source clock before React's next
+      // commit. The active slot owns transport only, never exclusive audio.
+      slotRuntimeRef.current.forEach((leg, index) => {
+        const legEntry = entriesRef.current.find(candidate => candidate.clip.id === leg.preparedClipId);
+        const player = playerForSlot(index as SlotIndex);
+        const audible = legEntry && leg.readiness === 'ready' && leg.firstFrameReady
+          && surfacesAdmittedRef.current && playIntentRef.current
+          && (window.outgoing?.clipId === legEntry.clip.id || window.incoming?.clipId === legEntry.clip.id);
+        player.volume = audible ? transitionClipPlaybackVolume(legEntry, transitionMs, window) : 0;
+        player.muted = !audible || player.volume <= 0;
+      });
       if (transitionMs >= window.endMs) {
         compositeClockRef.current = undefined;
         // A no-handle leg may have a different rate/source clock. Restore the
@@ -919,8 +968,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       return;
     }
     const timelineMs = clamp(timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
+    // A sample queued before a source-clock rebase must not rewind playback.
+    // Explicit backward seeks establish their new position through requestTarget.
+    if (timelineMs < currentMsRef.current) return;
     setCurrentMs(timelineMs);
-    playerForSlot(slot).volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
+    playerForSlot(slot).volume = playbackVolume(entry, timelineMs);
+    playerForSlot(slot).muted = entry.clip.muted || playerForSlot(slot).volume <= 0;
     if (timelineMs >= entry.endMs - tolerance) advanceFrom(entry);
   };
 
@@ -947,6 +1000,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const onStatusChange = (slot: SlotIndex, status: string, error: unknown) => {
     if (status !== 'error') return;
+    if (compositeClockRef.current) {
+      players.forEach(player => { player.muted = true; player.volume = 0; player.pause(); });
+    }
     const runtime = slotRuntimeRef.current[slot];
     if (runtime.preparation) {
       runtime.preparationError = error instanceof Error ? error : new Error(
@@ -1032,7 +1088,10 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     activeSlot,
     markFirstFrame,
     retireComposite,
-    setCompositeClock: (clock?: CompositeClock) => { compositeClockRef.current = clock; },
+    setCompositeClock: (clock?: CompositeClock) => {
+      compositeClockRef.current = clock;
+      if (clock) pendingOrdinaryRestoreRef.current = false;
+    },
     hasPresentedFrame,
     currentMs,
     isPlaying,

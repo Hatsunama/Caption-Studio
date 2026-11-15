@@ -114,6 +114,49 @@ class TimelineTransitionCoverAudioClockTest {
     }
   }
 
+  @Test fun coversAndCompositesCascadeWithoutRepeatingSelectedAudio() {
+    TimelineTransitionSpec.coverTypes.forEach { cover ->
+      listOf(cover to cover, cover to "crossfade", "crossfade" to cover).forEach { (leftType, rightType) ->
+        listOf(false, true).forEach { handles ->
+          listOf(0.5f, 2f).forEach { rate ->
+            val selectedEnd = 1_000L + (4_000 * rate).toLong()
+            val first = fixture(leftType).first.copy(
+              sourceStartMs = 1_000, sourceEndMs = selectedEnd, playbackRate = rate,
+              availableSourceStartMs = if (handles) 0 else 1_000,
+              availableSourceEndMs = selectedEnd + if (handles) 1_000 else 0,
+            )
+            val middle = first.copy(id = "middle", uri = "content://middle",
+              timelineStartMs = 4_000, timelineEndMs = 8_000, transitionType = rightType)
+            val last = first.copy(id = "last", uri = "content://last",
+              timelineStartMs = 8_000, timelineEndMs = 12_000,
+              transitionType = "none", transitionDurationMs = 0)
+            val clips = listOf(first, middle, last)
+            val timeline = TimelineTransitionTimeline.create(clips, clips.associate { it.uri to it.availableSourceEndMs })
+            val segments = timeline.audioSegments(middle)
+            val leftComposite = leftType == "crossfade"
+            val rightComposite = rightType == "crossfade"
+            assertEquals(if (leftComposite) 3_700L else 4_000L, segments.first().timelineStartMs)
+            assertEquals(if (rightComposite) 8_300L else 8_000L, segments.last().timelineEndMs)
+            val handleDuration = if (handles) (300 * rate).toLong() else 0L
+            assertEquals(1_000L - if (leftComposite) handleDuration else 0L, segments.first().sourceStartMs)
+            assertEquals(selectedEnd + if (rightComposite) handleDuration else 0L, segments.last().sourceEndMs)
+            assertTrue(segments.zipWithNext().all { (a, b) ->
+              a.timelineEndMs == b.timelineStartMs && a.sourceEndMs == b.sourceStartMs
+            })
+            val ordinary = segments.single { it.timelineStartMs <= 6_000 && it.timelineEndMs > 6_000 }
+            assertEquals(rate, ordinary.playbackRate, 0f)
+            assertEquals(1_000.0 + 2_000 * rate,
+              ordinary.sourceStartMs + (6_000 - ordinary.timelineStartMs) * ordinary.playbackRate.toDouble(), 0.0001)
+            assertEquals(if (leftComposite) sqrt(0.5) else 0.0,
+              transitionAudioGain(4_000.0, timeline.windows.first(), timeline.windows.last()), 0.000001)
+            assertEquals(if (rightComposite) sqrt(0.5) else 0.0,
+              transitionAudioGain(8_000.0, timeline.windows.first(), timeline.windows.last()), 0.000001)
+          }
+        }
+      }
+    }
+  }
+
   // Read the existing private provider rather than adding a product constructor seam.
   private fun gainProvider(clip: RenderVideoClip, segment: ClipAudioSegment): GainProcessor.GainProvider {
     val constructor = Class.forName("app.captionstudio.media.TimelineClipGainProvider")

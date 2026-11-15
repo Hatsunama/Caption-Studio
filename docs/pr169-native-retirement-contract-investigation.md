@@ -461,3 +461,112 @@ source-version proofs and captures are retained outside the worktree under
 `crossfade-parent-integration-20261115`, `composite-exit-owner-20261115`,
 `composite-boundary-handoff-20261115`, `composite-compatibility-followup-20261115`
 and `pr169-643-candidate-tools`.
+
+## Native alpha-composition acceptance follow-up
+
+The rebuilt `9288fd2` CI APK (`f9ac3d67...1722f`) cold-starts on both phones,
+but its paused crossfade is still visibly wrong. This is a disposable test
+project: A1/B1/A2/B2 are 5/3/3/5-second pieces of two existing sources. The first
+two boundaries are ordinary cuts; only the boundary at11s has a650ms crossfade.
+The clip blocks remain consecutive. Crossfade preview intentionally blends the
+two source pictures around that boundary; no ordinary-cut overlap was added.
+
+At project10.895833s both screens show source A frame187 and B frame70. The
+canonical source hashes are `ec40f18e...901f2` and `71e3e0d3...f9bf9`.
+Parent independently decodes those originals and maps their contain geometry
+into each actual native preview rectangle. Two uniform-bar samples have a red
+channel near253 in BOTH sources, so a dissolve must retain that bright channel
+at any phase. Actual screen red is86 on both phones. The12-level allowance covers
+compression/scaling/8-bit rounding; the observed error exceeds160 levels.
+`Test-PausedCrossfadePixels.py` fails against both actual screenshots. This is
+native paused-pixel evidence, not a mocked GPU test or proof of moving frames.
+The existing image-over-PiP front order and original0..3 timing remain visible.
+
+The connected source audit finds no JS double fade. Fractional alpha belongs to
+the existing outer `VideoLayer` wrapper, but it never requests Android group
+alpha composition. Installed RN0.86.3 `ReactViewGroup.hasOverlappingRendering`
+returns false unless `needsOffscreenAlphaCompositing` is enabled. The proposed
+repair opts in on that wrapper only for Android with0<opacity<1, using RN's
+[documented group-alpha mechanism](https://reactnative.dev/docs/0.86/view#needsoffscreenalphacompositing).
+It adds no wrapper, persistent hardware texture, decoder, background, source
+clock, transform, data-format or dependency change. Opaque/hidden ordinary
+playback and iOS/web retain their previous composition policy. The extra
+offscreen-composition cost is limited to fractional-alpha transition frames;
+its actual device performance and GPU correctness are not yet verified.
+
+Test-before-edit host regressions fail6 Android fractional-alpha recipe cases
+and pass36 controls; all42 pass after the proposed change. They execute the
+actual exported component across14 recipes,3 platforms and both slot orders,
+checking the alpha owner, endpoints and stable native-host ancestry. They prove
+property/lifecycle wiring, NOT that Android now blends the pixels correctly.
+The combined local related suite exceeds the protected128MiB heap; no full
+local suite pass is claimed or limit bypassed. Fresh hosted checks and the same
+native pixel invariant plus moving-frame review remain acceptance gates.
+
+The initial interruption probe also exposed private test-method limits: Samsung's
+root-only reveal cannot expose a count inside the independently scrolling track
+labels, and Seeker reentry did not retain the probe's assumed forced UI1. Neither
+is reported as an application crash or established data-loss defect. Original
+rotation settings were restored; task-state reentry coverage remains incomplete.
+Detailed native screenshots/XML, hashes and failing pixel reports are retained
+under `pr169-9288-candidate-tools`; host RED/GREEN logs are under
+`composite-alpha-20261115`. PR169 stays draft/unmerged pending fresh actual pixels.
+
+## Transition integration: confirmed baseline and acceptance gates
+
+The follow-up audit covers all 22 registered choices: clean cut, seven covers,
+and fourteen two-source composites. It keeps the current buttons, effect names,
+durations, project format, source selection, fit/transform controls and layer order.
+It uses the installed Expo Video 57.0.5, React Native 0.86.3 and Media3 1.11.0;
+there is no rendering-framework replacement or dependency upgrade.
+
+Test-only commit `c582d1410b0e5d8f90a1c5e7beb1279707bba010` compiles and runs
+the native release tests against unchanged native production code. Independent
+[run 43769561830](https://github.com/Hatsunama/Caption-Studio/actions/runs/43769561830)
+executes 314 tests: all 277 existing cases and two new controls pass; 35 new
+assertions fail. Twenty reproduce transparent composite output, missing incoming
+fit-margin backgrounds or the missing Spin flash. Fifteen reproduce cover audio
+extending across the cut on a different source clock, incorrect half-window gains
+or their interaction with user fades. These are assertion failures, not compiler
+or dependency failures. Raw XML is retained in artifact `14184102395`.
+
+The implementation gives each composite input its complete canvas background
+before effect masks, transforms and opacity, and gives the output bitmap an opaque
+background at its own presentation time. Native compositor input alpha remains
+unchanged: input-latched timestamps must not control output transition ownership.
+Spin reuses Camera flash's actual white peak-squared cover above the video pair
+and below captions and stickers. Seven covers keep audio on each clip's ordinary
+source clock and own side of the cut; their outgoing cosine/incoming sine envelopes
+meet at silence. Composites retain their existing source clocks and equal-power
+two-source mix. Clip mute, volume and user fades still apply independently.
+
+The connected color audit also reproduces the project/native eight-digit color
+mismatch. Project colors remain `#RRGGBBAA`; native style serialization now converts
+them to Android `#AARRGGBB`, preserving alpha for text, words, translations,
+watermarks, stroke, shadow and background. Canvas backgrounds instead resolve
+once over black to opaque RGB in both preview and export. Persisted colors and
+ASS/SRT output are unchanged. Local actual-serializer regressions fail before
+this bridge repair and pass afterward; native/device appearance remains a gate.
+
+An additional integrated regression reproduces a repair-induced playback freeze:
+both players pause after a composite-render failure while play intent stays true.
+The required fallback retains the existing unavailable-preview notice, silences
+unauthorized transition audio and restores the active clip's ordinary source clock
+so users can continue, pause, seek and recover. Background/suspension must still
+stop both players. Both sides of a retimed, no-handle cut are covered separately.
+The parent follow-up also reproduces a 125ms backward jump from a queued old-clock
+sample after restoration. Ordinary playback now rejects backward samples; explicit
+backward seeks still establish a new position through the existing target path.
+The four muted/unmuted, before/after-cut cases pass after the guard, together with
+the explicit backward-seek control. A same-batch test that required a frozen active
+player was updated to require silence, a paused standby, unchanged native epochs
+and forward navigation instead. Interruption and stale-callback assertions remain.
+
+Acceptance still requires the full hosted checks on the final combined commit,
+review of the actual diff, and cold-start checks of that exact APK on Samsung and
+Seeker. Native tests use real Robolectric Canvas drawing with substituted decoded
+frames; they do not prove hardware decoding, GPU blending, audible mixing or device
+lifecycle behavior. Focused device checks must verify crossfade pixels and moving
+frames, fit margins/masks, Spin flash, cover sound timing and pause/rotation/resume
+without introducing unrelated retests. PR169 remains draft/unmerged and release
+blocked until those checks pass. No final artifact approval is implied here.

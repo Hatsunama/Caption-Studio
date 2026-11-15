@@ -191,7 +191,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     transport = useTimelineVideoController(project, () => {}, policy.videoSurfacesAdmitted);
     const main = jsx(VideoTransitionOverlay, { entries: buildClipTimeline(project.clips), sources: project.sources,
       timelineMs: transport.currentMs, isPlaying: transport.isPlaying, transportReady: transport.phase === 'ready',
-      width, height, backgroundColor: '#000', admitted: policy.videoSurfacesAdmitted && !transport.previewResourcesSuspended,
+      width, height, backgroundColor: '#000000', admitted: policy.videoSurfacesAdmitted && !transport.previewResourcesSuspended,
       visible: !transport.isGap, players: pip ? players.slice(0, 2) : players, slots: transport.slots, activeSlot: transport.activeSlot,
       currentTransform: transform, currentClipId: transport.slots[transport.activeSlot].preparedClipId,
       onFirstFrameRender: transport.markFirstFrame, setCompositeClock: transport.setCompositeClock,
@@ -393,11 +393,11 @@ for (const previous of [0, 1]) for (const incomingHandle of [false, true]) for (
     assert.equal(h.players[previous].playbackRate, .5);
     assert.equal(h.players[incoming].playbackRate, incomingRate);
     h.render(); await h.settle();
-    assert.equal(h.transport.activeSlot, ms < 13000 ? previous : incoming, 'audio/transport ownership changes at the cut, never at ordinary early-cut tolerance');
+    assert.equal(h.transport.activeSlot, ms < 13000 ? previous : incoming, 'transport ownership changes at the cut, never at ordinary early-cut tolerance');
     assert.ok(Math.abs(h.transport.currentMs - ms) <= 1, 'composite clock survives crossing the clip boundary');
     assert.ok(h.players.every(p => p.playing));
-    assert.equal(h.players[previous].muted, ms >= 13000);
-    assert.equal(h.players[incoming].muted, ms < 13000 || muted);
+    assert.equal(h.players[previous].muted, false);
+    assert.equal(h.players[incoming].muted, muted);
     assert.deepEqual(h.views.map(view => view.nativePath), paths);
     assert.ok(!h.calls.some(c => c[0] === 'pause' || c[0] === 'seek'), 'overlay must not repair a controller-induced pause/seek after commit');
   }
@@ -485,7 +485,7 @@ for (const previous of [0, 1]) for (const playing of [false, true]) for (const m
   if (playing) { h.transport.play(); await h.complete(); }
   assert.equal(h.transport.activeSlot, previous);
   assert.ok(h.players.every(player => player.playing === playing), 'production composite follows transport intent');
-  assert.equal(h.players[1 - previous].muted, true, 'incoming starts as muted standby');
+  assert.equal(h.players[1 - previous].muted, !playing || muted, 'prepared composite incoming leg follows playback intent and its clip mute');
   h.calls.length = 0;
   // No intervening render: activate the prepared incoming slot and leave the
   // transition window in the same host commit that removes the composite.
@@ -505,7 +505,7 @@ for (const previous of [0, 1]) for (const playing of [false, true]) for (const m
   assert.ok(!h.calls.some(call => call[0] === 'pause' && call[1] === 1 - previous), 'cleanup never pauses the new owner');
 });
 
-test('controller composite retirement clears its clock without cancelling playback intent', async t => {
+test('controller retirement silences transition audio while the ordinary owner remains navigable', async t => {
   const outgoing = { ...clip('out'), transitionAfter: { type: 'crossfade', durationMs: 1000 } };
   const h = harness({ clips: [outgoing, clip('in', 'other')], sourceDurationMs: 60000 });
   t.after(() => h.unmount()); await h.complete();
@@ -516,12 +516,18 @@ test('controller composite retirement clears its clock without cancelling playba
   assert.equal(h.players[1].playing, false);
   assert.equal(h.players[1].muted, true);
   assert.equal(h.players[0].playing, true);
-  assert.equal(h.players[0].muted, false);
-  // A slightly older native sample is clamped to 29.75s by a live composite
-  // clock. Retirement must restore ordinary source-to-timeline conversion.
-  h.players[0].emit('timeUpdate', { currentTime: 30.7 });
+  assert.equal(h.players[0].muted, true);
+  assert.ok(h.players.every(player => player.volume === 0));
+  const epochs = h.transport.slots.map(slot => slot.nativeViewEpoch);
+  // The standby never owns transport. A fresh ordinary-owner sample can move
+  // forward; the still-ready overlay may then explicitly reauthorize its pair.
+  h.players[1].emit('timeUpdate', { currentTime: 12 });
   await h.settle();
-  assert.equal(h.transport.currentMs, 29700, 'no stale synchronized clock after retirement');
+  assert.equal(h.transport.currentMs, 29750, 'standby cannot advance transport');
+  h.players[0].currentTime = 30.85;
+  await h.positionAck(0);
+  assert.equal(h.transport.currentMs, 29850, 'ordinary source time advances without a frozen play intent');
+  assert.deepEqual(h.transport.slots.map(slot => slot.nativeViewEpoch), epochs);
   assert.equal(h.transport.isPlaying, true);
 });
 

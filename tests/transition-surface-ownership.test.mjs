@@ -178,7 +178,7 @@ for (const version of [24, 27]) for (const reverse of [false, true]) test(
         const layerIndex = video.ancestors.findIndex(a => a.style.zIndex != null);
         const layer = video.ancestors[layerIndex];
         const pair = video.ancestors[layerIndex - 1];
-        const content = video.ancestors[layerIndex + 1];
+        const content = video.ancestors[layerIndex + 2];
         assert.equal(layer.style.backgroundColor, undefined, 'elevated host never acquires a drawable with an opaque native outline');
         assert.equal(layer.style.borderWidth, undefined);
         assert.equal(layer.style.borderRadius, undefined);
@@ -193,10 +193,10 @@ for (const version of [24, 27]) for (const reverse of [false, true]) test(
         assert.equal(pair.style.transform, undefined);
         assert.ok(video.ancestors.every(a => a.props.collapsable === false));
         assert.equal(video.props.surfaceType, 'textureView'); assert.equal(video.props.useExoShutter, false);
-        assert.equal(layer.props.needsOffscreenAlphaCompositing, undefined);
+        assert.equal(layer.props.needsOffscreenAlphaCompositing, layer.style.opacity > 0 && layer.style.opacity < 1);
         assert.equal(layer.props.renderToHardwareTextureAndroid, undefined);
-        assert.equal(content.style.backgroundColor, composite ? undefined : '#123456', 'ordinary background moves to the existing content host only');
-        if (composite) assert.equal(video.ancestors.filter(a => a.style.backgroundColor != null).length, 1, 'only the project stage paints a composite background');
+        assert.equal(content.style.backgroundColor, '#123456', 'every input has an opaque matte on the existing inner content host');
+        if (composite) assert.equal(video.ancestors.filter(a => a.style.backgroundColor != null).length, 2, 'stage plus opaque per-input matte');
         if (composite) {
           const incoming = slot === Number(!reverse), phase = (timelineMs - 3500) / 1000;
           const fades = ['crossfade', 'fold-horizontal', 'fold-vertical', 'zoom-in', 'zoom-out', 'spin'].includes(recipe);
@@ -358,7 +358,7 @@ for (const reverse of [false, true]) test(`recipe ordering, phase-zero and exit 
       assert.ok(styles(incoming).some(s => (s.elevation ?? s.zIndex) === 1));
       assert.ok(styles(outgoing).some(s => (s.elevation ?? s.zIndex) === 0));
       assert.equal(styles(incoming).some(s => s.backgroundColor != null), true, 'stage retains project background');
-      assert.equal(styles(incoming).filter(s => s.backgroundColor != null).length, 1, 'individual composite layers remain transparent');
+      assert.equal(styles(incoming).filter(s => s.backgroundColor != null).length, 2, 'incoming full frame matte covers outgoing margins at the endpoint');
       if (recipe.startsWith('push-')) {
         const axis = ['push-left', 'push-right'].includes(recipe) ? 'translateX' : 'translateY';
         const offset = { 'push-left': 300, 'push-right': -300, 'push-up': 200, 'push-down': -200 }[recipe];
@@ -426,7 +426,7 @@ for (const reverse of [false, true]) test(`clock, muting and cleanup use retaine
   assert.equal(h.players[reverse ? 1 : 0].currentTime, 5);
   assert.equal(h.players[reverse ? 0 : 1].currentTime, 1);
   assert.ok(h.players.every(p => p.playing));
-  assert.equal(h.players[reverse ? 0 : 1].muted, true);
+  assert.equal(h.players[reverse ? 0 : 1].muted, false);
   assert.deepEqual(JSON.parse(JSON.stringify(h.calls.filter(c => c[0] === 'clock').at(-1)[1])), {
     key: h.windows[0].key, slot: reverse ? 1 : 0, prepareToken: reverse ? 11 : 10,
   });

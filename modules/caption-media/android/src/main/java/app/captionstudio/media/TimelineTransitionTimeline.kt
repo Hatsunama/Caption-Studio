@@ -65,21 +65,28 @@ internal class TimelineTransitionTimeline private constructor(
   fun audioSegments(clip: RenderVideoClip): List<ClipAudioSegment> {
     val left = leftByClipId[clip.id]
     val right = rightByClipId[clip.id]
+    // Covers leave video on its ordinary source clock and never borrow audio handles.
+    val leftClock = left?.takeIf {
+      TimelineTransitionSpec.renderingPath(it.outgoing.transitionType) == TimelineTransitionSpec.RenderingPath.COMPOSITE
+    }
+    val rightClock = right?.takeIf {
+      TimelineTransitionSpec.renderingPath(it.outgoing.transitionType) == TimelineTransitionSpec.RenderingPath.COMPOSITE
+    }
     val segments = mutableListOf<ClipAudioSegment>()
-    if (left != null) {
+    if (leftClock != null) {
       segments += audioSegment(
-        timelineStartMs = left.startMs,
-        timelineEndMs = left.endMs,
-        sourceStartMs = left.incomingSourceStartMs,
-        sourceEndMs = left.incomingSourceEndMs,
+        timelineStartMs = leftClock.startMs,
+        timelineEndMs = leftClock.endMs,
+        sourceStartMs = leftClock.incomingSourceStartMs,
+        sourceEndMs = leftClock.incomingSourceEndMs,
         leftTransition = left,
         rightTransition = right,
       )
     }
-    val middleTimelineStartMs = left?.endMs ?: clip.timelineStartMs
-    val middleTimelineEndMs = right?.startMs ?: clip.timelineEndMs
-    val middleSourceStartMs = left?.incomingSourceEndMs ?: clip.sourceStartMs
-    val middleSourceEndMs = right?.outgoingSourceStartMs ?: clip.sourceEndMs
+    val middleTimelineStartMs = leftClock?.endMs ?: clip.timelineStartMs
+    val middleTimelineEndMs = rightClock?.startMs ?: clip.timelineEndMs
+    val middleSourceStartMs = leftClock?.incomingSourceEndMs ?: clip.sourceStartMs
+    val middleSourceEndMs = rightClock?.outgoingSourceStartMs ?: clip.sourceEndMs
     if (middleTimelineEndMs > middleTimelineStartMs) {
       require(middleSourceEndMs > middleSourceStartMs) {
         "Transitions consume all selected audio from clip ${clip.id}"
@@ -93,12 +100,12 @@ internal class TimelineTransitionTimeline private constructor(
         rightTransition = right,
       )
     }
-    if (right != null) {
+    if (rightClock != null) {
       segments += audioSegment(
-        timelineStartMs = right.startMs,
-        timelineEndMs = right.endMs,
-        sourceStartMs = right.outgoingSourceStartMs,
-        sourceEndMs = right.outgoingSourceEndMs,
+        timelineStartMs = rightClock.startMs,
+        timelineEndMs = rightClock.endMs,
+        sourceStartMs = rightClock.outgoingSourceStartMs,
+        sourceEndMs = rightClock.outgoingSourceEndMs,
         leftTransition = left,
         rightTransition = right,
       )
@@ -200,12 +207,16 @@ internal fun transitionAudioGain(
 ): Double {
   var gain = 1.0
   if (left != null && timelineTimeMs < left.endMs) {
-    val phase = ((timelineTimeMs - left.startMs) / left.durationMs).coerceIn(0.0, 1.0)
+    val cover = TimelineTransitionSpec.renderingPath(left.outgoing.transitionType) == TimelineTransitionSpec.RenderingPath.COVER
+    val startMs = if (cover) left.boundaryMs else left.startMs
+    val phase = ((timelineTimeMs - startMs) / (left.endMs - startMs)).coerceIn(0.0, 1.0)
     gain *= sin(phase * PI / 2.0)
   }
   if (right != null && timelineTimeMs >= right.startMs) {
-    val phase = ((timelineTimeMs - right.startMs) / right.durationMs).coerceIn(0.0, 1.0)
-    gain *= cos(phase * PI / 2.0)
+    val cover = TimelineTransitionSpec.renderingPath(right.outgoing.transitionType) == TimelineTransitionSpec.RenderingPath.COVER
+    val endMs = if (cover) right.boundaryMs else right.endMs
+    val phase = ((timelineTimeMs - right.startMs) / (endMs - right.startMs)).coerceIn(0.0, 1.0)
+    gain *= if (cover && timelineTimeMs >= endMs) 0.0 else cos(phase * PI / 2.0)
   }
   return gain.coerceIn(0.0, 1.0)
 }

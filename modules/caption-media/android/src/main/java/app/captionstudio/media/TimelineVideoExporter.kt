@@ -746,9 +746,10 @@ internal class TimelineBitmapOverlay(
     val peak = 1f - abs(phase * 2f - 1f)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     when (transition.outgoing.transitionType) {
-      "dip-white", "flash" -> {
+      "flash" -> drawCameraFlash(canvas, phase)
+      "dip-white" -> {
         paint.color = Color.WHITE
-        paint.alpha = (255 * if (transition.outgoing.transitionType == "flash") peak * peak else peak).toInt()
+        paint.alpha = (255 * peak).toInt()
         canvas.drawRect(0f, 0f, plan.width.toFloat(), plan.height.toFloat(), paint)
       }
       // Preview uses a full black cover at the cut for both effects.
@@ -776,12 +777,23 @@ internal class TimelineBitmapOverlay(
     }
   }
 
+  private fun drawCameraFlash(canvas: Canvas, phase: Float) {
+    val peak = 1f - abs(phase * 2f - 1f)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.WHITE
+      alpha = (255 * peak * peak).toInt()
+    }
+    canvas.drawRect(0f, 0f, plan.width.toFloat(), plan.height.toFloat(), paint)
+  }
+
   private fun drawCompositeTransition(canvas: Canvas, transition: TimelineTransitionWindow, timeMs: Long) {
     val phase = transition.phaseAt(timeMs)
     val outgoingSourceTimeMs = transition.outgoingSourceTimeMs(timeMs)
     val incomingSourceTimeMs = transition.incomingSourceTimeMs(timeMs)
     val type = transition.outgoing.transitionType
     require(type in TimelineTransitionSpec.compositeTypes) { "Video transition $type has no compositor" }
+    // Own every output pixel, including gaps left by moving or shrinking snapshots.
+    canvas.drawColor(gapColor)
     if (type in setOf("push-left", "push-right", "push-up", "push-down")) {
       val outgoingX = when (type) {
         "push-left" -> -plan.width * phase
@@ -859,6 +871,7 @@ internal class TimelineBitmapOverlay(
       }
       else -> error("Video transition $type has no compositor")
     }
+    if (type == "spin") drawCameraFlash(canvas, phase)
   }
 
   private fun drawMaskedTransitionSnapshot(
@@ -892,17 +905,19 @@ internal class TimelineBitmapOverlay(
   ) {
     val frame = retriever(clip.uri).frame(sourceTimeMs, decodeWidth, decodeHeight)
       ?: throw IllegalArgumentException("Transition clip ${clip.id} could not decode a frame at $sourceTimeMs ms")
-    canvas.save()
+    val checkpoint = canvas.save()
     try {
       if (clipRect != null) canvas.clipRect(clipRect)
       canvas.translate(translateX, translateY)
       canvas.scale(scaleX, scaleY, plan.width / 2f, plan.height / 2f)
       canvas.rotate(rotation, plan.width / 2f, plan.height / 2f)
       val layer = canvas.saveLayerAlpha(null, (alpha.coerceIn(0f, 1f) * 255).toInt())
+      // Resolve fit/transform margins before applying snapshot opacity and masks.
+      canvas.drawRect(0f, 0f, plan.width.toFloat(), plan.height.toFloat(), Paint().apply { color = gapColor })
       drawVideoFrame(canvas, frame, clip.transform)
       canvas.restoreToCount(layer)
     } finally {
-      canvas.restore()
+      canvas.restoreToCount(checkpoint)
       frame.recycle()
     }
   }
