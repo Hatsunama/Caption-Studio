@@ -7,6 +7,7 @@ export type TransitionPreviewSource = {
   clipId: string;
   sourceId: string;
   uri: string;
+  sourceDurationMs: number;
   sourceStartMs: number;
   sourceEndMs: number;
   playbackRate: number;
@@ -112,6 +113,7 @@ export function buildVideoTransitionPreviewWindows(
           clipId: entry.clip.id,
           sourceId: entry.clip.sourceId,
           uri: videoPlaybackUri(outgoingSource),
+          sourceDurationMs: integerMs(outgoingSource.durationMs),
           sourceStartMs: outgoingVisibleStartMs,
           sourceEndMs: outgoingSourceEndMs,
           playbackRate: outgoingPlaybackRate,
@@ -121,6 +123,7 @@ export function buildVideoTransitionPreviewWindows(
           clipId: incomingEntry.clip.id,
           sourceId: incomingEntry.clip.sourceId,
           uri: videoPlaybackUri(incomingSource),
+          sourceDurationMs: integerMs(incomingSource.durationMs),
           sourceStartMs: incomingSourceStartMs,
           sourceEndMs: incomingVisibleEndMs,
           playbackRate: incomingPlaybackRate,
@@ -194,13 +197,13 @@ export function videoTransitionPlaybackTargets(
   return [
     {
       slot: outgoingSlot,
-      sourceTimeMs: frame.outgoingSourceTimeMs,
+      sourceTimeMs: playableSourceTime(frame.outgoing, frame.outgoingSourceTimeMs),
       playbackRate: frame.outgoing.playbackRate,
       muted: outgoingSlot !== activeSlot,
     },
     {
       slot: incomingSlot,
-      sourceTimeMs: frame.incomingSourceTimeMs,
+      sourceTimeMs: playableSourceTime(frame.incoming, frame.incomingSourceTimeMs),
       playbackRate: frame.incoming.playbackRate,
       muted: incomingSlot !== activeSlot,
     },
@@ -259,6 +262,12 @@ function requiredSource(
 
 function interpolateSourceTime(source: TransitionPreviewSource, phase: number) {
   return source.sourceStartMs + Math.round((source.sourceEndMs - source.sourceStartMs) * phase);
+}
+
+function playableSourceTime(source: TransitionPreviewSource, sourceTimeMs: number) {
+  // Match native export's ManagedRetriever.frame: rounding can reach EOF even
+  // inside the window. Keep that logical clock, but seek to readable media.
+  return clamp(sourceTimeMs, 0, Math.max(0, source.sourceDurationMs - 1));
 }
 
 function sourceDurationMs(timelineDurationMs: number, playbackRate: number) {

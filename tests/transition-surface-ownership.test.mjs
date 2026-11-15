@@ -17,7 +17,7 @@ const flatten = style => Object.assign({}, ...(Array.isArray(style) ? style.flat
 // Executes the actual exported overlay and every component it returns. Native host
 // identity follows keyed parent/type ancestry, including all wrapper components.
 // Only React scheduling and native hosts are substituted; policy modules are real.
-function createHarness(type, reverse = false, platform = 'android') {
+function createHarness(type, reverse = false, platform = 'android', platformVersion = 36) {
   const hosts = new Map(), natives = new Map(), cache = new Map();
   const context = vm.createContext({});
   const effects = [], calls = [];
@@ -38,7 +38,7 @@ function createHarness(type, reverse = false, platform = 'android') {
   };
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = { react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
-    'react-native': { Platform: { OS: platform }, View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' } };
+    'react-native': { Platform: { OS: platform, Version: platformVersion }, View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' } };
   function load(file) {
     if (cache.has(file)) return cache.get(file);
     if (!compiled.has(file)) compiled.set(file, ts.transpileModule(readFileSync(file, 'utf8'), {
@@ -123,6 +123,121 @@ const recipes = ['crossfade', 'push-left', 'push-right', 'push-up', 'push-down',
   'iris-circle', 'iris-diamond', 'fold-horizontal', 'fold-vertical', 'zoom-in', 'zoom-out', 'spin',
   'fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'];
 
+for (const reverse of [false, true]) test(`Android stable Fabric order with native front order and no shadows, reversed=${reverse}`, t => {
+  for (const recipe of recipes) {
+    const h = createHarness(recipe, reverse, 'android');
+    t.after(() => h.unmount());
+    const initial = h.render().map(v => v.id);
+    for (const timelineMs of [3000, 3500, 3750, 4000, 4499, 4500, 5000]) {
+      h.render({ timelineMs, activeSlot: timelineMs < 4000 ? Number(reverse) : Number(!reverse) });
+      const layers = h.videos().map(v => v.ancestors.find(a => a.style.zIndex != null));
+      assert.deepEqual(h.videos().map(v => v.id), initial, 'retain both host identities');
+      assert.deepEqual(layers.map(layer => layer.style.zIndex), [0, 0], 'Fabric orderIndex must stay fixed through entry, cut and exit');
+      assert.deepEqual(layers.map(layer => layer.style.shadowColor), ['transparent', 'transparent'], 'native elevation must not add ambient or spot shadows');
+      const composite = !['fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'].includes(recipe)
+        && timelineMs >= 3500 && timelineMs < 4500;
+      const front = composite ? Number(!reverse) : h.props.activeSlot;
+      assert.deepEqual(layers.map(layer => layer.style.elevation), [Number(front === 0), Number(front === 1)], `${recipe}: incoming stays in front throughout composition; active owner outside it`);
+    }
+    h.unmount();
+  }
+});
+
+for (const version of [24, 27, 28, 36]) test(`Android stable ordering across supported APIs: ${version}`, t => {
+  for (const reverse of [false, true]) {
+    const h = createHarness('crossfade', reverse, 'android', version);
+    t.after(() => h.unmount()); h.render();
+    for (const timelineMs of [3000, 3500, 4000, 4500]) {
+      h.render({ timelineMs, activeSlot: timelineMs < 4000 ? Number(reverse) : Number(!reverse) });
+      const layers = h.videos().map(v => v.ancestors.find(a => a.style.zIndex != null).style);
+      const front = timelineMs >= 3500 && timelineMs < 4500 ? Number(!reverse) : h.props.activeSlot;
+      for (const [slot, layer] of layers.entries()) {
+        assert.equal(layer.zIndex, 0);
+        assert.equal(layer.elevation, Number(slot === front));
+        assert.equal(layer.shadowColor, 'transparent');
+      }
+    }
+  }
+});
+
+// A transparent RN background drawable can still supply an opaque rectangular
+// outline on API 24-27. The elevated host must NEVER own a background drawable,
+// including before composition: clearing an already installed color is too late.
+for (const version of [24, 27]) for (const reverse of [false, true]) test(
+  `Android ${version} shadow-free elevation prerequisites and retained recipe geometry, reversed=${reverse}`, t => {
+  for (const recipe of recipes) {
+    const h = createHarness(recipe, reverse, 'android', version);
+    t.after(() => h.unmount());
+    const initial = h.render().map(v => v.id);
+    for (const timelineMs of [3000, 3500, 3750, 4000, 4499, 4500, 5000, 3750, 3000]) {
+      h.render({ timelineMs, activeSlot: timelineMs < 4000 ? Number(reverse) : Number(!reverse) });
+      assert.deepEqual(h.videos().map(v => v.id), initial);
+      const composite = !['fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'].includes(recipe)
+        && timelineMs >= 3500 && timelineMs < 4500;
+      for (const [slot, video] of h.videos().entries()) {
+        const layerIndex = video.ancestors.findIndex(a => a.style.zIndex != null);
+        const layer = video.ancestors[layerIndex];
+        const pair = video.ancestors[layerIndex - 1];
+        const content = video.ancestors[layerIndex + 1];
+        assert.equal(layer.style.backgroundColor, undefined, 'elevated host never acquires a drawable with an opaque native outline');
+        assert.equal(layer.style.borderWidth, undefined);
+        assert.equal(layer.style.borderRadius, undefined);
+        assert.equal(layer.style.backgroundImage, undefined);
+        assert.equal(layer.style.boxShadow, undefined);
+        assert.equal(layer.style.zIndex, 0, 'fixed Fabric mount order on API 24+');
+        assert.equal(layer.style.elevation, Number(slot === (composite ? Number(!reverse) : h.props.activeSlot)));
+        for (const style of [pair.style, layer.style]) {
+          assert.equal(style.position, 'absolute'); assert.equal(style.inset, 0, 'full-canvas layer and parent bounds');
+        }
+        assert.equal(pair.style.overflow, 'hidden', 'ordinary full-canvas shadows stay outside the parent clip');
+        assert.equal(pair.style.transform, undefined);
+        assert.ok(video.ancestors.every(a => a.props.collapsable === false));
+        assert.equal(video.props.surfaceType, 'textureView'); assert.equal(video.props.useExoShutter, false);
+        assert.equal(layer.props.needsOffscreenAlphaCompositing, undefined);
+        assert.equal(layer.props.renderToHardwareTextureAndroid, undefined);
+        assert.equal(content.style.backgroundColor, composite ? undefined : '#123456', 'ordinary background moves to the existing content host only');
+        if (composite) assert.equal(video.ancestors.filter(a => a.style.backgroundColor != null).length, 1, 'only the project stage paints a composite background');
+        if (composite) {
+          const incoming = slot === Number(!reverse), phase = (timelineMs - 3500) / 1000;
+          const fades = ['crossfade', 'fold-horizontal', 'fold-vertical', 'zoom-in', 'zoom-out', 'spin'].includes(recipe);
+          const expectedAlpha = incoming && fades ? phase : incoming && recipe.startsWith('iris-') && phase === 0 ? 0 : 1;
+          assert.equal(layer.style.opacity, expectedAlpha, 'recipe alpha stays unchanged on older Android');
+          if (incoming && ['zoom-in', 'zoom-out', 'spin'].includes(recipe)) {
+            const scale = recipe === 'zoom-out' ? 1.8 - phase * .8 : .35 + phase * .65;
+            const rotate = recipe === 'spin' ? `${(1 - phase) * 280}deg` : '0deg';
+            assert.equal(JSON.stringify(layer.style.transform), JSON.stringify([{ scale }, { rotate }]));
+          } else if (incoming && recipe.startsWith('fold-')) {
+            assert.equal(JSON.stringify(layer.style.transform), JSON.stringify([recipe === 'fold-horizontal'
+              ? { scaleY: Math.max(.015, phase) } : { scaleX: Math.max(.015, phase) }]));
+          }
+        }
+        if (!composite) {
+          assert.equal(layer.style.transform, undefined);
+          assert.equal(layer.style.opacity, slot === h.props.activeSlot ? 1 : 0);
+          assert.equal(content.style.position, 'absolute'); assert.equal(content.style.inset, 0);
+        }
+      }
+      if (composite) {
+        const incoming = h.videos()[Number(!reverse)];
+        const styles = incoming.ancestors.map(a => a.style);
+        const phase = (timelineMs - 3500) / 1000;
+        if (recipe.startsWith('push-')) {
+          const axis = ['push-left', 'push-right'].includes(recipe) ? 'translateX' : 'translateY';
+          const distance = axis === 'translateX' ? 300 : 200;
+          const sign = ['push-left', 'push-up'].includes(recipe) ? 1 : -1;
+          assert.ok(styles.some(s => JSON.stringify(s.transform) === JSON.stringify([{ [axis]: sign * distance * (1 - phase) }])));
+        } else if (recipe.startsWith('split-')) {
+          assert.ok(styles.some(s => s.overflow === 'hidden' && (recipe === 'split-horizontal' ? s.height === 200 * phase : s.width === 300 * phase)));
+        } else if (recipe.startsWith('iris-')) {
+          const size = Math.max(1, (recipe === 'iris-circle' ? Math.hypot(300, 200) : 500 / Math.SQRT2) * phase);
+          assert.ok(styles.some(s => s.overflow === 'hidden' && s.width === size && s.height === size));
+        }
+      }
+    }
+    h.unmount();
+  }
+});
+
 for (const platform of ['android', 'ios', 'web']) for (const reverse of [false, true]) {
   test(`${platform}, reversed slots=${reverse}: retained layer alpha follows ordinary and composite ownership`, t => {
     for (const recipe of recipes) {
@@ -145,7 +260,7 @@ for (const platform of ['android', 'ios', 'web']) for (const reverse of [false, 
             : platform === 'android' && slot !== activeSlot ? 0 : 1;
           assert.equal(alpha(views[0]), expected, `${recipe}, time=${timelineMs}, active=${activeSlot}, slot=${slot}`);
           if (expected > 0) assert.ok(views[0].ancestors.every(a => a.style.opacity !== 0), 'visible layers have no concealed ancestor');
-          assert.equal(views[0].ancestors.some(a => a.style.zIndex === (inComposite ? Number(incoming) : Number(slot === activeSlot))), true);
+          assert.equal(views[0].ancestors.some(a => (a.style.elevation ?? a.style.zIndex) === (inComposite ? Number(incoming) : Number(slot === activeSlot))), true);
         }
       }
       h.unmount();
@@ -240,8 +355,8 @@ for (const reverse of [false, true]) test(`recipe ordering, phase-zero and exit 
     const styles = v => v.ancestors.map(a => a.style);
     const composite = !['fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'].includes(recipe);
     if (composite) {
-      assert.ok(styles(incoming).some(s => s.zIndex === 1));
-      assert.ok(styles(outgoing).some(s => s.zIndex === 0));
+      assert.ok(styles(incoming).some(s => (s.elevation ?? s.zIndex) === 1));
+      assert.ok(styles(outgoing).some(s => (s.elevation ?? s.zIndex) === 0));
       assert.equal(styles(incoming).some(s => s.backgroundColor != null), true, 'stage retains project background');
       assert.equal(styles(incoming).filter(s => s.backgroundColor != null).length, 1, 'individual composite layers remain transparent');
       if (recipe.startsWith('push-')) {
@@ -255,17 +370,17 @@ for (const reverse of [false, true]) test(`recipe ordering, phase-zero and exit 
       for (const activeSlot of [0, 1]) {
         h.render({ activeSlot });
         const layers = h.videos();
-        assert.ok(layers.find(v => v.props.player === h.players[reverse ? 0 : 1]).ancestors.some(a => a.style.zIndex === 1));
+        assert.ok(layers.find(v => v.props.player === h.players[reverse ? 0 : 1]).ancestors.some(a => (a.style.elevation ?? a.style.zIndex) === 1));
       }
     }
     h.phase(1);
     assert.deepEqual(h.videos().map(v => v.id), initial);
     for (const v of h.videos()) {
-      assert.ok(v.ancestors.some(a => a.style.zIndex === (v.props.player === h.players[h.props.activeSlot] ? 1 : 0)));
+      assert.ok(v.ancestors.some(a => (a.style.elevation ?? a.style.zIndex) === (v.props.player === h.players[h.props.activeSlot] ? 1 : 0)));
       assert.equal(v.ancestors.some(a => a.style.width === 0 || a.style.height === 0), false, 'exit clears clipped geometry');
       const zeroAlpha = v.ancestors.filter(a => a.style.opacity === 0);
       if (platform === 'android' && v.props.player !== h.players[h.props.activeSlot]) {
-        const inactiveLayer = v.ancestors.find(a => a.style.zIndex === 0);
+        const inactiveLayer = v.ancestors.find(a => (a.style.elevation ?? a.style.zIndex) === 0);
         assert.deepEqual(zeroAlpha.map(a => a.id), [inactiveLayer.id], 'only the ordinary inactive Android layer stays excluded');
       } else assert.equal(zeroAlpha.length, 0, 'exit clears transition opacity from every visible layer');
       assert.ok(v.ancestors.some(a => JSON.stringify(a.style.transform) === JSON.stringify([

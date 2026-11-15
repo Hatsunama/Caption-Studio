@@ -412,3 +412,52 @@ All pass, as does the product contract. The prepared UI port independently passe
 8 offline groups with no loader/context/network/device execution or receipt seal.
 These are behavioral/static evidence, not native GREEN or APK acceptance.
 Complete unchanged hosted checks and actual two-phone pixels remain mandatory.
+
+## 2026-11-15 composite lifetime and attachment follow-up
+
+The exact `6435ba4` CI APK (`0a82981d...68137`) still reproduces a brief
+near-black crossfade flash on Samsung. Hard-cut control playback is clean.
+The mixed fixture is A1/B1/A2/B2 with 5/3/3/5-second clips from distinct landscape
+and portrait sources: the third boundary is 11 seconds, not 13. Raw encoded
+frame indices are not elapsed timestamps. Both phones retain the original PiP
+and two images at 0..3 seconds after split/reorder; both were returned Home.
+
+The connected investigation proves three source-level defects: Fabric zIndex
+changes reorder/remove/insert retained native hosts despite stable React keys;
+ordinary early-cut activation pauses/seeks live composite legs and resets their
+source rate; rounded preview endpoints can seek the source or clipped item EOF.
+The Samsung PID log independently records output-surface reconnects near entry.
+That is supporting native evidence, not proof that every pixel failure has the
+same cause. The previous callback-lifetime/authoritative-retirement fixes remain.
+
+The repair keeps Android Fabric order fixed and uses native elevation for drawing
+order. The elevated wrapper never receives a background drawable; the ordinary
+project background moves to its existing content wrapper. AOSP API24/27 empty
+background outlines have zero shadow alpha, avoiding a broken legacy fallback.
+iOS/web ordering, recipe geometry/alpha, two main decoders, masks/frame receipts,
+separate PiP, persisted data, fonts, model, dependencies and appearance remain
+protected. At the composite cut the controller transfers transport/audio ownership
+without pausing or seeking either visible leg; it restores normal timing at tail
+exit. The synchronizer reuses the authoritative installed window and existing
+bounded native-end helper, retaining its seconds precision and mismatch policy.
+
+Actual-module RED cases cover both slot directions, the incident's 11s cut, a
+separate synthetic 13s cut, interruption/recovery, EOF rounding, native Float
+bounds and lost ULP precision. Rendered tests cover every recipe and API24/27
+background/outline/clipping prerequisites. These prove JavaScript behavior and
+supported native-property inputs, not Android attachment continuity or GPU pixels.
+Parent independently passes 12 model, 68 integrated handoff/EOF, 62 callback,
+6 ordering and 4 API24/27 geometry checks with the approved 128MiB gate.
+
+Full local ownership-file/lint runs exceed that heap cap; they were not retried
+as if a product repair could fix the resource limit. Parent's first model command
+omitted the project's tsx loader and failed module resolution; the corrected
+unchanged test passes. Full fresh hosted checks, exact rebuilt-APK cold starts,
+native transition pixels/overlay order/interruption checks on both phones and
+final separately locally signed Solana APK/Play AAB verification remain mandatory.
+The current downloaded APK is still a failing baseline. PR #169 remains draft;
+there is no merge, store release or download approval. Detailed RED/GREEN logs,
+source-version proofs and captures are retained outside the worktree under
+`crossfade-parent-integration-20261115`, `composite-exit-owner-20261115`,
+`composite-boundary-handoff-20261115`, `composite-compatibility-followup-20261115`
+and `pr169-643-candidate-tools`.

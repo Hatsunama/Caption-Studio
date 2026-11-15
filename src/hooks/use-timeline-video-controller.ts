@@ -35,6 +35,8 @@ export type TimelineVideoSlot = {
   prepareToken: number;
   nativeViewEpoch: number;
   readiness: 'idle' | 'preparing' | 'ready' | 'error' | 'cancelled';
+  // Published from the installed item, not inferred from the preview recipe.
+  appliedWindowEndMs?: number | null;
 };
 
 type SlotRuntime = TimelineVideoSlot & {
@@ -138,6 +140,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         prepareToken: first.prepareToken,
         nativeViewEpoch: first.nativeViewEpoch,
         readiness: first.readiness,
+        appliedWindowEndMs: first.appliedWindowEndMs,
       },
       {
         sourceId: second.sourceId,
@@ -147,6 +150,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         prepareToken: second.prepareToken,
         nativeViewEpoch: second.nativeViewEpoch,
         readiness: second.readiness,
+        appliedWindowEndMs: second.appliedWindowEndMs,
       },
     ]);
   }, []);
@@ -876,7 +880,45 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const transitionMs = transitionTimelineTimeAt(
       transitionWindowsRef.current, entry.clip.id, currentMsRef.current, sourceMs, synchronizedWindowKey,
     );
-    const timelineMs = clamp(transitionMs ?? timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
+    const window = synchronizedWindowKey
+      ? transitionWindowsRef.current.find(candidate => candidate.key === synchronizedWindowKey) : undefined;
+    if (transitionMs != null && window) {
+      let ownerSlot = slot;
+      let ownerEntry = entry;
+      if (window.outgoing?.clipId === entry.clip.id && transitionMs >= window.boundaryMs) {
+        const next = nextEntryAfter(entry);
+        const incomingSlot = next && window.incoming?.clipId === next.clip.id ? findPreparedSlot(next) : undefined;
+        if (!next || incomingSlot == null || incomingSlot === slot) {
+          // Lost readiness retires composite authority; normal activation keeps
+          // its existing preparation, generation and cancellation checks.
+          compositeClockRef.current = undefined;
+          advanceFrom(entry);
+          return;
+        }
+        // Both decoders already follow this composite. Transfer transport/audio
+        // ownership without ordinary activation pausing or re-seeking either leg.
+        playerForSlot(slot).muted = true;
+        setActiveSlot(incomingSlot);
+        activeClipIdRef.current = next.clip.id;
+        boundaryClipIdRef.current = undefined;
+        compositeClockRef.current = { key: window.key, slot: incomingSlot,
+          prepareToken: slotRuntimeRef.current[incomingSlot].prepareToken };
+        playerForSlot(incomingSlot).muted = next.clip.muted;
+        ownerSlot = incomingSlot;
+        ownerEntry = next;
+        preloadNext(next, incomingSlot, transitionMs);
+      }
+      setCurrentMs(transitionMs);
+      playerForSlot(ownerSlot).volume = clipPlaybackVolume(ownerEntry.clip, transitionMs - ownerEntry.startMs);
+      if (transitionMs >= window.endMs) {
+        compositeClockRef.current = undefined;
+        // A no-handle leg may have a different rate/source clock. Restore the
+        // ordinary clip clock once, after its last visible composite sample.
+        applyClipToSlot(ownerSlot, ownerEntry, transitionMs);
+      }
+      return;
+    }
+    const timelineMs = clamp(timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
     setCurrentMs(timelineMs);
     playerForSlot(slot).volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
     if (timelineMs >= entry.endMs - tolerance) advanceFrom(entry);
@@ -891,6 +933,13 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const onPlayingChange = (slot: SlotIndex, nativePlaying: boolean) => {
     if (slot !== activeSlotRef.current || nativePlaying || !playIntentRef.current) return;
     if (processingRef.current || phaseRef.current !== 'ready') return;
+    const clock = compositeClockRef.current;
+    if (clock?.slot === slot && clock.prepareToken === slotRuntimeRef.current[slot].prepareToken) {
+      // A temporary decoder stop is not an ordinary trim-end acknowledgement
+      // while this player is running the composite's source clock.
+      playerForSlot(slot).play();
+      return;
+    }
     const entry = entriesRef.current.find((candidate) => candidate.clip.id === activeClipIdRef.current);
     if (entry && playerForSlot(slot).currentTime * 1_000 >= entry.clip.sourceEndMs - 200) advanceFrom(entry);
     else playerForSlot(slot).play();

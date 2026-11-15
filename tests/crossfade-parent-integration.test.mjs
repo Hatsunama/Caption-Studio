@@ -38,7 +38,7 @@ function createHarness(type, reverse = false, platform = 'android') {
   };
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = { react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
-    'react-native': { Platform: { OS: platform }, View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' } };
+    'react-native': { Platform: { OS: platform, Version: 36 }, View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' } };
   function load(file) {
     if (cache.has(file)) return cache.get(file);
     if (!compiled.has(file)) compiled.set(file, ts.transpileModule(readFileSync(file, 'utf8'), {
@@ -187,7 +187,7 @@ for (const recipe of compositeRecipes) for (const reverse of [false, true]) for 
       assert.deepEqual(h.calls.filter(c => c[0] === 'pause'), [], 'callback identity is not composite exit');
       assert.ok(h.players.every(p => p.playing));
       const incoming = h.videos().find(v => v.props.player === h.players[reverse ? 0 : 1]);
-      if (recipe === 'crossfade') assert.equal(incoming.ancestors.find(a => a.style.zIndex === 1).style.opacity, (timelineMs - 3500) / 1000);
+      if (recipe === 'crossfade') assert.equal(incoming.ancestors.find(a => (a.style.elevation ?? a.style.zIndex) === 1).style.opacity, (timelineMs - 3500) / 1000);
       assert.ok(h.videos().every(v => v.ancestors.every(a => a.style.opacity !== 0)), 'both retained layers remain presented');
     }
     assert.ok(callbacks.slice(0, -1).every(calls => !calls.includes(undefined)), 'no false clock teardown');

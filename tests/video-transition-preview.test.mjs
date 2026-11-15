@@ -119,6 +119,40 @@ test('full-source clips advance visible tail and head without frozen frames', ()
   ]);
 });
 
+test('an EOF tail uses native export playable bounds without changing the composite clock', () => {
+  const entries = buildClipTimeline([
+    clip('A2', 'A', {
+      sourceStartMs: 5_000, sourceEndMs: 8_000, availableSourceEndMs: 8_000,
+      transitionAfter: { type: 'crossfade', durationMs: 650 },
+    }),
+    clip('B2', 'B', { sourceStartMs: 3_000, sourceEndMs: 8_000, availableSourceEndMs: 8_000 }),
+  ]).map((entry) => ({
+    ...entry,
+    gapStartMs: entry.gapStartMs + 10_000,
+    startMs: entry.startMs + 10_000,
+    endMs: entry.endMs + 10_000,
+    afterGapEndMs: entry.afterGapEndMs + 10_000,
+  }));
+  const windows = buildVideoTransitionPreviewWindows(entries, [source('A', 8_000), source('B', 8_000)]);
+  const window = windows[0];
+  assert.deepEqual([window.startMs, window.boundaryMs, window.endMs], [12_675, 13_000, 13_325]);
+  assert.equal(window.unavailableReason, undefined);
+  assert.deepEqual(videoTransitionPlaybackTargets(videoTransitionPreviewFrameAt(windows, window.startMs), 0, 1, 0), [
+    { slot: 0, sourceTimeMs: 7_675, playbackRate: 0.5, muted: false },
+    { slot: 1, sourceTimeMs: 2_675, playbackRate: 1, muted: true },
+  ]);
+  const lastFrame = videoTransitionPreviewFrameAt(windows, window.endMs - 1);
+  assert.equal(lastFrame.outgoingSourceTimeMs, 8_000, 'keep the native rounded source clock');
+  // TimelineVideoExporter.ManagedRetriever.frame clamps decoding to durationMs - 1.
+  assert.deepEqual(videoTransitionPlaybackTargets(lastFrame, 1, 0, 0), [
+    { slot: 1, sourceTimeMs: 7_999, playbackRate: 0.5, muted: true },
+    { slot: 0, sourceTimeMs: 3_324, playbackRate: 1, muted: false },
+  ], 'a paused or resynchronized preview must not seek the outgoing player to EOF');
+  assert.equal(videoTransitionPreviewFrameAt(windows, window.endMs), undefined);
+  assert.equal(transitionTimelineTimeAt(windows, 'A2', 13_000, 7_999, window.key), 13_323);
+  assert.equal(videoTransitionPreloadWindow(windows, window.startMs - TRANSITION_PRELOAD_LEAD_MS)?.key, window.key);
+});
+
 test('active transition source clocks preserve timeline progress through a no-handle cut', () => {
   const windows = buildVideoTransitionPreviewWindows(buildClipTimeline([
     clip('out', 'out-source', { sourceStartMs: 0, sourceEndMs: 4_000, availableSourceEndMs: 4_000,

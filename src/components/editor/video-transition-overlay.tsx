@@ -13,6 +13,7 @@ import type { TimelineVideoSlot } from '@/hooks/use-timeline-video-controller';
 import type { ClipTimelineEntry } from '@/lib/video-timeline';
 import type { ProjectVideoSource, VideoTransform } from '@/types/project';
 import { chrome } from '@/lib/ui-theme';
+import { effectiveNativeSeekTarget } from '@/lib/video-playback-position';
 
 type Props = {
   entries: readonly ClipTimelineEntry[];
@@ -101,6 +102,15 @@ function TimelineVideoPair(props: Props & { composite?: Composite; concealed: bo
         const incoming = composite?.incomingSlot === slot;
         const source = composite ? (incoming ? composite.frame.incoming : composite.frame.outgoing) : undefined;
         const effect = composite ? compositeLayerStyle(composite.frame, incoming, props.width, props.height) : undefined;
+        const front = composite ? incoming : slot === props.activeSlot;
+        // Fabric sorts concrete children by zIndex and removes/reinserts them
+        // when it changes. Keep the TextureView ancestry attached on Android;
+        // elevation changes RenderNode drawing order without a mount mutation.
+        // The elevated wrapper never gets a background drawable (including
+        // ordinary playback), so its native outline has zero alpha on API 24+.
+        const order: ViewStyle = Platform.OS === 'android'
+          ? { zIndex: 0, elevation: front ? 1 : 0, shadowColor: 'transparent' }
+          : { zIndex: front ? 1 : 0 };
         return (
           <VideoLayer
             key={`${slot}:${props.slots[slot].nativeViewEpoch}`}
@@ -109,9 +119,8 @@ function TimelineVideoPair(props: Props & { composite?: Composite; concealed: bo
             width={props.width}
             height={props.height}
             opacity={composite ? effect?.opacity : Platform.OS === 'android' && slot !== props.activeSlot ? 0 : undefined}
-            effectStyle={composite
-              ? [{ zIndex: incoming ? 1 : 0 }, effect?.style]
-              : { zIndex: slot === props.activeSlot ? 1 : 0, backgroundColor: props.backgroundColor }}
+            effectStyle={[order, effect?.style]}
+            backgroundColor={composite ? undefined : props.backgroundColor}
             clip={effect?.clip}
             onFirstFrameRender={() => props.onFirstFrameRender(slot, props.slots[slot].nativeViewEpoch)}
           />
@@ -148,8 +157,22 @@ function SynchronizedComposite(props: Props & {
         return;
       }
       targets.forEach((target) => {
+        const outgoing = target.slot === outgoingSlot;
+        const source = outgoing ? frame.outgoing! : frame.incoming!;
+        const logicalMs = outgoing ? frame.outgoingSourceTimeMs! : frame.incomingSourceTimeMs!;
+        const installedEndSeconds = (slots[target.slot].appliedWindowEndMs ?? source.sourceDurationMs) / 1_000;
+        const nativeEndSeconds = effectiveNativeSeekTarget(
+          installedEndSeconds, installedEndSeconds,
+          players[target.slot].duration, Platform.OS,
+        );
+        // Bound the whole near-EOF tail, not only exact declared EOF. Keep the
+        // helper's seconds/ULP intact through Expo's Double -> Long conversion.
+        // If it declines adjustment, retain the sidecar's full-source bound.
+        const nativeSeconds = nativeEndSeconds < installedEndSeconds
+          ? Math.min(logicalMs / 1_000, nativeEndSeconds)
+          : target.sourceTimeMs! / 1_000;
         synchronizeTransitionPlayer(
-          players[target.slot], target.sourceTimeMs, target.playbackRate,
+          players[target.slot], nativeSeconds, target.playbackRate,
           isPlaying && transportReady, target.muted,
         );
       });
@@ -165,14 +188,13 @@ function SynchronizedComposite(props: Props & {
 
 function synchronizeTransitionPlayer(
   player: VideoPlayer,
-  targetMs: number | undefined,
+  targetSeconds: number | undefined,
   playbackRate: number | undefined,
   playing: boolean,
   muted: boolean,
 ) {
-  if (targetMs == null || playbackRate == null) return;
+  if (targetSeconds == null || playbackRate == null) return;
   if (muted) player.muted = true;
-  const targetSeconds = targetMs / 1_000;
   player.playbackRate = playbackRate;
   const driftMs = Math.abs(player.currentTime - targetSeconds) * 1_000;
   if (!playing || !player.playing || driftMs > 160) player.currentTime = targetSeconds;
@@ -249,13 +271,14 @@ function VideoLayer(props: {
   height: number;
   opacity?: number;
   effectStyle?: StyleProp<ViewStyle>;
+  backgroundColor?: string;
   clip?: LayerClip;
   onFirstFrameRender: () => void;
 }) {
   return (
     <View collapsable={false} style={[fill, props.effectStyle, { opacity: props.opacity ?? 1 }]}>
       {/* Keep native ancestry stable as clipping starts/stops, including RN view flattening. */}
-      <View collapsable={false} style={props.clip?.outer ?? fill}>
+      <View collapsable={false} style={[props.clip?.outer ?? fill, props.backgroundColor ? { backgroundColor: props.backgroundColor } : undefined]}>
         <View collapsable={false} style={props.clip?.inner ?? fill}>
           <View collapsable={false} style={[fill, { transform: transformStyle(props.transform, props.width, props.height) }]}>
             <VideoView

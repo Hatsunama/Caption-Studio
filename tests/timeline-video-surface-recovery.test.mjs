@@ -41,7 +41,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
       committedActiveSlot: transport.activeSlot, committedMs: transport.currentMs,
       committedViews: views.map(view => ({ slot: players.indexOf(view.player),
         nativePath: view.nativePath,
-        foreground: view.ancestors.some(style => style.zIndex === 1)
+        foreground: view.ancestors.some(style => (style.elevation ?? style.zIndex) === 1)
           && !view.ancestors.some(style => style.opacity === 0),
       })),
     });
@@ -147,7 +147,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
       },
     } },
     react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
-    'react-native': { View: 'view', Text: 'text', AppState: appState, Platform: { OS: platform } },
+    'react-native': { View: 'view', Text: 'text', AppState: appState, Platform: { OS: platform, Version: 36 } },
     'expo-video': { VideoView: 'video', useVideoPlayer(source, setup) {
       const player = players[playerCursor++]; const ref = react.useRef(false);
       if (!ref.current) { if (source) { player.loadedUri = source; player.status = 'loading'; }
@@ -317,6 +317,159 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     get timerCount() { return timers.size; },
   };
 }
+
+// Synthetic A/B/A/B 5/5/3/3s fixture: the third cut is at 13s, with a 650ms
+// composite. A2 reaches EOF, so its visible 325ms tail runs at half speed.
+function mixedBoundaryClips(incomingHandle = true, muted = false) {
+  return [
+    { ...clip('A1'), sourceStartMs: 0, sourceEndMs: 5000, availableSourceEndMs: 8000 },
+    { ...clip('B1', 'other'), sourceStartMs: 0, sourceEndMs: 5000, availableSourceEndMs: 8000 },
+    { ...clip('A2'), sourceStartMs: 5000, sourceEndMs: 8000, availableSourceEndMs: 8000,
+      transitionAfter: { type: 'crossfade', durationMs: 650 } },
+    { ...clip('B2', 'other'), sourceStartMs: 3000, sourceEndMs: 6000, availableSourceEndMs: 8000,
+      availableSourceStartMs: incomingHandle ? 0 : 3000, muted, volume: .6 },
+  ];
+}
+
+async function enterMixedBoundary(h, previous) {
+  await h.complete();
+  if (previous === 0) { h.transport.seek(5000); await h.complete(); }
+  h.transport.seek(10000); await h.complete();
+  h.transport.seek(12750); await h.complete();
+  h.transport.play(); await h.complete();
+  assert.equal(h.transport.activeSlot, previous);
+  assert.ok(h.players.every(player => player.playing));
+}
+
+for (const previous of [0, 1]) test(`actual 5/3/3/5s mixed boundary at 11s, slot=${previous}`, async t => {
+  const clips = mixedBoundaryClips();
+  clips[1].sourceEndMs = 3000;
+  clips[3].sourceEndMs = 8000;
+  const h = harness({ clips, sourceDurationMs: 8000 });
+  t.after(() => h.unmount()); await h.complete();
+  if (previous === 0) { h.transport.seek(5000); await h.complete(); }
+  h.transport.seek(8000); await h.complete();
+  h.transport.seek(10750); await h.complete();
+  h.transport.play(); await h.complete();
+  assert.equal(h.transport.activeSlot, previous);
+  const incoming = 1 - previous;
+  for (const ms of [10990, 11000, 11100]) {
+    h.players[previous].currentTime = (7675 + Math.round((ms - 10675) * .5)) / 1000;
+    h.players[incoming].currentTime = (ms - 8000) / 1000;
+    h.calls.length = 0;
+    h.players[h.transport.activeSlot].emit('timeUpdate', { currentTime: h.players[h.transport.activeSlot].currentTime });
+    await h.drainWithoutCommit();
+    t.diagnostic(JSON.stringify({ ms, previous, callsBeforeCommit: h.calls }));
+    assert.ok(!h.calls.some(c => ['seek', 'pause', 'replace', 'window'].includes(c[0])));
+    h.render(); await h.settle();
+    assert.equal(h.transport.activeSlot, ms < 11000 ? previous : incoming);
+    assert.ok(Math.abs(h.transport.currentMs - ms) <= 1);
+    assert.ok(h.players.every(p => p.playing));
+    assert.equal(h.players[previous].playbackRate, .5);
+    assert.equal(h.players[incoming].playbackRate, 1);
+  }
+});
+
+for (const previous of [0, 1]) for (const incomingHandle of [false, true]) for (const muted of [false, true]) for (const sample of [12990, 13000, 13040]) test(
+  `integrated mixed boundary keeps both visible legs continuous: slot=${previous}, handle=${incomingHandle}, muted=${muted}, sample=${sample}`, async t => {
+  const h = harness({ clips: mixedBoundaryClips(incomingHandle, muted), sourceDurationMs: 8000 });
+  t.after(() => h.unmount()); await enterMixedBoundary(h, previous);
+  const incoming = 1 - previous, paths = h.views.map(view => view.nativePath);
+  const incomingRate = incomingHandle ? 1 : .5;
+  // At 13.324s the half-rate incoming leg rounds to its endpoint, whose
+  // inverse is already 13.325s. Keep this sample unambiguously inside the tail;
+  // endpoint rounding is exercised independently by the installed EOF cases.
+  for (const ms of [12800, sample, ...(sample < 13000 ? [13000] : []), 13100, 13322]) {
+    // Decoder samples are independent fixed arithmetic, not production targets.
+    h.players[previous].currentTime = Math.min(7999, 7675 + Math.round((ms - 12675) * .5)) / 1000;
+    h.players[incoming].currentTime = (incomingHandle ? ms - 10000 : 3000 + Math.round((ms - 12675) * .5)) / 1000;
+    h.calls.length = 0;
+    const owner = h.transport.activeSlot;
+    h.players[owner].emit('timeUpdate', { currentTime: h.players[owner].currentTime });
+    await h.drainWithoutCommit();
+    t.diagnostic(JSON.stringify({ ms, previous, incomingHandle, callsBeforeCommit: h.calls,
+      players: h.players.map(p => ({ time: p.currentTime, rate: p.playbackRate, playing: p.playing, muted: p.muted })) }));
+    assert.ok(!h.calls.some(c => ['pause', 'seek', 'replace', 'window'].includes(c[0])), 'a live composite clock must not pause, seek or prepare either visible leg');
+    assert.equal(h.players[previous].playbackRate, .5);
+    assert.equal(h.players[incoming].playbackRate, incomingRate);
+    h.render(); await h.settle();
+    assert.equal(h.transport.activeSlot, ms < 13000 ? previous : incoming, 'audio/transport ownership changes at the cut, never at ordinary early-cut tolerance');
+    assert.ok(Math.abs(h.transport.currentMs - ms) <= 1, 'composite clock survives crossing the clip boundary');
+    assert.ok(h.players.every(p => p.playing));
+    assert.equal(h.players[previous].muted, ms >= 13000);
+    assert.equal(h.players[incoming].muted, ms < 13000 || muted);
+    assert.deepEqual(h.views.map(view => view.nativePath), paths);
+    assert.ok(!h.calls.some(c => c[0] === 'pause' || c[0] === 'seek'), 'overlay must not repair a controller-induced pause/seek after commit');
+  }
+  // The tail exits at 13.325s. Incoming returns to its ordinary 1x clock;
+  // the outgoing surface can then retire, with no new native host.
+  h.players[incoming].currentTime = 3.325;
+  await h.positionAck(incoming);
+  assert.equal(h.transport.currentMs, 13325);
+  assert.equal(h.transport.activeSlot, incoming);
+  assert.equal(h.players[incoming].currentTime, 3.325);
+  assert.equal(h.players[incoming].playbackRate, 1);
+  assert.equal(h.players[incoming].playing, true);
+  assert.equal(h.players[incoming].muted, muted);
+  assert.equal(h.players[incoming].volume, muted ? 0 : .6);
+  assert.equal(h.players[previous].playing, false);
+  assert.deepEqual(h.views.map(view => view.nativePath), paths);
+  h.players[incoming].currentTime = 3.4; await h.positionAck(incoming);
+  assert.equal(h.transport.currentMs, 13400);
+});
+
+for (const previous of [0, 1]) for (const interruption of ['seek', 'pause', 'background', 'retry', 'native-stop']) test(
+  `integrated mixed boundary interruption ${interruption}, slot=${previous}`, async t => {
+  const h = harness({ clips: mixedBoundaryClips(false), sourceDurationMs: 8000 });
+  t.after(() => h.unmount()); await enterMixedBoundary(h, previous);
+  if (interruption === 'native-stop') {
+    h.players[previous].currentTime = 7.833;
+    h.players[previous].playing = false;
+    h.players[previous].emit('playingChange', { isPlaying: false });
+    await h.settle();
+    assert.equal(h.transport.activeSlot, previous, 'native stop recovery cannot force an early cut while the composite owns timing');
+    assert.ok(h.players.every(p => p.playing));
+    return;
+  }
+  const retired = h.views.map(view => view.onFirstFrameRender);
+  if (interruption === 'seek') { h.transport.seek(14000); await h.complete(); }
+  if (interruption === 'pause') { h.transport.pause(); await h.settle(); }
+  if (interruption === 'background') { await h.app('background'); await h.app('active'); await h.complete(); }
+  if (interruption === 'retry') { h.transport.retrySource(); await h.complete(); }
+  retired.forEach(callback => callback()); await h.settle();
+  assert.equal(h.transport.phase, 'ready');
+  assert.equal(h.transport.isPlaying, interruption === 'seek');
+  assert.ok(h.players.every(p => p.playing === (interruption === 'seek' && p === h.transport.player)));
+  if (interruption === 'seek') {
+    assert.equal(h.transport.currentMs, 14000);
+    assert.equal(h.transport.player.currentTime, 4);
+    assert.equal(h.transport.player.playbackRate, 1);
+  } else {
+    assert.equal(h.transport.currentMs, 12750);
+    assert.equal(h.views.length, 2);
+    h.transport.play(); await h.complete();
+    assert.ok(h.players.every(p => p.playing), 'explicit play restores both prepared composite legs');
+  }
+});
+
+for (const [endpoint, nativeDuration, expectedMs] of [[8000, undefined, 7999], [6385, undefined, 6384],
+  [7950, undefined, 7949], [8000, Math.fround(7.95), 7949], [8000, Math.fround(7.5), 7999]]) test(
+  `integrated synchronizer respects installed EOF ${endpoint}ms, native=${nativeDuration}`, async t => {
+  const outgoing = { ...clip('out'), sourceStartMs: endpoint - 3000, sourceEndMs: endpoint,
+    availableSourceEndMs: endpoint, transitionAfter: { type: 'crossfade', durationMs: 650 } };
+  const h = harness({ clips: [outgoing, { ...clip('in', 'other'), sourceStartMs: 3000, sourceEndMs: 6000 }],
+    sourceDurationMs: 8000, nativeClock: true, nativeDuration });
+  t.after(() => h.unmount()); await h.complete();
+  h.transport.seek(3324); await h.complete();
+  const slot = h.transport.slots.findIndex(s => s.preparedClipId === 'out');
+  const player = h.players[slot];
+  assert.equal(player.windowEndMs, endpoint === 8000 ? null : endpoint);
+  const actualSeek = h.calls.filter(c => c[0] === 'seek' && c[1] === slot).at(-1)[2];
+  t.diagnostic(JSON.stringify({ endpoint, reportedDuration: player.duration, actualSeek, nativeLongMs: Math.trunc(actualSeek * 1000) }));
+  assert.equal(Math.trunc(actualSeek * 1000), expectedMs, 'reuse bounded EOF adjustment and preserve Android Long targets; do not warp a large native mismatch');
+  assert.equal(h.transport.currentMs, 3324, 'native seek adjustment never changes logical preview time');
+  assert.equal(player.playing, false);
+});
 
 for (const previous of [0, 1]) for (const playing of [false, true]) for (const muted of [false, true]) test(
   `simultaneous composite exit and controller slot change preserves owner: slot ${previous}, playing=${playing}, muted=${muted}`, async t => {
@@ -1720,4 +1873,49 @@ test('cleanup disposes the latest actual native mask ID after repeated preparati
   h.unmount(); await h.settle();
   assert.deepEqual(h.calls.filter(call => call[0] === 'maskDispose').map(call => call.slice(1)),
     [[0, latest[0]], [1, latest[1]]], 'cleanup must dispose the actual lease IDs without snapshotting initial numbers');
+});
+
+// Use the complete controller/overlay harness and its installed Expo Long/Float
+// nativeClock boundary. Short sources use valid bounds and their own cut time.
+for (const endpoint of [1002, 6385, 8000]) for (const full of [false, true]) for (const nativeFloat of [false, true]) test(
+  `EOF seconds precision survives actual overlay: end=${endpoint}, full=${full}, Float=${nativeFloat}`, async t => {
+  const length = Math.min(endpoint, 3000);
+  const outgoing = { ...clip('precision-out'), sourceStartMs: endpoint - length, sourceEndMs: endpoint,
+    availableSourceEndMs: endpoint, transitionAfter: { type: 'crossfade', durationMs: 650 } };
+  const h = harness({ clips: [outgoing, { ...clip('precision-in', 'other'), sourceStartMs: 0, sourceEndMs: length }],
+    sourceDurationMs: full ? endpoint : 10000, nativeClock: true,
+    nativeDuration: nativeFloat ? Math.fround(Math.fround(endpoint) / 1000) : undefined });
+  t.after(() => h.unmount()); await h.complete();
+  assert.ok(outgoing.sourceStartMs >= 0);
+  const timelineMs = length + 324; // one ms before this actual transition window ends
+  h.transport.seek(timelineMs); await h.complete();
+  const slot = h.transport.slots.findIndex(s => s.preparedClipId === outgoing.id);
+  const player = h.players[slot];
+  assert.equal(player.windowEndMs, full ? null : endpoint);
+  const actualSeek = h.calls.filter(c => c[0] === 'seek' && c[1] === slot).at(-1)?.[2];
+  assert.equal(typeof actualSeek, 'number', 'production synchronizer issued the source seek');
+  t.diagnostic(JSON.stringify({ endpoint, full, nativeFloat, timelineMs, reportedDuration: player.duration, actualSeek, nativeLongMs: Math.trunc(actualSeek * 1000) }));
+  assert.equal(Math.trunc(actualSeek * 1000), endpoint - 1, 'preserve the helper ULP through the real Expo seek boundary');
+  assert.equal(player.currentTime, Math.fround(Math.fround(endpoint - 1) / 1000), 'actual nativeClock landed on the final readable ms');
+  assert.equal(h.transport.currentMs, timelineMs, 'source bound must not change the logical timeline');
+  assert.equal(player.playing, false);
+});
+
+for (const [logicalMs, nativeDuration, expectedMs] of [
+  [7900, Math.fround(7.95), 7900], [7960, Math.fround(7.95), 7949], [7990, Math.fround(7.95), 7949],
+  [8000, Math.fround(7.95), 7949], [7990, Math.fround(7.5), 7990], [8000, Math.fround(7.5), 7999],
+]) test(`EOF native playable bound in actual overlay: logical=${logicalMs}, native=${nativeDuration}`, async t => {
+  const outgoing = { ...clip('native-bound-out'), sourceStartMs: 5000, sourceEndMs: 8000,
+    availableSourceEndMs: 8000, transitionAfter: { type: 'crossfade', durationMs: 650 } };
+  const h = harness({ clips: [outgoing, { ...clip('native-bound-in', 'other'), sourceStartMs: 0, sourceEndMs: 3000 }],
+    sourceDurationMs: 8000, nativeClock: true, nativeDuration });
+  t.after(() => h.unmount()); await h.complete();
+  const timelineMs = logicalMs === 8000 ? 3324 : 2675 + (logicalMs - 7675) * 2;
+  h.transport.seek(timelineMs); await h.complete();
+  const slot = h.transport.slots.findIndex(s => s.preparedClipId === outgoing.id);
+  const actualSeek = h.calls.filter(c => c[0] === 'seek' && c[1] === slot).at(-1)?.[2];
+  t.diagnostic(JSON.stringify({ logicalMs, nativeDuration, actualSeek, nativeLongMs: Math.trunc(actualSeek * 1000) }));
+  assert.equal(Math.trunc(actualSeek * 1000), expectedMs, 'bound near-EOF seeks even before declared EOF; preserve interior targets and >250ms mismatch policy');
+  assert.equal(h.transport.currentMs, timelineMs);
+  assert.equal(h.players[slot].playing, false);
 });
