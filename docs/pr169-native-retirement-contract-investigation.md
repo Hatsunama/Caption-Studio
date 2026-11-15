@@ -289,3 +289,21 @@ check was resumed after observing a Y-clipped ruler. No split/append/reorder was
 repeated. Both phones were guarded back to Home. A fresh candidate must be tested
 on both before PR169 can leave draft; final store-key artifacts require their own
 later verification. No store artifact was changed or published.
+## Hosted harness follow-up
+
+Commercial CI43689822160 rejected54 cases:53 transition tests had no Platform
+mock and one historical integrity check expected the previous source literal.
+No typecheck/lint or APK build was reached. The failures were reproduced locally.
+The integrity check now executes the actual sourceChanged expression across source,
+window, pending-mutation and transient-status cases and exercises the real parsed
+SDK adapter for Android/iOS/web success and rejection. Its authority/timeout/signal
+and retirement assertions remain.
+
+The transition harness declares its platform explicitly. Parent review also ran
+all original cases on Android, reproducing two obsolete exit-opacity expectations.
+Every original host/geometry/failure/lifecycle obligation now runs on BOTH Android
+and iOS; only Android's intended inactive-layer exclusion has a separate precise
+assertion. Active/composite/iOS/web alpha and retained-host checks span every
+existing recipe. Parent execution passes112 transition cases and4 integrity cases.
+No production file, dependency or lint configuration changed in this follow-up.
+Native compilation and fresh exact-APK runtime evidence are still required.

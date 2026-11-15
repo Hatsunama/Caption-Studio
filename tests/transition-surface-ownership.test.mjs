@@ -17,7 +17,7 @@ const flatten = style => Object.assign({}, ...(Array.isArray(style) ? style.flat
 // Executes the actual exported overlay and every component it returns. Native host
 // identity follows keyed parent/type ancestry, including all wrapper components.
 // Only React scheduling and native hosts are substituted; policy modules are real.
-function harness(type, reverse = false) {
+function createHarness(type, reverse = false, platform = 'android') {
   const hosts = new Map(), natives = new Map(), cache = new Map();
   const context = vm.createContext({});
   const effects = [], calls = [];
@@ -38,7 +38,7 @@ function harness(type, reverse = false) {
   };
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = { react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
-    'react-native': { View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' } };
+    'react-native': { Platform: { OS: platform }, View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' } };
   function load(file) {
     if (cache.has(file)) return cache.get(file);
     if (!compiled.has(file)) compiled.set(file, ts.transpileModule(readFileSync(file, 'utf8'), {
@@ -117,6 +117,42 @@ const recipes = ['crossfade', 'push-left', 'push-right', 'push-up', 'push-down',
   'iris-circle', 'iris-diamond', 'fold-horizontal', 'fold-vertical', 'zoom-in', 'zoom-out', 'spin',
   'fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'];
 
+for (const platform of ['android', 'ios', 'web']) for (const reverse of [false, true]) {
+  test(`${platform}, reversed slots=${reverse}: retained layer alpha follows ordinary and composite ownership`, t => {
+    for (const recipe of recipes) {
+      const h = createHarness(recipe, reverse, platform); t.after(() => h.unmount());
+      const initial = h.render().map(v => v.id);
+      const composite = !['fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'].includes(recipe);
+      const alpha = view => view.ancestors.find(a => a.style.zIndex != null).style.opacity;
+      // Exercise both active-slot directions before, inside and after the window.
+      for (const timelineMs of [3000, 4000, 5000]) for (const activeSlot of [0, 1, 0]) {
+        h.render({ timelineMs, activeSlot });
+        assert.deepEqual(h.videos().map(v => v.id), initial, 'alpha changes retain both native hosts');
+        assert.equal(h.videos().length, 2);
+        for (const [slot, player] of h.players.entries()) {
+          const views = h.videos().filter(v => v.props.player === player);
+          assert.equal(views.length, 1, 'each SDK player keeps exactly one rendered host');
+          const incoming = slot === (reverse ? 0 : 1);
+          const inComposite = composite && timelineMs === 4000;
+          const compositeAlpha = incoming && ['crossfade', 'fold-horizontal', 'fold-vertical', 'zoom-in', 'zoom-out', 'spin'].includes(recipe) ? .5 : 1;
+          const expected = inComposite ? compositeAlpha
+            : platform === 'android' && slot !== activeSlot ? 0 : 1;
+          assert.equal(alpha(views[0]), expected, `${recipe}, time=${timelineMs}, active=${activeSlot}, slot=${slot}`);
+          if (expected > 0) assert.ok(views[0].ancestors.every(a => a.style.opacity !== 0), 'visible layers have no concealed ancestor');
+          assert.equal(views[0].ancestors.some(a => a.style.zIndex === (inComposite ? Number(incoming) : Number(slot === activeSlot))), true);
+        }
+      }
+      h.unmount();
+    }
+  });
+}
+
+// Keep every original ownership, geometry, failure and lifecycle obligation on
+// Android as well as the unchanged iOS path; only inactive Android alpha differs.
+const platformTest = test;
+for (const platform of ['android', 'ios']) {
+const test = (name, body) => platformTest(`${platform}: ${name}`, body);
+const harness = (type, reverse = false) => createHarness(type, reverse, platform);
 test('native hosts and frame callbacks follow view epochs independently of async preparation tokens', t => {
   const h = harness('crossfade'); t.after(() => h.unmount());
   const initial = h.render().map(view => view.id);
@@ -221,7 +257,11 @@ for (const reverse of [false, true]) test(`recipe ordering, phase-zero and exit 
     for (const v of h.videos()) {
       assert.ok(v.ancestors.some(a => a.style.zIndex === (v.props.player === h.players[h.props.activeSlot] ? 1 : 0)));
       assert.equal(v.ancestors.some(a => a.style.width === 0 || a.style.height === 0), false, 'exit clears clipped geometry');
-      assert.equal(v.ancestors.some(a => a.style.opacity === 0), false, 'exit clears transition opacity');
+      const zeroAlpha = v.ancestors.filter(a => a.style.opacity === 0);
+      if (platform === 'android' && v.props.player !== h.players[h.props.activeSlot]) {
+        const inactiveLayer = v.ancestors.find(a => a.style.zIndex === 0);
+        assert.deepEqual(zeroAlpha.map(a => a.id), [inactiveLayer.id], 'only the ordinary inactive Android layer stays excluded');
+      } else assert.equal(zeroAlpha.length, 0, 'exit clears transition opacity from every visible layer');
       assert.ok(v.ancestors.some(a => JSON.stringify(a.style.transform) === JSON.stringify([
         { translateX: 0 }, { translateY: 0 }, { rotate: '12deg' }, { scaleX: 1 }, { scaleY: 1 },
       ])), 'ordinary transform restored at endpoint');
@@ -327,3 +367,5 @@ for (const reverse of [false, true]) test(`recipe geometry at midpoint, reversed
     h.unmount();
   }
 });
+
+}
