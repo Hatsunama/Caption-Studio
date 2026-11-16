@@ -627,11 +627,14 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     return task;
   };
 
-  const applyClipToSlot = (slot: SlotIndex, entry: ClipTimelineEntry, timelineMs: number) => {
+  const applyClipToSlot = (
+    slot: SlotIndex, entry: ClipTimelineEntry, timelineMs: number, positionIsCurrent = false,
+  ) => {
     const media = playerForSlot(slot);
     media.playbackRate = entry.clip.playbackRate;
     media.volume = playbackVolume(entry, timelineMs);
     media.muted = entry.clip.muted || media.volume <= 0;
+    if (positionIsCurrent) return;
     const windowEndMs = slotRuntimeRef.current[slot].appliedWindowEndMs;
     const timeSeconds = effectiveNativeSeekTarget(
       Math.min(sourceTimeAt(entry, timelineMs), windowEndMs ?? Infinity) / 1_000, (windowEndMs ?? sourceForEntry(entry).durationMs) / 1_000, media.duration, Platform.OS,
@@ -973,9 +976,19 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       });
       if (transitionMs >= window.endMs) {
         compositeClockRef.current = undefined;
-        // A no-handle leg may have a different rate/source clock. Restore the
-        // ordinary clip clock once, after its last visible composite sample.
-        applyClipToSlot(ownerSlot, ownerEntry, transitionMs);
+        // The presentation clock stops at the endpoint; the incoming decoder
+        // may already be ahead when this callback arrives. Sample it once and
+        // resume its ordinary clock, including after a slowed no-handle leg.
+        const incomingSeconds = playerForSlot(ownerSlot).currentTime;
+        const incomingTimelineMs = timelineTimeAt(ownerEntry, incomingSeconds * 1_000);
+        const ordinaryMs = Math.max(window.endMs, incomingTimelineMs);
+        const positionIsCurrent = incomingTimelineMs >= window.endMs || !shouldApplyTimelineSeek(
+          incomingSeconds, sourceTimeAt(ownerEntry, window.endMs) / 1_000,
+        );
+        setCurrentMs(ordinaryMs);
+        // Skip a second getter/seek decision when already current. A behind
+        // incoming leg still needs forward catch-up on an outgoing transfer.
+        applyClipToSlot(ownerSlot, ownerEntry, ordinaryMs, positionIsCurrent);
       }
       return;
     }
