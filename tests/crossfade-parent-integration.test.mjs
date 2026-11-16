@@ -30,7 +30,7 @@ const matteOf = video => {
 // Executes the actual exported overlay and every component it returns. Native host
 // identity follows keyed parent/type ancestry, including all wrapper components.
 // Only React scheduling and native hosts are substituted; policy modules are real.
-function createHarness(type, reverse = false, platform = 'android') {
+function createHarness(type, reverse = false, platform = 'android', { nativeAudioQueue = false } = {}) {
   const hosts = new Map(), natives = new Map(), cache = new Map();
   const context = vm.createContext({});
   const effects = [], calls = [];
@@ -38,6 +38,7 @@ function createHarness(type, reverse = false, platform = 'android') {
   const players = [0, 1].map(slot => ({ currentTime: 0, playbackRate: 1, muted: false, playing: false,
     play() { this.playing = true; calls.push(['play', slot, this.muted]); },
     pause() { this.playing = false; calls.push(['pause', slot]); } }));
+  const audio = nativeAudioQueue ? installNativeAudioQueue(players) : undefined;
   const react = {
     useRef(value) { return owner.cells[cursor++] ??= { current: value }; },
     useState(initial) { const host = owner, i = cursor++;
@@ -131,7 +132,7 @@ function createHarness(type, reverse = false, platform = 'android') {
     if (node.children != null) nodes(type, node.children, [...ancestors, node], result); return result;
   }
   const videos = () => nodes('video');
-  return { props, players, calls, windows, render, nodes, videos,
+  return { props, players, calls, windows, render, nodes, videos, audio,
     frame() { videos().forEach(v => v.props.onFirstFrameRender()); render(); },
     phase(phase) { render({ timelineMs: 3500 + phase * 1000 }); },
     unmount() { mounted = false; render(); },
@@ -390,4 +391,207 @@ for (const platform of ['android', 'ios', 'web']) for (const reverse of [false, 
       }
     });
   }
+}
+
+// Opt-in Expo 57.0.5 Android setter boundary, not an audio/DSP simulation.
+// VideoPlayer.kt:131-143 + delegates/IgnoreSameSet.kt:18-23. Volume captures
+// Float new but reads muted dynamically; muted captures Boolean new and reads
+// latest userVolume. VideoModule.kt:101-103 updates userVolume even on equal set.
+// Only explicit flush executes the audio FIFO; no claim about queue latency/PCM.
+// Clock/seek stay a property-boundary fixture: unlike VideoModule's runBlocking
+// currentTime getter, they do not drain mainQueue. Seek safety below checks mute
+// at the JS request, not real native seek execution or decoder output.
+function installNativeAudioQueue(players) {
+  const queue = [], writes = [], seeks = [];
+  const states = players.map((player, slot) => {
+    const state = { time: player.currentTime, volume: 1, userVolume: 1,
+      muted: false, nativeVolume: 1, rate: 1, failSeek: false };
+    const write = (value, setter) => {
+      state.nativeVolume = value;
+      writes.push({ slot, value, setter });
+    };
+    Object.defineProperties(player, {
+      volume: { get: () => state.volume, set(value) {
+        const next = Math.fround(value);
+        state.userVolume = next;
+        if (state.volume === next) return;
+        state.volume = next;
+        queue.push(() => write(state.muted ? 0 : next, 'volume'));
+      } },
+      muted: { get: () => state.muted, set(next) {
+        if (state.muted === next) return;
+        state.muted = next;
+        queue.push(() => write(next ? 0 : state.userVolume, 'muted'));
+      } },
+      playbackRate: { get: () => state.rate, set(value) { state.rate = Math.fround(value); } },
+      currentTime: { get: () => state.time, set(value) {
+        if (state.failSeek) { state.failSeek = false; throw new Error('native seek unavailable'); }
+        seeks.push({ slot, value, requestedMuted: state.muted });
+        state.time = value;
+      } },
+    });
+    return state;
+  });
+  return { states, writes, seeks,
+    flush() { const start = writes.length; while (queue.length) queue.shift()(); return writes.slice(start); },
+    advanceNative(seconds) {
+      states.forEach((state, slot) => { if (players[slot].playing) state.time += seconds * state.rate; });
+    },
+    // Decoder drift is not a JS seek. Both operations bypass the property setter.
+    displaceNative(slot, seconds) { states[slot].time += seconds; },
+  };
+}
+
+test('native audio queue fixture matches captured mute and dynamic volume setters', () => {
+  const players = [{ currentTime: 0, playing: true }];
+  const audio = installNativeAudioQueue(players), [p] = players;
+  p.volume = .6; p.volume = .6; p.muted = true; p.muted = true; p.muted = false;
+  assert.deepEqual(audio.writes, [], 'writes only materialize on explicit flush');
+  const writes = audio.flush();
+  assert.deepEqual(writes.map(w => w.value), [Math.fround(.6), 0, Math.fround(.6)],
+    'volume reads final muted=false; captured true still writes zero; equals deduplicated');
+  p.muted = true; p.volume = .4;
+  assert.deepEqual(audio.flush().map(w => w.value), [0, 0], 'dynamic muted silences volume closure');
+  p.muted = false; p.volume = .3;
+  assert.deepEqual(audio.flush().map(w => w.value), [Math.fround(.3), Math.fround(.3)],
+    'unmute closure reads latest userVolume, not enqueue-time volume');
+  const time = p.currentTime;
+  p.playbackRate = .3; audio.advanceNative(.05);
+  assert.equal(p.currentTime, time + .05 * Math.fround(.3));
+  assert.deepEqual(audio.seeks, [], 'native clock advance never invokes JS seek');
+});
+
+const audioPhases = [.25, .35, .45, .5, .55, .65, .75];
+const expectedCrossGain = (phase, incoming) => incoming
+  ? Math.sin(phase * Math.PI / 2) : Math.cos(phase * Math.PI / 2);
+const nearGain = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-6,
+  `${message}: ${actual} vs ${expected}`);
+const audioHarness = reverse => createHarness('crossfade', reverse, 'android', { nativeAudioQueue: true });
+const warmAudio = (h, phase = .25) => {
+  h.render({ timelineMs: 3500 + phase * 1000, isPlaying: true });
+  h.audio.flush();
+};
+
+// Every start phase gets a fresh warm pair. Accumulate zero pulses so the RED
+// reports the entire bounded sweep instead of aborting at the first bad tick.
+for (const reverse of [false, true]) {
+  test(`native audio queue: continuous crossfade has no zero pulse, reverse=${reverse}`, t => {
+    const violations = [];
+    let observed = 0, positiveWrites = 0, flips = 0;
+    for (const start of audioPhases) {
+      const h = audioHarness(reverse);
+      try {
+        warmAudio(h, start);
+        const ids = h.videos().map(v => v.id);
+        for (const [slot, player] of h.players.entries()) {
+          nearGain(player.volume, expectedCrossGain(start, slot === (reverse ? 0 : 1)), 'warm JS gain');
+          assert.equal(player.playing, true);
+          assert.equal(player.muted, false);
+        }
+        let previous = start;
+        // Include an aligned same-clock callback churn at each start phase, then
+        // successive phases and the real outgoing->incoming cut ownership flip.
+        for (const phase of [start, ...audioPhases.filter(p => p > start)]) {
+          h.audio.advanceNative(phase - previous);
+          const seekCount = h.audio.seeks.length;
+          const oldActive = h.props.activeSlot;
+          const activeSlot = phase >= .5 ? (reverse ? 0 : 1) : (reverse ? 1 : 0);
+          h.render({ timelineMs: 3500 + phase * 1000, activeSlot,
+            currentClipId: phase >= .5 ? 'in' : 'out', setCompositeClock: () => {} });
+          if (activeSlot !== oldActive) flips++;
+          assert.equal(h.audio.seeks.length, seekCount, 'aligned advancing native clocks do not seek');
+          assert.deepEqual(h.videos().map(v => v.id), ids, 'retained source hosts survive ticks and cut');
+          const writes = h.audio.flush();
+          for (const [slot, player] of h.players.entries()) {
+            const expected = expectedCrossGain(phase, slot === (reverse ? 0 : 1));
+            assert.ok(expected > .38, 'independent envelope is strictly audible in this sweep');
+            nearGain(player.volume, expected, 'final JS gain');
+            nearGain(h.audio.states[slot].nativeVolume, expected, 'final native gain');
+            assert.equal(player.muted, false);
+            assert.equal(player.playing, true);
+            for (const write of writes.filter(w => w.slot === slot)) {
+              observed++;
+              if (write.value === 0) violations.push({ start, phase, ...write });
+              else { positiveWrites++; nearGain(write.value, expected, 'positive native envelope write'); }
+            }
+          }
+          previous = phase;
+        }
+      } finally { h.unmount(); h.audio.flush(); }
+    }
+    assert.ok(flips >= 3, 'cross the cut in either slot assignment');
+    assert.ok(observed >= 42 && positiveWrites >= 42, 'non-vacuous native writes across successive phases');
+    t.diagnostic(JSON.stringify({ observed, positiveWrites, zeroPulses: violations }));
+    assert.deepEqual(violations, [], 'aligned already-playing positive-gain legs must never receive native zero');
+  });
+}
+
+for (const reverse of [false, true]) {
+  test(`native audio queue: pause, explicit mute/zero and drift seek remain safe, reverse=${reverse}`, t => {
+    const h = audioHarness(reverse); t.after(() => h.unmount());
+    warmAudio(h);
+    h.render({ isPlaying: false }); h.audio.flush();
+    assert.ok(h.players.every(p => !p.playing && p.muted));
+    assert.ok(h.audio.states.every(s => s.nativeVolume === 0), 'pause silences both legs');
+    h.render({ isPlaying: true }); h.audio.flush();
+    for (const mode of ['muted', 'volume']) {
+      for (const entry of h.props.entries) {
+        h.render({ entries: h.props.entries.map(e => ({ ...e, clip: { ...e.clip,
+          [mode]: e.clip.id === entry.clip.id ? (mode === 'muted' ? true : 0) : (mode === 'muted' ? false : 1) } })) });
+        h.audio.flush();
+        const slot = h.props.slots.findIndex(s => s.preparedClipId === entry.clip.id);
+        assert.equal(h.players[slot].muted, true);
+        assert.equal(h.audio.states[slot].nativeVolume, 0, 'explicit clip silence reaches native queue');
+      }
+      h.render({ entries: h.props.entries.map(e => ({ ...e, clip: { ...e.clip, muted: false, volume: 1 } })) });
+      h.audio.flush();
+    }
+    for (const slot of [0, 1]) {
+      h.audio.displaceNative(slot, -.4);
+      const count = h.audio.seeks.length;
+      h.render({ setCompositeClock: () => {} }); h.audio.flush();
+      const seeks = h.audio.seeks.slice(count);
+      assert.equal(seeks.length, 1, 'real decoder drift resynchronizes only the displaced leg');
+      assert.equal(seeks[0].slot, slot);
+      assert.equal(seeks[0].requestedMuted, true, 'seek requested while muted');
+      assert.ok(h.audio.states.every(s => s.nativeVolume > 0), 'gain restored after safe seek');
+    }
+    h.render({ timelineMs: 4200 }); h.audio.flush();
+    assert.ok(h.audio.seeks.slice(-2).every(s => s.requestedMuted), 'large timeline seeks requested while muted');
+    assert.ok(h.audio.states.every(s => s.nativeVolume > 0));
+  });
+}
+
+for (const mode of ['failure', 'unavailable', 'suspend', 'cancel', 'unmount']) {
+  test(`native audio queue: ${mode} drains silent without late resurrection`, t => {
+    const h = audioHarness(false); t.after(() => h.unmount());
+    warmAudio(h);
+    // Leave a real synchronization batch queued before retiring to detect stale
+    // captured unmute work. Unmount transport stop belongs to the parent, whose
+    // existing fixture deliberately preserves ordinary active playback on retire.
+    h.audio.advanceNative(.05);
+    h.render({ timelineMs: 3800 });
+    if (mode === 'failure') {
+      h.audio.states[1].failSeek = true; h.audio.displaceNative(1, -.5);
+      h.render({ setCompositeClock: () => {} });
+    } else if (mode === 'unavailable' || mode === 'cancel') {
+      h.render({ slots: h.props.slots.map((s, i) => i === 1
+        ? { ...s, readiness: mode === 'cancel' ? 'cancelled' : 'error', firstFrameReady: false } : s) });
+    } else if (mode === 'suspend') {
+      h.render({ visible: false });
+    } else {
+      // Execute the actual overlay stop first; parent transport owns full unmount silence.
+      h.render({ isPlaying: false }); h.unmount();
+    }
+    h.audio.flush();
+    assert.ok(h.audio.states.every(s => s.nativeVolume === 0), 'retirement batch ends silent');
+    assert.ok(h.players.every(p => p.muted));
+    const count = h.audio.writes.length;
+    h.audio.advanceNative(.1); h.audio.flush();
+    if (mode !== 'unmount') h.render({ setCompositeClock: () => {} });
+    const late = h.audio.flush();
+    assert.ok(late.every(w => w.value === 0), 'no later queued gain resurrection');
+    assert.ok(h.audio.writes.slice(count).every(w => w.value === 0));
+    if (mode === 'unmount') assert.equal(h.videos().length, 0);
+  });
 }
