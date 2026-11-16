@@ -190,6 +190,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   };
 
   const retireComposite = (allowOrdinaryPlayback = true) => {
+    // A keyed child's passive cleanup can run after Expo releases the players.
+    if (!mountedRef.current) {
+      compositeClockRef.current = undefined;
+      pendingOrdinaryRestoreRef.current = false;
+      return;
+    }
     const clock = compositeClockRef.current;
     compositeClockRef.current = undefined;
     const restoreAfterProcessing = pendingOrdinaryRestoreRef.current && !processingRef.current;
@@ -1043,11 +1049,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   useEventListener(playerB, 'playingChange', ({ isPlaying: nativePlaying }) => onPlayingChange(1, nativePlaying));
   useEventListener(playerB, 'statusChange', ({ status, error }) => onStatusChange(1, status, error));
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const maskRequestIds = maskRequestIdsRef.current;
     mountedRef.current = true;
-    requestTargetRef.current(0);
     return () => {
+      // Expo owns release in an earlier-registered passive effect. Retire JS
+      // work and quiet native players during layout, while they are still live.
       mountedRef.current = false;
       if (translationSuspensionRef.current) {
         translationSuspensionRef.current.restored = true;
@@ -1055,6 +1062,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       }
       translationSuspensionRef.current = null;
       playIntentRef.current = false;
+      compositeClockRef.current = undefined;
+      pendingOrdinaryRestoreRef.current = false;
       desiredRef.current = undefined;
       generationRef.current += 1;
       boundaryClipIdRef.current = undefined;
@@ -1064,6 +1073,10 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       cancelGapClock();
       cancelScheduledPreload();
     };
+  }, [players, retireSurfaceFrames]);
+
+  useEffect(() => {
+    requestTargetRef.current(0);
   }, [players, retireSurfaceFrames]);
 
   useLayoutEffect(() => {

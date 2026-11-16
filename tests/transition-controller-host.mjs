@@ -21,11 +21,33 @@ const clip = (id = 'a', sourceId = 'source') => ({ id, sourceId, sourceStartMs: 
 // React scheduling and the native boundary are faked. Public view frames never
 // arrive by default; all Android native presentation is controlled by holdWindow.
 // Explicit iOS/web fixtures below retain coverage of the legacy public frame gates.
-export function harness({ clips = [clip()], missingSource = false, holdReplacement = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false, sourceDurationMs = 31000, allowGapClock = false, pip = false } = {}) {
+export function harness({ clips = [clip()], missingSource = false, holdReplacement = false, holdMaskAcquire = false, frameOnPublish = false, platform = 'android', nativeDuration, nativeClock = false, sourceDurationMs = 31000, allowGapClock = false, pip = false } = {}) {
   const hosts = new Map(), cache = new Map(), timers = new Map(), calls = [], eofFrames = new Map();
   const gapFrames = new Map();
   const publishedFrames = new Map();
   const retirementTrace = [];
+  const lifecycleTrace = [], postReleaseAccesses = [];
+  const released = new Set();
+  let nativeCompletion = false;
+  function assertLive(slot, operation) {
+    if (released.has(slot) && !nativeCompletion) {
+      postReleaseAccesses.push({ slot, operation });
+      throw new Error(`Cannot use shared object that was already released: ${slot}.${operation}`);
+    }
+  }
+  function cleanupOwners(owners) {
+    // React deletion traverses parents before children within each phase;
+    // effects on one fiber clean up in hook registration order.
+    for (const kind of ['layout', 'passive']) for (const owner of owners) {
+      for (const cell of owner.cells) if (cell?.effectKind === kind && cell.cleanup) {
+        const cleanup = cell.cleanup; cell.cleanup = undefined;
+        if (owner.name === 'SynchronizedComposite') lifecycleTrace.push({
+          operation: 'compositeCleanup', phase: kind, releasedCount: released.size,
+        });
+        cleanup();
+      }
+    }
+  }
   let heldNativeOwner;
   let traceRetirement = false;
   let host, cursor, dirty = true, transport, views = [], alive = true, timerId = 0, now = 0;
@@ -76,7 +98,7 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
   const players = (pip ? [0, 1, 2] : [0, 1]).map(slot => {
     const listeners = new Map();
     let time = 0;
-    return { mediaItems: 0, status: 'idle', playing: false, muted: false, playbackRate: 1, volume: 1, holdWindow: slot === 2,
+    return { holdMaskAcquire, mediaItems: 0, status: 'idle', playing: false, muted: false, playbackRate: 1, volume: 1, holdWindow: slot === 2,
       get duration() { const full = nativeDuration === undefined ? project.sources[0]?.durationMs / 1000 : nativeDuration;
         return this.windowEndMs == null ? full : Math.min(full, Math.fround(Math.fround(this.windowEndMs) / 1000)); },
       get currentTime() { return nativeClock ? Math.fround(Math.fround(time * 1000) / 1000) : time; },
@@ -87,19 +109,39 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
       async replaceAsync(uri) { calls.push(['replace', slot, uri]);
         if (uri) observeInstallation('replaceAsync', slot, uri);
         if ((this.holdReplacement ?? holdReplacement) && uri) await new Promise(resolve => { this.finishReplacement = resolve; });
-        if (uri) { this.mediaItems++; time = 0; }
-        this.loadedUri = uri; this.windowEndMs = undefined;
-        this.status = uri ? this.replacementStatus ?? 'readyToPlay' : 'idle'; },
+        // Native completion updates native state even after JS ownership ends.
+        nativeCompletion = true;
+        try {
+          if (uri) { this.mediaItems++; time = 0; }
+          this.loadedUri = uri; this.windowEndMs = undefined;
+          this.status = uri ? this.replacementStatus ?? 'readyToPlay' : 'idle';
+        } finally { nativeCompletion = false; } },
       addListener(event, fn) { const set = listeners.get(event) ?? new Set(); listeners.set(event, set); set.add(fn);
         return { remove: () => set.delete(fn) }; },
       emit(event, value) { for (const fn of [...(listeners.get(event) ?? [])]) fn(value); },
       listenerCount() { return [...listeners.values()].reduce((n, set) => n + set.size, 0); },
     };
   });
+  // Guard native properties/methods with accessors, without a forgiving proxy.
+  // Fixture controls (finishReplacement, emit, listenerCount) remain callable.
+  players.forEach((player, slot) => {
+    for (const key of ['status', 'playing', 'muted', 'volume', 'playbackRate', 'duration', 'currentTime',
+      'loop', 'timeUpdateEventInterval', 'audioMixingMode', 'staysActiveInBackground',
+      'pause', 'play', 'replaceAsync', 'addListener']) {
+      const descriptor = Object.getOwnPropertyDescriptor(player, key);
+      let value = descriptor?.value;
+      Object.defineProperty(player, key, { configurable: true,
+        get() { assertLive(slot, `get ${key}`); return descriptor?.get ? descriptor.get.call(player) : value; },
+        set(next) { assertLive(slot, `set ${key}`);
+          if (descriptor?.set) descriptor.set.call(player, next); else value = next; },
+      });
+    }
+  });
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = {
     'caption-media': { __esModule: true, default: {
       async acquireVideoMaskLease(player, peer, requestId, generation, requireHiddenAncestor) {
+        assertLive(players.indexOf(player), 'acquireVideoMaskLease');
         calls.push(['maskAcquire', players.indexOf(player), requestId, generation, requireHiddenAncestor]);
         assert.notEqual(player, peer);
         player.maskRequest = requestId;
@@ -111,6 +153,7 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
         player.nativeLeaseGrant = requestId;
       },
       async commitVideoMaskLease(player, requestId, generation) {
+        assertLive(players.indexOf(player), 'commitVideoMaskLease');
         assert.equal(player.nativeLeaseGrant, requestId);
         assert.equal(player.maskGeneration, generation);
         if (player.holdMaskCommit) await new Promise(resolve => { player.finishMaskCommit = resolve; });
@@ -118,14 +161,17 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
         calls.push(['maskCommit', players.indexOf(player), requestId]);
       },
       async cancelVideoMaskLease(player, requestId) {
+        assertLive(players.indexOf(player), 'cancelVideoMaskLease');
         player.cancelledMask = Math.max(player.cancelledMask ?? 0, requestId);
         calls.push(['maskCancel', players.indexOf(player), requestId]);
       },
       async disposeVideoMaskLease(player, requestId) {
+        assertLive(players.indexOf(player), 'disposeVideoMaskLease');
         calls.push(['maskDispose', players.indexOf(player), requestId]);
         player.cancelledMask = Math.max(player.cancelledMask ?? 0, requestId);
       },
       async configureVideoPlaybackWindow(player, uri, requestId, endMs, targetMs, timeoutMs) {
+        assertLive(players.indexOf(player), 'configureVideoPlaybackWindow');
         const slot = players.indexOf(player);
         calls.push(['window', slot, uri, requestId, endMs, timeoutMs, targetMs]);
         observeInstallation('configureVideoPlaybackWindow', slot, uri);
@@ -143,6 +189,7 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
         if (player.cancelledWindow === requestId) throw Object.assign(new Error('cancelled'), { name: 'AbortError' });
       },
       async cancelVideoPlaybackWindow(player, requestId) {
+        assertLive(players.indexOf(player), 'cancelVideoPlaybackWindow');
         calls.push(['cancelWindow', players.indexOf(player), requestId]); player.cancelledWindow = requestId;
       },
     } },
@@ -151,7 +198,16 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
     'expo-video': { VideoView: 'video', useVideoPlayer(source, setup) {
       const player = players[playerCursor++]; const ref = react.useRef(false);
       if (!ref.current) { if (source) { player.loadedUri = source; player.status = 'loading'; }
-        setup(player); ref.current = true; } return player; } },
+        setup(player); ref.current = true; }
+      // Expo 57 registers automatic release as a passive unmount effect.
+      react.useEffect(() => () => {
+        assertLive(players.indexOf(player), 'release');
+        lifecycleTrace.push({ operation: 'release', slot: players.indexOf(player),
+          muted: player.muted, volume: player.volume, playing: player.playing });
+        calls.push(['release', players.indexOf(player)]);
+        released.add(players.indexOf(player));
+      }, []);
+      return player; } },
     expo: { useEventListener(player, event, callback) {
       react.useEffect(() => { const sub = player.addListener(event, callback); return () => sub.remove(); }, [player, event, callback]); } },
   };
@@ -207,7 +263,7 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
     if (Array.isArray(node)) return node.forEach((child, i) => renderNode(child, `${path}/${child?.key ?? i}`, seen, ancestors));
     if (!node || typeof node !== 'object') return;
     if (typeof node.type === 'function') {
-      seen.add(path); host = hosts.get(path) ?? { cells: [] }; hosts.set(path, host); cursor = 0;
+      seen.add(path); host = hosts.get(path) ?? { cells: [], name: node.type.name }; hosts.set(path, host); cursor = 0;
       const child = node.type(node.props); renderNode(child, `${path}/result`, seen, ancestors);
     } else {
       if (node.type === 'video') views.push({ ...node.props, ancestors, nativePath: path });
@@ -222,7 +278,9 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
     do {
       assert.ok(++attempts < 30, 'render must settle'); dirty = false; playerCursor = 0; views = [];
       const seen = new Set(); renderNode(jsx(Root, {}), 'root', seen);
-      for (const [path, owner] of hosts) if (!seen.has(path)) { owner.cells.forEach(cell => cell?.cleanup?.()); hosts.delete(path); }
+      const removed = [...hosts].filter(([path]) => !seen.has(path));
+      cleanupOwners(removed.map(([, owner]) => owner));
+      for (const [path] of removed) hosts.delete(path);
       while (layout.length) layout.shift()(); while (passive.length) passive.shift()();
     } while (dirty);
     return transport;
@@ -313,7 +371,11 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
       }
       await settle();
     },
-    unmount() { alive = false; for (const owner of hosts.values()) owner.cells.forEach(cell => cell?.cleanup?.()); hosts.clear(); },
+    unmount() { if (!alive) return; alive = false; cleanupOwners([...hosts.values()]); hosts.clear(); },
+    lifecycleTrace, postReleaseAccesses,
+    get releasedCount() { return released.size; },
+    get listenerCount() { return players.reduce((sum, player) => sum + player.listenerCount(), 0); },
+    get gapFrameCount() { return gapFrames.size; },
     get timerCount() { return timers.size; },
   };
 }

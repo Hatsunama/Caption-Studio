@@ -577,3 +577,58 @@ lifecycle behavior. Focused device checks must verify crossfade pixels and movin
 frames, fit margins/masks, Spin flash, cover sound timing and pause/rotation/resume
 without introducing unrelated retests. PR169 remains draft/unmerged and release
 blocked until those checks pass. No final artifact approval is implied here.
+
+## Seeker Save Draft crash — 2026-11-15
+
+The exact private candidate `0f21acb` / APK SHA256
+`a4384eb563b8ebbf898795ff385385b558f6c10013cc09c5c4d50e63260c5169`
+crashes when Save Draft closes an editor paused inside a composite transition.
+Seeker records the foreground fatal exception at 21:30:33.383 America/New_York:
+Expo VideoPlayer shared object already released. React reports both
+EditorWorkspace and SynchronizedComposite passive-unmount cleanup. MediaSession
+and ExoPlayer release entries precede the exception. Android exit-info confirms
+APP CRASH(EXCEPTION); its later excessive-binder-traffic kill at 21:30:47 is a
+secondary event, not the initiating cause. This is runtime-reproduced.
+
+The controller calls useVideoPlayer twice before registering its own passive
+cleanup. Installed Expo Video 57.0.5 delegates to Expo Modules Core's
+useReleasingSharedObjectWithLifecycle, whose earlier passive cleanup releases
+the players. The later controller cleanup calls retireSurfaceFrames, which
+writes muted/volume and calls pause on those released objects. The keyed
+SynchronizedComposite passive cleanup also calls retireComposite, whose native
+writes were not guarded against controller retirement. Both paths match the
+recorded component errors. The existing fake-player test hosts did not model
+Expo automatic release or reject post-release access; their passing unmount
+assertions therefore did not establish native lifetime correctness.
+
+The directly related source-loader audit also finds replaceAsync completion
+reading player.status after cancellation has already settled the operation.
+That is a separate late-completion risk; it is not claimed as this captured
+passive-unmount crash. Test-first ownership and cancellation repairs are implemented; native acceptance remains pending. PiP video uses layout cleanup before Expo's passive release, and
+separate audio owns explicitly created players; neither is established as the
+cause of this incident. No configuration, dependency or signing change is needed.
+
+Acceptance requires failing-before/passing-after lifecycle and late-completion
+regressions, unchanged connected transition/recovery tests, full CI on the new
+head and a fresh exact APK. On each phone, exercise the same paused-composite
+Save Draft -> project list -> reopen sequence, ordinary editor exit, and the
+directly affected cancellation/background path. Preserve prior unaffected proof;
+no broad repetition is required. PR169 remains draft/unmerged and release blocked.
+Private logs and the exact action sequence are retained in
+`transition-integration-20261115/phone-seeker-0f21/URGENT-*` outside the repository.
+
+The repair moves controller retirement into layout cleanup, before Expo's passive
+release, while leaving initial source preparation passive. The retired child's
+composite callback clears only JavaScript ownership. Cancelled/failed/timed-out
+loaders ignore late replacement completion; current status-read errors reject
+through existing cleanup. No exception suppression or manual Expo release was added.
+Actual-hook tests now model parent-before-child layout/passive cleanup, Expo
+release and throwing post-release access. Before production edits, 14 new cases
+fail and all seven existing source-loader controls pass. Independent parent
+verification after repair passes all42 selected lifecycle, loader and connected
+transition contracts. It includes ordinary/composite exit, both play states,
+six pending-preparation stages, gap/preload cancellation and repeated fresh mounts.
+The older surface-recovery host still lacks automatic-release modeling and is
+not cited as proof of this defect. Local full typechecking exceeds the protected
+128MiB heap; fresh hosted typecheck/lint/full tests and both-phone APK checks are
+required, without relaxing memory limits or treating the resource error as green.
