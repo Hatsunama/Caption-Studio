@@ -647,3 +647,28 @@ static diff inspection does not establish GREEN. Parent targeted/full hosted
 checks and exact-APK native pixels, moving frames, rotation and cache release on
 both phones remain mandatory. Parent reports both-phone Save/list/reopen PASS
 on `238f464` before this change; this candidate remains UNVERIFIED.
+
+## 2026-11-16 retained sibling drawing order
+
+The exact `58d3c9f` APK failed the initial paused Cross on both phones: incoming
+portrait B occupied physical child 0 beneath opaque landscape A in child 1.
+Both sources appeared after one Save/list/reopen, without a process restart.
+Samsung's reopened frame passed 96 independent common-bright-channel sample
+points (110 channels), but that narrow result does not establish moving frames.
+
+The installed RN 0.86.3 `ReactViewGroup.drawChild` closes its Z section after each
+elevated child. Android's later opaque sibling can therefore overwrite elevated
+child 0; elevation does not provide the ordering previously claimed here.
+Test-only `af98ae2` first produced hosted RED: 4,132 logic cases total, 4,108 pass,
+15 new Android order/registration failures, nine platform skips. No unrelated
+failure category appeared. Native test execution was not reached in that run.
+
+The repair uses the standard Android `ViewGroup.getChildDrawingOrder` hook in a
+named view in the existing media module. It changes paint order, preserves fixed
+physical children and Yoga-owned child geometry, and adds no player or listener.
+The original caption presentation stays the default module view. Both child
+Z values are zero; the existing fractional alpha/cache, mattes, source timing,
+transforms and non-Android behavior remain unchanged. The Context constructor is
+kept for Expo's reflective release creation. Full CI, native software-Canvas
+contracts and both-phone GPU/motion/rotation/recovery acceptance remain pending.
+PR #169 remains draft and unmerged.

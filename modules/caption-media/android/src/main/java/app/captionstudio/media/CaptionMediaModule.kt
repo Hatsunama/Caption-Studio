@@ -116,6 +116,11 @@ class CaptionMediaModule : Module() {
       OnViewDestroys { view: CaptionPresentationView -> view.close() }
     }
 
+    View(CaptionTransitionPairView::class) {
+      Name("CaptionTransitionPair")
+      Prop("frontSlot") { view: CaptionTransitionPairView, value: Int -> view.setFrontSlot(value) }
+    }
+
     AsyncFunction("persistReadPermission") { inputUri: String ->
       persistReadPermission(inputUri)
     }

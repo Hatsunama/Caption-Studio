@@ -1,6 +1,7 @@
+import { requireNativeView } from 'expo';
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, Text, View, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
 
 import {
   buildVideoTransitionPreviewWindows,
@@ -38,6 +39,17 @@ type Props = {
 };
 
 const fill: ViewStyle = { position: 'absolute', inset: 0 };
+
+type TransitionPairProps = ViewProps & { frontSlot: 0 | 1 };
+
+// The RN fallback forwards only existing host props; frontSlot is Android only.
+function TransitionPairFallback({ children, collapsable, pointerEvents, style }: TransitionPairProps) {
+  return <View collapsable={collapsable} pointerEvents={pointerEvents} style={style}>{children}</View>;
+}
+
+const TransitionPair = Platform.OS === 'android'
+  ? requireNativeView<TransitionPairProps>('CaptionMedia', 'CaptionTransitionPair')
+  : TransitionPairFallback;
 
 export function VideoTransitionOverlay(props: Props) {
   const backgroundColor = resolveCanvasColor(props.backgroundColor);
@@ -116,20 +128,22 @@ function TimelineVideoPair(props: Props & { composite?: Composite; concealed: bo
   } : { outgoing: true, incoming: true };
   const ready = rendered.outgoing && rendered.incoming && !props.concealed;
   return (
-    <View collapsable={false} pointerEvents="none" style={[fill, { overflow: 'hidden', opacity: ready ? 1 : 0 }]}>
+    <TransitionPair
+      collapsable={false}
+      pointerEvents="none"
+      frontSlot={composite?.incomingSlot ?? props.activeSlot}
+      style={[fill, { overflow: 'hidden', opacity: ready ? 1 : 0 }]}
+    >
       {props.players.map((player, index) => {
         const slot = index as 0 | 1;
         const incoming = composite?.incomingSlot === slot;
         const source = composite ? (incoming ? composite.frame.incoming : composite.frame.outgoing) : undefined;
         const effect = composite ? compositeLayerStyle(composite.frame, incoming, props.width, props.height) : undefined;
         const front = composite ? incoming : slot === props.activeSlot;
-        // Fabric sorts concrete children by zIndex and removes/reinserts them
-        // when it changes. Keep the TextureView ancestry attached on Android;
-        // elevation changes RenderNode drawing order without a mount mutation.
-        // The elevated wrapper never gets a background drawable (including
-        // ordinary playback), so its native outline has zero alpha on API 24+.
+        // Keep Fabric child order fixed. The Android pair paints the foreground
+        // last without elevated RN children closing the sibling Z barrier early.
         const order: ViewStyle = Platform.OS === 'android'
-          ? { zIndex: 0, elevation: front ? 1 : 0, shadowColor: 'transparent' }
+          ? { zIndex: 0, elevation: 0 }
           : { zIndex: front ? 1 : 0 };
         return (
           <VideoLayer
@@ -146,7 +160,7 @@ function TimelineVideoPair(props: Props & { composite?: Composite; concealed: bo
           />
         );
       })}
-    </View>
+    </TransitionPair>
   );
 }
 
