@@ -14,6 +14,19 @@ const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Obje
 const transform = { position: { x: .5, y: .5 }, scale: 1, rotation: 0, fit: 'fit' };
 const flatten = style => Object.assign({}, ...(Array.isArray(style) ? style.flat(Infinity) : [style]).filter(Boolean));
 
+// Locate the existing alpha boundary and its inner matte by actual host props,
+// so changing only the pair's native type cannot hide a lifetime/layout regression.
+const opacityOwner = video => {
+  const owner = video.ancestors.find(node => Object.hasOwn(node.props, 'needsOffscreenAlphaCompositing'));
+  assert.ok(owner, 'retained video has its concrete opacity owner');
+  return owner;
+};
+const matteOf = video => {
+  const matte = video.ancestors.findLast(node => node.style.backgroundColor != null);
+  assert.ok(matte, 'retained video has its input matte');
+  return matte;
+};
+
 // Executes the actual exported overlay and every component it returns. Native host
 // identity follows keyed parent/type ancestry, including all wrapper components.
 // Only React scheduling and native hosts are substituted; policy modules are real.
@@ -38,7 +51,13 @@ function createHarness(type, reverse = false, platform = 'android') {
   };
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = { react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
-    'react-native': { Platform: { OS: platform, Version: 36 }, View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' } };
+    'react-native': { Platform: { OS: platform, Version: 36 }, View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' },
+    'expo': { requireNativeView(module, name) {
+      assert.equal(platform, 'android', 'native pair is Android only');
+      assert.equal(module, 'CaptionMedia');
+      assert.equal(name, 'CaptionTransitionPair');
+      return 'transition-pair';
+    } } };
   function load(file) {
     if (cache.has(file)) return cache.get(file);
     if (!compiled.has(file)) compiled.set(file, ts.transpileModule(readFileSync(file, 'utf8'), {
@@ -133,7 +152,7 @@ for (const platform of ['android', 'ios', 'web']) for (const recipe of composite
         const ids = identities();
         const check = () => {
           assert.deepEqual(identities(), ids, 'video and every wrapper survive entry, phase changes and exit');
-          const owners = h.videos().map(v => v.ancestors[2]);
+          const owners = h.videos().map(v => opacityOwner(v));
           for (const owner of owners) {
             const fractional = owner.style.opacity > 0 && owner.style.opacity < 1;
             assert.equal(owner.props.needsOffscreenAlphaCompositing === true,
@@ -190,8 +209,8 @@ for (const reverse of [false, true]) for (const activeSlot of [0, 1]) {
       assert.equal(a.backgrounds[0].style.backgroundColor, '#123456');
       assert.notEqual(a.backgrounds[1].id, b.backgrounds[1].id, 'each input owns its full frame matte');
       for (const video of [outgoing, incoming]) {
-        assert.equal(video.ancestors[2].style.backgroundColor, undefined, 'elevated wrapper stays background free');
-        assert.equal(video.ancestors[4].style.backgroundColor, '#123456', 'matte is inside clipping and outside user transform');
+        assert.equal(opacityOwner(video).style.backgroundColor, undefined, 'opacity wrapper stays background free');
+        assert.equal(matteOf(video).style.backgroundColor, '#123456', 'matte is inside clipping and outside user transform');
       }
       assert.ok(h.videos().every(v => v.props.surfaceType === 'textureView' && v.props.useExoShutter === false));
       assert.deepEqual(h.videos().map(v => v.id), ids);
@@ -235,7 +254,7 @@ for (const recipe of compositeRecipes) for (const reverse of [false, true]) for 
       assert.deepEqual(h.calls.filter(c => c[0] === 'pause'), [], 'callback identity is not composite exit');
       assert.ok(h.players.every(p => p.playing));
       const incoming = h.videos().find(v => v.props.player === h.players[reverse ? 0 : 1]);
-      if (recipe === 'crossfade') assert.equal(incoming.ancestors.find(a => (a.style.elevation ?? a.style.zIndex) === 1).style.opacity, (timelineMs - 3500) / 1000);
+      if (recipe === 'crossfade') assert.equal(opacityOwner(incoming).style.opacity, (timelineMs - 3500) / 1000);
       assert.ok(h.videos().every(v => v.ancestors.every(a => a.style.opacity !== 0)), 'both retained layers remain presented');
     }
     assert.ok(callbacks.slice(0, -1).every(calls => !calls.includes(undefined)), 'no false clock teardown');
@@ -304,13 +323,13 @@ for (const platform of ['android', 'ios', 'web']) for (const reverse of [false, 
           assert.equal(videos.length, 2, 'exactly two retained native hosts');
           assert.deepEqual(identities(), initial, 'every native ancestor retains identity');
           const incoming = videos.find(v => v.props.player === h.players[incomingSlot]);
-          const owner = incoming.ancestors[2];
+          const owner = opacityOwner(incoming);
           if (expectedAlpha != null) assert.equal(owner.style.opacity, expectedAlpha, 'independent recipe alpha');
           const nodes = [...h.nodes('view'), ...videos, ...h.nodes('text')];
           const cached = nodes.filter(node => node.props.renderToHardwareTextureAndroid === true);
           assert.equal(cached.length, expectedCount, 'bounded transient group cache count');
           for (const node of nodes) {
-            const layer = videos.some(v => v.ancestors[2].id === node.id);
+            const layer = videos.some(v => opacityOwner(v).id === node.id);
             const allowed = expectedCount === 1 && node.id === owner.id;
             if (layer) {
               assert.equal(node.props.renderToHardwareTextureAndroid === true, allowed,
@@ -325,8 +344,8 @@ for (const platform of ['android', 'ios', 'web']) for (const reverse of [false, 
           }
           if (expectedCount) {
             assert.equal(cached[0].id, owner.id, 'cache shares the alpha owner');
-            assert.equal(owner.style.backgroundColor, undefined, 'elevated boundary has no drawable');
-            assert.equal(incoming.ancestors[4].style.backgroundColor, '#123456', 'matte remains inside group');
+            assert.equal(owner.style.backgroundColor, undefined, 'opacity boundary has no drawable');
+            assert.equal(matteOf(incoming).style.backgroundColor, '#123456', 'matte remains inside group');
           }
           for (const player of h.players) {
             const hosts = videos.filter(video => video.props.player === player);

@@ -38,7 +38,13 @@ export function createHarness(type, reverse = false, platform = 'android') {
   };
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = { react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
-    'react-native': {  Platform: { OS: platform, Version: 36 }, View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' } };
+    'react-native': {  Platform: { OS: platform, Version: 36 }, View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' },
+    expo: { requireNativeView(moduleName, viewName) {
+      assert.equal(platform, 'android', 'transition pair native factory is Android only');
+      assert.equal(moduleName, 'CaptionMedia');
+      assert.equal(viewName, 'CaptionTransitionPair');
+      return 'transition-pair';
+    } } };
   function load(file) {
     if (cache.has(file)) return cache.get(file);
     if (!compiled.has(file)) compiled.set(file, ts.transpileModule(readFileSync(file, 'utf8'), {

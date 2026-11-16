@@ -63,7 +63,10 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
       committedActiveSlot: transport.activeSlot, committedMs: transport.currentMs,
       committedViews: views.map(view => ({ slot: players.indexOf(view.player),
         nativePath: view.nativePath,
-        foreground: view.ancestors.some(style => (style.elevation ?? style.zIndex) === 1)
+        pairAncestor: view.pairAncestor,
+        foreground: (view.pairAncestor
+          ? view.pairAncestor.frontSlot === view.pairAncestor.childSlot
+          : view.ancestors.some(style => (style.elevation ?? style.zIndex) === 1))
           && !view.ancestors.some(style => style.opacity === 0),
       })),
     });
@@ -208,7 +211,12 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
         released.add(players.indexOf(player));
       }, []);
       return player; } },
-    expo: { useEventListener(player, event, callback) {
+    expo: { requireNativeView(moduleName, viewName) {
+      assert.equal(platform, 'android', 'transition pair native factory is Android only');
+      assert.equal(moduleName, 'CaptionMedia');
+      assert.equal(viewName, 'CaptionTransitionPair');
+      return 'transition-pair';
+    }, useEventListener(player, event, callback) {
       react.useEffect(() => { const sub = player.addListener(event, callback); return () => sub.remove(); }, [player, event, callback]); } },
   };
   // One app has one JavaScript realm. Keep each harness isolated, while module
@@ -259,17 +267,21 @@ export function harness({ clips = [clip()], missingSource = false, holdReplaceme
       suspended: transport.previewResourcesSuspended || !policy.videoSurfacesAdmitted,
     })] : main;
   }
-  function renderNode(node, path, seen, ancestors = []) {
-    if (Array.isArray(node)) return node.forEach((child, i) => renderNode(child, `${path}/${child?.key ?? i}`, seen, ancestors));
+  // Capture the actual rendered native-pair prop and its physical child index.
+  // Do not infer committed foreground from controller state or player identity.
+  function renderNode(node, path, seen, ancestors = [], pairAncestor) {
+    if (Array.isArray(node)) return node.forEach((child, i) => renderNode(child, `${path}/${child?.key ?? i}`, seen, ancestors,
+      pairAncestor && pairAncestor.childSlot == null ? { ...pairAncestor, childSlot: i } : pairAncestor));
     if (!node || typeof node !== 'object') return;
     if (typeof node.type === 'function') {
       seen.add(path); host = hosts.get(path) ?? { cells: [], name: node.type.name }; hosts.set(path, host); cursor = 0;
-      const child = node.type(node.props); renderNode(child, `${path}/result`, seen, ancestors);
+      const child = node.type(node.props); renderNode(child, `${path}/result`, seen, ancestors, pairAncestor);
     } else {
-      if (node.type === 'video') views.push({ ...node.props, ancestors, nativePath: path });
+      if (node.type === 'video') views.push({ ...node.props, ancestors, pairAncestor, nativePath: path });
       const style = node.props?.style;
       const flat = Object.assign({}, ...(Array.isArray(style) ? style.flat(Infinity) : [style]).filter(Boolean));
-      renderNode(node.props?.children, `${path}/children`, seen, [...ancestors, flat]);
+      renderNode(node.props?.children, `${path}/children`, seen, [...ancestors, flat],
+        node.type === 'transition-pair' ? { frontSlot: node.props.frontSlot, childSlot: null } : pairAncestor);
     }
   }
   function render() {
