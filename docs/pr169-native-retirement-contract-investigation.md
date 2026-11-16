@@ -632,3 +632,18 @@ The older surface-recovery host still lacks automatic-release modeling and is
 not cited as proof of this defect. Local full typechecking exceeds the protected
 128MiB heap; fresh hosted typecheck/lint/full tests and both-phone APK checks are
 required, without relaxing memory limits or treating the resource error as green.
+
+## 2026-11-16 bounded Android compositor candidate — UNVERIFIED
+
+After test-only `e6a5784` (production identical to `238f464`), official CI
+[43809562663/job133107936678](https://github.com/Hatsunama/Caption-Studio/actions/runs/43809562663/job/133107936678)
+reports 4127 tests: 4096 pass, 22 missing-group assertions fail, 9 skip; APK build
+is skipped. The candidate adds `renderToHardwareTextureAndroid` to the existing
+concrete alpha owner with the same Android-only 0<opacity<1 predicate as
+`needsOffscreenAlphaCompositing`, including paused fractional composites. Both
+flags are false outside that interval; ancestry, matte, transforms and clocks
+are unchanged. Local tests were not run under the reported blocked RAM gate;
+static diff inspection does not establish GREEN. Parent targeted/full hosted
+checks and exact-APK native pixels, moving frames, rotation and cache release on
+both phones remain mandatory. Parent reports both-phone Save/list/reopen PASS
+on `238f464` before this change; this candidate remains UNVERIFIED.

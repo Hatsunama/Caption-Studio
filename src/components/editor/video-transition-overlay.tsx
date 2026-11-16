@@ -303,10 +303,12 @@ function VideoLayer(props: {
   onFirstFrameRender: () => void;
 }) {
   const opacity = props.opacity ?? 1;
+  const androidFractionalOpacity = Platform.OS === 'android' && opacity > 0 && opacity < 1;
   return (
     <View
       collapsable={false}
-      needsOffscreenAlphaCompositing={Platform.OS === 'android' && opacity > 0 && opacity < 1}
+      needsOffscreenAlphaCompositing={androidFractionalOpacity}
+      renderToHardwareTextureAndroid={androidFractionalOpacity}
       style={[fill, props.effectStyle, { opacity }]}
     >
       {/* Keep native ancestry stable as clipping starts/stops, including RN view flattening. */}
