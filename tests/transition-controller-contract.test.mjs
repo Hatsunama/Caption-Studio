@@ -246,24 +246,39 @@ for (const sample of [
   // Float getter rounding is bounded independently of the event's lateness.
   const withinNativeMs = (actual, expected) => Math.abs(actual - expected) < .01;
   try {
-    await h.complete(); h.transport.seek(shiftMs + 3750); await h.complete();
+    // Start no-handle playback at the shared ordinary/composite window edge.
+    // Starting at 3750 lets play's ordinary activation retain source 3750:
+    // its 125ms drift from composite 3625 is below the 160ms sync threshold.
+    await h.complete(); h.transport.seek(shiftMs + (noHandles ? 3500 : 3750)); await h.complete();
     h.transport.play(); await h.complete();
     const out = h.transport.activeSlot, incoming = 1 - out;
+    if (noHandles) {
+      // The fake players do not tick. Advance both native legs at rate .5
+      // before acknowledging the outgoing clock's 250ms timeline progress.
+      h.players[out].currentTime = 3.625;
+      h.players[incoming].currentTime = .125;
+      await h.positionAck(out);
+      near(h.transport.currentMs, shiftMs + 3750);
+    }
     assert.equal(out, outgoingSlot, 'normal preparation must establish the requested physical assignment');
     assert.equal(h.transport.slots[out].preparedClipId, 'out');
     assert.equal(h.transport.slots[incoming].preparedClipId, 'in');
     near(h.players[out].playbackRate, noHandles ? .5 : 1);
     near(h.players[incoming].playbackRate, noHandles ? .5 : 1);
     if (noHandles) {
-      assert.ok(withinNativeMs(h.players[out].currentTime * 1000, 3625));
-      assert.ok(withinNativeMs(h.players[incoming].currentTime * 1000, 125));
+      assert.ok(withinNativeMs(h.players[out].currentTime * 1000, 3625),
+        `no-handle outgoing setup: ${h.players[out].currentTime * 1000}ms, expected 3625ms`);
+      assert.ok(withinNativeMs(h.players[incoming].currentTime * 1000, 125),
+        `no-handle incoming setup: ${h.players[incoming].currentTime * 1000}ms, expected 125ms`);
     }
+    if (noHandles) h.players[incoming].currentTime = .375;
     h.players[out].currentTime = noHandles ? 3.875 : 5.25; await h.positionAck(out);
     assert.equal(h.transport.activeSlot, incoming);
     near(h.transport.currentMs, shiftMs + 4250);
     assert.equal(h.players[incoming].playing, true);
     near(h.players[incoming].volume, .8 * Math.sin(3 * Math.PI / 8));
-    if (noHandles) assert.ok(withinNativeMs(h.players[incoming].currentTime * 1000, 375));
+    if (noHandles) assert.ok(withinNativeMs(h.players[incoming].currentTime * 1000, 375),
+      `no-handle handoff: ${h.players[incoming].currentTime * 1000}ms, expected 375ms`);
 
     // Native progress is a fixture input, not a controller seek. Delivery can
     // lag native currentTime: preserve the live player and bound logical progress.
