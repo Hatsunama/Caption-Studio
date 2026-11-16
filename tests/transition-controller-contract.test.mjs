@@ -219,8 +219,8 @@ test('ordinary fallback play failure enters actionable source recovery without a
   } finally { h.unmount(); }
 });
 
-// These contracts apply only when both hidden handles preserve the rate-1
-// ordinary source clock. No-handle/rate-changing composites can require a rebase.
+// At a normal Cross exit, preserve native progress and restore the ordinary
+// clock/rate, including when no hidden handles slowed the composite to rate .5.
 // A real prefix clip primes outgoing slot 1 through normal transport preparation.
 for (const sample of [
   { outgoingSlot: 0, eventLateMs: 20, nativeLateMs: 20 },
@@ -229,13 +229,20 @@ for (const sample of [
   { outgoingSlot: 1, eventLateMs: 50, nativeLateMs: 100 },
   { outgoingSlot: 0, eventLateMs: 0, nativeLateMs: 0 },
   { outgoingSlot: 1, eventLateMs: 0, nativeLateMs: 0 },
-]) test(`unchanged-clock Cross exit: outgoing slot ${sample.outgoingSlot}, event +${sample.eventLateMs}ms, native +${sample.nativeLateMs}ms`, async () => {
-  const { outgoingSlot, eventLateMs, nativeLateMs } = sample;
+  { outgoingSlot: 0, eventLateMs: 50, nativeLateMs: 50, noHandles: true },
+  { outgoingSlot: 1, eventLateMs: 50, nativeLateMs: 100, noHandles: true },
+  { outgoingSlot: 0, eventLateMs: 0, nativeLateMs: 0, noHandles: true },
+]) test(`unchanged-clock Cross exit: outgoing slot ${sample.outgoingSlot}, event +${sample.eventLateMs}ms, native +${sample.nativeLateMs}ms, source ${sample.noHandles ? 'no handles' : 'handles'}`, async () => {
+  const { outgoingSlot, eventLateMs, nativeLateMs, noHandles = false } = sample;
   const shiftMs = outgoingSlot === 1 ? 4000 : 0;
-  const clips = [clip('out'), clip('in')];
+  const ordinaryClip = (id) => noHandles ? { ...clip(id), sourceStartMs: 0, sourceEndMs: 4000,
+    availableSourceStartMs: 0, availableSourceEndMs: 4000 } : clip(id);
+  const clips = [ordinaryClip('out'), ordinaryClip('in')];
+  const incomingEntry = { clip: clips[1], startMs: shiftMs + 4000 };
+  const endpointSourceMs = incomingEntry.clip.sourceStartMs + 500;
   clips[0].transitionAfter = { type: 'crossfade', durationMs: 1000 };
-  if (shiftMs) clips.unshift(clip('prefix'));
-  const h = harness({ clips, sourceDurationMs: 8000, nativeClock: true });
+  if (shiftMs) clips.unshift(ordinaryClip('prefix'));
+  const h = harness({ clips, sourceDurationMs: noHandles ? 4000 : 8000, nativeClock: true });
   // Float getter rounding is bounded independently of the event's lateness.
   const withinNativeMs = (actual, expected) => Math.abs(actual - expected) < .01;
   try {
@@ -245,23 +252,31 @@ for (const sample of [
     assert.equal(out, outgoingSlot, 'normal preparation must establish the requested physical assignment');
     assert.equal(h.transport.slots[out].preparedClipId, 'out');
     assert.equal(h.transport.slots[incoming].preparedClipId, 'in');
-    near(h.players[out].playbackRate, 1); near(h.players[incoming].playbackRate, 1);
-    h.players[out].currentTime = 5.25; await h.positionAck(out);
+    near(h.players[out].playbackRate, noHandles ? .5 : 1);
+    near(h.players[incoming].playbackRate, noHandles ? .5 : 1);
+    if (noHandles) {
+      assert.ok(withinNativeMs(h.players[out].currentTime * 1000, 3625));
+      assert.ok(withinNativeMs(h.players[incoming].currentTime * 1000, 125));
+    }
+    h.players[out].currentTime = noHandles ? 3.875 : 5.25; await h.positionAck(out);
     assert.equal(h.transport.activeSlot, incoming);
     near(h.transport.currentMs, shiftMs + 4250);
     assert.equal(h.players[incoming].playing, true);
     near(h.players[incoming].volume, .8 * Math.sin(3 * Math.PI / 8));
+    if (noHandles) assert.ok(withinNativeMs(h.players[incoming].currentTime * 1000, 375));
 
     // Native progress is a fixture input, not a controller seek. Delivery can
     // lag native currentTime: preserve the live player and bound logical progress.
-    h.players[incoming].currentTime = (1500 + nativeLateMs) / 1000;
+    h.players[incoming].currentTime = (endpointSourceMs + nativeLateMs) / 1000;
     const liveSourceMs = h.players[incoming].currentTime * 1000;
-    assert.ok(withinNativeMs(liveSourceMs, 1500 + nativeLateMs));
+    assert.ok(withinNativeMs(liveSourceMs, endpointSourceMs + nativeLateMs));
     const payloadSeconds = eventLateMs === nativeLateMs
-      ? h.players[incoming].currentTime : Math.fround((1500 + eventLateMs) / 1000);
-    // Independently: ordinary incoming source 1000ms begins at timeline 4000ms.
-    const payloadTimelineMs = shiftMs + 4000 + (payloadSeconds * 1000 - 1000);
-    const liveTimelineMs = shiftMs + 4000 + (liveSourceMs - 1000);
+      ? h.players[incoming].currentTime : Math.fround((endpointSourceMs + eventLateMs) / 1000);
+    // Independently derive the ordinary clock from the declared clip and entry.
+    const ordinaryTimelineMs = (sourceMs) => incomingEntry.startMs
+      + (sourceMs - incomingEntry.clip.sourceStartMs) / incomingEntry.clip.playbackRate;
+    const payloadTimelineMs = ordinaryTimelineMs(payloadSeconds * 1000);
+    const liveTimelineMs = ordinaryTimelineMs(liveSourceMs);
     // The deferred interval represents asynchronous sampling, not Float error.
     // Immediate delivery collapses it to one position within the 0.01ms bound.
     const callStart = h.calls.length;
@@ -287,10 +302,10 @@ for (const sample of [
     const afterExit = snapshot();
     const observedExit = { nativeMs: h.players[incoming].currentTime * 1000, timelineMs: h.transport.currentMs };
     // Old outgoing-source delivery has no authority after incoming ownership.
-    h.players[out].emit('timeUpdate', { currentTime: 5.1 }); await h.settle();
+    h.players[out].emit('timeUpdate', { currentTime: noHandles ? 3.8 : 5.1 }); await h.settle();
     const afterStaleOutgoing = snapshot(observedExit.timelineMs);
     // Also reject a queued older incoming sample after ordinary-clock retirement.
-    h.players[incoming].emit('timeUpdate', { currentTime: Math.fround(1.4) }); await h.settle();
+    h.players[incoming].emit('timeUpdate', { currentTime: Math.fround(incomingEntry.clip.sourceStartMs / 1000 + .4) }); await h.settle();
     assert.deepEqual({ afterExit, afterStaleOutgoing, afterStaleIncoming: snapshot(observedExit.timelineMs) },
       { afterExit: expected, afterStaleOutgoing: expected, afterStaleIncoming: expected },
       JSON.stringify({ liveSourceMs, payloadTimelineMs, liveTimelineMs, observedExit }));
@@ -301,7 +316,7 @@ for (const sample of [
       const pausedSeekCalls = h.calls.length;
       h.transport.seek(shiftMs + 4700); await h.complete();
       near(h.transport.currentMs, shiftMs + 4700);
-      assert.ok(withinNativeMs(h.transport.player.currentTime * 1000, 1700));
+      assert.ok(withinNativeMs(h.transport.player.currentTime * 1000, incomingEntry.clip.sourceStartMs + 700));
       assert.equal(h.transport.isPlaying, false);
       assert.ok(h.players.every(p => !p.playing), 'a paused seek must finish without playback');
       assert.deepEqual(h.calls.slice(pausedSeekCalls).filter(c => c[0] === 'play' && c[2] === false), [],
