@@ -218,3 +218,94 @@ test('ordinary fallback play failure enters actionable source recovery without a
     assert.ok(h.players.every(player => player.muted && !player.playing));
   } finally { h.unmount(); }
 });
+
+// These contracts apply only when both hidden handles preserve the rate-1
+// ordinary source clock. No-handle/rate-changing composites can require a rebase.
+// A real prefix clip primes outgoing slot 1 through normal transport preparation.
+for (const sample of [
+  { outgoingSlot: 0, eventLateMs: 20, nativeLateMs: 20 },
+  { outgoingSlot: 1, eventLateMs: 50, nativeLateMs: 50 },
+  { outgoingSlot: 0, eventLateMs: 150, nativeLateMs: 150 },
+  { outgoingSlot: 1, eventLateMs: 50, nativeLateMs: 100 },
+  { outgoingSlot: 0, eventLateMs: 0, nativeLateMs: 0 },
+  { outgoingSlot: 1, eventLateMs: 0, nativeLateMs: 0 },
+]) test(`unchanged-clock Cross exit: outgoing slot ${sample.outgoingSlot}, event +${sample.eventLateMs}ms, native +${sample.nativeLateMs}ms`, async () => {
+  const { outgoingSlot, eventLateMs, nativeLateMs } = sample;
+  const shiftMs = outgoingSlot === 1 ? 4000 : 0;
+  const clips = [clip('out'), clip('in')];
+  clips[0].transitionAfter = { type: 'crossfade', durationMs: 1000 };
+  if (shiftMs) clips.unshift(clip('prefix'));
+  const h = harness({ clips, sourceDurationMs: 8000, nativeClock: true });
+  // Float getter rounding is bounded independently of the event's lateness.
+  const withinNativeMs = (actual, expected) => Math.abs(actual - expected) < .01;
+  try {
+    await h.complete(); h.transport.seek(shiftMs + 3750); await h.complete();
+    h.transport.play(); await h.complete();
+    const out = h.transport.activeSlot, incoming = 1 - out;
+    assert.equal(out, outgoingSlot, 'normal preparation must establish the requested physical assignment');
+    assert.equal(h.transport.slots[out].preparedClipId, 'out');
+    assert.equal(h.transport.slots[incoming].preparedClipId, 'in');
+    near(h.players[out].playbackRate, 1); near(h.players[incoming].playbackRate, 1);
+    h.players[out].currentTime = 5.25; await h.positionAck(out);
+    assert.equal(h.transport.activeSlot, incoming);
+    near(h.transport.currentMs, shiftMs + 4250);
+    assert.equal(h.players[incoming].playing, true);
+    near(h.players[incoming].volume, .8 * Math.sin(3 * Math.PI / 8));
+
+    // Native progress is a fixture input, not a controller seek. Delivery can
+    // lag native currentTime: preserve the live player and bound logical progress.
+    h.players[incoming].currentTime = (1500 + nativeLateMs) / 1000;
+    const liveSourceMs = h.players[incoming].currentTime * 1000;
+    assert.ok(withinNativeMs(liveSourceMs, 1500 + nativeLateMs));
+    const payloadSeconds = eventLateMs === nativeLateMs
+      ? h.players[incoming].currentTime : Math.fround((1500 + eventLateMs) / 1000);
+    // Independently: ordinary incoming source 1000ms begins at timeline 4000ms.
+    const payloadTimelineMs = shiftMs + 4000 + (payloadSeconds * 1000 - 1000);
+    const liveTimelineMs = shiftMs + 4000 + (liveSourceMs - 1000);
+    // The deferred interval represents asynchronous sampling, not Float error.
+    // Immediate delivery collapses it to one position within the 0.01ms bound.
+    const callStart = h.calls.length;
+    const snapshot = (exitTimelineMs) => ({
+      backwardSeeks: h.calls.slice(callStart).filter(c => c[0] === 'seek'
+        && c[1] === incoming && c[2] * 1000 < liveSourceMs - .01),
+      nativePositionPreserved: h.players[incoming].currentTime * 1000 === liveSourceMs,
+      timelineWithinObservedInterval: h.transport.currentMs >= payloadTimelineMs - .01
+        && h.transport.currentMs <= liveTimelineMs + .01,
+      staleTimelinePreserved: exitTimelineMs === undefined
+        || withinNativeMs(h.transport.currentMs, exitTimelineMs),
+      activeSlot: h.transport.activeSlot,
+      rate: h.players[incoming].playbackRate,
+      gain: h.players[incoming].volume,
+      muted: h.players[incoming].muted,
+      playing: h.players[incoming].playing,
+      playIntent: h.transport.isPlaying,
+      outgoingRetired: h.players[out].muted && !h.players[out].playing,
+    });
+    const expected = { backwardSeeks: [], nativePositionPreserved: true, timelineWithinObservedInterval: true, staleTimelinePreserved: true,
+      activeSlot: incoming, rate: 1, gain: .8, muted: false, playing: true, playIntent: true, outgoingRetired: true };
+    h.players[incoming].emit('timeUpdate', { currentTime: payloadSeconds }); await h.settle();
+    const afterExit = snapshot();
+    const observedExit = { nativeMs: h.players[incoming].currentTime * 1000, timelineMs: h.transport.currentMs };
+    // Old outgoing-source delivery has no authority after incoming ownership.
+    h.players[out].emit('timeUpdate', { currentTime: 5.1 }); await h.settle();
+    const afterStaleOutgoing = snapshot(observedExit.timelineMs);
+    // Also reject a queued older incoming sample after ordinary-clock retirement.
+    h.players[incoming].emit('timeUpdate', { currentTime: Math.fround(1.4) }); await h.settle();
+    assert.deepEqual({ afterExit, afterStaleOutgoing, afterStaleIncoming: snapshot(observedExit.timelineMs) },
+      { afterExit: expected, afterStaleOutgoing: expected, afterStaleIncoming: expected },
+      JSON.stringify({ liveSourceMs, payloadTimelineMs, liveTimelineMs, observedExit }));
+
+    if (eventLateMs === 0) {
+      h.transport.pause(); await h.complete();
+      assert.ok(h.players.every(p => p.muted && !p.playing));
+      const pausedSeekCalls = h.calls.length;
+      h.transport.seek(shiftMs + 4700); await h.complete();
+      near(h.transport.currentMs, shiftMs + 4700);
+      assert.ok(withinNativeMs(h.transport.player.currentTime * 1000, 1700));
+      assert.equal(h.transport.isPlaying, false);
+      assert.ok(h.players.every(p => !p.playing), 'a paused seek must finish without playback');
+      assert.deepEqual(h.calls.slice(pausedSeekCalls).filter(c => c[0] === 'play' && c[2] === false), [],
+        'a paused seek must never request audible playback; muted frame preparation is permitted');
+    }
+  } finally { h.unmount(); }
+});
