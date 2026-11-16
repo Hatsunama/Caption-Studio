@@ -141,7 +141,11 @@ for (const platform of ['android', 'ios', 'web']) for (const recipe of composite
               'only the Android fractional-opacity layer opts into group alpha');
           }
           for (const node of [...h.nodes('view'), ...h.videos()]) {
-            assert.notEqual(node.props.renderToHardwareTextureAndroid, true, 'no persistent hardware texture');
+            const owner = owners.find(owner => owner.id === node.id);
+            const cache = platform === 'android' && Boolean(owner)
+              && owner.style.opacity > 0 && owner.style.opacity < 1;
+            assert.equal(node.props.renderToHardwareTextureAndroid === true, cache,
+              'only the fractional Android opacity owner may cache its group');
             if (!owners.some(owner => owner.id === node.id)) {
               assert.notEqual(node.props.needsOffscreenAlphaCompositing, true, 'group alpha belongs only to the opacity owner');
             }
@@ -281,3 +285,90 @@ test('failed or cancelled readiness still conceals the pair and retires its cloc
     assert.equal(clocks.at(-1), undefined);
   }
 });
+
+// Exercise the actual exported component with independent recipe expectations.
+// Mocked native hosts cannot prove Android pixels, moving frames or GPU memory.
+const alphaRecipes = ['crossfade', 'fold-horizontal', 'fold-vertical', 'zoom-in', 'zoom-out', 'spin'];
+const coverRecipes = ['fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'];
+for (const platform of ['android', 'ios', 'web']) for (const reverse of [false, true]) {
+  for (const recipe of [...compositeRecipes, ...coverRecipes]) {
+    test('bounded hardware group lifecycle: ' + [platform, reverse, recipe].join('/'), () => {
+      const h = createHarness(recipe, reverse, platform);
+      try {
+        h.render();
+        const identities = () => h.videos().map(v => [...v.ancestors, v].map(node => node.id));
+        const initial = identities(), incomingSlot = reverse ? 0 : 1;
+        const count = phase => Number(platform === 'android' && alphaRecipes.includes(recipe) && phase > 0 && phase < 1);
+        const check = (expectedCount, expectedAlpha) => {
+          const videos = h.videos();
+          assert.equal(videos.length, 2, 'exactly two retained native hosts');
+          assert.deepEqual(identities(), initial, 'every native ancestor retains identity');
+          const incoming = videos.find(v => v.props.player === h.players[incomingSlot]);
+          const owner = incoming.ancestors[2];
+          if (expectedAlpha != null) assert.equal(owner.style.opacity, expectedAlpha, 'independent recipe alpha');
+          const nodes = [...h.nodes('view'), ...videos, ...h.nodes('text')];
+          const cached = nodes.filter(node => node.props.renderToHardwareTextureAndroid === true);
+          assert.equal(cached.length, expectedCount, 'bounded transient group cache count');
+          for (const node of nodes) {
+            const layer = videos.some(v => v.ancestors[2].id === node.id);
+            const allowed = expectedCount === 1 && node.id === owner.id;
+            if (layer) {
+              assert.equal(node.props.renderToHardwareTextureAndroid === true, allowed,
+                'explicitly disable caching outside incoming fractional opacity');
+              assert.equal(node.props.needsOffscreenAlphaCompositing, allowed,
+                'both grouping properties share the existing opacity boundary');
+              assert.equal(node.props.collapsable, false, 'concrete native group');
+            } else {
+              assert.notEqual(node.props.renderToHardwareTextureAndroid, true, 'no other node cached');
+              assert.notEqual(node.props.needsOffscreenAlphaCompositing, true, 'no other alpha group');
+            }
+          }
+          if (expectedCount) {
+            assert.equal(cached[0].id, owner.id, 'cache shares the alpha owner');
+            assert.equal(owner.style.backgroundColor, undefined, 'elevated boundary has no drawable');
+            assert.equal(incoming.ancestors[4].style.backgroundColor, '#123456', 'matte remains inside group');
+          }
+          for (const player of h.players) {
+            const hosts = videos.filter(video => video.props.player === player);
+            assert.equal(hosts.length, 1, 'one native host per original player');
+            assert.equal(hosts[0].props.surfaceType, 'textureView');
+            assert.equal(hosts[0].props.useExoShutter, false);
+          }
+        };
+        // First Android alpha check must fail on the missing group, before any
+        // assertion about explicitly false endpoint props on unmodified code.
+        h.phase(.25); check(count(.25));
+        h.render({ timelineMs: 3000 }); check(0);
+        for (const isPlaying of [false, true]) {
+          h.render({ isPlaying });
+          for (const phase of [0, .025, .25, .5, .75, .975, 1]) {
+            h.phase(phase);
+            check(count(phase), alphaRecipes.includes(recipe) && phase < 1 ? phase : undefined);
+          }
+          h.phase(.5); check(count(.5));
+          h.render({ activeSlot: incomingSlot, width: 200, height: 300 }); check(count(.5));
+          h.render({ visible: false }); check(0);
+          h.render({ visible: true }); check(count(.5));
+          h.render({ transportReady: false }); check(0);
+          h.render({ transportReady: true }); check(count(.5));
+          const readySlots = h.props.slots;
+          for (const readiness of ['cancelled', 'error']) {
+            h.render({ slots: readySlots.map((slot, index) => index === incomingSlot
+              ? { ...slot, readiness, firstFrameReady: false } : slot) });
+            check(0);
+            h.render({ slots: readySlots }); check(count(.5));
+          }
+          h.render({ timelineMs: 5000 }); check(0);
+          h.phase(.5); check(count(.5));
+        }
+        h.render({ admitted: false });
+        assert.equal(h.videos().length, 0, 'leaving admission removes both native hosts');
+        assert.equal(h.nodes('view').filter(node => node.props.renderToHardwareTextureAndroid === true).length, 0);
+        h.unmount();
+        assert.equal(h.nodes('view').length, 0, 'unmount retains no cached group');
+      } finally {
+        h.unmount();
+      }
+    });
+  }
+}

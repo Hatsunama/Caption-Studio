@@ -194,7 +194,13 @@ for (const version of [24, 27]) for (const reverse of [false, true]) test(
         assert.ok(video.ancestors.every(a => a.props.collapsable === false));
         assert.equal(video.props.surfaceType, 'textureView'); assert.equal(video.props.useExoShutter, false);
         assert.equal(layer.props.needsOffscreenAlphaCompositing, layer.style.opacity > 0 && layer.style.opacity < 1);
-        assert.equal(layer.props.renderToHardwareTextureAndroid, undefined);
+        assert.equal(layer.props.renderToHardwareTextureAndroid === true, layer.style.opacity > 0 && layer.style.opacity < 1,
+          'only the fractional incoming group is cached, including on older Android');
+        for (const node of [...h.nodes('view'), ...h.videos()]) {
+          if (!h.videos().some(v => v.ancestors.some(a => a.id === node.id && a.style.zIndex != null))) {
+            assert.notEqual(node.props.renderToHardwareTextureAndroid, true, 'no cache outside the existing layer boundary');
+          }
+        }
         assert.equal(content.style.backgroundColor, '#123456', 'every input has an opaque matte on the existing inner content host');
         if (composite) assert.equal(video.ancestors.filter(a => a.style.backgroundColor != null).length, 2, 'stage plus opaque per-input matte');
         if (composite) {
