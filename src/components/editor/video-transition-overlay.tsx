@@ -233,11 +233,13 @@ function synchronizeTransitionPlayer(
   volume: number,
 ) {
   if (targetSeconds == null || playbackRate == null) return;
-  player.muted = true;
+  const driftMs = Math.abs(player.currentTime - targetSeconds) * 1_000;
+  const needsSeek = !playing || !player.playing || driftMs > 160;
+  // Muting an aligned playing leg queues a native zero even if immediately unmuted.
+  if (muted || needsSeek) player.muted = true;
   player.volume = volume;
   player.playbackRate = playbackRate;
-  const driftMs = Math.abs(player.currentTime - targetSeconds) * 1_000;
-  if (!playing || !player.playing || driftMs > 160) player.currentTime = targetSeconds;
+  if (needsSeek) player.currentTime = targetSeconds;
   if (playing) {
     player.muted = muted;
     if (!player.playing) player.play();
