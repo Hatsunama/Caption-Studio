@@ -339,3 +339,29 @@ for (const sample of [
     }
   } finally { h.unmount(); }
 });
+
+test('late outgoing Cross exit transfers ownership and catches a behind incoming clock forward', async () => {
+  const clips = [clip('out'), clip('in')];
+  clips[0].transitionAfter = { type: 'crossfade', durationMs: 1000 };
+  const h = harness({ clips, sourceDurationMs: 8000, nativeClock: true });
+  try {
+    await h.complete(); h.transport.seek(3750); await h.complete();
+    h.transport.play(); await h.complete();
+    const out = h.transport.activeSlot, incoming = 1 - out;
+    h.players[incoming].currentTime = 1.35;
+    h.players[out].currentTime = 5.55;
+    const callStart = h.calls.length;
+    await h.positionAck(out);
+    assert.equal(h.transport.activeSlot, incoming);
+    near(h.transport.currentMs, 4500);
+    assert.deepEqual(h.calls.slice(callStart).filter(c => c[0] === 'seek' && c[1] === incoming),
+      [['seek', incoming, 1.5]], 'late outgoing delivery must still catch the incoming player up to the endpoint');
+    near(h.players[incoming].currentTime, 1.5);
+    near(h.players[incoming].playbackRate, 1);
+    near(h.players[incoming].volume, .8);
+    assert.equal(h.players[incoming].muted, false);
+    assert.equal(h.players[incoming].playing, true);
+    assert.equal(h.transport.isPlaying, true);
+    assert.ok(h.players[out].muted && !h.players[out].playing);
+  } finally { h.unmount(); }
+});
