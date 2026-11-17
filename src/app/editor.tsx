@@ -2815,7 +2815,7 @@ function Action(props: { label: string; color?: string; danger?: boolean; disabl
 }
 
 function TransitionTimingSheet(props: { visible: boolean; durationMs: number; onChoose: (durationMs: number) => void; onClose: () => void }) {
-  const options = [200, 350, 500, 650, 800, 1_000, 1_250, 1_500, 2_000];
+  const options = [650, 800, 1_000, 1_250, 1_500, 2_000];
   return (
     <Modal visible={props.visible} transparent animationType="slide" onRequestClose={props.onClose}>
       <Pressable onPress={props.onClose} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.58)' }}>
