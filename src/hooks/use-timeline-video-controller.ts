@@ -1,5 +1,5 @@
 import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project-timeline';
-import { buildVideoTransitionPreviewWindows, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
+import { buildVideoTransitionPreviewWindows, videoTransitionPreviewFrameAt, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
 import { transitionClipPlaybackVolume } from '@/lib/video-transition-audio';
 import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
 import { desiredVideoPlaybackWindowEnd } from '@/lib/video-playback-window';
@@ -46,6 +46,7 @@ type SlotRuntime = TimelineVideoSlot & {
   preparationTask?: Promise<SlotIndex>;
   sourceMutation?: Promise<void>;
   preparingTimelineMs?: number;
+  preparingSourceMs?: number;
   preparingWindowEndMs?: number;
   // null is unknown; undefined is a confirmed full-source item.
   appliedWindowEndMs: number | null | undefined;
@@ -285,6 +286,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       runtime.playbackUri = undefined;
       runtime.appliedWindowEndMs = null;
       runtime.preparingWindowEndMs = undefined;
+      runtime.preparingSourceMs = undefined;
     });
     hasPresentedFrameRef.current = false;
     if (mountedRef.current) setHasPresentedFrameState(false);
@@ -459,6 +461,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     entry: ClipTimelineEntry,
     timelineMs: number,
     forceReload = false,
+    sourceTargetMs?: number,
   ) => {
     const runtime = slotRuntimeRef.current[slot];
     if (!surfacesAdmittedRef.current) throw abortError();
@@ -481,6 +484,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     runtime.playbackUri = uri;
     runtime.preparedClipId = entry.clip.id;
     runtime.preparingTimelineMs = timelineMs;
+    runtime.preparingSourceMs = sourceTargetMs;
     runtime.preparingWindowEndMs = windowEndMs;
     runtime.firstFrameReady = false;
     runtime.renderGate = 'loading';
@@ -535,8 +539,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       const expectedNativeDuration = nativePresentation && windowEndMs !== undefined
         ? Math.min(player.duration, Math.fround(Math.fround(windowEndMs) / 1000))
         : player.duration;
+      // A composite peer owns the recipe's frame, including hidden handles;
+      // ordinary activation retains its selected-range source clock.
+      const sourceMs = sourceTargetMs == null ? sourceTimeAt(entry, timelineMs)
+        : clamp(sourceTargetMs, 0, source.durationMs);
       const targetSeconds = effectiveNativeSeekTarget(
-        Math.min(sourceTimeAt(entry, timelineMs), windowEndMs ?? Infinity) / 1_000,
+        Math.min(sourceMs, windowEndMs ?? Infinity) / 1_000,
         (windowEndMs ?? source.durationMs) / 1_000, expectedNativeDuration, Platform.OS,
       );
       player.playbackRate = 1;
@@ -594,6 +602,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         runtime.playbackUri = undefined;
         runtime.appliedWindowEndMs = null;
         runtime.preparingWindowEndMs = undefined;
+        runtime.preparingSourceMs = undefined;
         player.pause();
         player.muted = true;
         publishSlots();
@@ -612,13 +621,14 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     entry: ClipTimelineEntry,
     timelineMs: number,
     forceReload = false,
+    sourceTargetMs?: number,
   ): Promise<SlotIndex> => {
     const runtime = slotRuntimeRef.current[slot];
     const uri = videoPlaybackUri(sourceForEntry(entry));
-    if (shouldJoinTimelinePreparation(runtime, entry.clip.id, uri, timelineMs, forceReload, windowEndForEntry(entry))) {
+    if (shouldJoinTimelinePreparation(runtime, entry.clip.id, uri, timelineMs, forceReload, windowEndForEntry(entry), sourceTargetMs)) {
       return runtime.preparationTask!;
     }
-    const task = prepareSlotOperation(slot, entry, timelineMs, forceReload);
+    const task = prepareSlotOperation(slot, entry, timelineMs, forceReload, sourceTargetMs);
     runtime.preparationTask = task;
     const clearTask = () => {
       if (runtime.preparationTask === task) runtime.preparationTask = undefined;
@@ -650,6 +660,15 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         && runtime.appliedWindowEndMs === windowEndForEntry(entry),
     );
     return match < 0 ? undefined : match as SlotIndex;
+  };
+
+  const prepareCompositeOutgoing = async (entry: ClipTimelineEntry, occupiedSlot: SlotIndex, timelineMs: number) => {
+    const frame = videoTransitionPreviewFrameAt(transitionWindowsRef.current, timelineMs);
+    const outgoing = frame?.outgoing?.entry;
+    if (frame?.mode !== 'composite' || frame.unavailableReason || frame.incoming?.clipId !== entry.clip.id
+      || !outgoing || frame.outgoingSourceTimeMs == null || findPreparedSlot(outgoing) != null) return;
+    const standby = (occupiedSlot === 0 ? 1 : 0) as SlotIndex;
+    await prepareSlot(standby, outgoing, timelineMs, false, frame.outgoingSourceTimeMs);
   };
 
   const nextEntryAfter = (entry: ClipTimelineEntry) => {
@@ -802,6 +821,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     markPresentedFrame();
     setPhase('ready');
     if (playIntentRef.current) playerForSlot(slot).play();
+    // Incoming-half activation also needs the previous retained view. Standby
+    // failure stays in slot readiness; it must not fail the current owner.
+    void prepareCompositeOutgoing(entry, slot, timelineMs).catch(() => {});
     preloadNext(entry, slot, timelineMs);
   };
 
