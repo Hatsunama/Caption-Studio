@@ -15,6 +15,8 @@ for (const major of [2, 4]) {
     ['+(*a)', 'a'.repeat(48) + '!'],
     ['*(a*)b', 'a'.repeat(48) + '!'],
     ['p+(@(*a))q', 'p' + 'a'.repeat(48) + '!'],
+    ['+([[]*a)', '[a'.repeat(38) + '!'],
+    ['+(["]*a)', '"a'.repeat(38) + '!'],
   ]) {
     test('picomatch v' + major + ' bounds repeated wildcard matching: ' + pattern, () => {
       const result = spawnSync(process.execPath, ['--max-old-space-size=32', '-e', probe, entry,
