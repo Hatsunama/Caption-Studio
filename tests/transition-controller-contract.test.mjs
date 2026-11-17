@@ -496,13 +496,20 @@ test('incoming-half peer failure retries only on explicit target and cancelled w
     assert.equal(h.transport.slots[cancelledPeer].readiness, 'preparing');
     const finishCancelled = h.players[cancelledPeer].finishWindow;
     h.transport.seek(4700); await h.complete();
+    const callsBeforeCancelledCompletion = h.calls.length;
     finishCancelled(); await h.settle();
     assert.equal(h.transport.slots[cancelledPeer].readiness, 'cancelled');
     assert.equal(h.transport.slots[cancelledPeer].firstFrameReady, false);
     assert.equal(h.transport.slots[cancelledPeer].playbackUri, undefined);
     assert.equal(h.transport.slots[h.transport.activeSlot].preparedClipId, 'in');
     near(h.transport.currentMs, 4700);
-    assert.ok(h.players.every(player => player.muted && !player.playing));
+    assert.ok(h.players.every(player => !player.playing), 'paused ordinary activation must not start audio');
+    assert.equal(h.transport.player.muted, false, 'ordinary activation retains the unmuted clip setting while paused');
+    near(h.transport.player.volume, .8);
+    near(h.transport.player.currentTime, 1.7);
+    assert.deepEqual(h.calls.slice(callsBeforeCancelledCompletion)
+      .filter(call => ['play', 'seek', 'replace', 'window'].includes(call[0])), [],
+      'cancelled peer completion cannot restart or reposition the ordinary owner');
 
     h.transport.seek(4250); await h.complete();
     assert.equal(h.transport.slots[cancelledPeer].readiness, 'preparing');
