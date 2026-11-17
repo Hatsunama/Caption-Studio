@@ -284,6 +284,26 @@ const repeatedExtglobRecursion = pattern => {
   return depth;
 };
 
+// A wildcard star inside an outer repetition can repartition the same
+// characters exponentially, even when there is only one alternative.
+// Reuse the existing literal fallback; leave proven linear star folds intact.
+const hasRepeatedWildcardStar = branch => {
+  let escaped = false;
+  let bracket = 0;
+  let quote = false;
+  for (let i = 0; i < branch.length; i++) {
+    const ch = branch[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\') { escaped = true; continue; }
+    if (ch === '"') { quote = !quote; continue; }
+    if (quote) continue;
+    if (ch === '[') { bracket++; continue; }
+    if (ch === ']' && bracket > 0) { bracket--; continue; }
+    if (bracket === 0 && ch === '*' && branch[i + 1] !== '(') return true;
+  }
+  return false;
+};
+
 const analyzeRepeatedExtglob = (body, options) => {
   if (options.maxExtglobRecursion === false) {
     return { risky: false };
@@ -341,6 +361,10 @@ const analyzeRepeatedExtglob = (body, options) => {
     return combinable
       ? { risky: true, safeOutput: buildCharClassStar([...new Set(safeChars)]) }
       : { risky: true };
+  }
+
+  if (branches.some(hasRepeatedWildcardStar)) {
+    return { risky: true };
   }
 
   return { risky: false };

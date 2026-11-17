@@ -34,9 +34,10 @@ for (const major of [2, 4]) {
       ['file-@(a|b).js', ['file-a.js', 'file-b.js', 'file-c.js'], ['file-a.js', 'file-b.js']],
       ['+([*]a)', ['*a', '*a*a', 'aa'], ['*a', '*a*a']],
       ['file-?.js', ['file-a.js', 'file-ab.js', 'file-.js'], ['file-a.js']],
+      ['+(*(a))', ['a', 'aa', 'aaa', 'b'], ['a', 'aa', 'aaa']],
     ];
     for (const [pattern, inputs, expected] of cases)
-      assert.deepEqual(inputs.filter(pm(pattern)), expected, pattern);
+      assert.deepEqual(inputs.filter(input => pm(pattern)(input)), expected, pattern);
     assert.equal(pm.isMatch('.a.js', '*.js', { dot: true }), true);
     assert.equal(pm.scan('src/**/*.js').isGlob, true);
     assert.equal(pm.makeRe('+(ab)', { capture: true }).test('abab'), true);
