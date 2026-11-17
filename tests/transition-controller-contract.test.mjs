@@ -419,3 +419,127 @@ for (const timelineMs of [4250, 4700]) test(`paused foreground preparation at ${
     }, 'foreground preparation must reveal the required retained views, then play those legs on explicit intent');
   } finally { h.unmount(); }
 });
+
+test('incoming-half activation retains outgoing through commit then preserves next-C preload', async () => {
+  const clips = [clip('out'), clip('in'), clip('next-C')];
+  clips[0].transitionAfter = { type: 'crossfade', durationMs: 1000 };
+  const h = harness({ clips, sourceDurationMs: 8000 });
+  try {
+    await h.complete(); h.transport.seek(4250); await h.complete();
+    await h.app('background'); await h.app('active'); await h.complete();
+    const active = h.transport.activeSlot, standby = 1 - active;
+    assert.equal(h.transport.slots[active].preparedClipId, 'in');
+    assert.equal(h.transport.slots[standby].preparedClipId, 'out');
+    assert.equal(h.transport.slots[standby].readiness, 'ready');
+    const prepared = h.calls.filter(call => ['replace', 'window', 'maskAcquire'].includes(call[0])).length;
+    await h.rotate(); await h.rotate();
+    h.transport.seek(4250); await h.complete();
+    assert.equal(h.calls.filter(call => ['replace', 'window', 'maskAcquire'].includes(call[0])).length, prepared,
+      'ready URI/window/frame cache survives render churn and explicit same-position seek');
+    h.transport.play(); await h.complete();
+    await h.advance(250);
+    assert.equal(h.transport.slots[standby].preparedClipId, 'out', 'timer cannot retire a still-committed composite tail');
+    h.players[active].currentTime = 1.5;
+    await h.positionAck(active); await h.complete();
+    near(h.transport.currentMs, 4500);
+    assert.equal(h.transport.slots[standby].preparedClipId, 'next-C', 'forward preload still owns standby after composite commit');
+    assert.equal(h.transport.slots[standby].readiness, 'ready');
+    assert.equal(h.players[standby].muted, true);
+    assert.equal(h.players[standby].playing, false);
+    assert.equal(h.players[active].playing, true);
+    near(h.players[active].volume, .8);
+  } finally { h.unmount(); }
+});
+
+test('incoming-half peer failure retries only on explicit target and cancelled work cannot revive after unmount', async () => {
+  const clips = [clip('out'), clip('in')];
+  clips[0].transitionAfter = { type: 'crossfade', durationMs: 1000 };
+  const h = harness({ clips, sourceDurationMs: 8000 });
+  try {
+    await h.complete(); h.transport.seek(4250); await h.complete();
+    await h.app('background');
+    const peer = 1 - h.transport.activeSlot;
+    h.players[peer].holdWindow = true;
+    await h.app('active'); await h.complete();
+    const active = h.transport.activeSlot;
+    assert.notEqual(active, peer);
+    assert.equal(h.transport.slots[active].preparedClipId, 'in');
+    assert.equal(h.transport.slots[active].readiness, 'ready');
+    assert.equal(h.transport.slots[peer].preparedClipId, 'out');
+    assert.equal(h.transport.slots[peer].readiness, 'preparing');
+    h.players[peer].failWindow(new Error('synthetic outgoing presentation failure'));
+    await h.settle();
+    assert.equal(h.transport.phase, 'ready', 'standby failure does not fail the active owner');
+    assert.equal(h.transport.sourceFailure, undefined);
+    assert.equal(h.transport.slots[peer].readiness, 'error');
+    assert.equal(h.transport.slots[peer].firstFrameReady, false);
+    assert.equal(h.transport.slots[peer].playbackUri, undefined);
+    assert.equal(h.transport.slots[peer].appliedWindowEndMs, null);
+    assert.ok(h.players.every(player => player.muted && !player.playing));
+    const failedCalls = h.calls.length;
+    await h.rotate(); await h.advance(1000); await h.complete();
+    assert.deepEqual(h.calls.slice(failedCalls).filter(call => ['replace', 'window', 'maskAcquire', 'play'].includes(call[0])), [],
+      'render/time passage cannot auto-retry or resume audio');
+    h.players[peer].holdWindow = false;
+    h.transport.seek(4250); await h.complete();
+    assert.equal(h.transport.slots[peer].readiness, 'ready');
+    assert.equal(h.transport.slots[peer].firstFrameReady, true);
+    assert.equal(h.players[peer].loadedUri, 'file:///source.mp4');
+    assert.equal(h.calls.slice(failedCalls).filter(call => call[0] === 'replace' && call[1] === peer).length, 1,
+      'explicit retry reloads the invalidated failed source exactly once');
+    assert.ok(h.players.every(player => player.muted && !player.playing));
+
+    await h.app('background');
+    const cancelledPeer = 1 - h.transport.activeSlot;
+    h.players[cancelledPeer].holdWindow = true;
+    await h.app('active'); await h.complete();
+    assert.equal(h.transport.slots[cancelledPeer].readiness, 'preparing');
+    const finishCancelled = h.players[cancelledPeer].finishWindow;
+    h.transport.seek(4700); await h.complete();
+    finishCancelled(); await h.settle();
+    assert.equal(h.transport.slots[cancelledPeer].readiness, 'cancelled');
+    assert.equal(h.transport.slots[cancelledPeer].firstFrameReady, false);
+    assert.equal(h.transport.slots[cancelledPeer].playbackUri, undefined);
+    assert.equal(h.transport.slots[h.transport.activeSlot].preparedClipId, 'in');
+    near(h.transport.currentMs, 4700);
+    assert.ok(h.players.every(player => player.muted && !player.playing));
+
+    h.transport.seek(4250); await h.complete();
+    assert.equal(h.transport.slots[cancelledPeer].readiness, 'preparing');
+    const finishAfterUnmount = h.players[cancelledPeer].finishWindow;
+    h.unmount();
+    const callsAtUnmount = h.calls.length;
+    finishAfterUnmount(); await h.settle();
+    assert.deepEqual(h.calls.slice(callsAtUnmount).filter(call => ['play', 'pause', 'seek', 'replace', 'window'].includes(call[0])), []);
+    assert.deepEqual(h.postReleaseAccesses, []);
+    assert.equal(h.listenerCount, 0);
+    assert.equal(h.timerCount, 0);
+  } finally { h.unmount(); }
+});
+
+for (const handles of [true, false]) test(`cold incoming-half peer owns the composite source frame, handles=${handles}`, async () => {
+  const clips = [clip('out'), clip('in')];
+  if (!handles) for (const c of clips) Object.assign(c, { sourceStartMs: 0, sourceEndMs: 4000,
+    availableSourceStartMs: 0, availableSourceEndMs: 4000 });
+  clips[0].transitionAfter = { type: 'crossfade', durationMs: 1000 };
+  const h = harness({ clips, sourceDurationMs: handles ? 8000 : 4000 });
+  try {
+    await h.complete(); h.transport.seek(4250); await h.complete();
+    await h.app('background');
+    const active = h.transport.activeSlot, peer = 1 - active;
+    const before = h.calls.length;
+    await h.app('active'); await h.complete();
+    const peerWindows = h.calls.slice(before).filter(call => call[0] === 'window' && call[1] === peer);
+    assert.equal(peerWindows.length, 1, 'one owned native presentation prepares the retired outgoing view');
+    assert.equal(peerWindows[0][2], 'file:///source.mp4');
+    near(peerWindows[0][6], handles ? 5250 : 3875);
+    assert.equal(peerWindows[0][3], h.transport.slots[peer].prepareToken);
+    assert.equal(h.transport.slots[peer].preparedClipId, 'out');
+    assert.equal(h.transport.slots[peer].readiness, 'ready');
+    assert.equal(h.transport.slots[peer].firstFrameReady, true);
+    assert.equal(h.transport.activeSlot, active);
+    assert.equal(h.transport.slots[active].preparedClipId, 'in');
+    near(h.transport.currentMs, 4250);
+    assert.ok(h.players.every(player => player.muted && !player.playing));
+  } finally { h.unmount(); }
+});
