@@ -49,7 +49,10 @@ for (const [major, record] of Object.entries(config.packages)) {
       ['-c', inspect, archive], { encoding: 'utf8', windowsHide: true }));
     assert.deepEqual(packed, actual, 'pinned tarball must contain exactly the reviewed source bytes');
     const manifest = JSON.parse(readFileSync(path.join(root, 'package.json')));
-    assert.equal(manifest.overrides[major === '2' ? 'picomatch@^2' : 'picomatch@>=3'], record.resolved);
+    if (major === '2') {
+      assert.equal(manifest.overrides.micromatch.picomatch, record.resolved);
+      assert.equal(manifest.overrides['jest-util'].picomatch, record.resolved);
+    } else assert.equal(manifest.overrides.picomatch, record.resolved);
     assert.ok(record.resolved.includes('/02dbbc68517b96ad14bcca443205c4515d79ca11/'));
   });
 }

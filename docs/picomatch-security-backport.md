@@ -61,7 +61,7 @@ No initial failing run is represented as accepted evidence.
 Next requirements: actual fresh npm ci, the installed Expo/Metro/Jest/fdir
 consumers and bounded exploit tests, unchanged full npm security audit, entire
 logic/build-tool/type/lint/Expo/native gates, and the real optimized release.
-Only the three reviewed Picomatch lock nodes and two override selectors may
+Only the three reviewed Picomatch lock nodes and explicit major-preserving consumer overrides may
 change; the independent whole-graph fingerprint remains comprehensive.
 
 No private signing material is in these sources or archives. Final APK/AAB
@@ -73,3 +73,5 @@ Primary references:
 - https://github.com/micromatch/picomatch
 - https://github.com/micromatch/picomatch/pull/194 (partial related work, explicitly not adopted as a complete security fix)
 Actual installed-consumer RED: CI 44186018030 reproduced the timeout through all seven real root/Expo/Metro/Micromatch/Jest/tinyglobby/fdir resolutions; both ordinary consumer tests passed. The override integration changes only the three independently compared lock nodes. Remote distributions at the pinned commit were downloaded again and their SHA-512 integrities matched the reviewed local archives.
+
+Integration repair: npm ci rejected version-range selectors with a conflicting ideal hoist. Keep global v4 explicit and scope the v2 fork to its actual Micromatch/Jest owners, retaining all three reviewed lock nodes. No peer-check suppression or package-manager option was added.
