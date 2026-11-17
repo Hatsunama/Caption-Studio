@@ -47,6 +47,8 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci
+      - name: Test installed glob-matcher security and build consumers
+        run: node --max-old-space-size=64 --test --test-concurrency=1 tests/picomatch-installed-security.test.mjs
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
       - name: Test JavaScript and TypeScript contracts
