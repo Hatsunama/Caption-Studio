@@ -49,7 +49,7 @@ function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.
   const expectedAndroidPackage = resolveExpectedAndroidPackage();
   const defaultConfig = findNamedBlock(appBuild, 'defaultConfig', 'Android default configuration');
   const applicationId = defaultConfig.match(/\bapplicationId\s*(?:=\s*)?["']([^"']+)["']/)?.[1];
-  if (applicationId !== expectedAndroidPackage || /\bapplicationIdSuffix\b/.test(releaseBuild)) {
+  if (applicationId !== expectedAndroidPackage || /\bapplicationIdSuffix\b/.test(appBuild)) {
     throw new Error(`Generated Android application id must be ${expectedAndroidPackage} without a suffix.`);
   }
 
