@@ -29,3 +29,11 @@ test('both release workflows test every owned Android module before building', a
     assert.ok(workflow.indexOf(testCommand) < workflow.indexOf(':app:assembleRelease'));
   }
 });
+
+test('CI validates actual R8 APK/AAB output before successful binary retention', async () => {
+  const workflow = await readFile(new URL('.github/workflows/ci.yml', root), 'utf8');
+  const command = 'node ./scripts/verify-r8-optimization.mjs --apk "$apk" --aab "$aab"';
+  assert.match(workflow, /^\s*node \.\/scripts\/verify-r8-optimization\.mjs --apk "\$apk" --aab "\$aab"\s*$/m);
+  assert.ok(workflow.indexOf(':app:assembleRelease :app:bundleRelease') < workflow.indexOf(command));
+  assert.ok(workflow.indexOf(command) < workflow.indexOf('- name: Retain CI-signed release-validation APK and AAB'));
+});

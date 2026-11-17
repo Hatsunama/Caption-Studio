@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import * as gate from '../scripts/local-signing/sign-validation.mjs';
 import { parseSigningCertificate } from '../scripts/configure-sidecar-release.mjs';
+import { writeR8Fixture } from './fixtures/local-signing-r8.mjs';
 
 const windows = process.platform === 'win32';
 const windowsOnly = { skip: !windows };
@@ -41,6 +42,18 @@ async function fixture(t) {
   await writeFile(files.provenance, JSON.stringify(provenance()));
   return { root, files, output: path.join(root, 'out') };
 }
+
+test('pre-key archive gate reads actual optimized metadata and exact APK/AAB DEX inventory', async t => {
+  const f = await fixture(t);
+  writeR8Fixture(f.files);
+  await gate.inspectOptimizedArchives(f.files, python);
+  for (const mutation of ['old-release', 'missing', 'malformed', 'disabled', 'all-unoptimized',
+    'wrong-checksum', 'empty-inventory', 'apk-dex']) {
+    writeR8Fixture(f.files, mutation);
+    await assert.rejects(gate.inspectOptimizedArchives(f.files, python), /R8|optimization|DEX|JSON/i, mutation);
+    assert.ok(!(await readdir(f.root)).some(n => n === 'out' || n.includes('pending')));
+  }
+});
 
 test('production parameter defaults use canonical signing root and preserve explicit KeyRoot', windowsOnly, async t => {
   const f = await fixture(t);

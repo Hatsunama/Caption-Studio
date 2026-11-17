@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { bundletoolSha256, parseRelease } from '../unsigned-store-build.mjs';
 import { assertUnsigned } from '../verify-unsigned-play-aab.mjs';
 import { assertAndroidAbiCoverage } from '../verify-android-abi.mjs';
+import { assertR8Optimization } from '../verify-r8-optimization.mjs';
 import { parseSigningCertificate, validateReleaseMetadata } from '../configure-sidecar-release.mjs';
 export { bundletoolSha256 };
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -102,7 +103,7 @@ export function comparePayloads(before, after) {
 }
 // Python stdlib streams each member: no archive extraction and bounded memory.
 const zipInspection = String.raw`import sys,zipfile,hashlib,json,struct,re
-hashes={}; manifest=''; mapping=None
+hashes={}; manifest=''; mapping=None; r8Metadata=None
 with zipfile.ZipFile(sys.argv[1]) as z:
  cd=z.start_dir
  for i in z.infolist():
@@ -122,6 +123,9 @@ with zipfile.ZipFile(sys.argv[1]) as z:
    if i.file_size>16777216: raise ValueError('Oversize manifest')
    manifest=z.read(i).decode('utf-8')
   if n=='BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map': mapping=h.hexdigest()
+  if n=='BUNDLE-METADATA/com.android.tools/r8.json':
+   if i.file_size>1048576: raise ValueError('Oversize R8 metadata')
+   r8Metadata=z.read(i).decode('utf-8')
   if re.match(r'^(base/)?lib/(arm64-v8a|x86_64)/[^/]+\.so$',n):
    with z.open(i) as s:
     header=s.read(64)
@@ -141,7 +145,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     if loads==0: raise ValueError('No ELF LOAD segments')
 with open(sys.argv[1],'rb') as f:
  f.seek(max(0,cd-16)); block=(cd>=16 and f.read(16)==b'APK Sig Block 42')
-print(json.dumps(dict(hashes=hashes,manifest=manifest,mapping=mapping,signingBlock=block)))
+print(json.dumps(dict(hashes=hashes,manifest=manifest,mapping=mapping,signingBlock=block,r8Metadata=r8Metadata)))
 `;
 // Never propagate child output, argv, or process errors to a caller/log.
 // Internal timeout argument is for controlled fixtures, never request/CLI data.
@@ -227,10 +231,18 @@ export async function verifyNativeIdentity(o, files, p, execute = run) {
   const config = JSON.parse(await java('-jar', o.bundletool, 'dump', 'config', '--bundle=' + files.aab));
   assert.equal(config.optimizations?.uncompressNativeLibraries?.alignment, 'PAGE_ALIGNMENT_16K');
 }
-async function unsigned(o, files, p) {
+// Called by --prepare on inputs AND staged copies before PowerShell opens
+// keys, and again by --finalize before publication. No provenance flag bypass.
+export async function inspectOptimizedArchives(files, python) {
   const archives = {};
+  for (const k of ['apk', 'aab']) archives[k] = await inspectArchive(files[k], python);
+  assertR8Optimization(archives.aab.r8Metadata, archives.aab.hashes, archives.apk.hashes);
+  return archives;
+}
+async function unsigned(o, files, p) {
+  const archives = await inspectOptimizedArchives(files, o.python);
   for (const k of ['apk', 'aab']) {
-    const a = archives[k] = await inspectArchive(files[k], o.python);
+    const a = archives[k];
     assert.equal(a.signingBlock, false, 'Signing block in unsigned input');
     const entries = Object.keys(a.hashes);
     if (k === 'apk') assert.ok(entries.includes('AndroidManifest.xml') && !entries.includes('base/manifest/AndroidManifest.xml'));
@@ -280,7 +292,8 @@ async function finalize(o) {
   const p = await validateInputs(o.files, o.output, o.expectedCommit, o.expectedRunId);
   const before = await unsigned(o, o.files, p);
   const files = Object.fromEntries(Object.keys(outputNames).map(k => [k, path.join(o.stage, outputNames[k])]));
-  for (const k of ['apk', 'aab']) comparePayloads(before[k], await inspectArchive(files[k], o.python));
+  const after = await inspectOptimizedArchives(files, o.python);
+  for (const k of ['apk', 'aab']) comparePayloads(before[k], after[k]);
   assert.equal(await hashFile(files.mapping), p.payloads.mapping.sha256);
   await verifyNativeIdentity(o, files, p);
   const certs = await run(path.join(o.javaBin, 'java.exe'), [...javaFlags, '-jar', path.join(o.buildTools, 'lib/apksigner.jar'), 'verify', '--verbose', '--print-certs', files.apk]);

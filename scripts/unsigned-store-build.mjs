@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { configureSidecarApp } from './configure-sidecar-release.mjs';
 import { assertNoSigningInputs, assertUnsigned, assertMapping } from './verify-unsigned-play-aab.mjs';
 import { assertAndroidAbiCoverage } from './verify-android-abi.mjs';
+import { assertR8Optimization, inspectR8Artifacts } from './verify-r8-optimization.mjs';
 
 export const mappingEntry = 'BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map';
 export const bundletoolSha256 = 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29';
@@ -79,6 +80,7 @@ function assertArchive(entries, jarOutput, manifest, format) {
 }
 
 export function assertPayload(evidence, release) {
+  assertR8Optimization(evidence.r8?.aab?.r8Metadata, evidence.r8?.aab?.hashes, evidence.r8?.apk?.hashes);
   for (const format of ['apk', 'aab']) {
     assert.deepEqual(evidence[`${format}Identity`], { package: release.package, version: release.version,
       versionCode: String(release.versionCode), minSdk: '24', targetSdk: '36' }, `${format} identity mismatch`);
@@ -104,6 +106,9 @@ export async function publishVerified(input, { copy = copyFile } = {}) {
   assert.equal(source.sourceCommit, context.GITHUB_SHA);
   assert.match(source.sourceTree ?? '', /^[0-9a-f]{40}$/);
   const mappingSha = assertPayload(evidence, release);
+  // Re-read actual archives here as well: caller evidence/provenance cannot
+  // replace the artifact gate at the final publication boundary.
+  inspectR8Artifacts(files);
   const payloads = {};
   const names = { apk: 'caption-studio-UNSIGNED-not-installable.apk',
     aab: 'caption-studio-UNSIGNED-not-installable.aab', mapping: 'mapping.txt' };
@@ -229,6 +234,7 @@ with zipfile.ZipFile(sys.argv[1]) as src, zipfile.ZipFile(sys.argv[2], 'x') as d
   e.aabElf16k = true;
   e.generatedMapping = await readFile(files.mapping);
   e.embeddedMapping = run('unzip', ['-p', files.aab, mappingEntry], true);
+  e.r8 = inspectR8Artifacts(files);
   for (const key of ['apk', 'aab', 'mapping'])
     assert.equal(await hashFile(files[key]), e.payloadHashes[key], `${key} changed during verification`);
   return e;

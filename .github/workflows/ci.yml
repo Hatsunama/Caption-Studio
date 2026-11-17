@@ -150,7 +150,7 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace --warning-mode all
 
-      - name: Verify release identity, signing, alignment, and target SDK
+      - name: Verify release identity, R8 optimization, signing, alignment, and target SDK
         shell: bash
         run: |
           set -euo pipefail
@@ -158,6 +158,7 @@ jobs:
           aab="android/app/build/outputs/bundle/release/app-release.aab"
           test -s "$apk"
           test -s "$aab"
+          node ./scripts/verify-r8-optimization.mjs --apk "$apk" --aab "$aab"
           node ./scripts/verify-android-abi.mjs --apk "$apk" --aab "$aab"
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           test -x "$build_tools/aapt"
