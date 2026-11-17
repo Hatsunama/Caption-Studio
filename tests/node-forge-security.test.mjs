@@ -106,5 +106,5 @@ test('actual Expo certificate helper and CLI sign and verify fixture manifests',
 });
 
 test('existing dependency API success and rejection checks remain compatible', () => {
-  rootRequire('./dependency-api-compatibility.cjs');
+  rootRequire('./tests/dependency-api-compatibility.cjs');
 });

@@ -11,7 +11,7 @@ const {
 } = require('./android-patch-utils');
 const { media3AlignmentBlock, verifyAndroidReleaseConfig } = require('./verify-android-release-config');
 
-const gradleDistributionSha256 = 'distributionSha256Sum=d8a18a7a841dd5df825d35a685fad6f2d7f12ac0c280e57b67c27b4a520ba228';
+const gradleDistributionSha256 = 'distributionSha256Sum=903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856';
 
 const signingProperties = `def captionStudioReleaseStoreFile = findProperty('CAPTION_STUDIO_RELEASE_STORE_FILE')
 def captionStudioReleaseStorePassword = findProperty('CAPTION_STUDIO_RELEASE_STORE_PASSWORD')
@@ -58,8 +58,8 @@ function configureAndroidRelease(projectRoot = path.join(path.dirname(module.fil
 
   replaceLineRequired(
     wrapper,
-    /^distributionUrl=https\\:\/\/services\.gradle\.org\/distributions\/gradle-(?:9\.3\.1|9\.4\.0|9\.9\.1)-bin\.zip\r?$/m,
-    'distributionUrl=https\\://services.gradle.org/distributions/gradle-9.9.1-bin.zip',
+    /^distributionUrl=https\\:\/\/services\.gradle\.org\/distributions\/gradle-(?:9\.3\.1|9\.4\.0|9\.9\.1|8\.14\.7)-bin\.zip\r?$/m,
+    'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.7-bin.zip',
   );
   const wrapperSource = readRequired(wrapper);
   fs.writeFileSync(

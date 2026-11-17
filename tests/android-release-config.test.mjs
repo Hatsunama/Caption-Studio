@@ -24,7 +24,12 @@ const postinstallScripts = [
 ];
 
 test('release verifier accepts generated modern Gradle release signing', () => {
-  withFixture((root) => assert.doesNotThrow(() => verifyAndroidReleaseConfig(root)));
+  withFixture((root) => {
+    const wrapper = readFileSync(join(root, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties'), 'utf8');
+    assert.match(wrapper, /^distributionUrl=https\\:\/\/services\.gradle\.org\/distributions\/gradle-8\.14\.7-bin\.zip$/m);
+    assert.match(wrapper, /^distributionSha256Sum=903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856$/m);
+    assert.doesNotThrow(() => verifyAndroidReleaseConfig(root));
+  });
 });
 
 test('clean prebuild aligns every Media3 request, survives reruns and regeneration', () => {
@@ -181,18 +186,19 @@ test('release verifier rejects an unpinned Gradle distribution', () => {
   });
 });
 
-// Official HTTPS checksum receipt: gradle-security-primary-20261117/checksum.txt.
-const securityGradleUrl = 'https\\://services.gradle.org/distributions/gradle-9.9.1-bin.zip';
-const securityGradleSha256 = 'd8a18a7a841dd5df825d35a685fad6f2d7f12ac0c280e57b67c27b4a520ba228';
+// Official HTTPS checksum receipt: gradle-compatibility-followup-20261117/REPORT.md.
+const securityGradleUrl = 'https\\://services.gradle.org/distributions/gradle-8.14.7-bin.zip';
+const securityGradleSha256 = '903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856';
 
-test('Gradle security: real Expo wrapper regeneration pins 9.9.1 and is idempotent', () => {
+test('Gradle security: known wrapper regeneration pins compatible fixed 8.14.7 and is idempotent', () => {
   withFixture((root) => {
     const wrapperFile = join(root, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties');
-    const generated = 'distributionBase=GRADLE_USER_HOME\ndistributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-bin.zip\nnetworkTimeout=10000\nvalidateDistributionUrl=true\n';
+    const generatedWrappers = ['9.3.1', '9.4.0', '9.9.1', '8.14.7'].map(version =>
+      `distributionBase=GRADLE_USER_HOME\ndistributionUrl=https\\://services.gradle.org/distributions/gradle-${version}-bin.zip\nnetworkTimeout=10000\nvalidateDistributionUrl=true\n`);
     const files = ['android/gradle/wrapper/gradle-wrapper.properties', 'android/build.gradle', 'android/app/build.gradle', 'android/gradle.properties'];
     const snapshot = () => files.map(file => readFileSync(join(root, file), 'utf8'));
     let configured;
-    for (const input of [generated, `${generated}distributionSha256Sum=${'0'.repeat(64)}\n`]) {
+    for (const input of generatedWrappers.flatMap(generated => [generated, `${generated}distributionSha256Sum=${'0'.repeat(64)}\n`])) {
       writeFileSync(wrapperFile, input);
       assert.equal(configureAndroidRelease(root), true);
       const wrapper = readFileSync(wrapperFile, 'utf8');
@@ -214,6 +220,14 @@ test('Gradle security: verifier rejects 9.4.0 even with its valid official check
   withFixture((root) => {
     const wrapperFile = join(root, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties');
     writeFileSync(wrapperFile, 'distributionUrl=https\\://services.gradle.org/distributions/gradle-9.4.0-bin.zip\ndistributionSha256Sum=60ea723356d81263e8002fec0fcf9e2b0eee0c0850c7a3d7ab0a63f2ccc601f3\n');
+    assert.throws(() => verifyAndroidReleaseConfig(root), /Gradle wrapper/i);
+  });
+});
+
+test('Gradle compatibility: verifier rejects incompatible 9.9.1 even with its valid official checksum', () => {
+  withFixture((root) => {
+    const wrapperFile = join(root, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties');
+    writeFileSync(wrapperFile, 'distributionUrl=https\\://services.gradle.org/distributions/gradle-9.9.1-bin.zip\ndistributionSha256Sum=d8a18a7a841dd5df825d35a685fad6f2d7f12ac0c280e57b67c27b4a520ba228\n');
     assert.throws(() => verifyAndroidReleaseConfig(root), /Gradle wrapper/i);
   });
 });
@@ -375,7 +389,7 @@ tasks.configureEach { task ->
   write(
     root,
     'android/gradle/wrapper/gradle-wrapper.properties',
-    'distributionUrl=https\\://services.gradle.org/distributions/gradle-9.4.0-bin.zip\ndistributionSha256Sum=60ea723356d81263e8002fec0fcf9e2b0eee0c0850c7a3d7ab0a63f2ccc601f3\n',
+    'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.7-bin.zip\ndistributionSha256Sum=903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856\n',
   );
   write(
     root,

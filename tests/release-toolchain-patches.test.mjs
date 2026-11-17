@@ -132,11 +132,14 @@ test('the reviewed SDK 57 patch graph retains every platform constraint and inte
   // its original version and integrity.
   // Hash every other package and decoder metadata field, including engines and
   // licensing, against this exact reviewed graph; add no further exclusions.
+  // 2026-11-17: rebaseline only the official Forge 1.4.3 replacement.
+  // Parent compared the complete old/new lock objects: only its name/version/
+  // URL/integrity changed. Every other package and field remains in this hash.
   unchanged['node_modules/decode-uri-component'] = {
     ...unchanged['node_modules/decode-uri-component'],
     version: '0.5.0',
     resolved: 'https://registry.npmjs.org/decode-uri-component/-/decode-uri-component-0.5.0.tgz',
     integrity: 'sha512-1BiQVoK8C9gUbQU6NzAtO/tkz2qOFpEObMWpcFvhx4fYnj4Oc5yzaJN/LD36ihkVUdXyh5ZekzX+yM+ty/SrPg=='
   };
-  assert.equal(createHash('sha256').update(JSON.stringify(unchanged)).digest('hex'), 'c5279a750e4cb2b4586fa59f16417d93491e6ce2cf73fffaf150d828d9a4bb76');
+  assert.equal(createHash('sha256').update(JSON.stringify(unchanged)).digest('hex'), '4ee947319c596588e29912bcfd034a4d232bfaff1d67a55cc825686125cac6b9');
 });

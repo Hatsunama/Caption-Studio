@@ -3,7 +3,7 @@ const path = require('node:path');
 
 const REQUIRED_ANDROID_SDK = '36';
 const REQUIRED_MIN_ANDROID_SDK = '24';
-const REQUIRED_GRADLE_DISTRIBUTION_SHA256 = 'd8a18a7a841dd5df825d35a685fad6f2d7f12ac0c280e57b67c27b4a520ba228';
+const REQUIRED_GRADLE_DISTRIBUTION_SHA256 = '903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856';
 const PRODUCT_CONTRACT = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'product-contract.json'), 'utf8'));
 const PRODUCTION_ANDROID_PACKAGE = PRODUCT_CONTRACT.android.sourcePackage;
 const FIXED_ANDROID_PACKAGE = PRODUCT_CONTRACT.android.release.package;
@@ -96,7 +96,7 @@ function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.
   requireWrapperProperty(
     wrapper,
     'distributionUrl',
-    'https\\://services.gradle.org/distributions/gradle-9.9.1-bin.zip',
+    'https\\://services.gradle.org/distributions/gradle-8.14.7-bin.zip',
     'Gradle wrapper URL',
   );
   requireWrapperProperty(
