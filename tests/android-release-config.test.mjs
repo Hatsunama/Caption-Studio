@@ -24,7 +24,12 @@ const postinstallScripts = [
 ];
 
 test('release verifier accepts generated modern Gradle release signing', () => {
-  withFixture((root) => assert.doesNotThrow(() => verifyAndroidReleaseConfig(root)));
+  withFixture((root) => {
+    const wrapper = readFileSync(join(root, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties'), 'utf8');
+    assert.match(wrapper, /^distributionUrl=https\\:\/\/services\.gradle\.org\/distributions\/gradle-8\.14\.7-bin\.zip$/m);
+    assert.match(wrapper, /^distributionSha256Sum=903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856$/m);
+    assert.doesNotThrow(() => verifyAndroidReleaseConfig(root));
+  });
 });
 
 test('clean prebuild aligns every Media3 request, survives reruns and regeneration', () => {
@@ -181,6 +186,95 @@ test('release verifier rejects an unpinned Gradle distribution', () => {
   });
 });
 
+// Official HTTPS checksum receipt: gradle-compatibility-followup-20261117/REPORT.md.
+const securityGradleUrl = 'https\\://services.gradle.org/distributions/gradle-8.14.7-bin.zip';
+const securityGradleSha256 = '903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856';
+
+test('Gradle security: known wrapper regeneration pins compatible fixed 8.14.7 and is idempotent', () => {
+  withFixture((root) => {
+    const wrapperFile = join(root, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties');
+    const generatedWrappers = ['9.3.1', '9.4.0', '9.9.1', '8.14.7'].map(version =>
+      `distributionBase=GRADLE_USER_HOME\ndistributionUrl=https\\://services.gradle.org/distributions/gradle-${version}-bin.zip\nnetworkTimeout=10000\nvalidateDistributionUrl=true\n`);
+    const files = ['android/gradle/wrapper/gradle-wrapper.properties', 'android/build.gradle', 'android/app/build.gradle', 'android/gradle.properties'];
+    const snapshot = () => files.map(file => readFileSync(join(root, file), 'utf8'));
+    let configured;
+    for (const input of generatedWrappers.flatMap(generated => [generated, `${generated}distributionSha256Sum=${'0'.repeat(64)}\n`])) {
+      writeFileSync(wrapperFile, input);
+      assert.equal(configureAndroidRelease(root), true);
+      const wrapper = readFileSync(wrapperFile, 'utf8');
+      assert.deepEqual(wrapper.split(/\r?\n/).filter(line => line.startsWith('distributionUrl=')), [`distributionUrl=${securityGradleUrl}`]);
+      assert.deepEqual(wrapper.split(/\r?\n/).filter(line => line.startsWith('distributionSha256Sum=')), [`distributionSha256Sum=${securityGradleSha256}`]);
+      assert.ok(wrapper.includes('networkTimeout=10000\n'));
+      assert.ok(wrapper.includes('validateDistributionUrl=true\n'));
+      assert.doesNotThrow(() => verifyAndroidReleaseConfig(root));
+      const current = snapshot();
+      if (configured) assert.deepEqual(current, configured);
+      configured = current;
+      configureAndroidRelease(root);
+      assert.deepEqual(snapshot(), configured);
+    }
+  });
+});
+
+test('Gradle security: verifier rejects 9.4.0 even with its valid official checksum', () => {
+  withFixture((root) => {
+    const wrapperFile = join(root, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties');
+    writeFileSync(wrapperFile, 'distributionUrl=https\\://services.gradle.org/distributions/gradle-9.4.0-bin.zip\ndistributionSha256Sum=60ea723356d81263e8002fec0fcf9e2b0eee0c0850c7a3d7ab0a63f2ccc601f3\n');
+    assert.throws(() => verifyAndroidReleaseConfig(root), /Gradle wrapper/i);
+  });
+});
+
+test('Gradle compatibility: verifier rejects incompatible 9.9.1 even with its valid official checksum', () => {
+  withFixture((root) => {
+    const wrapperFile = join(root, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties');
+    writeFileSync(wrapperFile, 'distributionUrl=https\\://services.gradle.org/distributions/gradle-9.9.1-bin.zip\ndistributionSha256Sum=d8a18a7a841dd5df825d35a685fad6f2d7f12ac0c280e57b67c27b4a520ba228\n');
+    assert.throws(() => verifyAndroidReleaseConfig(root), /Gradle wrapper/i);
+  });
+});
+
+for (const [name, mutate] of [
+  ['tampered checksum', source => source.replace(/^distributionSha256Sum=.*$/m, `distributionSha256Sum=${'0'.repeat(64)}`)],
+  ['checksum suffix', source => source.replace(/^(distributionSha256Sum=.*)$/m, '$1tampered')],
+  ['commented checksum', source => source.replace(/^distributionSha256Sum=/m, '# distributionSha256Sum=')],
+  ['duplicate checksum', source => `${source}distributionSha256Sum=${'0'.repeat(64)}\n`],
+  ['untrusted URL host', source => source.replace('services.gradle.org', 'untrusted.invalid')],
+  ['insecure URL protocol', source => source.replace('https', 'http')],
+  ['URL suffix', source => source.replace('-bin.zip', '-bin.zip.tampered')],
+  ['commented URL', source => source.replace(/^distributionUrl=/m, '# distributionUrl=')],
+  ['duplicate URL', source => `${source}distributionUrl=https\\://untrusted.invalid/gradle-9.9.1-bin.zip\n`],
+]) {
+  test(`Gradle security: verifier rejects ${name}`, () => {
+    withFixture((root) => {
+      const wrapperFile = join(root, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties');
+      const source = readFileSync(wrapperFile, 'utf8');
+      const tampered = mutate(source);
+      assert.notEqual(tampered, source, 'mutation must exercise the generated configuration');
+      writeFileSync(wrapperFile, tampered);
+      assert.throws(() => verifyAndroidReleaseConfig(root), /Gradle (?:wrapper|distribution SHA-256)/i);
+    });
+  });
+}
+
+for (const [name, relativePath, mutate, error] of [
+  ['credential binding', 'android/app/build.gradle', source => source.replace("findProperty('CAPTION_STUDIO_RELEASE_KEY_PASSWORD')", 'null'), /release key password property/i],
+  ['credential gate', 'android/app/build.gradle', source => source.replace('if (hasCaptionStudioReleaseSigning) {\n                signingConfig', 'if (true) {\n                signingConfig'), /credential-gated/i],
+  ['minification', 'android/gradle.properties', source => source.replace('android.enableMinifyInReleaseBuilds=true', 'android.enableMinifyInReleaseBuilds=false'), /release R8 minification/i],
+  ['resource shrinking', 'android/gradle.properties', source => source.replace('android.enableShrinkResourcesInReleaseBuilds=true', 'android.enableShrinkResourcesInReleaseBuilds=false'), /release resource shrinking/i],
+  ['compile SDK', 'node_modules/react-native/gradle/libs.versions.toml', source => source.replace('compileSdk = "36"', 'compileSdk = "35"'), /compileSdk must be 36/i],
+  ['minimum SDK', 'node_modules/react-native/gradle/libs.versions.toml', source => source.replace('minSdk = "24"', 'minSdk = "23"'), /minSdk must be 24/i],
+]) {
+  test(`Gradle security: existing ${name} guard remains enforced`, () => {
+    withFixture((root) => {
+      const file = join(root, relativePath);
+      const source = readFileSync(file, 'utf8');
+      const tampered = mutate(source);
+      assert.notEqual(tampered, source, 'guard mutation must change the generated configuration');
+      writeFileSync(file, tampered);
+      assert.throws(() => verifyAndroidReleaseConfig(root), error);
+    });
+  });
+}
+
 test('postinstall patch succeeds before a generated Android directory exists', () => {
   const root = mkdtempSync(join(tmpdir(), 'caption-studio-postinstall-'));
   try {
@@ -295,7 +389,7 @@ tasks.configureEach { task ->
   write(
     root,
     'android/gradle/wrapper/gradle-wrapper.properties',
-    'distributionUrl=https\\://services.gradle.org/distributions/gradle-9.4.0-bin.zip\ndistributionSha256Sum=60ea723356d81263e8002fec0fcf9e2b0eee0c0850c7a3d7ab0a63f2ccc601f3\n',
+    'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.7-bin.zip\ndistributionSha256Sum=903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856\n',
   );
   write(
     root,

@@ -3,7 +3,7 @@ const path = require('node:path');
 
 const REQUIRED_ANDROID_SDK = '36';
 const REQUIRED_MIN_ANDROID_SDK = '24';
-const REQUIRED_GRADLE_DISTRIBUTION_SHA256 = '60ea723356d81263e8002fec0fcf9e2b0eee0c0850c7a3d7ab0a63f2ccc601f3';
+const REQUIRED_GRADLE_DISTRIBUTION_SHA256 = '903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856';
 const PRODUCT_CONTRACT = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'product-contract.json'), 'utf8'));
 const PRODUCTION_ANDROID_PACKAGE = PRODUCT_CONTRACT.android.sourcePackage;
 const FIXED_ANDROID_PACKAGE = PRODUCT_CONTRACT.android.release.package;
@@ -93,11 +93,17 @@ function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.
   requireText(properties, 'android.enableShrinkResourcesInReleaseBuilds=true', 'release resource shrinking');
   requireText(properties, 'org.gradle.vfs.watch=false', 'stable Windows Gradle filesystem behavior');
   requireText(rootBuild, "classpath('com.android.tools:r8:8.13.19')", 'pinned R8 implementation');
-  requireText(wrapper, 'gradle-9.4.0-bin.zip', 'verified Gradle wrapper version');
-  requireText(
+  requireWrapperProperty(
     wrapper,
-    `distributionSha256Sum=${REQUIRED_GRADLE_DISTRIBUTION_SHA256}`,
-    'verified Gradle distribution SHA-256',
+    'distributionUrl',
+    'https\\://services.gradle.org/distributions/gradle-8.14.7-bin.zip',
+    'Gradle wrapper URL',
+  );
+  requireWrapperProperty(
+    wrapper,
+    'distributionSha256Sum',
+    REQUIRED_GRADLE_DISTRIBUTION_SHA256,
+    'Gradle distribution SHA-256',
   );
 
   const androidConfig = appConfig.expo?.android;
@@ -146,6 +152,14 @@ allprojects {
 function readRequired(file) {
   if (!fs.existsSync(file)) throw new Error(`Required generated Android file is missing: ${file}`);
   return fs.readFileSync(file, 'utf8');
+}
+
+function requireWrapperProperty(source, name, expected, purpose) {
+  const entries = source.split(/\r?\n/).filter(line =>
+    new RegExp(`^\\s*${name}(?:\\s|[=:]|$)`).test(line));
+  if (entries.length !== 1 || entries[0] !== `${name}=${expected}`) {
+    throw new Error(`Generated Android configuration must have one exact active ${purpose}.`);
+  }
 }
 
 function requireText(source, expected, purpose) {
