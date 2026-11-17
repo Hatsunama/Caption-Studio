@@ -1,0 +1,674 @@
+# PR169 native retirement investigation (2026-11-15)
+
+Current status: a native masking candidate is now implemented below. The original
+RED investigation is retained as history. This is **not native/device GREEN**;
+HEAD remains `0cc376aab819ce951718e67140d7b69b5fe828ab`, and native compilation,
+Robolectric execution, independent review and fresh APK tests remain with parent.
+
+Initial investigation stopped at RED; the subsequent candidate and parent checks are recorded below. Baseline:
+`fix/pip-move-order-20261112`, `0cc376aab819ce951718e67140d7b69b5fe828ab`.
+Installed packages are Expo Video 57.0.5 and RN 0.86.3. Dependencies and model
+remain unchanged. Read root AGENTS.md and exact versioned Expo docs before edits.
+
+The parent reports black native frames at the first two A/B/A/B boundaries and
+a clean last boundary without another preload. That supports investigating
+outgoing-player reuse but does not establish its cause conclusively. The new
+tests demonstrate a missing ownership invariant, not reproduced black pixels.
+
+## Actual contracts inspected
+
+- `src/hooks/use-timeline-video-controller.ts`: `preloadNext` releases preparation
+  after `committedPreviewRef` has the new active slot and transition-tail time.
+  A passive effect updates that ref. No native ownership evidence is required.
+- `src/components/editor/video-transition-overlay.tsx`: the retained pair changes
+  layer zIndex and uses `slot:nativeViewEpoch` keys. Composite styles can keep
+  both surfaces visible; zIndex alone cannot certify outgoing retirement.
+- `modules/caption-media/android/src/main/java/app/captionstudio/media/VideoFrameReceipt.kt`
+  (the actual class name, not NativeFrameReceipt): combines current item/target,
+  current VideoView/player binding, reading-source analytics, current-output
+  first-frame and SDK layout validity. It does not observe ancestor visibility,
+  sibling draw order, composite-tail completion or frame submission.
+- `VideoPlaybackWindow.kt`: owns preparation, not presentation ownership. Its
+  native install pauses, sets the media source and prepares. Starting this
+  operation is already too late to protect the old decoder. Successful readiness
+  removes the receipt listeners; it cannot certify a later handoff.
+- `CaptionMediaModule.kt`, its TS declaration and the playback-window service
+  export configure/cancel only. No native handoff/retirement receipt exists.
+- Installed Expo `VideoPlayer.kt` sets ExoPlayer's application looper to main.
+  `changeVideoView` switches PlayerView target and changes currentVideoView.
+  Its `FirstFrameEventGenerator.kt` checks layout ratio and deduplicates item/view
+  events. `VideoView.kt` then exposes the surface and dispatches first frame.
+  None of these callbacks acknowledges Fabric sibling presentation ownership.
+- Installed RN `ReactViewGroup.kt` says z-order is managed by Fabric C++; its
+  legacy updateDrawingOrder is a no-op. `ConcreteViewShadowNode.h` sets orderIndex
+  from zIndex. Reading a React prop or the obsolete Java drawing-order helper
+  therefore cannot be substituted for actual mounted native hierarchy state.
+
+Official references read:
+
+- [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/)
+- [Expo Video 57](https://docs.expo.dev/versions/v57.0.0/sdk/video/)
+- [Android ViewTreeObserver](https://developer.android.com/reference/android/view/ViewTreeObserver#registerFrameCommitCallback(java.lang.Runnable)):
+  frame-commit notification requires API 29 and hardware rendering, and denotes
+  swap-chain submission, not necessarily display. It cannot cover min API 24.
+  OnDraw/OnPreDraw notification precedes drawing; it is not a submitted-frame ACK.
+- [Texture update listener](https://developer.android.com/reference/android/view/TextureView.SurfaceTextureListener#onSurfaceTextureUpdated(android.graphics.SurfaceTexture)):
+  observes updateTexImage, not sibling ownership or transition completion.
+
+This bounded investigation has not established an API-24 native hierarchy/draw
+contract sufficient for safe retirement. This is not a claim that such an owner
+cannot be built. A first-party native presentation owner needs a separately
+justified contract before implementation; adding a promise around JS commit,
+pre-draw, elapsed time or SDK first frame would not meet the requested invariant.
+
+## RED evidence
+
+`tests/timeline-video-surface-recovery.test.mjs` adds an independent held-native
+owner snapshot and four new regressions. React effects and render settle while
+that snapshot stays unchanged. Both outgoing slots are tested with both:
+
+1. Same URI reused: configureVideoPlaybackWindow mutates the held player.
+2. Different URI: replaceAsync followed by configureVideoPlaybackWindow mutates it.
+
+The assertions also protect epoch and view path. In this run both stayed stable;
+the demonstrated violations are source/window mutations. No invented native
+receipt callback or fake successful gate was added. There is no positive receipt
+release test because no supported receipt implementation was established.
+
+One Node process, `node --max-old-space-size=128 tests/timeline-video-surface-recovery.test.mjs`,
+ran while holding `Local\CaptionStudioNodeChecks`; free physical memory immediately
+before launch was 1,579,664 KiB (>768 MiB). Result: **141 tests, 137 pass, 4 fail**,
+exit 1. All four failures are the new held-native-owner cases. Full output:
+`evidence/pr169-native-retirement-red-20261115.txt`. No GREEN repair is claimed.
+`git diff --check` passed. No native tests/builds, devices or Gradle were run.
+
+## Required owner proof and subsequent tests (not implemented)
+
+The eventual native owner must establish actual view/player/output binding,
+generation and active owner, actual native layer/ancestor visibility and ordering,
+and completed transition-tail state before any standby source, epoch or surface
+mutation. First-frame readiness remains a separate prerequisite. A snapshot that
+was valid before another Fabric mount is not a durable ownership lease.
+
+Native checks and the authorization/retirement operation need defined main-thread
+ordering against Fabric mounts and player changes. A promise resolved to JS must
+not leave a check-to-mutation race in which a seek, mount or generation change
+restores the retiring surface before source mutation. An active native lease or
+atomic native retirement operation needs proof, not just a callback name.
+
+Cancel/superseding generation must tombstone authorization before queued work;
+late receipt, old view/epoch/player/output, or wrong owner must fail closed.
+Timeout/error must preserve the outgoing source and settle once. Detach,
+background, rotation/rebind, release and module destruction must invalidate the
+lease and remove listeners, including callbacks already queued for delivery.
+
+After choosing that contract, add real native owner tests for both directions,
+stale receipts, cancellation before/after queued draw, failed receipt, detach,
+rotation/rebind, tail still visible and destruction. Add matching hook tests for
+successful release, stale receipt, superseding seek, background and failure;
+existing JS commit cancellation tests do not certify native receipt handling.
+Protect iOS/web paths, composite/cover/gap/tail, audio/rate/preview behavior, two
+main-player limit and URI policy. Parent retains CI/native verification ownership.
+
+Only the test file and this investigation document were changed; the new log is
+inside the pre-existing untracked evidence directory. No commit/push/merge,
+network mutation, dependency/settings/device/build/key or local Gradle changes.
+
+
+## Native masking candidate (subsequent implementation)
+
+The parent supplied a different, supported exclusion contract: own native masking
+before destructive preload, independently of any submitted-frame acknowledgment.
+The Samsung evidence is
+`../pip-move-order-20261112-evidence/pr169-e410-candidate-tools/samsung-native-source-switch-baselines.json`
+and its adjacent PNG. Its two source baselines each contain 192 frames with no
+black frames. The parent's subsequent visual review confirms whole-preview black
+frames 187/316 at the first two switches and the clean final no-next control at
+437. This candidate has not been captured on a device.
+
+### Full preparation and simpler coupling review
+
+`prepareSlotOperation` installs a native window even when its URI is unchanged.
+Protecting only `replaceAsync` misses the same-URI mutation. The existing JS commit
+and transition-tail scheduling remain useful admission conditions but are not the
+lease. The retained Android inactive layer now has parent opacity zero outside
+composites. Composite recipes and iOS/web styles are unchanged.
+
+There is also an actual state/visibility coupling: a waiting composite conceals
+the **common pair parent** until both source frames are ready. Requiring a visible
+peer in that state would deadlock preparation. The native guard distinguishes an
+actual shared alpha-zero ancestor from separate alpha-zero sibling layers. Shared
+concealment already excludes both surfaces; acquiring a view mask reveals or hides
+no additional pixels. Separate masked siblings must wait for the actual peer
+surface to become effectively visible. No global visibility toggle or third player
+was added.
+
+### Installed APIs checked
+
+Read root AGENTS.md and the exact [Expo SDK 57 reference](https://docs.expo.dev/versions/v57.0.0/)
+and [Expo Video 57 reference](https://docs.expo.dev/versions/v57.0.0/sdk/video/)
+before implementation. Installed Expo Video is 57.0.5. Its Android
+`FirstFrameEventGenerator.isPlayerSurfaceLayoutValid` checks nonzero surface size
+and aspect/fill/unknown video size; it does not check alpha, `isShown`, or ancestor
+visibility. Alpha-zero TextureView preparation therefore does not suppress that
+SDK receipt predicate. `VideoView.onRenderedFirstFrame` writes the texture child's
+alpha; it does not own the outer VideoView alpha used by this lease.
+
+`VideoPlayer.changeVideoView` switches the PlayerView then updates
+`currentVideoView` synchronously; native target listeners run synchronously on the
+main thread. The MutableWeakReference callback reverses its argument labels, so
+the observer reads the actual current view and actual Player binding. ExoPlayer's
+application looper is main. `VideoModule.replaceImpl` queues source assignment and
+`prepare()` together on mainQueue. Java legacy RN z-order helpers are not used.
+
+Media3 is pinned at 1.11.0. Its exact
+[AnalyticsListener source](https://raw.githubusercontent.com/androidx/media/1.11.0/libraries/exoplayer/src/main/java/androidx/media3/exoplayer/analytics/AnalyticsListener.java)
+and [Android API reference](https://developer.android.com/reference/androidx/media3/exoplayer/analytics/AnalyticsListener#onPlayerReleased(androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime))
+provide release notification for cleanup of the permanent dirty-mask owner.
+No dependency, min SDK, Expo configuration, source factory or URI policy changed.
+
+### Ownership sequence and cancellation
+
+1. Before any Android preparation pause/source/window mutation, the hook acquires
+   a native request scoped to its player, request ID, generation and peer. Native
+   resolves actual TextureView-backed VideoView/Player binding. A standby grant
+   requires an actual masked ancestor and either an effectively visible peer
+   surface (attachment, window, dimensions, global visible rect, visibility and
+   alpha through ancestry), or the actual shared concealment described above.
+2. The native owner writes **outer VideoView alpha zero before resolving JS**.
+   The alpha remains owned through replacement and window preparation. Native
+   synchronous target-change observation masks newly bound SDK views; pre-draw
+   reasserts already owned masks against hierarchy updates. Pre-draw is exclusion
+   maintenance, never a GPU/submission receipt. Initial/recovery preparation of
+   the active slot may acquire its own mask directly; this is not permission to
+   retire a visible standby.
+3. Aborting the JS SDK loader does not cancel its already queued replacement.
+   The hook tracks that replacement promise per slot and drains it under the mask
+   before another replacement/window install. The drain is abortable and bounded
+   at 15 seconds; its timeout keeps dirty exclusion and invalidates the cache.
+4. Existing `VideoFrameReceipt` and `VideoPlaybackWindow` validation remain intact.
+   Only successful native window completion records a mask-release checkpoint:
+   current native item identity, view identity, available SurfaceTexture identity,
+   current position, surface dimensions, READY/error state and SDK layout validity.
+   The final native commit checks the same request/generation and these current
+   values after the hook's position acknowledgment before restoring owned alpha.
+5. Cancel tombstones authorization synchronously before queued main work. Before
+   a grant there is no owned alpha to restore. After grant, cancellation leaves
+   the dirty mask and binding observer in place; it cannot reveal a possibly
+   queued replacement. The hook immediately invalidates first-frame/URI/window
+   cache when its preparation aborts. A later valid preparation must establish its
+   own grant/checkpoint. Request `granted` is reset on renewal; old held exclusion
+   cannot authorize a new request. Renewal only reasserts masks it already owns.
+   A target callback's dirty-mask preservation is a separate responsibility.
+
+Request callbacks settle once and are cleared after grant/failure/cancellation;
+acquire and commit waits are bounded to 5 seconds. There are at most 32 weak-keyed
+owners. SDK player references, view masks and ViewTreeObserver references are weak;
+the saved original alpha has a weak owner to prevent stale-owner restoration over
+a newer owner. Successful commit, unmount disposal, player analytics release and
+module destruction remove permanent listeners. Background tombstones pending and
+granted requests and keeps dirty exclusion; foreground enables fresh requests.
+Unmasking requires a new successful checkpoint. Empty timelines never start a mask
+request, including translation and unmount. PiP's separate playback-window consumer
+and export paths retain their contracts.
+
+### Candidate validation and remaining owner work
+
+The original four RED held-native-owner regressions remain and now wait for an
+explicit native lease grant. Added positive release cases cover both slot
+directions and URI patterns; stale grant, cancellation, timeout/failure and dirty
+standby cache cases exercise the real hook. Direct real-service tests cover acquire
+and commit abort/timeout with late native resolution and the empty-timeline control.
+The harness explicitly models the native boundary; none of these tests prove pixels.
+
+`VideoMaskLeaseTest` exercises the actual production observer through a binding
+seam using Android Views, alpha/ancestry and a paused main looper on API 24/28.
+It covers masked/visible peers, shared concealment, stale renewal, dirty masks,
+queued cancellation, current-view rebind, item/output/state mismatch, background,
+timeout, player release and listener cleanup. It is **written but not executed**:
+no local Gradle/native build was authorized. Native compile/runtime review is still
+required, including release ordering and real Fabric remount behavior.
+
+Parent owns independent checks, CI and fresh actual native APK verification on both
+phones (Samsung four-clip and Seeker controls). A passing Node suite or a native
+observer unit test cannot make this release GREEN. No commit/push/merge, dependency
+change, device/key/paging/process operation or native build was performed here.
+
+
+Final bounded worker checks: **156/156 Node tests pass**, exit 0, using exactly one
+`node --max-old-space-size=128 tests/timeline-video-surface-recovery.test.mjs`
+process while holding `Local\CaptionStudioNodeChecks`. Final pre-launch free
+physical memory was **1,202,064 KiB**, above 768 MiB. Output is preserved in
+`evidence/pr169-native-mask-candidate-node-20261115.txt`; the earlier RED log remains
+unchanged. `git diff --check` passes. The native test source has 13 tests configured
+for API 24 and 28; none were run locally. No typecheck/full check or native compile
+result is claimed. Native error handling keeps dirty exclusion rather than dropping
+its binding observer; release/unmount/module shutdown perform final cleanup.
+
+## Parent integration review (2026-11-15)
+
+Independent parent execution passes the final 157-case surface/controller suite,
+7 native-window adapter cases, 27 PiP readiness cases, 1 PiP suspension case,
+8 translation ownership cases, 2 two-decoder/audio ownership checks and 12 timeline
+extent cases. The unchanged product-contract check passes. These are JavaScript,
+mock-boundary and source-contract evidence, not native pixel or compilation proof.
+
+A legacy audio-ownership assertion required the exact direct-player loader call.
+Its failure was reproduced after the Android adapter was connected. It now parses
+the actual awaited loader call and checks its unchanged URI/15-second/abort-signal
+arguments, direct non-Android player, and Android forwarding of SDK status,
+listeners and replacement. The two-player and shared-preload assertions remain.
+Behavioral SDK replacement and cancellation coverage lives in the controller suite.
+
+Parent isolated execution of the production exhaustive-deps rule reproduced two
+new cleanup wiring errors. The effect now captures the stable mutable ID array in
+commit phase and declares its player dependency. A control verifies disposal uses
+the latest actual IDs after renewed preparations, rather than mount-time numbers.
+That rule and the 157 behavioral cases pass after the correction. No lint rule or
+production lint configuration was changed. This isolated diagnostic is not the
+full Expo lint gate.
+
+Full local typecheck and normal Expo lint each reached the authorized 128 MiB
+Node heap limit (exit134) before completion. Their logs remain private under
+`evidence/pr169-parent-mask-{typecheck,lint}-20261115.txt`. No local GREEN claim,
+heap escalation, dependency reinstall, paging change or other-agent termination
+is made. Full clean CI, native compilation and native observer tests are mandatory.
+
+Impact trace: main transport -> source-loader adapter -> mask lease -> unchanged
+SDK load and native playback-window receipt -> position acknowledgment -> native
+lease release -> slot readiness -> retained pair. PiP still calls the unchanged
+playback-window service without acquiring a main-pair lease; absent native owners
+make its checkpoint notification a no-op. Export, URI policy, persisted schema,
+model, dependencies and keys are unchanged. Composite/cover/gap/tail and iOS/web
+coverage remain in the behavioral suite. No additional issue was found in this
+inspected scope; that is not proof of native correctness.
+
+Samsung's exact0cc CI APK remains the failing baseline. Seeker's A/B/A/B setup is
+complete with its original three overlays unchanged; its final tool-only return
+check was resumed after observing a Y-clipped ruler. No split/append/reorder was
+repeated. Both phones were guarded back to Home. A fresh candidate must be tested
+on both before PR169 can leave draft; final store-key artifacts require their own
+later verification. No store artifact was changed or published.
+## Hosted harness follow-up
+
+Commercial CI43689822160 rejected54 cases:53 transition tests had no Platform
+mock and one historical integrity check expected the previous source literal.
+No typecheck/lint or APK build was reached. The failures were reproduced locally.
+The integrity check now executes the actual sourceChanged expression across source,
+window, pending-mutation and transient-status cases and exercises the real parsed
+SDK adapter for Android/iOS/web success and rejection. Its authority/timeout/signal
+and retirement assertions remain.
+
+The transition harness declares its platform explicitly. Parent review also ran
+all original cases on Android, reproducing two obsolete exit-opacity expectations.
+Every original host/geometry/failure/lifecycle obligation now runs on BOTH Android
+and iOS; only Android's intended inactive-layer exclusion has a separate precise
+assertion. Active/composite/iOS/web alpha and retained-host checks span every
+existing recipe. Parent execution passes112 transition cases and4 integrity cases.
+No production file, dependency or lint configuration changed in this follow-up.
+Native compilation and fresh exact-APK runtime evidence are still required.
+
+## Native fixture window follow-up
+
+Native76ef CI compiled the production code and ran269 cases. All20 failures are
+in the new26-case observer suite: ordinary fixtures never receive a grant; the
+shared-concealment and cancellation controls pass. Parent downloaded the334475-byte
+raw report artifact14152232603 and verified SHA-256
+27cd03ceb518ba57bbc1b7b243eb9f1f92c0fc37e5fcb0b0b716bb69282d81b5.
+Actual XML totals match26 cases,20 failures,0 errors/skips. This does not identify
+the exact failed visibility predicate and does not establish a product defect.
+
+The fixture previously made an empty activity visible, then installed content and
+measured only its leaf root. Robolectric4.16.1 setup() already calls visible();
+Android clips visible rectangles through all window ancestors. The revised
+fixture installs its explicit100x100 content before attachment and measures/layouts
+from the320x480 decor. Preflight assertions now expose actual attachment, token,
+window, ancestor dimensions, global rectangles and alpha before any lease request.
+Health and real ancestor-clipping controls were added; all13 original observer
+methods/assertions remain. No production guard, visibility implementation or
+fake grant changed. This is a fixture repair hypothesis awaiting hosted evidence,
+not a native GREEN claim. The new suite has15 methods across API24/28.
+
+## Proven Robolectric legacy-window cause
+
+The ae8 raw health report disproves ancestor layout as the complete explanation:
+both views are attached, shown, share a token and have positive global rectangles,
+but every ancestor reports windowVisibility=8 (GONE). All30 new observer cases
+therefore fail the fixture health precondition before exercising a lease.
+The381889-byte artifact14152692035 has parent-verified SHA-256
+e2da99e92b1dbc29d64021543f5c446487e5bfaf99ba9633dd28d98d890fde0b.
+
+Robolectric4.16.1 ShadowWindowManagerGlobal.java, addToDisplay lines463-470,
+explicitly documents that legacy graphics omits ADD_FLAG_APP_VISIBLE by default.
+Its supported migration property is robolectric.areWindowsMarkedVisible=true.
+Pinned source: https://raw.githubusercontent.com/robolectric/robolectric/robolectric-4.16.1/shadows/framework/src/main/java/org/robolectric/shadows/ShadowWindowManagerGlobal.java
+Android9 ViewRootImpl sets mAppVisible from that add flag, and getHostVisibility
+returns GONE when it is absent. This agrees with the actual hosted diagnostics.
+
+Only this test class now opts into the framework migration in JUnit Before and
+restores the exact prior property (including absence) in After. The production
+visibility predicate is unchanged. A negative control uses the default hidden
+framework window with a shown/attached/measured/alpha1 view and confirms it is
+still rejected. All prior assertions and API24/28 coverage remain;16 methods
+produce32 expected cases. Native hosted execution must establish GREEN.
+
+## Hosted window result and off-canvas compatibility RED
+
+Parent verified native run43692678293 at25c46b1 against its authenticated raw
+artifact14153816119 (292007 bytes, SHA-256
+1f94ea019f9cab6a7b4e0a32f359e425b705bc7c53c4ad4d0a7a5a5cf51af05f).
+Actual XML counts match275 testcases across44 suites,0 failure/error/skip;
+32 observer cases cover API24 and28. The framework-window migration repairs
+the test fixture without replacing the production predicate. The commercial
+25c run was cancelled during Android lint by the next push; no APK was produced.
+
+The follow-up found a compatibility error in the new media admission predicate.
+Project mutation and schema2 permit normalized video positions -4..4. Parent
+executed edits and serialize/decode for two distinct source clips at both x=-4
+and x=4; positions, source bounds and rates survive unchanged. Global canvas
+clipping therefore cannot by itself mean that an otherwise ready peer is absent.
+The new native positive test intentionally translates that attached/shown/alpha1
+peer outside its ancestors, confirms no global visible rectangle and asks for
+retiring-decoder exclusion. On unmodified product code it fails on BOTH API24
+and28: no grant, expected [null]. All275 previous native cases still pass.
+
+Parent verified run43694967984 at e942a56 using artifact14154306845 (300047
+bytes, SHA-256 fd4647c182096cd1905b137ed487f467502ebd70364441870d3f566b3af0df3c).
+All277 actual XML cases match declared totals; exactly those2 new cases fail.
+This proves the admission-policy mismatch in the real native owner. Its full
+physical-device symptom remains unverified. A centered target can change its
+transform before activation, so this is not evidence that every ordinary cut
+fails; consecutive valid off-canvas clips remain a compatibility obligation.
+
+The repair must distinguish presentation eligibility from actual onscreen pixels.
+It must preserve window/attachment/measurement/ancestor alpha and visibility,
+current SDK player/view/TextureView binding, surface availability, native frame
+checkpoint, generation, cancellation, background and persistent mask ownership.
+It must not clamp persisted geometry or alter touch safety. Private device input
+checks continue to require visible unobstructed touch areas. No production
+geometry, schema, feature, dependency, model or signing change is authorized here.
+
+Impact trace: persisted transform -> active preview container -> native peer
+eligibility -> retiree mask -> source/window preparation -> unchanged independent
+frame receipt -> transport readiness. VideoFrameReceipt.NativeHooks.layoutValid
+checks SDK player/surface/aspect validity and has no global clipping predicate.
+PiP does not acquire the main-pair lease; export and saved geometry are unchanged.
+A rebuilt exact APK still requires both-phone cut, interruption and recovery checks.
+
+The bounded repair removes only the global-visible-rectangle admission condition
+and names the remaining predicate presentationEligible/eligibleForPresentation.
+The obsolete clipping-rejection test now proves two clipped clips can prepare,
+while alpha-zero peers still wait and a missing checkpoint still rejects commit.
+The initial positive RED and hidden-window/lifecycle controls remain. Parent
+review traced all predicate callers and found no other consumer or second policy.
+The existing frame receipt, source mutation serialization and native mask cleanup
+are unchanged. Persisted positions/source times/rates and the separate input
+safety guards are unchanged. This intentionally changes only the mistaken new
+admission policy; it is not a geometry or appearance change.
+
+Parent reran157 controller,11 transition model,7 native-adapter,2 audio-ownership
+and6 integrity/schema cases under the single-process128MiB/768MiB-free gate.
+All pass, as does the product contract. The prepared UI port independently passes
+8 offline groups with no loader/context/network/device execution or receipt seal.
+These are behavioral/static evidence, not native GREEN or APK acceptance.
+Complete unchanged hosted checks and actual two-phone pixels remain mandatory.
+
+## 2026-11-15 composite lifetime and attachment follow-up
+
+The exact `6435ba4` CI APK (`0a82981d...68137`) still reproduces a brief
+near-black crossfade flash on Samsung. Hard-cut control playback is clean.
+The mixed fixture is A1/B1/A2/B2 with 5/3/3/5-second clips from distinct landscape
+and portrait sources: the third boundary is 11 seconds, not 13. Raw encoded
+frame indices are not elapsed timestamps. Both phones retain the original PiP
+and two images at 0..3 seconds after split/reorder; both were returned Home.
+
+The connected investigation proves three source-level defects: Fabric zIndex
+changes reorder/remove/insert retained native hosts despite stable React keys;
+ordinary early-cut activation pauses/seeks live composite legs and resets their
+source rate; rounded preview endpoints can seek the source or clipped item EOF.
+The Samsung PID log independently records output-surface reconnects near entry.
+That is supporting native evidence, not proof that every pixel failure has the
+same cause. The previous callback-lifetime/authoritative-retirement fixes remain.
+
+The repair keeps Android Fabric order fixed and uses native elevation for drawing
+order. The elevated wrapper never receives a background drawable; the ordinary
+project background moves to its existing content wrapper. AOSP API24/27 empty
+background outlines have zero shadow alpha, avoiding a broken legacy fallback.
+iOS/web ordering, recipe geometry/alpha, two main decoders, masks/frame receipts,
+separate PiP, persisted data, fonts, model, dependencies and appearance remain
+protected. At the composite cut the controller transfers transport/audio ownership
+without pausing or seeking either visible leg; it restores normal timing at tail
+exit. The synchronizer reuses the authoritative installed window and existing
+bounded native-end helper, retaining its seconds precision and mismatch policy.
+
+Actual-module RED cases cover both slot directions, the incident's 11s cut, a
+separate synthetic 13s cut, interruption/recovery, EOF rounding, native Float
+bounds and lost ULP precision. Rendered tests cover every recipe and API24/27
+background/outline/clipping prerequisites. These prove JavaScript behavior and
+supported native-property inputs, not Android attachment continuity or GPU pixels.
+Parent independently passes 12 model, 68 integrated handoff/EOF, 62 callback,
+6 ordering and 4 API24/27 geometry checks with the approved 128MiB gate.
+
+Full local ownership-file/lint runs exceed that heap cap; they were not retried
+as if a product repair could fix the resource limit. Parent's first model command
+omitted the project's tsx loader and failed module resolution; the corrected
+unchanged test passes. Full fresh hosted checks, exact rebuilt-APK cold starts,
+native transition pixels/overlay order/interruption checks on both phones and
+final separately locally signed Solana APK/Play AAB verification remain mandatory.
+The current downloaded APK is still a failing baseline. PR #169 remains draft;
+there is no merge, store release or download approval. Detailed RED/GREEN logs,
+source-version proofs and captures are retained outside the worktree under
+`crossfade-parent-integration-20261115`, `composite-exit-owner-20261115`,
+`composite-boundary-handoff-20261115`, `composite-compatibility-followup-20261115`
+and `pr169-643-candidate-tools`.
+
+## Native alpha-composition acceptance follow-up
+
+The rebuilt `9288fd2` CI APK (`f9ac3d67...1722f`) cold-starts on both phones,
+but its paused crossfade is still visibly wrong. This is a disposable test
+project: A1/B1/A2/B2 are 5/3/3/5-second pieces of two existing sources. The first
+two boundaries are ordinary cuts; only the boundary at11s has a650ms crossfade.
+The clip blocks remain consecutive. Crossfade preview intentionally blends the
+two source pictures around that boundary; no ordinary-cut overlap was added.
+
+At project10.895833s both screens show source A frame187 and B frame70. The
+canonical source hashes are `ec40f18e...901f2` and `71e3e0d3...f9bf9`.
+Parent independently decodes those originals and maps their contain geometry
+into each actual native preview rectangle. Two uniform-bar samples have a red
+channel near253 in BOTH sources, so a dissolve must retain that bright channel
+at any phase. Actual screen red is86 on both phones. The12-level allowance covers
+compression/scaling/8-bit rounding; the observed error exceeds160 levels.
+`Test-PausedCrossfadePixels.py` fails against both actual screenshots. This is
+native paused-pixel evidence, not a mocked GPU test or proof of moving frames.
+The existing image-over-PiP front order and original0..3 timing remain visible.
+
+The connected source audit finds no JS double fade. Fractional alpha belongs to
+the existing outer `VideoLayer` wrapper, but it never requests Android group
+alpha composition. Installed RN0.86.3 `ReactViewGroup.hasOverlappingRendering`
+returns false unless `needsOffscreenAlphaCompositing` is enabled. The proposed
+repair opts in on that wrapper only for Android with0<opacity<1, using RN's
+[documented group-alpha mechanism](https://reactnative.dev/docs/0.86/view#needsoffscreenalphacompositing).
+It adds no wrapper, persistent hardware texture, decoder, background, source
+clock, transform, data-format or dependency change. Opaque/hidden ordinary
+playback and iOS/web retain their previous composition policy. The extra
+offscreen-composition cost is limited to fractional-alpha transition frames;
+its actual device performance and GPU correctness are not yet verified.
+
+Test-before-edit host regressions fail6 Android fractional-alpha recipe cases
+and pass36 controls; all42 pass after the proposed change. They execute the
+actual exported component across14 recipes,3 platforms and both slot orders,
+checking the alpha owner, endpoints and stable native-host ancestry. They prove
+property/lifecycle wiring, NOT that Android now blends the pixels correctly.
+The combined local related suite exceeds the protected128MiB heap; no full
+local suite pass is claimed or limit bypassed. Fresh hosted checks and the same
+native pixel invariant plus moving-frame review remain acceptance gates.
+
+The initial interruption probe also exposed private test-method limits: Samsung's
+root-only reveal cannot expose a count inside the independently scrolling track
+labels, and Seeker reentry did not retain the probe's assumed forced UI1. Neither
+is reported as an application crash or established data-loss defect. Original
+rotation settings were restored; task-state reentry coverage remains incomplete.
+Detailed native screenshots/XML, hashes and failing pixel reports are retained
+under `pr169-9288-candidate-tools`; host RED/GREEN logs are under
+`composite-alpha-20261115`. PR169 stays draft/unmerged pending fresh actual pixels.
+
+## Transition integration: confirmed baseline and acceptance gates
+
+The follow-up audit covers all 22 registered choices: clean cut, seven covers,
+and fourteen two-source composites. It keeps the current buttons, effect names,
+durations, project format, source selection, fit/transform controls and layer order.
+It uses the installed Expo Video 57.0.5, React Native 0.86.3 and Media3 1.11.0;
+there is no rendering-framework replacement or dependency upgrade.
+
+Test-only commit `c582d1410b0e5d8f90a1c5e7beb1279707bba010` compiles and runs
+the native release tests against unchanged native production code. Independent
+[run 43769561830](https://github.com/Hatsunama/Caption-Studio/actions/runs/43769561830)
+executes 314 tests: all 277 existing cases and two new controls pass; 35 new
+assertions fail. Twenty reproduce transparent composite output, missing incoming
+fit-margin backgrounds or the missing Spin flash. Fifteen reproduce cover audio
+extending across the cut on a different source clock, incorrect half-window gains
+or their interaction with user fades. These are assertion failures, not compiler
+or dependency failures. Raw XML is retained in artifact `14184102395`.
+
+The implementation gives each composite input its complete canvas background
+before effect masks, transforms and opacity, and gives the output bitmap an opaque
+background at its own presentation time. Native compositor input alpha remains
+unchanged: input-latched timestamps must not control output transition ownership.
+Spin reuses Camera flash's actual white peak-squared cover above the video pair
+and below captions and stickers. Seven covers keep audio on each clip's ordinary
+source clock and own side of the cut; their outgoing cosine/incoming sine envelopes
+meet at silence. Composites retain their existing source clocks and equal-power
+two-source mix. Clip mute, volume and user fades still apply independently.
+
+The connected color audit also reproduces the project/native eight-digit color
+mismatch. Project colors remain `#RRGGBBAA`; native style serialization now converts
+them to Android `#AARRGGBB`, preserving alpha for text, words, translations,
+watermarks, stroke, shadow and background. Canvas backgrounds instead resolve
+once over black to opaque RGB in both preview and export. Persisted colors and
+ASS/SRT output are unchanged. Local actual-serializer regressions fail before
+this bridge repair and pass afterward; native/device appearance remains a gate.
+
+An additional integrated regression reproduces a repair-induced playback freeze:
+both players pause after a composite-render failure while play intent stays true.
+The required fallback retains the existing unavailable-preview notice, silences
+unauthorized transition audio and restores the active clip's ordinary source clock
+so users can continue, pause, seek and recover. Background/suspension must still
+stop both players. Both sides of a retimed, no-handle cut are covered separately.
+The parent follow-up also reproduces a 125ms backward jump from a queued old-clock
+sample after restoration. Ordinary playback now rejects backward samples; explicit
+backward seeks still establish a new position through the existing target path.
+The four muted/unmuted, before/after-cut cases pass after the guard, together with
+the explicit backward-seek control. A same-batch test that required a frozen active
+player was updated to require silence, a paused standby, unchanged native epochs
+and forward navigation instead. Interruption and stale-callback assertions remain.
+The first combined hosted suite passes3973 cases with9 platform skips and fails
+one existing source guard against reading native `player.playing` in the controller.
+The guard is unchanged: fallback uses authoritative play intent and an idempotent
+play command. Final cleanup regressions also reproduce two player calls after
+unmount and an uncaught active-player play failure. A mounted-lifetime guard and
+the existing actionable source-error path repair those cases. All19 focused
+controller cases and the unchanged source guard pass afterward; full CI is rerun.
+
+Acceptance still requires the full hosted checks on the final combined commit,
+review of the actual diff, and cold-start checks of that exact APK on Samsung and
+Seeker. Native tests use real Robolectric Canvas drawing with substituted decoded
+frames; they do not prove hardware decoding, GPU blending, audible mixing or device
+lifecycle behavior. Focused device checks must verify crossfade pixels and moving
+frames, fit margins/masks, Spin flash, cover sound timing and pause/rotation/resume
+without introducing unrelated retests. PR169 remains draft/unmerged and release
+blocked until those checks pass. No final artifact approval is implied here.
+
+## Seeker Save Draft crash — 2026-11-15
+
+The exact private candidate `0f21acb` / APK SHA256
+`a4384eb563b8ebbf898795ff385385b558f6c10013cc09c5c4d50e63260c5169`
+crashes when Save Draft closes an editor paused inside a composite transition.
+Seeker records the foreground fatal exception at 21:30:33.383 America/New_York:
+Expo VideoPlayer shared object already released. React reports both
+EditorWorkspace and SynchronizedComposite passive-unmount cleanup. MediaSession
+and ExoPlayer release entries precede the exception. Android exit-info confirms
+APP CRASH(EXCEPTION); its later excessive-binder-traffic kill at 21:30:47 is a
+secondary event, not the initiating cause. This is runtime-reproduced.
+
+The controller calls useVideoPlayer twice before registering its own passive
+cleanup. Installed Expo Video 57.0.5 delegates to Expo Modules Core's
+useReleasingSharedObjectWithLifecycle, whose earlier passive cleanup releases
+the players. The later controller cleanup calls retireSurfaceFrames, which
+writes muted/volume and calls pause on those released objects. The keyed
+SynchronizedComposite passive cleanup also calls retireComposite, whose native
+writes were not guarded against controller retirement. Both paths match the
+recorded component errors. The existing fake-player test hosts did not model
+Expo automatic release or reject post-release access; their passing unmount
+assertions therefore did not establish native lifetime correctness.
+
+The directly related source-loader audit also finds replaceAsync completion
+reading player.status after cancellation has already settled the operation.
+That is a separate late-completion risk; it is not claimed as this captured
+passive-unmount crash. Test-first ownership and cancellation repairs are implemented; native acceptance remains pending. PiP video uses layout cleanup before Expo's passive release, and
+separate audio owns explicitly created players; neither is established as the
+cause of this incident. No configuration, dependency or signing change is needed.
+
+Acceptance requires failing-before/passing-after lifecycle and late-completion
+regressions, unchanged connected transition/recovery tests, full CI on the new
+head and a fresh exact APK. On each phone, exercise the same paused-composite
+Save Draft -> project list -> reopen sequence, ordinary editor exit, and the
+directly affected cancellation/background path. Preserve prior unaffected proof;
+no broad repetition is required. PR169 remains draft/unmerged and release blocked.
+Private logs and the exact action sequence are retained in
+`transition-integration-20261115/phone-seeker-0f21/URGENT-*` outside the repository.
+
+The repair moves controller retirement into layout cleanup, before Expo's passive
+release, while leaving initial source preparation passive. The retired child's
+composite callback clears only JavaScript ownership. Cancelled/failed/timed-out
+loaders ignore late replacement completion; current status-read errors reject
+through existing cleanup. No exception suppression or manual Expo release was added.
+Actual-hook tests now model parent-before-child layout/passive cleanup, Expo
+release and throwing post-release access. Before production edits, 14 new cases
+fail and all seven existing source-loader controls pass. Independent parent
+verification after repair passes all42 selected lifecycle, loader and connected
+transition contracts. It includes ordinary/composite exit, both play states,
+six pending-preparation stages, gap/preload cancellation and repeated fresh mounts.
+The older surface-recovery host still lacks automatic-release modeling and is
+not cited as proof of this defect. Local full typechecking exceeds the protected
+128MiB heap; fresh hosted typecheck/lint/full tests and both-phone APK checks are
+required, without relaxing memory limits or treating the resource error as green.
+
+## 2026-11-16 bounded Android compositor candidate — UNVERIFIED
+
+After test-only `e6a5784` (production identical to `238f464`), official CI
+[43809562663/job133107936678](https://github.com/Hatsunama/Caption-Studio/actions/runs/43809562663/job/133107936678)
+reports 4127 tests: 4096 pass, 22 missing-group assertions fail, 9 skip; APK build
+is skipped. The candidate adds `renderToHardwareTextureAndroid` to the existing
+concrete alpha owner with the same Android-only 0<opacity<1 predicate as
+`needsOffscreenAlphaCompositing`, including paused fractional composites. Both
+flags are false outside that interval; ancestry, matte, transforms and clocks
+are unchanged. Local tests were not run under the reported blocked RAM gate;
+static diff inspection does not establish GREEN. Parent targeted/full hosted
+checks and exact-APK native pixels, moving frames, rotation and cache release on
+both phones remain mandatory. Parent reports both-phone Save/list/reopen PASS
+on `238f464` before this change; this candidate remains UNVERIFIED.
+
+## 2026-11-16 retained sibling drawing order
+
+The exact `58d3c9f` APK failed the initial paused Cross on both phones: incoming
+portrait B occupied physical child 0 beneath opaque landscape A in child 1.
+Both sources appeared after one Save/list/reopen, without a process restart.
+Samsung's reopened frame passed 96 independent common-bright-channel sample
+points (110 channels), but that narrow result does not establish moving frames.
+
+The installed RN 0.86.3 `ReactViewGroup.drawChild` closes its Z section after each
+elevated child. Android's later opaque sibling can therefore overwrite elevated
+child 0; elevation does not provide the ordering previously claimed here.
+Test-only `af98ae2` first produced hosted RED: 4,132 logic cases total, 4,108 pass,
+15 new Android order/registration failures, nine platform skips. No unrelated
+failure category appeared. Native test execution was not reached in that run.
+
+The repair uses the standard Android `ViewGroup.getChildDrawingOrder` hook in a
+named view in the existing media module. It changes paint order, preserves fixed
+physical children and Yoga-owned child geometry, and adds no player or listener.
+The original caption presentation stays the default module view. Both child
+Z values are zero; the existing fractional alpha/cache, mattes, source timing,
+transforms and non-Android behavior remain unchanged. The Context constructor is
+kept for Expo's reflective release creation. Full CI, native software-Canvas
+contracts and both-phone GPU/motion/rotation/recovery acceptance remain pending.
+PR #169 remains draft and unmerged.

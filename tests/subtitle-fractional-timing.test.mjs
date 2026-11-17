@@ -41,6 +41,12 @@ function planTimes(project) {
     .map(({ startMs, endMs }) => [startMs, endMs]);
 }
 
+test('MP4 preserves shared primary and secondary fractional support through the native bridge', () => {
+  const project = fixture(1000.75, 1001.25);
+  const before = structuredClone(project);
+  assert.deepEqual(planTimes(project), [[1000.75, 1001.25], [1000.75, 1001.25]]);
+  assert.deepEqual(project, before);
+});
 test('identical fractional dual timing produces one SRT event without changing the project', () => {
   const project = fixture();
   const before = structuredClone(project);
@@ -65,7 +71,7 @@ test('independent fractional timing stays as two SRT events', () => {
     { timing: '00:00:01,001 --> 00:00:02,000', text: 'Primary' },
     { timing: '00:00:01,101 --> 00:00:01,900', text: 'Secondary' },
   ]);
-  assert.deepEqual(planTimes(project), [[1001, 2000], [1101, 1900]]);
+  assert.deepEqual(planTimes(project), [[1000.6, 2000.4], [1100.6, 1900.4]]);
   assert.deepEqual(assTimes(project), [['0:00:01.00', '0:00:02.00'], ['0:00:01.10', '0:00:01.90']]);
 });
 
@@ -81,9 +87,9 @@ test('independent timings in the same millisecond bin remain separate events', (
 test('clipping retains fractions and applies identical zero and duration bounds', () => {
   for (const [startMs, endMs, clipped, srt, ass, plan] of [
     [-10.6, 2000.4, [0, 2000.4], '00:00:00,000 --> 00:00:02,000',
-      ['0:00:00.00', '0:00:02.00'], [0, 2000]],
+      ['0:00:00.00', '0:00:02.00'], [0, 2000.4]],
     [1000.6, 4000.4, [1000.6, 4000], '00:00:01,001 --> 00:00:04,000',
-      ['0:00:01.00', '0:00:04.00'], [1001, 4000]],
+      ['0:00:01.00', '0:00:04.00'], [1000.6, 4000]],
   ]) {
     const project = fixture(startMs, endMs);
     const before = structuredClone(project);
@@ -107,12 +113,12 @@ test('fully out of bounds and nonfinite secondary intervals are omitted', () => 
   }
 });
 
-test('ASS quantizes original fractional timing directly and MP4 rounds both tracks equally', () => {
+test("ASS quantizes format timing while MP4 retains both tracks' source precision", () => {
   const project = fixture(1004.6, 2004.4);
   assert.deepEqual(assTimes(project), [
     ['0:00:01.00', '0:00:02.00'], ['0:00:01.00', '0:00:02.00'],
   ]);
-  assert.deepEqual(planTimes(project), [[1005, 2004], [1005, 2004]]);
+  assert.deepEqual(planTimes(project), [[1004.6, 2004.4], [1004.6, 2004.4]]);
   assert.deepEqual(cues(project), [
     { timing: '00:00:01,005 --> 00:00:02,004', text: 'Primary\nSecondary' },
   ]);
@@ -131,16 +137,16 @@ test('playback speed derived fractions remain aligned across SRT, ASS, and MP4',
   assert.deepEqual(assTimes(project), [
     ['0:00:00.67', '0:00:01.33'], ['0:00:00.67', '0:00:01.33'],
   ]);
-  assert.deepEqual(planTimes(project), [[667, 1335], [667, 1335]]);
+  assert.deepEqual(planTimes(project), [[667.3333333333333, 1334.6666666666665], [667.3333333333333, 1334.6666666666665]]);
 });
 
-test('fractional cues rounding to the output end do not extend past the format bound', () => {
+test('format quantization omits unrepresentable cues while MP4 retains their bounded fractional support', () => {
   const project = fixture(3999.8, 4000.4);
   assert.deepEqual(exportCaptionPairs(project).map((pair) => [pair.startMs, pair.endMs]),
     [[3999.8, 4000]]);
   assert.deepEqual(cues(project), []);
   assert.deepEqual(assTimes(project), []);
-  assert.deepEqual(planTimes(project), []);
+  assert.deepEqual(planTimes(project), [[3999.8, 4000], [3999.8, 4000]]);
 });
 
 function terminalFixture(startMs = 3000) {

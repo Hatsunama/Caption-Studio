@@ -297,7 +297,7 @@ for (const change of ['source', 'version']) test('concurrent ' + change + ' edit
   assert.deepEqual(fs.readdirSync(path.dirname(target)), ['Pressable.js']);
 });
 
-test('postinstall owner invokes repair first and aborts downstream work on failure', () => {
+test('postinstall owner invokes Pressable repair after whisper guard and aborts downstream work on failure', () => {
   const owner = fs.readFileSync(path.join(root, 'scripts/patch-react-native-gradle.js'), 'utf8');
   for (const failing of [false, true]) {
     const calls = [];
@@ -311,10 +311,11 @@ test('postinstall owner invokes repair first and aborts downstream work on failu
     stubRequire.main = module;
     const run = () => new Function('require', 'module', owner)(stubRequire, module);
     if (failing) assert.throws(run, /repair rejected/); else run();
-    assert.equal(calls[0]?.[0], 'repairPressableAccessibility');
+    assert.equal(calls[0]?.[0], 'patchWhisperWordBoundaries');
+    assert.equal(calls[1]?.[0], 'repairPressableAccessibility');
     assert.ok(calls.every(([, dir]) => dir === path.resolve(root)));
-    if (failing) assert.equal(calls.length, 1);
-    else assert.deepEqual(calls.map(([name]) => name), ['repairPressableAccessibility', 'repairNativeScrollInput',
+    if (failing) assert.equal(calls.length, 2);
+    else assert.deepEqual(calls.map(([name]) => name), ['patchWhisperWordBoundaries', 'repairPressableAccessibility', 'repairNativeScrollInput',
       'repairReanimatedNativeProps', 'patchAndroidDependencies', 'configureAndroidRelease']);
   }
 });

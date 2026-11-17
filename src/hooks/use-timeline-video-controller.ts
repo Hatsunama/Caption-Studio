@@ -1,8 +1,9 @@
 import { projectTimelineDuration, projectTimelineSegmentAt } from '@/lib/project-timeline';
-import { buildVideoTransitionPreviewWindows, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
+import { buildVideoTransitionPreviewWindows, videoTransitionPreviewFrameAt, transitionTimelineTimeAt } from '@/lib/video-transition-preview';
+import { transitionClipPlaybackVolume } from '@/lib/video-transition-audio';
 import { loadPlayableVideoSource, videoSourceFailure, type VideoSourceFailure } from '@/lib/video-source-recovery';
 import { desiredVideoPlaybackWindowEnd } from '@/lib/video-playback-window';
-import { configureVideoPlaybackWindow } from '@/services/video-playback-window';
+import { acquireVideoMaskLease, configureVideoPlaybackWindow, disposeVideoMaskLease } from '@/services/video-playback-window';
 import { videoPlaybackUri } from '@/lib/video-playback-source';
 import { acknowledgesPlaybackPosition, effectiveNativeSeekTarget } from '@/lib/video-playback-position';
 import { useEventListener } from 'expo';
@@ -12,7 +13,6 @@ import { Platform } from 'react-native';
 
 import {
   buildClipTimeline,
-  clipPlaybackVolume,
   sourceTimeAt,
   timelineTimeAt,
   type ClipTimelineEntry,
@@ -35,6 +35,8 @@ export type TimelineVideoSlot = {
   prepareToken: number;
   nativeViewEpoch: number;
   readiness: 'idle' | 'preparing' | 'ready' | 'error' | 'cancelled';
+  // Published from the installed item, not inferred from the preview recipe.
+  appliedWindowEndMs?: number | null;
 };
 
 type SlotRuntime = TimelineVideoSlot & {
@@ -42,7 +44,9 @@ type SlotRuntime = TimelineVideoSlot & {
   renderGate: 'disarmed' | 'loading' | 'awaitingPosition' | 'awaitingFrame' | 'ready';
   preparation?: AbortController;
   preparationTask?: Promise<SlotIndex>;
+  sourceMutation?: Promise<void>;
   preparingTimelineMs?: number;
+  preparingSourceMs?: number;
   preparingWindowEndMs?: number;
   // null is unknown; undefined is a confirmed full-source item.
   appliedWindowEndMs: number | null | undefined;
@@ -90,6 +94,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const phaseRef = useRef<TransportPhase>(initialPhase);
   const activeSlotRef = useRef<SlotIndex>(0);
   const compositeClockRef = useRef<CompositeClock | undefined>(undefined);
+  const pendingOrdinaryRestoreRef = useRef(false);
   const activeClipIdRef = useRef<string | undefined>(undefined);
   const slotRuntimeRef = useRef<[SlotRuntime, SlotRuntime]>([createSlotRuntime(0, 0), createSlotRuntime(0, 0)]);
   const desiredRef = useRef<Target | undefined>(undefined);
@@ -100,6 +105,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const boundaryClipIdRef = useRef<string | undefined>(undefined);
   const gapFrameRef = useRef<number | undefined>(undefined);
   const preloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pendingPreloadRef = useRef<(() => void) | undefined>(undefined);
+  const committedPreviewRef = useRef({ activeSlot, timelineMs: currentMs });
+  const maskRequestIdsRef = useRef<[number, number]>([0, 0]);
   const reloadRequestedRef = useRef(false);
   const hasPresentedFrameRef = useRef(false);
   const mountedRef = useRef(true);
@@ -134,6 +142,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         prepareToken: first.prepareToken,
         nativeViewEpoch: first.nativeViewEpoch,
         readiness: first.readiness,
+        appliedWindowEndMs: first.appliedWindowEndMs,
       },
       {
         sourceId: second.sourceId,
@@ -143,6 +152,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         prepareToken: second.prepareToken,
         nativeViewEpoch: second.nativeViewEpoch,
         readiness: second.readiness,
+        appliedWindowEndMs: second.appliedWindowEndMs,
       },
     ]);
   }, []);
@@ -171,6 +181,67 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const playerForSlot = (slot: SlotIndex) => players[slot];
 
+  const playbackVolume = (entry: ClipTimelineEntry, timelineMs: number) => {
+    const window = transitionWindowsRef.current.find(candidate => timelineMs >= candidate.startMs && timelineMs <= candidate.endMs
+      && (candidate.outgoing?.clipId === entry.clip.id || candidate.incoming?.clipId === entry.clip.id));
+    // Ordinary activation has no authority to reveal composite audio before the
+    // retained pair is ready. SynchronizedComposite installs both gains together.
+    if (window?.mode === 'composite' && timelineMs < window.endMs) return 0;
+    return transitionClipPlaybackVolume(entry, timelineMs, window);
+  };
+
+  const retireComposite = (allowOrdinaryPlayback = true) => {
+    // A keyed child's passive cleanup can run after Expo releases the players.
+    if (!mountedRef.current) {
+      compositeClockRef.current = undefined;
+      pendingOrdinaryRestoreRef.current = false;
+      return;
+    }
+    const clock = compositeClockRef.current;
+    compositeClockRef.current = undefined;
+    const restoreAfterProcessing = pendingOrdinaryRestoreRef.current && !processingRef.current;
+    pendingOrdinaryRestoreRef.current = allowOrdinaryPlayback && Boolean(processingRef.current);
+    const active = activeSlotRef.current;
+    const runtime = slotRuntimeRef.current[active];
+    const entry = entriesRef.current.find(candidate => candidate.clip.id === activeClipIdRef.current);
+    const ordinaryReady = allowOrdinaryPlayback && mountedRef.current && surfacesAdmittedRef.current
+      && !translationSuspensionRef.current && phaseRef.current === 'ready'
+      && !processingRef.current && !runtime.preparation && runtime.readiness === 'ready' && runtime.firstFrameReady
+      && entry && runtime.preparedClipId === entry.clip.id;
+    const canRestore = ordinaryReady && playIntentRef.current;
+    const ownsClock = clock?.slot === active && clock.prepareToken === runtime.prepareToken;
+    const insideComposite = transitionWindowsRef.current.some(window => window.mode === 'composite'
+      && currentMsRef.current >= window.startMs && currentMsRef.current < window.endMs);
+    // Ordinary activation may have installed a new owner before the old keyed
+    // component unmounts. Preserve that owner's existing paused/audio state.
+    const preserveOrdinaryOwner = ordinaryReady && !insideComposite && !ownsClock && !restoreAfterProcessing;
+    // Retire against current ownership, not the outgoing composite's last props.
+    // Only the retiring clock's current preparation may rebase source time.
+    // New target processing/ownership must retain its own position and rate.
+    players.forEach((player, slot) => {
+      if (slot !== active || (!canRestore && !preserveOrdinaryOwner)) {
+        player.muted = true;
+        player.volume = 0;
+        player.pause();
+      }
+    });
+    if (canRestore && !preserveOrdinaryOwner) {
+      const player = playerForSlot(active);
+      try {
+        if (ownsClock) {
+          applyClipToSlot(active, entry, currentMsRef.current);
+        }
+        player.volume = playbackVolume(entry, currentMsRef.current);
+        player.muted = entry.clip.muted || player.volume <= 0;
+        // Intent authorizes playback; the native command is idempotent.
+        player.play();
+      } catch (error) {
+        const source = projectRef.current.sources.find(candidate => candidate.id === entry.clip.sourceId);
+        failSource(source ?? { id: entry.clip.sourceId, uri: runtime.playbackUri ?? '', displayName: 'Source video' }, error);
+      }
+    }
+  };
+
   const cancelGapClock = () => {
     if (gapFrameRef.current != null) cancelAnimationFrame(gapFrameRef.current);
     gapFrameRef.current = undefined;
@@ -179,6 +250,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const cancelScheduledPreload = () => {
     if (preloadTimeoutRef.current != null) clearTimeout(preloadTimeoutRef.current);
     preloadTimeoutRef.current = undefined;
+    pendingPreloadRef.current = undefined;
   };
 
   const abortPreparationsExcept = (clipId?: string) => {
@@ -193,11 +265,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     boundaryClipIdRef.current = undefined;
     cancelGapClock();
     cancelScheduledPreload();
-    players.forEach((player) => player.pause());
+    players.forEach((player) => { player.muted = true; player.volume = 0; player.pause(); });
     if (mountedRef.current) setIsPlaying(false);
   }, [players]);
 
   const retireSurfaceFrames = useCallback(() => {
+    players.forEach(player => { player.muted = true; player.volume = 0; player.pause(); });
     slotRuntimeRef.current.forEach((runtime) => {
       runtime.preparation?.abort();
       // Retire callbacks and async continuations before publishing new surfaces.
@@ -213,11 +286,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       runtime.playbackUri = undefined;
       runtime.appliedWindowEndMs = null;
       runtime.preparingWindowEndMs = undefined;
+      runtime.preparingSourceMs = undefined;
     });
     hasPresentedFrameRef.current = false;
     if (mountedRef.current) setHasPresentedFrameState(false);
     publishSlots();
-  }, [publishSlots]);
+  }, [players, publishSlots]);
 
   const suspendForTranslation = useCallback(() => {
     if (translationSuspensionRef.current && !translationSuspensionRef.current.restored) {
@@ -387,6 +461,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     entry: ClipTimelineEntry,
     timelineMs: number,
     forceReload = false,
+    sourceTargetMs?: number,
   ) => {
     const runtime = slotRuntimeRef.current[slot];
     if (!surfacesAdmittedRef.current) throw abortError();
@@ -402,25 +477,55 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const token = nextPrepareToken(runtime.prepareToken);
     runtime.prepareToken = token;
     const sourceChanged = forceReload || runtime.playbackUri !== uri
-      || runtime.sourceId !== source.id || runtime.appliedWindowEndMs !== windowEndMs;
+      || runtime.sourceId !== source.id || runtime.appliedWindowEndMs !== windowEndMs
+      || runtime.sourceMutation != null;
 
     runtime.sourceId = source.id;
     runtime.playbackUri = uri;
     runtime.preparedClipId = entry.clip.id;
     runtime.preparingTimelineMs = timelineMs;
+    runtime.preparingSourceMs = sourceTargetMs;
     runtime.preparingWindowEndMs = windowEndMs;
     runtime.firstFrameReady = false;
     runtime.renderGate = 'loading';
     runtime.readiness = 'preparing';
     publishSlots();
 
+    let mask: Awaited<ReturnType<typeof acquireVideoMaskLease>> | undefined;
+    const invalidateCancelledCache = () => {
+      if (runtime.prepareToken !== token) return;
+      runtime.firstFrameReady = false;
+      runtime.playbackUri = undefined;
+      runtime.appliedWindowEndMs = null;
+    };
+    preparation.signal.addEventListener('abort', invalidateCancelledCache, { once: true });
     try {
+      if (Platform.OS === 'android') {
+        maskRequestIdsRef.current[slot] = token;
+        mask = await acquireVideoMaskLease(player, playerForSlot(slot === 0 ? 1 : 0), token,
+          generationRef.current + 1, hasPresentedFrameRef.current && slot !== activeSlotRef.current, preparation.signal);
+        if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
+        // An aborted loader does not cancel Expo's queued mainQueue replacement.
+        // Keep this native lease while draining that mutation before starting another.
+        if (runtime.sourceMutation) await waitForSourceMutation(runtime.sourceMutation, preparation.signal);
+        if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
+      }
       player.pause();
       player.muted = true;
       if (sourceChanged) {
         runtime.firstFrameReady = false;
         publishSlots();
-        await loadPlayableVideoSource(player, uri, 15_000, preparation.signal);
+        await loadPlayableVideoSource(Platform.OS === 'android' ? {
+          get status() { return player.status; },
+          addListener: (event, listener) => player.addListener(event, listener),
+          replaceAsync: (replacementUri) => {
+            const task = player.replaceAsync(replacementUri);
+            runtime.sourceMutation = task;
+            const clear = () => { if (runtime.sourceMutation === task) runtime.sourceMutation = undefined; };
+            void task.then(clear, clear);
+            return task;
+          },
+        } : player, uri, 15_000, preparation.signal);
         if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
         // Android's installed contract stays unknown until owned native presentation.
         runtime.appliedWindowEndMs = Platform.OS === 'android' ? null : undefined;
@@ -434,8 +539,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       const expectedNativeDuration = nativePresentation && windowEndMs !== undefined
         ? Math.min(player.duration, Math.fround(Math.fround(windowEndMs) / 1000))
         : player.duration;
+      // A composite peer owns the recipe's frame, including hidden handles;
+      // ordinary activation retains its selected-range source clock.
+      const sourceMs = sourceTargetMs == null ? sourceTimeAt(entry, timelineMs)
+        : clamp(sourceTargetMs, 0, source.durationMs);
       const targetSeconds = effectiveNativeSeekTarget(
-        Math.min(sourceTimeAt(entry, timelineMs), windowEndMs ?? Infinity) / 1_000,
+        Math.min(sourceMs, windowEndMs ?? Infinity) / 1_000,
         (windowEndMs ?? source.durationMs) / 1_000, expectedNativeDuration, Platform.OS,
       );
       player.playbackRate = 1;
@@ -477,6 +586,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       if (performance.now() >= frameDeadline) throw new Error('The video did not render a frame in time. Try loading it again.');
       player.pause();
+      if (mask) await mask.commit();
+      if (preparation.signal.aborted || token !== runtime.prepareToken) throw abortError();
       runtime.readiness = 'ready';
       runtime.renderGate = 'ready';
       publishSlots();
@@ -491,12 +602,15 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         runtime.playbackUri = undefined;
         runtime.appliedWindowEndMs = null;
         runtime.preparingWindowEndMs = undefined;
+        runtime.preparingSourceMs = undefined;
         player.pause();
         player.muted = true;
         publishSlots();
       }
       throw error;
     } finally {
+      preparation.signal.removeEventListener('abort', invalidateCancelledCache);
+      mask?.cancel();
       preparation.abort();
       if (runtime.preparation === preparation) runtime.preparation = undefined;
     }
@@ -507,13 +621,14 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     entry: ClipTimelineEntry,
     timelineMs: number,
     forceReload = false,
+    sourceTargetMs?: number,
   ): Promise<SlotIndex> => {
     const runtime = slotRuntimeRef.current[slot];
     const uri = videoPlaybackUri(sourceForEntry(entry));
-    if (shouldJoinTimelinePreparation(runtime, entry.clip.id, uri, timelineMs, forceReload, windowEndForEntry(entry))) {
+    if (shouldJoinTimelinePreparation(runtime, entry.clip.id, uri, timelineMs, forceReload, windowEndForEntry(entry), sourceTargetMs)) {
       return runtime.preparationTask!;
     }
-    const task = prepareSlotOperation(slot, entry, timelineMs, forceReload);
+    const task = prepareSlotOperation(slot, entry, timelineMs, forceReload, sourceTargetMs);
     runtime.preparationTask = task;
     const clearTask = () => {
       if (runtime.preparationTask === task) runtime.preparationTask = undefined;
@@ -522,11 +637,14 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     return task;
   };
 
-  const applyClipToSlot = (slot: SlotIndex, entry: ClipTimelineEntry, timelineMs: number) => {
+  const applyClipToSlot = (
+    slot: SlotIndex, entry: ClipTimelineEntry, timelineMs: number, positionIsCurrent = false,
+  ) => {
     const media = playerForSlot(slot);
     media.playbackRate = entry.clip.playbackRate;
-    media.muted = entry.clip.muted;
-    media.volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
+    media.volume = playbackVolume(entry, timelineMs);
+    media.muted = entry.clip.muted || media.volume <= 0;
+    if (positionIsCurrent) return;
     const windowEndMs = slotRuntimeRef.current[slot].appliedWindowEndMs;
     const timeSeconds = effectiveNativeSeekTarget(
       Math.min(sourceTimeAt(entry, timelineMs), windowEndMs ?? Infinity) / 1_000, (windowEndMs ?? sourceForEntry(entry).durationMs) / 1_000, media.duration, Platform.OS,
@@ -542,6 +660,15 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
         && runtime.appliedWindowEndMs === windowEndForEntry(entry),
     );
     return match < 0 ? undefined : match as SlotIndex;
+  };
+
+  const prepareCompositeOutgoing = async (entry: ClipTimelineEntry, occupiedSlot: SlotIndex, timelineMs: number) => {
+    const frame = videoTransitionPreviewFrameAt(transitionWindowsRef.current, timelineMs);
+    const outgoing = frame?.outgoing?.entry;
+    if (frame?.mode !== 'composite' || frame.unavailableReason || frame.incoming?.clipId !== entry.clip.id
+      || !outgoing || frame.outgoingSourceTimeMs == null || findPreparedSlot(outgoing) != null) return;
+    const standby = (occupiedSlot === 0 ? 1 : 0) as SlotIndex;
+    await prepareSlot(standby, outgoing, timelineMs, false, frame.outgoingSourceTimeMs);
   };
 
   const nextEntryAfter = (entry: ClipTimelineEntry) => {
@@ -560,14 +687,26 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const entryIndex = entriesRef.current.findIndex((candidate) => candidate.clip.id === entry.clip.id);
     const previous = entryIndex > 0 ? entriesRef.current[entryIndex - 1] : undefined;
     const visibleTransitionEndMs = previous
-      ? entry.startMs + previous.clip.transitionAfter.durationMs / 2
+      ? transitionWindowsRef.current.find(window => window.outgoing?.clipId === previous.clip.id
+        && window.incoming?.clipId === entry.clip.id)?.endMs
+        ?? entry.startMs + previous.clip.transitionAfter.durationMs / 2
       : entry.startMs;
     const timelineDelayMs = Math.max(0, visibleTransitionEndMs - timelineMs);
     if (timelineDelayMs > 0 && !playIntentRef.current) return;
     const prepare = () => {
       preloadTimeoutRef.current = undefined;
+      pendingPreloadRef.current = undefined;
       if (!mountedRef.current || !surfacesAdmittedRef.current || generation !== generationRef.current
         || activeSlotRef.current !== occupiedSlot || activeClipIdRef.current !== entry.clip.id) return;
+      // The mutable transport ref advances before React commits the retained
+      // pair's z-order. Keep the outgoing decoder intact through that commit,
+      // including any still-rendered transition tail. The timer above only
+      // schedules timeline work; it is not a presentation acknowledgement.
+      const committed = committedPreviewRef.current;
+      if (committed.activeSlot !== occupiedSlot || committed.timelineMs < visibleTransitionEndMs) {
+        pendingPreloadRef.current = prepare;
+        return;
+      }
       const runtime = slotRuntimeRef.current[standby];
       if (runtime.preparedClipId === next.clip.id
         && runtime.playbackUri === videoPlaybackUri(sourceForEntry(next))
@@ -598,8 +737,8 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     activeClipIdRef.current = entry.clip.id;
     boundaryClipIdRef.current = undefined;
     player.playbackRate = entry.clip.playbackRate;
-    player.muted = entry.clip.muted;
-    player.volume = clipPlaybackVolume(entry.clip, 0);
+    player.volume = playbackVolume(entry, entry.startMs);
+    player.muted = entry.clip.muted || player.volume <= 0;
     publishSlots();
     setCurrentMs(entry.startMs);
     setSourceFailure(undefined);
@@ -682,6 +821,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     markPresentedFrame();
     setPhase('ready');
     if (playIntentRef.current) playerForSlot(slot).play();
+    // Incoming-half activation also needs the previous retained view. Standby
+    // failure stays in slot readiness; it must not fail the current owner.
+    void prepareCompositeOutgoing(entry, slot, timelineMs).catch(() => {});
     preloadNext(entry, slot, timelineMs);
   };
 
@@ -711,6 +853,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     }).finally(() => {
       processingRef.current = undefined;
       if (desiredRef.current && mountedRef.current) void drainTargetsRef.current();
+      else if (mountedRef.current && pendingOrdinaryRestoreRef.current && !compositeClockRef.current) retireComposite();
     });
     processingRef.current = operation;
     return operation;
@@ -722,6 +865,7 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const requestTarget = (timelineMs: number) => {
     compositeClockRef.current = undefined;
+    players.forEach(player => { player.muted = true; player.volume = 0; });
     cancelScheduledPreload();
     const targetMs = clamp(timelineMs, 0, projectTimelineDuration(projectRef.current));
     const segment = projectTimelineSegmentAt(projectRef.current, targetMs, entriesRef.current);
@@ -814,9 +958,69 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     const transitionMs = transitionTimelineTimeAt(
       transitionWindowsRef.current, entry.clip.id, currentMsRef.current, sourceMs, synchronizedWindowKey,
     );
-    const timelineMs = clamp(transitionMs ?? timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
+    const window = synchronizedWindowKey
+      ? transitionWindowsRef.current.find(candidate => candidate.key === synchronizedWindowKey) : undefined;
+    if (transitionMs != null && window) {
+      let ownerSlot = slot;
+      let ownerEntry = entry;
+      if (window.outgoing?.clipId === entry.clip.id && transitionMs >= window.boundaryMs) {
+        const next = nextEntryAfter(entry);
+        const incomingSlot = next && window.incoming?.clipId === next.clip.id ? findPreparedSlot(next) : undefined;
+        if (!next || incomingSlot == null || incomingSlot === slot) {
+          // Lost readiness retires composite authority; normal activation keeps
+          // its existing preparation, generation and cancellation checks.
+          compositeClockRef.current = undefined;
+          advanceFrom(entry);
+          return;
+        }
+        // Both decoders already follow this composite. Transfer transport
+        // ownership without ordinary activation pausing or re-seeking either leg.
+        setActiveSlot(incomingSlot);
+        activeClipIdRef.current = next.clip.id;
+        boundaryClipIdRef.current = undefined;
+        compositeClockRef.current = { key: window.key, slot: incomingSlot,
+          prepareToken: slotRuntimeRef.current[incomingSlot].prepareToken };
+        ownerSlot = incomingSlot;
+        ownerEntry = next;
+        preloadNext(next, incomingSlot, transitionMs);
+      }
+      setCurrentMs(transitionMs);
+      // Update both gains on the authoritative source clock before React's next
+      // commit. The active slot owns transport only, never exclusive audio.
+      slotRuntimeRef.current.forEach((leg, index) => {
+        const legEntry = entriesRef.current.find(candidate => candidate.clip.id === leg.preparedClipId);
+        const player = playerForSlot(index as SlotIndex);
+        const audible = legEntry && leg.readiness === 'ready' && leg.firstFrameReady
+          && surfacesAdmittedRef.current && playIntentRef.current
+          && (window.outgoing?.clipId === legEntry.clip.id || window.incoming?.clipId === legEntry.clip.id);
+        player.volume = audible ? transitionClipPlaybackVolume(legEntry, transitionMs, window) : 0;
+        player.muted = !audible || player.volume <= 0;
+      });
+      if (transitionMs >= window.endMs) {
+        compositeClockRef.current = undefined;
+        // The presentation clock stops at the endpoint; the incoming decoder
+        // may already be ahead when this callback arrives. Sample it once and
+        // resume its ordinary clock, including after a slowed no-handle leg.
+        const incomingSeconds = playerForSlot(ownerSlot).currentTime;
+        const incomingTimelineMs = timelineTimeAt(ownerEntry, incomingSeconds * 1_000);
+        const ordinaryMs = Math.max(window.endMs, incomingTimelineMs);
+        const positionIsCurrent = incomingTimelineMs >= window.endMs || !shouldApplyTimelineSeek(
+          incomingSeconds, sourceTimeAt(ownerEntry, window.endMs) / 1_000,
+        );
+        setCurrentMs(ordinaryMs);
+        // Skip a second getter/seek decision when already current. A behind
+        // incoming leg still needs forward catch-up on an outgoing transfer.
+        applyClipToSlot(ownerSlot, ownerEntry, ordinaryMs, positionIsCurrent);
+      }
+      return;
+    }
+    const timelineMs = clamp(timelineTimeAt(entry, sourceMs), entry.startMs, entry.endMs);
+    // A sample queued before a source-clock rebase must not rewind playback.
+    // Explicit backward seeks establish their new position through requestTarget.
+    if (timelineMs < currentMsRef.current) return;
     setCurrentMs(timelineMs);
-    playerForSlot(slot).volume = clipPlaybackVolume(entry.clip, timelineMs - entry.startMs);
+    playerForSlot(slot).volume = playbackVolume(entry, timelineMs);
+    playerForSlot(slot).muted = entry.clip.muted || playerForSlot(slot).volume <= 0;
     if (timelineMs >= entry.endMs - tolerance) advanceFrom(entry);
   };
 
@@ -829,6 +1033,13 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   const onPlayingChange = (slot: SlotIndex, nativePlaying: boolean) => {
     if (slot !== activeSlotRef.current || nativePlaying || !playIntentRef.current) return;
     if (processingRef.current || phaseRef.current !== 'ready') return;
+    const clock = compositeClockRef.current;
+    if (clock?.slot === slot && clock.prepareToken === slotRuntimeRef.current[slot].prepareToken) {
+      // A temporary decoder stop is not an ordinary trim-end acknowledgement
+      // while this player is running the composite's source clock.
+      playerForSlot(slot).play();
+      return;
+    }
     const entry = entriesRef.current.find((candidate) => candidate.clip.id === activeClipIdRef.current);
     if (entry && playerForSlot(slot).currentTime * 1_000 >= entry.clip.sourceEndMs - 200) advanceFrom(entry);
     else playerForSlot(slot).play();
@@ -836,6 +1047,9 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
 
   const onStatusChange = (slot: SlotIndex, status: string, error: unknown) => {
     if (status !== 'error') return;
+    if (compositeClockRef.current) {
+      players.forEach(player => { player.muted = true; player.volume = 0; player.pause(); });
+    }
     const runtime = slotRuntimeRef.current[slot];
     if (runtime.preparation) {
       runtime.preparationError = error instanceof Error ? error : new Error(
@@ -870,10 +1084,12 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
   useEventListener(playerB, 'playingChange', ({ isPlaying: nativePlaying }) => onPlayingChange(1, nativePlaying));
   useEventListener(playerB, 'statusChange', ({ status, error }) => onStatusChange(1, status, error));
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const maskRequestIds = maskRequestIdsRef.current;
     mountedRef.current = true;
-    requestTargetRef.current(0);
     return () => {
+      // Expo owns release in an earlier-registered passive effect. Retire JS
+      // work and quiet native players during layout, while they are still live.
       mountedRef.current = false;
       if (translationSuspensionRef.current) {
         translationSuspensionRef.current.restored = true;
@@ -881,14 +1097,22 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
       }
       translationSuspensionRef.current = null;
       playIntentRef.current = false;
+      compositeClockRef.current = undefined;
+      pendingOrdinaryRestoreRef.current = false;
       desiredRef.current = undefined;
       generationRef.current += 1;
       boundaryClipIdRef.current = undefined;
       retireSurfaceFrames();
+      if (Platform.OS === 'android') players.forEach((player, slot) =>
+        disposeVideoMaskLease(player, maskRequestIds[slot]));
       cancelGapClock();
       cancelScheduledPreload();
     };
-  }, [retireSurfaceFrames]);
+  }, [players, retireSurfaceFrames]);
+
+  useEffect(() => {
+    requestTargetRef.current(0);
+  }, [players, retireSurfaceFrames]);
 
   useLayoutEffect(() => {
     if (!surfacesAdmitted || translationSuspensionRef.current) {
@@ -902,13 +1126,26 @@ export function useTimelineVideoController(project: CaptionProject, _onError: (m
     }
   }, [retireSurfaceFrames, surfacesAdmitted, stopTransport]);
 
+  useEffect(() => {
+    // This hook and VideoTransitionOverlay consume the same editor render.
+    // Passive effects establish JS commit ordering only: Fabric may not yet
+    // have presented the native z-order on Android's main looper. Device proof
+    // is still required before claiming native presentation retirement.
+    committedPreviewRef.current = { activeSlot, timelineMs: currentMs };
+    pendingPreloadRef.current?.();
+  });
+
   return {
     player: players[activeSlot],
     players,
     slots,
     activeSlot,
     markFirstFrame,
-    setCompositeClock: (clock?: CompositeClock) => { compositeClockRef.current = clock; },
+    retireComposite,
+    setCompositeClock: (clock?: CompositeClock) => {
+      compositeClockRef.current = clock;
+      if (clock) pendingOrdinaryRestoreRef.current = false;
+    },
     hasPresentedFrame,
     currentMs,
     isPlaying,
@@ -933,6 +1170,22 @@ function abortError() {
   const error = new Error('Video preparation was superseded.');
   error.name = 'AbortError';
   return error;
+}
+
+function waitForSourceMutation(task: Promise<void>, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true; clearTimeout(timeout); signal.removeEventListener('abort', abort);
+      if (error) reject(error); else resolve();
+    };
+    const abort = () => finish(abortError());
+    const timeout = setTimeout(() => finish(new Error('The previous SDK replacement has not finished.')), 15000);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    void task.then(() => finish(), () => finish());
+  });
 }
 
 function nextPrepareToken(previous: number) {

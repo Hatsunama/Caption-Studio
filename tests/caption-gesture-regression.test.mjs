@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import test from 'node:test';
@@ -10,6 +11,11 @@ const componentPath = 'components/editor/layer-timeline.tsx';
 const exportsSuffix = '\nexports.TimedBlock = TimedBlock; exports.DirectTimelineGestureSurface = DirectTimelineGestureSurface; exports.TimelineTimingGrip = TimelineTimingGrip; exports.TimelineEdgeHandleMarker = TimelineEdgeHandleMarker;';
 
 function harness() {
+  const nativeEvents = new EventEmitter();
+  const deviceEvents = { addListener(name, callback) {
+    nativeEvents.on(name, callback);
+    return { remove: () => nativeEvents.off(name, callback) };
+  } };
   const slots = [];
   let cursor = 0;
   let result;
@@ -33,14 +39,23 @@ function harness() {
   const exports = {};
   runInNewContext(output, {
     exports, setTimeout() { return 0; }, clearTimeout() {}, requestAnimationFrame() { return 0; }, cancelAnimationFrame() {},
-    require(name) {
+    require: function load(name) {
       if (name === 'react') return react;
+      if (name === '@/hooks/use-display-rotation-invalidation') {
+        const hook = {};
+        const source = readFileSync(new URL('../src/hooks/use-display-rotation-invalidation.ts', import.meta.url), 'utf8');
+        const code = ts.transpileModule(source, {
+          compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+        }).outputText;
+        runInNewContext(code, { exports: hook, require: load });
+        return hook;
+      }
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'react-native-reanimated') return { useSharedValue: (value) => react.useRef({ value }).current };
       if (name === '@/components/spring-scroll-view') return {
         SpringScrollView: 'ScrollView', SpringScrollGestureContext: { value: [] },
       };
-      if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PanResponder: { create: (handlers) => ({ panHandlers: handlers }) } };
+      if (name === 'react-native') return { DeviceEventEmitter: deviceEvents, View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', PanResponder: { create: (handlers) => ({ panHandlers: handlers }) } };
       if (name === 'expo-image') return { Image: 'Image' };
       if (name === './timeline-linked-scroll') return requireLocal('../src/components/editor/timeline-linked-scroll.ts');
       if (name === './timeline-native-gesture') return {
@@ -171,12 +186,33 @@ test('video trim handles use the same timing gesture controller as every other e
 
 test('selected video trim handles stay visible outside clipped artwork', () => {
   const source = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
-  const videoBlock = source.slice(source.indexOf('function VideoClipBlock'), source.indexOf('function ClipFrameThumb'));
-  const shell = videoBlock.slice(videoBlock.indexOf('<View\n      style={{'), videoBlock.indexOf('<View\n        pointerEvents="none"'));
-  const artwork = videoBlock.slice(videoBlock.indexOf('<View\n        pointerEvents="none"'), videoBlock.indexOf('<VideoMoveGrip'));
-
-  assert.match(shell, /overflow:\s*'visible'/);
-  assert.match(artwork, /overflow:\s*'hidden'/);
+  const ast = ts.createSourceFile(componentPath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const component = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'VideoClipBlock');
+  assert.ok(component?.body, 'inspect the actual VideoClipBlock declaration');
+  const returned = component.body.statements.find(ts.isReturnStatement);
+  let shell = returned?.expression;
+  while (shell && ts.isParenthesizedExpression(shell)) shell = shell.expression;
+  assert.ok(shell && ts.isJsxElement(shell), 'the returned node is the video shell');
+  assert.equal(shell.openingElement.tagName.getText(ast), 'View');
+  const artwork = shell.children.find(node => ts.isJsxElement(node)
+    && node.openingElement.tagName.getText(ast) === 'View'
+    && node.openingElement.attributes.properties.some(attribute => ts.isJsxAttribute(attribute)
+      && attribute.name.getText(ast) === 'pointerEvents'
+      && ts.isStringLiteral(attribute.initializer) && attribute.initializer.text === 'none'));
+  assert.ok(artwork, 'clipped artwork is a direct child of the shell');
+  function overflow(node) {
+    const style = node.openingElement.attributes.properties.find(attribute => ts.isJsxAttribute(attribute)
+      && attribute.name.getText(ast) === 'style');
+    const expression = style?.initializer?.expression;
+    assert.ok(expression && ts.isObjectLiteralExpression(expression), 'the actual node has an inline style');
+    const property = expression.properties.find(property => ts.isPropertyAssignment(property)
+      && property.name.getText(ast) === 'overflow');
+    assert.ok(property && ts.isStringLiteral(property.initializer), 'overflow is explicit on this node');
+    return property.initializer.text;
+  }
+  assert.equal(overflow(shell), 'visible');
+  assert.equal(overflow(artwork), 'hidden');
+  const videoBlock = component.getText(ast);
   assert.match(videoBlock, /const showTrimGrips = props\.selected && !props\.reordering && !props\.filmstrip/);
   assert.match(videoBlock, /<VideoTrimGrip \{\.\.\.props\} side="start" gripLeft=\{handleLayout\.startGripLeft\}/);
   assert.match(videoBlock, /<VideoTrimGrip \{\.\.\.props\} side="end" gripLeft=\{handleLayout\.endGripLeft\}/);

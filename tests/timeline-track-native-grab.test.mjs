@@ -27,7 +27,7 @@ function fixture({ disabled = false, axis, holdMilliseconds = 0 } = {}) {
   const geometry = createTimelineGestureGeometry({ viewportWidth: 360, scale: 16 });
   const hooks = { createContext: (value) => ({ value }), useContext: (context) => context.value,
     useState: (init) => [typeof init === 'function' ? init() : init], useRef: (value) => ({ current: value }),
-    useCallback: (fn) => fn, useEffect: (setup) => effects.push(setup) };
+    useCallback: (fn) => fn, useEffect: (setup) => effects.push(setup), useLayoutEffect: (setup) => effects.push(setup) };
   const jsx = (type, props) => ({ type, props });
   const exports = {};
   const onRN = (kind, ...args) => { assert.equal(thread, 'rn'); calls.push([kind, ...args]); };
@@ -38,7 +38,7 @@ function fixture({ disabled = false, axis, holdMilliseconds = 0 } = {}) {
     if (name === '@/components/spring-scroll-view') return {
       SpringScrollView: 'ScrollView', SpringScrollGestureContext: { value: [] },
     };
-    if (name === 'react-native') return { Platform: { OS: 'android' }, View: 'View', ScrollView: 'ScrollView' };
+    if (name === 'react-native') return { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) }, Platform: { OS: 'android' }, View: 'View', ScrollView: 'ScrollView' };
     if (name === 'react-native-gesture-handler') return { Gesture: { Pan: () => pan, Native: () => ({
       disallowInterruption() { return this; }, shouldCancelWhenOutside() { return this; },
     }) }, GestureDetector: 'GestureDetector', State: { FAILED: 1, CANCELLED: 3 } };

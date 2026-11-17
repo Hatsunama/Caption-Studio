@@ -1,5 +1,27 @@
 export type TimelineInterval = { id: string; startMs: number; endMs: number };
 
+/** Input is front to back. Each overlapping predecessor must occupy a strictly
+ * higher row. Longest-path ranks of this ordered overlap DAG are minimal; a
+ * chain can require more rows than peak concurrency. Touching endpoints reuse
+ * rows. Keep the chronological packer below for cue/legacy callers. */
+export function packOrderedTimelineLanes(intervals: readonly TimelineInterval[]) {
+  const laneById = new Map<string, number>();
+  let laneCount = 1;
+  for (let index = 0; index < intervals.length; index++) {
+    const interval = intervals[index];
+    let lane = 0;
+    for (let front = 0; front < index; front++) {
+      const predecessor = intervals[front];
+      if (Math.max(interval.startMs, predecessor.startMs) < Math.min(interval.endMs, predecessor.endMs)) {
+        lane = Math.max(lane, laneById.get(predecessor.id)! + 1);
+      }
+    }
+    laneById.set(interval.id, lane);
+    laneCount = Math.max(laneCount, lane + 1);
+  }
+  return { laneById, laneCount };
+}
+
 export const MAX_TIMELINE_BODY_CUES = 256;
 export const MAX_TIMELINE_DENSITY_BINS = 16;
 export const MIN_TIMELINE_DENSITY_BIN_PX = 44;

@@ -271,7 +271,7 @@ test('one verified caption model owns generation and first-use consent', () => {
   assert.match(editor, /Alert\.alert\('Caption generation failed', message\)/);
   assert.match(pipeline, /modelId: TranscriptionModelId/);
   assert.match(workflows, /CAPTION_TRANSCRIPTION_MODEL_ID/);
-  assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint\)/);
+  assert.match(pipeline, /canReuseSourceTranscription\(sourceResults\[sourceId\], modelId, sourceFingerprint, source\.durationMs\)/);
   assert.match(pipeline, /CaptionMedia\.sha256\(source\.uri\)/);
   // Progress-before-native ordering is exercised by the callable audio
   // cancellation boundary regressions, rather than an exact call-string match.
@@ -1441,10 +1441,10 @@ test('the add-video button stays in the timeline header instead of covering clip
   assert.doesNotMatch(button, /top: RULER_HEIGHT/);
 });
 
-test('timeline keeps a fixed playhead, scrubs its content, renders a ruler, and offers an append-video control', () => {
+test('timeline scrubs its content, renders a ruler, and offers an append-video control', () => {
   const timeline = readFileSync(new URL('../src/components/editor/layer-timeline.tsx', import.meta.url), 'utf8');
   assert.match(timeline, /timelineTimeAtScroll\(offset, duration, trackWidth\)/);
-  assert.match(timeline, /left: '50%'/);
+  // Rendered centering and held-marker behavior are covered in timeline-edge-scroll.test.mjs.
   assert.match(timeline, /onScrollBeginDrag/);
   assert.match(timeline, /TimelineRuler/);
   assert.match(timeline, /onAddVideos/);

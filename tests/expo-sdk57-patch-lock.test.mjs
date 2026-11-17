@@ -4,8 +4,8 @@ import test from 'node:test';
 
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
-// Published SDK 57 patch floors from the 2026-10-21 Expo release.
-const patchFloors = { expo: 31, 'expo-router': 29, 'expo-sharing': 24 };
+// Published SDK 57 compatibility patches reviewed on 2026-11-12.
+const patchFloors = { expo: 33, 'expo-constants': 24, 'expo-linking': 14, 'expo-router': 31, 'expo-sharing': 26, 'expo-sqlite': 5 };
 const reviewedOverrides = {
   "@expo/fingerprint": {
     "glob": "14.0.3",
@@ -48,7 +48,7 @@ test('manifest and lock root describe the same dependency graph', () => {
 });
 
 test('SDK 57 patch transitive minimums resolve in the actual lock graph', () => {
-  for (const [name, floor] of Object.entries({ '@expo/cli': 32, '@expo/config-plugins': 11, 'expo-modules-core': 24, '@expo/ui': 26 })) {
+  for (const [name, floor] of Object.entries({ '@expo/cli': 34, '@expo/config-plugins': 13, 'expo-modules-core': 26, '@expo/ui': 26 })) {
     const entries = Object.entries(lock.packages).filter(([key]) => key.endsWith('/node_modules/' + name) || key === 'node_modules/' + name);
     assert.ok(entries.length > 0, name + ' must be locked');
     for (const [key, entry] of entries) {

@@ -1,12 +1,15 @@
 import { effectiveVideoTransition, videoTransitionPreviewKind, videoTransitionUsesCompositeMedia } from '@/lib/video-transitions';
 import { videoPlaybackUri } from '@/lib/video-playback-source';
+import { transitionClipPlaybackVolume } from '@/lib/video-transition-audio';
 import type { ClipTimelineEntry } from '@/lib/video-timeline';
 import type { ProjectVideoSource, VideoTransform, VideoTransitionType } from '@/types/project';
 
 export type TransitionPreviewSource = {
+  entry: ClipTimelineEntry;
   clipId: string;
   sourceId: string;
   uri: string;
+  sourceDurationMs: number;
   sourceStartMs: number;
   sourceEndMs: number;
   playbackRate: number;
@@ -109,18 +112,22 @@ export function buildVideoTransitionPreviewWindows(
         ...base,
         key: `${base.key}:${outgoingSource.id}:${outgoingSource.uri}:${incomingSource.id}:${incomingSource.uri}`,
         outgoing: {
+          entry,
           clipId: entry.clip.id,
           sourceId: entry.clip.sourceId,
           uri: videoPlaybackUri(outgoingSource),
+          sourceDurationMs: integerMs(outgoingSource.durationMs),
           sourceStartMs: outgoingVisibleStartMs,
           sourceEndMs: outgoingSourceEndMs,
           playbackRate: outgoingPlaybackRate,
           transform: entry.clip.transform,
         },
         incoming: {
+          entry: incomingEntry,
           clipId: incomingEntry.clip.id,
           sourceId: incomingEntry.clip.sourceId,
           uri: videoPlaybackUri(incomingSource),
+          sourceDurationMs: integerMs(incomingSource.durationMs),
           sourceStartMs: incomingSourceStartMs,
           sourceEndMs: incomingVisibleEndMs,
           playbackRate: incomingPlaybackRate,
@@ -187,22 +194,24 @@ export function videoTransitionPlaybackTargets(
   frame: VideoTransitionPreviewFrame,
   outgoingSlot: 0 | 1,
   incomingSlot: 0 | 1,
-  activeSlot: 0 | 1,
+  _activeSlot: 0 | 1,
 ) {
   if (!frame.outgoing || !frame.incoming
     || frame.outgoingSourceTimeMs == null || frame.incomingSourceTimeMs == null) return [];
   return [
     {
       slot: outgoingSlot,
-      sourceTimeMs: frame.outgoingSourceTimeMs,
+      sourceTimeMs: playableSourceTime(frame.outgoing, frame.outgoingSourceTimeMs),
       playbackRate: frame.outgoing.playbackRate,
-      muted: outgoingSlot !== activeSlot,
+      volume: transitionClipPlaybackVolume(frame.outgoing.entry, frame.startMs + frame.phase * frame.durationMs, frame),
+      muted: transitionClipPlaybackVolume(frame.outgoing.entry, frame.startMs + frame.phase * frame.durationMs, frame) <= 0,
     },
     {
       slot: incomingSlot,
-      sourceTimeMs: frame.incomingSourceTimeMs,
+      sourceTimeMs: playableSourceTime(frame.incoming, frame.incomingSourceTimeMs),
       playbackRate: frame.incoming.playbackRate,
-      muted: incomingSlot !== activeSlot,
+      volume: transitionClipPlaybackVolume(frame.incoming.entry, frame.startMs + frame.phase * frame.durationMs, frame),
+      muted: transitionClipPlaybackVolume(frame.incoming.entry, frame.startMs + frame.phase * frame.durationMs, frame) <= 0,
     },
   ];
 }
@@ -235,6 +244,8 @@ export function videoTransitionCompositeState(
   const outgoingSlot = slots.findIndex((slot) => slot.preparedClipId === frame.outgoing?.clipId);
   const incomingSlot = slots.findIndex((slot) => slot.preparedClipId === frame.incoming?.clipId);
   const status = frame.unavailableReason || frame.key === failedPreviewKey || !frame.outgoing || !frame.incoming
+    || (outgoingSlot >= 0 && slots[outgoingSlot].readiness === 'error')
+    || (incomingSlot >= 0 && slots[incomingSlot].readiness === 'error')
     ? 'unavailable'
     : outgoingSlot < 0 || incomingSlot < 0 || outgoingSlot === incomingSlot
       || !slots[outgoingSlot].firstFrameReady || !slots[incomingSlot].firstFrameReady
@@ -259,6 +270,12 @@ function requiredSource(
 
 function interpolateSourceTime(source: TransitionPreviewSource, phase: number) {
   return source.sourceStartMs + Math.round((source.sourceEndMs - source.sourceStartMs) * phase);
+}
+
+function playableSourceTime(source: TransitionPreviewSource, sourceTimeMs: number) {
+  // Match native export's ManagedRetriever.frame: rounding can reach EOF even
+  // inside the window. Keep that logical clock, but seek to readable media.
+  return clamp(sourceTimeMs, 0, Math.max(0, source.sourceDurationMs - 1));
 }
 
 function sourceDurationMs(timelineDurationMs: number, playbackRate: number) {

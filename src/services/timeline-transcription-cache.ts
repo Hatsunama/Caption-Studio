@@ -31,7 +31,7 @@ function cacheUri() {
   return FileSystem.cacheDirectory ? `${FileSystem.cacheDirectory}caption-timeline-transcription-v1.json` : undefined;
 }
 
-async function readCandidate(uri: string, projectId: string, fingerprint: SourceTranscriptionFingerprint, modelId: string) {
+async function readCandidate(uri: string, projectId: string, fingerprint: SourceTranscriptionFingerprint, modelId: string, durationMs?: number) {
   const info = await FileSystem.getInfoAsync(uri);
   if (!info.exists || info.isDirectory || (info.size ?? 0) > MAX_CACHE_BYTES) return undefined;
   const raw = await FileSystem.readAsStringAsync(uri);
@@ -41,15 +41,15 @@ async function readCandidate(uri: string, projectId: string, fingerprint: Source
   const record = parsed as Partial<CacheRecord>;
   if (record.version !== 2 || record.projectId !== projectId
     || !record.result || typeof record.result !== 'object') return undefined;
-  return canReuseSourceTranscription(record.result, modelId, fingerprint) ? record.result : undefined;
+  return canReuseSourceTranscription(record.result, modelId, fingerprint, durationMs) ? record.result : undefined;
 }
 
-export async function readTimelineTranscription(projectId: string, fingerprint: SourceTranscriptionFingerprint, modelId: string) {
+export async function readTimelineTranscription(projectId: string, fingerprint: SourceTranscriptionFingerprint, modelId: string, durationMs?: number) {
   const uri = cacheUri();
   if (!uri) return undefined;
   for (const candidate of [uri, `${uri}.previous`]) {
     try {
-      const result = await readCandidate(candidate, projectId, fingerprint, modelId);
+      const result = await readCandidate(candidate, projectId, fingerprint, modelId, durationMs);
       if (result) return result;
     } catch {
       // Cache corruption cannot prevent a fresh transcription.
@@ -62,8 +62,9 @@ export async function writeTimelineTranscription(
   projectId: string,
   fingerprint: SourceTranscriptionFingerprint,
   result: SourceTranscription,
+  durationMs?: number,
 ) {
-  if (!canReuseSourceTranscription(result, result.modelId, fingerprint)) return;
+  if (!canReuseSourceTranscription(result, result.modelId, fingerprint, durationMs)) return;
   const uri = cacheUri();
   if (!uri) return;
   const encoded = JSON.stringify({ version: 2, projectId, result } satisfies CacheRecord);

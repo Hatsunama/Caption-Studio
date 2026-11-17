@@ -61,6 +61,8 @@ function transcriptionHarness(native = {}) {
     '@/services/storage-policy': { requireFreeSpace: async () => {} },
     '@/lib/wav-chunking': require('../src/lib/wav-chunking.ts'),
     '@/lib/speech-alignment': require('../src/lib/speech-alignment.ts'),
+    '@/lib/whisper-words': require('../src/lib/whisper-words.ts'),
+    '@/lib/transcription-language': require('../src/lib/transcription-language.ts'),
   }, `
 export { ensureModel, detectSpeechCooperatively };
 export function configure(h) {
@@ -75,6 +77,29 @@ export function configure(h) {
   return { ...service, fs };
 }
 const options = { projectId: 'test', videoUri: 'video', durationMs: 1000 };
+
+for (const starts of [[790, 794, 795], [790, 790], [801]]) {
+  test(`actual transcription caller bounds alignment and cleans contexts/WAV: ${starts}`, async () => {
+    let whisperReleases = 0, vadReleases = 0;
+    const h = transcriptionHarness({
+      initWhisperVad: async () => ({ release: async () => { vadReleases += 1; } }),
+      initWhisper: async () => ({
+        transcribe: () => ({ stop: async () => {}, promise: Promise.resolve({ language: 'en', segments: starts.map((t0, i) => ({ text: ` Token${i}`, t0, t1: 805 })) }) }),
+        release: async () => { whisperReleases += 1; },
+      }),
+    });
+    h.configure({ ensureModel: async () => ({ uri: 'model' }), detectSpeech: async () => [{ t0: 0, t1: 810 }] });
+    h.fs.data.set('cache/caption-audio/test.wav', new Uint8Array(44));
+    const running = h.transcribeVideoLocally({ ...options, durationMs: 8000 });
+    if (starts[1] === 794) {
+      const result = await running;
+      assert.deepEqual(result.words.map(({ startMs, endMs }) => [startMs, endMs]), [[7900, 7940], [7940, 7950], [7950, 8000]]);
+    } else await assert.rejects(running, /Source word timing quality failure/);
+    assert.equal(whisperReleases, 1);
+    assert.equal(vadReleases, 1);
+    assert.equal(h.fs.data.has('cache/caption-audio/test.wav'), false);
+  });
+}
 
 test('failed model preparation cannot leave a sibling VAD download running', async () => {
   const h = transcriptionHarness();

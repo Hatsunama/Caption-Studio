@@ -30,7 +30,7 @@ import { SpringScrollModal as Modal } from '@/components/spring-scroll-modal';
 import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 
 import { AnimationBrowser } from '@/components/editor/animation-browser';
-import { setTimelineTrackOrder } from '@/lib/timeline-tracks';
+import { applyTimelineStackOrder, reorderVisualTimelineLayer, setTimelineTrackOrder } from '@/lib/timeline-tracks';
 import { projectMediaRecoveryPrompts } from '@/components/editor/project-media-recovery-prompts';
 import { exportProgressPresentation } from '@/lib/export-progress-presentation';
 import { ensureProjectVideoAccess } from '@/services/project-media-access';
@@ -1488,10 +1488,25 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const reorderTimelineTracks = (order: string[]) => {
+    if (!editorSession.editable()) return;
     const before = editorSession.current();
-    const next = setTimelineTrackOrder(before, order);
+    if (before.id !== project.id) return;
+    const stacked = applyTimelineStackOrder(before, order);
+    // Derived visual segment IDs are not a second persisted ordering model.
+    const next = setTimelineTrackOrder(stacked, order.filter((id) => id === 'video' || id === 'audio'));
     if (next === before) return;
-    pushUndo();
+    pushUndo(before);
+    setProject(next);
+    persistProjectInBackground();
+  };
+
+  const reorderTimelineLayer = (layerId: string, destinationFrontIndex: number) => {
+    if (!editorSession.editable()) return;
+    const before = editorSession.current();
+    if (before.id !== project.id) return;
+    const next = reorderVisualTimelineLayer(before, layerId, destinationFrontIndex);
+    if (next === before) return;
+    pushUndo(before);
     setProject(next);
     persistProjectInBackground();
   };
@@ -1811,6 +1826,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     if (!selectedClipId) return;
     pushUndo();
     const next = setVideoTransition(editorSession.current(), selectedClipId, type, durationMs);
+    transport.synchronizeProject(next);
     setProject(next);
     persistProjectInBackground();
   };
@@ -2094,6 +2110,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
             currentClipId={currentClipEntry?.clip.id}
             onFirstFrameRender={transport.markFirstFrame}
             setCompositeClock={transport.setCompositeClock}
+            retireComposite={transport.retireComposite}
           />
           {timelineLayers.map((layer) => {
             if (!layer.visible) return null;
@@ -2341,6 +2358,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
           onTimingChangeEnd={finishHistoryInteraction}
           trackOrder={project.timelineTrackOrder}
           onReorderTrack={reorderTimelineTracks}
+          onReorderVisualLayer={reorderTimelineLayer}
           revealRequest={timelineRevealRequest}
           onAddVideos={() => { void addVideosToTimeline(); }}
           onSelectAudioClip={(clipId) => selectEditorObject({ kind: 'audio', id: clipId })}
@@ -2353,7 +2371,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         />
         </View>
         {selectedCaption || selectedTranslationPair || selectedAudioClip || selectedTextLayer || selectedImageLayer || selectedVideoLayer ? (
-          <Text style={{ color: palette.muted, fontSize: 11 }}>Drag the selected block to move it. Drag either white edge to trim it.</Text>
+          <Text style={{ color: palette.muted, fontSize: 11 }}>Drag sideways to move, edges to trim. Hold and drag up/down to reorder. Top is front.</Text>
         ) : null}
 
         {activeTool === 'video' ? (
@@ -2798,7 +2816,7 @@ function Action(props: { label: string; color?: string; danger?: boolean; disabl
 }
 
 function TransitionTimingSheet(props: { visible: boolean; durationMs: number; onChoose: (durationMs: number) => void; onClose: () => void }) {
-  const options = [200, 350, 500, 650, 800, 1_000, 1_250, 1_500, 2_000];
+  const options = [650, 800, 1_000, 1_250, 1_500, 2_000];
   return (
     <Modal visible={props.visible} transparent animationType="slide" onRequestClose={props.onClose}>
       <Pressable onPress={props.onClose} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.58)' }}>

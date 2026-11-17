@@ -1,6 +1,7 @@
+import { requireNativeView } from 'expo';
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, Text, View, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
 
 import {
   buildVideoTransitionPreviewWindows,
@@ -13,6 +14,8 @@ import type { TimelineVideoSlot } from '@/hooks/use-timeline-video-controller';
 import type { ClipTimelineEntry } from '@/lib/video-timeline';
 import type { ProjectVideoSource, VideoTransform } from '@/types/project';
 import { chrome } from '@/lib/ui-theme';
+import { effectiveNativeSeekTarget } from '@/lib/video-playback-position';
+import { resolveCanvasColor } from '@/lib/canvas-color';
 
 type Props = {
   entries: readonly ClipTimelineEntry[];
@@ -32,12 +35,27 @@ type Props = {
   currentClipId?: string;
   onFirstFrameRender: (slot: 0 | 1, nativeViewEpoch: number) => void;
   setCompositeClock: (clock?: { key: string; slot: 0 | 1; prepareToken: number }) => void;
+  retireComposite: (allowOrdinaryPlayback?: boolean) => void;
 };
 
 const fill: ViewStyle = { position: 'absolute', inset: 0 };
 
+type TransitionPairProps = ViewProps & { frontSlot: 0 | 1 };
+
+// The RN fallback forwards only existing host props; frontSlot is Android only.
+function TransitionPairFallback({ children, collapsable, pointerEvents, style }: TransitionPairProps) {
+  return <View collapsable={collapsable} pointerEvents={pointerEvents} style={style}>{children}</View>;
+}
+
+const TransitionPair = Platform.OS === 'android'
+  ? requireNativeView<TransitionPairProps>('CaptionMedia', 'CaptionTransitionPair')
+  : TransitionPairFallback;
+
 export function VideoTransitionOverlay(props: Props) {
-  const [failedPreviewKey, setFailedPreviewKey] = useState<string>();
+  const backgroundColor = resolveCanvasColor(props.backgroundColor);
+  const [failedPreview, setFailedPreview] = useState<{ key: string; preparation: string }>();
+  const preparation = props.slots.map(slot => slot.prepareToken).join(':');
+  const failedPreviewKey = failedPreview?.preparation === preparation ? failedPreview.key : undefined;
   const windows = useMemo(
     () => buildVideoTransitionPreviewWindows(props.entries, props.sources),
     [props.entries, props.sources],
@@ -55,18 +73,34 @@ export function VideoTransitionOverlay(props: Props) {
   } : sourceFrame;
   const compositeState = frame?.mode === 'composite'
     ? videoTransitionCompositeState(frame, props.slots, failedPreviewKey) : undefined;
-  const onUnavailable = useCallback(() => setFailedPreviewKey(frame?.key), [frame?.key]);
-  if (!props.admitted) return null;
+  const frameKey = frame?.key;
+  const onUnavailable = useCallback(() => {
+    if (frameKey) setFailedPreview({ key: frameKey, preparation });
+  }, [frameKey, preparation]);
   const transitionReady = props.visible && props.transportReady;
-  const composite = transitionReady && frame?.mode === 'composite' && compositeState?.status === 'ready'
+  const composite = props.admitted && transitionReady && frame?.mode === 'composite' && compositeState?.status === 'ready'
     ? { frame, outgoingSlot: compositeState.outgoingSlot as 0 | 1, incomingSlot: compositeState.incomingSlot as 0 | 1 }
     : undefined;
+  const compositeUnavailable = frame?.mode === 'composite' && !composite;
+  const { admitted, isPlaying, players, retireComposite, activeSlot, slots, timelineMs } = props;
+  useEffect(() => {
+    if (compositeUnavailable) {
+      // The notice conceals the unavailable pair, but the admitted ordinary
+      // owner must still deliver its real decoder clock through this window.
+      players.forEach(player => { player.muted = true; player.volume = 0; });
+      retireComposite(admitted && transitionReady && isPlaying);
+    }
+  }, [compositeUnavailable, admitted, isPlaying, players, retireComposite,
+    activeSlot, slots, timelineMs, transitionReady]);
+  if (!props.admitted) return null;
   return (
-    <View collapsable={false} pointerEvents="none" style={[fill, transitionReady && compositeState ? { backgroundColor: props.backgroundColor } : undefined]}>
+    <View collapsable={false} pointerEvents="none" style={[fill, transitionReady && compositeState ? { backgroundColor } : undefined]}>
       <TimelineVideoPair {...props} composite={composite} concealed={Boolean(transitionReady && compositeState && !composite)} />
-      {!props.visible ? <View style={[fill, { backgroundColor: props.backgroundColor }]} /> : null}
+      {!props.visible ? <View style={[fill, { backgroundColor }]} /> : null}
       {transitionReady && frame?.mode === 'cover'
         ? <CoverTransition frame={frame} width={props.width} height={props.height} /> : null}
+      {composite?.frame.type === 'spin'
+        ? <CoverTransition frame={{ ...composite.frame, type: 'flash' }} width={props.width} height={props.height} /> : null}
       {transitionReady && frame?.mode === 'cover' && frame.unavailableReason
         ? <PreviewNotice label="TRANSITION PREVIEW UNAVAILABLE" detail={frame.unavailableReason} /> : null}
       {transitionReady && compositeState?.status !== 'ready' && compositeState
@@ -94,12 +128,23 @@ function TimelineVideoPair(props: Props & { composite?: Composite; concealed: bo
   } : { outgoing: true, incoming: true };
   const ready = rendered.outgoing && rendered.incoming && !props.concealed;
   return (
-    <View collapsable={false} pointerEvents="none" style={[fill, { overflow: 'hidden', opacity: ready ? 1 : 0 }]}>
+    <TransitionPair
+      collapsable={false}
+      pointerEvents="none"
+      frontSlot={composite?.incomingSlot ?? props.activeSlot}
+      style={[fill, { overflow: 'hidden', opacity: ready ? 1 : 0 }]}
+    >
       {props.players.map((player, index) => {
         const slot = index as 0 | 1;
         const incoming = composite?.incomingSlot === slot;
         const source = composite ? (incoming ? composite.frame.incoming : composite.frame.outgoing) : undefined;
         const effect = composite ? compositeLayerStyle(composite.frame, incoming, props.width, props.height) : undefined;
+        const front = composite ? incoming : slot === props.activeSlot;
+        // Keep Fabric child order fixed. The Android pair paints the foreground
+        // last without elevated RN children closing the sibling Z barrier early.
+        const order: ViewStyle = Platform.OS === 'android'
+          ? { zIndex: 0, elevation: 0 }
+          : { zIndex: front ? 1 : 0 };
         return (
           <VideoLayer
             key={`${slot}:${props.slots[slot].nativeViewEpoch}`}
@@ -107,16 +152,15 @@ function TimelineVideoPair(props: Props & { composite?: Composite; concealed: bo
             transform={source?.transform ?? props.currentTransform}
             width={props.width}
             height={props.height}
-            opacity={effect?.opacity}
-            effectStyle={composite
-              ? [{ zIndex: incoming ? 1 : 0 }, effect?.style]
-              : { zIndex: slot === props.activeSlot ? 1 : 0, backgroundColor: props.backgroundColor }}
+            opacity={composite ? effect?.opacity : Platform.OS === 'android' && slot !== props.activeSlot ? 0 : undefined}
+            effectStyle={[order, effect?.style]}
+            backgroundColor={resolveCanvasColor(props.backgroundColor)}
             clip={effect?.clip}
             onFirstFrameRender={() => props.onFirstFrameRender(slot, props.slots[slot].nativeViewEpoch)}
           />
         );
       })}
-    </View>
+    </TransitionPair>
   );
 }
 
@@ -126,62 +170,78 @@ function SynchronizedComposite(props: Props & {
   incomingSlot: 0 | 1;
   onUnavailable: () => void;
 }) {
-  const { activeSlot, frame, isPlaying, onUnavailable, outgoingSlot, incomingSlot, transportReady, players, slots, setCompositeClock } = props;
-  const latestPlayersRef = useRef(players);
-  const latestActiveSlotRef = useRef(activeSlot);
+  const { activeSlot, admitted, visible, frame, isPlaying, onUnavailable, outgoingSlot, incomingSlot,
+    transportReady, players, slots, setCompositeClock, retireComposite } = props;
+  const latestRetireCompositeRef = useRef(props.retireComposite);
 
   useEffect(() => {
-    latestPlayersRef.current = players;
-    latestActiveSlotRef.current = activeSlot;
-  }, [players, activeSlot]);
+    latestRetireCompositeRef.current = props.retireComposite;
+  }, [props.retireComposite]);
 
   useEffect(() => () => {
-    setCompositeClock();
-    latestPlayersRef.current.forEach((player, slot) => {
-      if (slot !== latestActiveSlotRef.current) {
-        player.muted = true;
-        player.pause();
-      }
-    });
-  }, [setCompositeClock]);
+    latestRetireCompositeRef.current();
+    // Parent callbacks can change every clock render. Only retiring this keyed
+    // composite may pause its standby player; otherwise every tick forces a seek.
+  }, []);
 
   useEffect(() => {
     try {
       const targets = videoTransitionPlaybackTargets(frame, outgoingSlot, incomingSlot, activeSlot);
       if (targets.length !== 2) {
-        setCompositeClock();
-        return;
+        throw new Error('Both transition sources must be available.');
       }
+      // Claim this preparation before either leg can be retimed. A partial
+      // synchronization failure must retire the same authority as a full pair.
+      setCompositeClock({ key: frame.key, slot: activeSlot, prepareToken: slots[activeSlot].prepareToken });
       targets.forEach((target) => {
+        const outgoing = target.slot === outgoingSlot;
+        const source = outgoing ? frame.outgoing! : frame.incoming!;
+        const logicalMs = outgoing ? frame.outgoingSourceTimeMs! : frame.incomingSourceTimeMs!;
+        const installedEndSeconds = (slots[target.slot].appliedWindowEndMs ?? source.sourceDurationMs) / 1_000;
+        const nativeEndSeconds = effectiveNativeSeekTarget(
+          installedEndSeconds, installedEndSeconds,
+          players[target.slot].duration, Platform.OS,
+        );
+        // Bound the whole near-EOF tail, not only exact declared EOF. Keep the
+        // helper's seconds/ULP intact through Expo's Double -> Long conversion.
+        // If it declines adjustment, retain the sidecar's full-source bound.
+        const nativeSeconds = nativeEndSeconds < installedEndSeconds
+          ? Math.min(logicalMs / 1_000, nativeEndSeconds)
+          : target.sourceTimeMs! / 1_000;
         synchronizeTransitionPlayer(
-          players[target.slot], target.sourceTimeMs, target.playbackRate,
-          isPlaying && transportReady, target.muted,
+          players[target.slot], nativeSeconds, target.playbackRate,
+          isPlaying && transportReady, target.muted, target.volume,
         );
       });
-      setCompositeClock({ key: frame.key, slot: activeSlot, prepareToken: slots[activeSlot].prepareToken });
     } catch {
-      setCompositeClock();
+      players.forEach(player => { player.muted = true; player.volume = 0; });
+      retireComposite(admitted && visible && transportReady && isPlaying);
       onUnavailable();
     }
-  }, [activeSlot, frame, incomingSlot, isPlaying, onUnavailable, outgoingSlot, players, setCompositeClock, slots, transportReady]);
+  }, [activeSlot, admitted, visible, frame, incomingSlot, isPlaying, onUnavailable, outgoingSlot,
+    players, retireComposite, setCompositeClock, slots, transportReady]);
 
   return null;
 }
 
 function synchronizeTransitionPlayer(
   player: VideoPlayer,
-  targetMs: number | undefined,
+  targetSeconds: number | undefined,
   playbackRate: number | undefined,
   playing: boolean,
   muted: boolean,
+  volume: number,
 ) {
-  if (targetMs == null || playbackRate == null) return;
-  if (muted) player.muted = true;
-  const targetSeconds = targetMs / 1_000;
-  player.playbackRate = playbackRate;
+  if (targetSeconds == null || playbackRate == null) return;
   const driftMs = Math.abs(player.currentTime - targetSeconds) * 1_000;
-  if (!playing || !player.playing || driftMs > 160) player.currentTime = targetSeconds;
+  const needsSeek = !playing || !player.playing || driftMs > 160;
+  // Muting an aligned playing leg queues a native zero even if immediately unmuted.
+  if (muted || needsSeek) player.muted = true;
+  player.volume = volume;
+  player.playbackRate = playbackRate;
+  if (needsSeek) player.currentTime = targetSeconds;
   if (playing) {
+    player.muted = muted;
     if (!player.playing) player.play();
   } else {
     player.pause();
@@ -254,14 +314,22 @@ function VideoLayer(props: {
   height: number;
   opacity?: number;
   effectStyle?: StyleProp<ViewStyle>;
+  backgroundColor?: string;
   clip?: LayerClip;
   onFirstFrameRender: () => void;
 }) {
+  const opacity = props.opacity ?? 1;
+  const androidFractionalOpacity = Platform.OS === 'android' && opacity > 0 && opacity < 1;
   return (
-    <View collapsable={false} style={[fill, props.effectStyle, { opacity: props.opacity ?? 1 }]}>
+    <View
+      collapsable={false}
+      needsOffscreenAlphaCompositing={androidFractionalOpacity}
+      renderToHardwareTextureAndroid={androidFractionalOpacity}
+      style={[fill, props.effectStyle, { opacity }]}
+    >
       {/* Keep native ancestry stable as clipping starts/stops, including RN view flattening. */}
       <View collapsable={false} style={props.clip?.outer ?? fill}>
-        <View collapsable={false} style={props.clip?.inner ?? fill}>
+        <View collapsable={false} style={[props.clip?.inner ?? fill, { backgroundColor: props.backgroundColor }]}>
           <View collapsable={false} style={[fill, { transform: transformStyle(props.transform, props.width, props.height) }]}>
             <VideoView
               style={{ flex: 1 }}

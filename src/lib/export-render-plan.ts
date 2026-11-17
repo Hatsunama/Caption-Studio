@@ -1,4 +1,5 @@
 import { audibleVideoOverlaysWithin } from '@/lib/audible-video-overlays';
+import { resolveCanvasColor, toAndroidArgbColor } from '@/lib/canvas-color';
 import { videoOverlaySegments } from '@/lib/video-overlay-segments';
 import { projectRenderDuration } from '@/lib/project-timeline';
 import { audibleAudioClipsWithin } from '@/lib/audio-timeline';
@@ -142,7 +143,7 @@ export function buildTimelineRenderPlan(
   for (const caption of captionsEnabled ? project.captions : []) {
     if (caption.timelineVisible === false || !caption.text.trim()
       || (caption.styleOverride?.opacity ?? project.projectStyle.opacity ?? 1) <= 0) continue;
-    const interval = boundedInterval(caption.startMs, caption.endMs, durationMs);
+    const interval = preciseCaptionInterval(caption.startMs, caption.endMs, durationMs);
     if (!interval) continue;
     captions.push({
       id: caption.id,
@@ -152,7 +153,7 @@ export function buildTimelineRenderPlan(
       words: caption.wordIds.flatMap((wordId) => {
         const word = wordsById.get(wordId);
         if (!word) return [];
-        const wordInterval = boundedInterval(
+        const wordInterval = preciseCaptionInterval(
           Math.max(word.startMs, interval.startMs),
           Math.min(word.endMs, interval.endMs),
           durationMs,
@@ -169,7 +170,7 @@ export function buildTimelineRenderPlan(
 
   for (const pair of captionsEnabled ? exportCaptionPairs(project, allowIncompleteTranslations) : []) {
     if ((pair.style.opacity ?? 1) <= 0) continue;
-    const interval = boundedInterval(pair.startMs, pair.endMs, durationMs);
+    const interval = preciseCaptionInterval(pair.startMs, pair.endMs, durationMs);
     if (!interval) continue;
     captions.push({ id: pair.translation.id, text: pair.displayText, ...interval,
       style: renderStyle(pair.style), words: [] });
@@ -225,7 +226,7 @@ export function buildTimelineRenderPlan(
     width,
     height,
     frameRate,
-    backgroundColor: project.canvas.backgroundColor,
+    backgroundColor: resolveCanvasColor(project.canvas.backgroundColor),
     burnCaptions: project.export.burnCaptions,
     videoTransform: compatibilityVideoTransform,
     clips: entries.map((entry, index) => {
@@ -305,14 +306,14 @@ export function serializeStyle(style: CaptionStyle, resolvedFontUris: ResolvedFo
     fontSize: style.fontSize,
     fontWeight: style.fontWeight,
     italic: style.italic,
-    textColor: style.textColor,
+    textColor: toAndroidArgbColor(style.textColor),
     ...(style.opacity === undefined ? {} : { opacity: style.opacity }),
-    secondaryTextColor: style.secondaryTextColor,
+    secondaryTextColor: toAndroidArgbColor(style.secondaryTextColor),
     textTreatment: style.textTreatment,
-    activeWordColor: style.activeWordColor,
-    stroke: { ...style.stroke },
-    shadow: { ...style.shadow },
-    background: { ...style.background },
+    activeWordColor: toAndroidArgbColor(style.activeWordColor),
+    stroke: { ...style.stroke, color: toAndroidArgbColor(style.stroke.color) },
+    shadow: { ...style.shadow, color: toAndroidArgbColor(style.shadow.color) },
+    background: { ...style.background, color: toAndroidArgbColor(style.background.color) },
     alignment: style.alignment,
     letterSpacing: style.letterSpacing,
     lineHeight: style.lineHeight,
@@ -369,6 +370,12 @@ function outputDimensions(project: CaptionProject, activeSources: CaptionProject
 function even(value: number) {
   const bounded = Math.max(2, Math.min(3840, Math.round(value)));
   return bounded % 2 === 0 ? bounded : bounded - 1;
+}
+
+function preciseCaptionInterval(startMs: number, endMs: number, durationMs: number) {
+  const start = Math.max(0, startMs);
+  const end = Math.min(durationMs, endMs);
+  return end > start ? { startMs: start, endMs: end } : undefined;
 }
 
 function boundedInterval(startMs: number, endMs: number, durationMs: number) {

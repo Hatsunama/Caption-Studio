@@ -72,3 +72,28 @@ test('explicit retry actually replaces the same URI and waits for fresh readines
   await loadPlayableVideoSource(player, source.uri);
   assert.deepEqual(attempts, [source.uri, source.uri]);
 });
+
+for (const reason of ['abort', 'error', 'timeout']) test(`settled ${reason} ignores replacement completion after player release`, async () => {
+  let complete;
+  const player = fakePlayer(() => new Promise(resolve => { complete = resolve; }));
+  const controller = new AbortController();
+  const task = loadPlayableVideoSource(player, source.uri, reason === 'timeout' ? 1 : 15000, controller.signal);
+  const rejected = assert.rejects(task, reason === 'abort' ? /superseded/ : reason === 'error' ? /decoder failed/ : /did not become ready/);
+  if (reason === 'abort') controller.abort();
+  if (reason === 'error') player.emit('error', 'decoder failed');
+  await rejected;
+  let reads = 0;
+  Object.defineProperty(player, 'status', { get() { reads++; throw new Error('already released'); } });
+  complete();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 0, 'settled loader must not touch the released native player');
+  assert.equal(player.listeners.size, 0);
+});
+
+test('current replacement status getter failure rejects through the loader cleanup', async () => {
+  const player = fakePlayer();
+  const failure = new Error('native status unavailable');
+  Object.defineProperty(player, 'status', { get() { throw failure; } });
+  await assert.rejects(loadPlayableVideoSource(player, source.uri, 5), error => error === failure);
+  assert.equal(player.listeners.size, 0);
+});

@@ -254,21 +254,30 @@ function expandTimedCaptionWord<T extends TimedCaptionText>(word: T): ExpandedTi
   const weights = units.map((unit) => Math.max(1, captionTextLength(unit.text)));
   const totalWeight = weights.reduce((total, weight) => total + weight, 0);
   const durationMs = word.endMs - word.startMs;
+  const offsets = [0];
   let consumedWeight = 0;
-  return units.flatMap((unit, index) => {
-    const startMs = word.startMs + Math.round(durationMs * consumedWeight / totalWeight);
-    consumedWeight += weights[index];
-    const endMs = word.startMs + Math.round(durationMs * consumedWeight / totalWeight);
-    if (endMs <= startMs) return [];
-    return [{
-      ...unit,
-      word: units.length === 1
-        ? word
-        : { ...word, id: `${word.id}:timing-${index}` },
-      startMs,
-      endMs,
-    }];
-  });
+  for (const weight of weights) {
+    consumedWeight += weight;
+    offsets.push(durationMs * consumedWeight / totalWeight);
+  }
+  const preciseBoundaries = offsets.map((offset, index) => index === units.length
+    ? word.endMs
+    : word.startMs + offset);
+  const roundedBoundaries = offsets.map((offset) => word.startMs + Math.round(offset));
+  const useRounded = units.length > 1 && roundedBoundaries.every((boundary, index) => (
+    boundary >= word.startMs && boundary <= word.endMs
+    && (index === 0 || boundary > roundedBoundaries[index - 1])
+  )) && roundedBoundaries.at(-1) === word.endMs;
+  const boundaries = useRounded ? roundedBoundaries : preciseBoundaries;
+  if (boundaries.some((boundary, index) => index > 0 && boundary <= boundaries[index - 1])) return [];
+  return units.map((unit, index) => ({
+    ...unit,
+    word: units.length === 1
+      ? word
+      : { ...word, id: `${word.id}:timing-${index}` },
+    startMs: boundaries[index],
+    endMs: boundaries[index + 1],
+  }));
 }
 
 function captionTimingKey(text: string) {

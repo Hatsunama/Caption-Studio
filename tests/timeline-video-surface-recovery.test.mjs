@@ -25,9 +25,30 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   const hosts = new Map(), cache = new Map(), timers = new Map(), calls = [], eofFrames = new Map();
   const gapFrames = new Map();
   const publishedFrames = new Map();
+  const retirementTrace = [];
+  let heldNativeOwner;
+  let traceRetirement = false;
   let host, cursor, dirty = true, transport, views = [], alive = true, timerId = 0, now = 0;
   let appStateListener, playerCursor = 0, blockingUi = false, width = 300, height = 200;
   const layout = [], passive = [];
+  // views and transport describe the last completed host commit, not pending
+  // useState cells. Observe native-boundary calls without inventing black pixels
+  // or deriving foreground ownership from the controller's mutable active ref.
+  function observeInstallation(operation, slot, uri) {
+    if (!traceRetirement) return;
+    retirementTrace.push({ operation, slot, uri,
+      heldNativeOwner,
+      committedActiveSlot: transport.activeSlot, committedMs: transport.currentMs,
+      committedViews: views.map(view => ({ slot: players.indexOf(view.player),
+        nativePath: view.nativePath,
+        pairAncestor: view.pairAncestor,
+        foreground: (view.pairAncestor
+          ? view.pairAncestor.frontSlot === view.pairAncestor.childSlot
+          : view.ancestors.some(style => (style.elevation ?? style.zIndex) === 1))
+          && !view.ancestors.some(style => style.opacity === 0),
+      })),
+    });
+  }
   const effect = (queue) => (fn, deps) => {
     const i = cursor++, cell = host.cells[i] ??= {};
     if (!same(cell.deps, deps)) {
@@ -67,6 +88,7 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
       pause() { this.playing = false; calls.push(['pause', slot]); },
       play() { this.playing = true; calls.push(['play', slot, this.muted]); },
       async replaceAsync(uri) { calls.push(['replace', slot, uri]);
+        if (uri) observeInstallation('replaceAsync', slot, uri);
         if ((this.holdReplacement ?? holdReplacement) && uri) await new Promise(resolve => { this.finishReplacement = resolve; });
         if (uri) { this.mediaItems++; time = 0; }
         this.loadedUri = uri; this.windowEndMs = undefined;
@@ -80,9 +102,36 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = {
     'caption-media': { __esModule: true, default: {
+      async acquireVideoMaskLease(player, peer, requestId, generation, requireHiddenAncestor) {
+        calls.push(['maskAcquire', players.indexOf(player), requestId, generation, requireHiddenAncestor]);
+        assert.notEqual(player, peer);
+        player.maskRequest = requestId;
+        player.maskGeneration = generation;
+        if (player.holdMaskAcquire || heldNativeOwner?.slot === players.indexOf(player)) {
+          await new Promise((resolve, reject) => { player.grantMask = resolve; player.failMask = reject; });
+        }
+        if (player.cancelledMask >= requestId || player.maskRequest !== requestId) throw Object.assign(new Error('stale mask'), { name: 'AbortError' });
+        player.nativeLeaseGrant = requestId;
+      },
+      async commitVideoMaskLease(player, requestId, generation) {
+        assert.equal(player.nativeLeaseGrant, requestId);
+        assert.equal(player.maskGeneration, generation);
+        if (player.holdMaskCommit) await new Promise(resolve => { player.finishMaskCommit = resolve; });
+        if (player.cancelledMask >= requestId) throw Object.assign(new Error('stale mask'), { name: 'AbortError' });
+        calls.push(['maskCommit', players.indexOf(player), requestId]);
+      },
+      async cancelVideoMaskLease(player, requestId) {
+        player.cancelledMask = Math.max(player.cancelledMask ?? 0, requestId);
+        calls.push(['maskCancel', players.indexOf(player), requestId]);
+      },
+      async disposeVideoMaskLease(player, requestId) {
+        calls.push(['maskDispose', players.indexOf(player), requestId]);
+        player.cancelledMask = Math.max(player.cancelledMask ?? 0, requestId);
+      },
       async configureVideoPlaybackWindow(player, uri, requestId, endMs, targetMs, timeoutMs) {
         const slot = players.indexOf(player);
         calls.push(['window', slot, uri, requestId, endMs, timeoutMs, targetMs]);
+        observeInstallation('configureVideoPlaybackWindow', slot, uri);
         assert.equal(player.loadedUri, uri, 'SDK source must be current before configuring its window');
         assert.equal(player.playing, false); assert.equal(player.muted, true);
         assert.ok(timeoutMs > 0 && timeoutMs <= 5000);
@@ -101,12 +150,17 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
       },
     } },
     react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
-    'react-native': { View: 'view', Text: 'text', AppState: appState, Platform: { OS: platform } },
+    'react-native': { View: 'view', Text: 'text', AppState: appState, Platform: { OS: platform, Version: 36 } },
     'expo-video': { VideoView: 'video', useVideoPlayer(source, setup) {
       const player = players[playerCursor++]; const ref = react.useRef(false);
       if (!ref.current) { if (source) { player.loadedUri = source; player.status = 'loading'; }
         setup(player); ref.current = true; } return player; } },
-    expo: { useEventListener(player, event, callback) {
+    expo: { requireNativeView(moduleName, viewName) {
+      assert.equal(platform, 'android', 'transition pair native factory is Android only');
+      assert.equal(moduleName, 'CaptionMedia');
+      assert.equal(viewName, 'CaptionTransitionPair');
+      return 'transition-pair';
+    }, useEventListener(player, event, callback) {
       react.useEffect(() => { const sub = player.addListener(event, callback); return () => sub.remove(); }, [player, event, callback]); } },
   };
   // One app has one JavaScript realm. Keep each harness isolated, while module
@@ -145,10 +199,11 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     transport = useTimelineVideoController(project, () => {}, policy.videoSurfacesAdmitted);
     const main = jsx(VideoTransitionOverlay, { entries: buildClipTimeline(project.clips), sources: project.sources,
       timelineMs: transport.currentMs, isPlaying: transport.isPlaying, transportReady: transport.phase === 'ready',
-      width, height, backgroundColor: '#000', admitted: policy.videoSurfacesAdmitted && !transport.previewResourcesSuspended,
+      width, height, backgroundColor: '#000000', admitted: policy.videoSurfacesAdmitted && !transport.previewResourcesSuspended,
       visible: !transport.isGap, players: pip ? players.slice(0, 2) : players, slots: transport.slots, activeSlot: transport.activeSlot,
       currentTransform: transform, currentClipId: transport.slots[transport.activeSlot].preparedClipId,
-      onFirstFrameRender: transport.markFirstFrame, setCompositeClock: transport.setCompositeClock });
+      onFirstFrameRender: transport.markFirstFrame, setCompositeClock: transport.setCompositeClock,
+      retireComposite: transport.retireComposite });
     return pip ? [main, jsx(VideoLayerOverlay, {
       layer: { id: 'pip', uri: 'file:///pip.mp4', startMs: 0, endMs: 8000,
         sourceStartMs: 0, sourceDurationMs: 8000, playbackRate: 1, includeAudio: false, opacity: 1 },
@@ -156,17 +211,21 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
       suspended: transport.previewResourcesSuspended || !policy.videoSurfacesAdmitted,
     })] : main;
   }
-  function renderNode(node, path, seen, ancestors = []) {
-    if (Array.isArray(node)) return node.forEach((child, i) => renderNode(child, `${path}/${child?.key ?? i}`, seen, ancestors));
+  // Capture the actual rendered native-pair prop and its physical child index.
+  // Do not infer committed foreground from controller state or player identity.
+  function renderNode(node, path, seen, ancestors = [], pairAncestor) {
+    if (Array.isArray(node)) return node.forEach((child, i) => renderNode(child, `${path}/${child?.key ?? i}`, seen, ancestors,
+      pairAncestor && pairAncestor.childSlot == null ? { ...pairAncestor, childSlot: i } : pairAncestor));
     if (!node || typeof node !== 'object') return;
     if (typeof node.type === 'function') {
       seen.add(path); host = hosts.get(path) ?? { cells: [] }; hosts.set(path, host); cursor = 0;
-      const child = node.type(node.props); renderNode(child, `${path}/result`, seen, ancestors);
+      const child = node.type(node.props); renderNode(child, `${path}/result`, seen, ancestors, pairAncestor);
     } else {
-      if (node.type === 'video') views.push({ ...node.props, ancestors, nativePath: path });
+      if (node.type === 'video') views.push({ ...node.props, ancestors, pairAncestor, nativePath: path });
       const style = node.props?.style;
       const flat = Object.assign({}, ...(Array.isArray(style) ? style.flat(Infinity) : [style]).filter(Boolean));
-      renderNode(node.props?.children, `${path}/children`, seen, [...ancestors, flat]);
+      renderNode(node.props?.children, `${path}/children`, seen, [...ancestors, flat],
+        node.type === 'transition-pair' ? { frontSlot: node.props.frontSlot, childSlot: null } : pairAncestor);
     }
   }
   function render() {
@@ -183,6 +242,25 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
   async function settle() { for (let i = 0; i < 25; i++) { await Promise.resolve(); if (dirty) render(); } return transport; }
   render();
   return { players, calls, project, render, settle, get transport() { return transport; }, get views() { return views; },
+    maskService: load('src/services/video-playback-window.ts'),
+    retirementTrace,
+    traceRetirement(value) { traceRetirement = value; },
+    // Independent native-boundary fixture: later React renders must not advance
+    // this snapshot. Its native lease is released only by an explicit fixture grant.
+    holdNativeOwnership() {
+      const slot = transport.activeSlot;
+      heldNativeOwner = { slot, nativeViewEpoch: transport.slots[slot].nativeViewEpoch,
+        nativePath: views.find(view => view.player === players[slot]).nativePath };
+      return heldNativeOwner;
+    },
+    async nativeLeaseGrant(slot) {
+      assert.ok(players[slot].grantMask, 'an actual lease request must be pending');
+      players[slot].grantMask();
+      await settle();
+    },
+    // Let promise continuations/native-boundary requests run while React's next
+    // host commit is pending. No timers, fabricated view frames or render calls.
+    async drainWithoutCommit() { for (let i = 0; i < 25; i++) await Promise.resolve(); },
     async app(state) { appState.currentState = state; appStateListener(state); render(); await settle(); },
     async modal(value) { blockingUi = value; render(); await settle(); },
     async rotate() { [width, height] = [height, width]; render(); await settle(); },
@@ -251,6 +329,480 @@ function harness({ clips = [clip()], missingSource = false, holdReplacement = fa
     get timerCount() { return timers.size; },
   };
 }
+
+// Synthetic A/B/A/B 5/5/3/3s fixture: the third cut is at 13s, with a 650ms
+// composite. A2 reaches EOF, so its visible 325ms tail runs at half speed.
+function mixedBoundaryClips(incomingHandle = true, muted = false) {
+  return [
+    { ...clip('A1'), sourceStartMs: 0, sourceEndMs: 5000, availableSourceEndMs: 8000 },
+    { ...clip('B1', 'other'), sourceStartMs: 0, sourceEndMs: 5000, availableSourceEndMs: 8000 },
+    { ...clip('A2'), sourceStartMs: 5000, sourceEndMs: 8000, availableSourceEndMs: 8000,
+      transitionAfter: { type: 'crossfade', durationMs: 650 } },
+    { ...clip('B2', 'other'), sourceStartMs: 3000, sourceEndMs: 6000, availableSourceEndMs: 8000,
+      availableSourceStartMs: incomingHandle ? 0 : 3000, muted, volume: .6 },
+  ];
+}
+
+async function enterMixedBoundary(h, previous) {
+  await h.complete();
+  if (previous === 0) { h.transport.seek(5000); await h.complete(); }
+  h.transport.seek(10000); await h.complete();
+  h.transport.seek(12750); await h.complete();
+  h.transport.play(); await h.complete();
+  assert.equal(h.transport.activeSlot, previous);
+  assert.ok(h.players.every(player => player.playing));
+}
+
+for (const previous of [0, 1]) test(`actual 5/3/3/5s mixed boundary at 11s, slot=${previous}`, async t => {
+  const clips = mixedBoundaryClips();
+  clips[1].sourceEndMs = 3000;
+  clips[3].sourceEndMs = 8000;
+  const h = harness({ clips, sourceDurationMs: 8000 });
+  t.after(() => h.unmount()); await h.complete();
+  if (previous === 0) { h.transport.seek(5000); await h.complete(); }
+  h.transport.seek(8000); await h.complete();
+  h.transport.seek(10750); await h.complete();
+  h.transport.play(); await h.complete();
+  assert.equal(h.transport.activeSlot, previous);
+  const incoming = 1 - previous;
+  for (const ms of [10990, 11000, 11100]) {
+    h.players[previous].currentTime = (7675 + Math.round((ms - 10675) * .5)) / 1000;
+    h.players[incoming].currentTime = (ms - 8000) / 1000;
+    h.calls.length = 0;
+    h.players[h.transport.activeSlot].emit('timeUpdate', { currentTime: h.players[h.transport.activeSlot].currentTime });
+    await h.drainWithoutCommit();
+    t.diagnostic(JSON.stringify({ ms, previous, callsBeforeCommit: h.calls }));
+    assert.ok(!h.calls.some(c => ['seek', 'pause', 'replace', 'window'].includes(c[0])));
+    h.render(); await h.settle();
+    assert.equal(h.transport.activeSlot, ms < 11000 ? previous : incoming);
+    assert.ok(Math.abs(h.transport.currentMs - ms) <= 1);
+    assert.ok(h.players.every(p => p.playing));
+    assert.equal(h.players[previous].playbackRate, .5);
+    assert.equal(h.players[incoming].playbackRate, 1);
+  }
+});
+
+for (const previous of [0, 1]) for (const incomingHandle of [false, true]) for (const muted of [false, true]) for (const sample of [12990, 13000, 13040]) test(
+  `integrated mixed boundary keeps both visible legs continuous: slot=${previous}, handle=${incomingHandle}, muted=${muted}, sample=${sample}`, async t => {
+  const h = harness({ clips: mixedBoundaryClips(incomingHandle, muted), sourceDurationMs: 8000 });
+  t.after(() => h.unmount()); await enterMixedBoundary(h, previous);
+  const incoming = 1 - previous, paths = h.views.map(view => view.nativePath);
+  const incomingRate = incomingHandle ? 1 : .5;
+  // At 13.324s the half-rate incoming leg rounds to its endpoint, whose
+  // inverse is already 13.325s. Keep this sample unambiguously inside the tail;
+  // endpoint rounding is exercised independently by the installed EOF cases.
+  for (const ms of [12800, sample, ...(sample < 13000 ? [13000] : []), 13100, 13322]) {
+    // Decoder samples are independent fixed arithmetic, not production targets.
+    h.players[previous].currentTime = Math.min(7999, 7675 + Math.round((ms - 12675) * .5)) / 1000;
+    h.players[incoming].currentTime = (incomingHandle ? ms - 10000 : 3000 + Math.round((ms - 12675) * .5)) / 1000;
+    h.calls.length = 0;
+    const owner = h.transport.activeSlot;
+    h.players[owner].emit('timeUpdate', { currentTime: h.players[owner].currentTime });
+    await h.drainWithoutCommit();
+    t.diagnostic(JSON.stringify({ ms, previous, incomingHandle, callsBeforeCommit: h.calls,
+      players: h.players.map(p => ({ time: p.currentTime, rate: p.playbackRate, playing: p.playing, muted: p.muted })) }));
+    assert.ok(!h.calls.some(c => ['pause', 'seek', 'replace', 'window'].includes(c[0])), 'a live composite clock must not pause, seek or prepare either visible leg');
+    assert.equal(h.players[previous].playbackRate, .5);
+    assert.equal(h.players[incoming].playbackRate, incomingRate);
+    h.render(); await h.settle();
+    assert.equal(h.transport.activeSlot, ms < 13000 ? previous : incoming, 'transport ownership changes at the cut, never at ordinary early-cut tolerance');
+    assert.ok(Math.abs(h.transport.currentMs - ms) <= 1, 'composite clock survives crossing the clip boundary');
+    assert.ok(h.players.every(p => p.playing));
+    assert.equal(h.players[previous].muted, false);
+    assert.equal(h.players[incoming].muted, muted);
+    assert.deepEqual(h.views.map(view => view.nativePath), paths);
+    assert.ok(!h.calls.some(c => c[0] === 'pause' || c[0] === 'seek'), 'overlay must not repair a controller-induced pause/seek after commit');
+  }
+  // The tail exits at 13.325s. Incoming returns to its ordinary 1x clock;
+  // the outgoing surface can then retire, with no new native host.
+  h.players[incoming].currentTime = 3.325;
+  await h.positionAck(incoming);
+  assert.equal(h.transport.currentMs, 13325);
+  assert.equal(h.transport.activeSlot, incoming);
+  assert.equal(h.players[incoming].currentTime, 3.325);
+  assert.equal(h.players[incoming].playbackRate, 1);
+  assert.equal(h.players[incoming].playing, true);
+  assert.equal(h.players[incoming].muted, muted);
+  assert.equal(h.players[incoming].volume, muted ? 0 : .6);
+  assert.equal(h.players[previous].playing, false);
+  assert.deepEqual(h.views.map(view => view.nativePath), paths);
+  h.players[incoming].currentTime = 3.4; await h.positionAck(incoming);
+  assert.equal(h.transport.currentMs, 13400);
+});
+
+for (const previous of [0, 1]) for (const interruption of ['seek', 'pause', 'background', 'retry', 'native-stop']) test(
+  `integrated mixed boundary interruption ${interruption}, slot=${previous}`, async t => {
+  const h = harness({ clips: mixedBoundaryClips(false), sourceDurationMs: 8000 });
+  t.after(() => h.unmount()); await enterMixedBoundary(h, previous);
+  if (interruption === 'native-stop') {
+    h.players[previous].currentTime = 7.833;
+    h.players[previous].playing = false;
+    h.players[previous].emit('playingChange', { isPlaying: false });
+    await h.settle();
+    assert.equal(h.transport.activeSlot, previous, 'native stop recovery cannot force an early cut while the composite owns timing');
+    assert.ok(h.players.every(p => p.playing));
+    return;
+  }
+  const retired = h.views.map(view => view.onFirstFrameRender);
+  if (interruption === 'seek') { h.transport.seek(14000); await h.complete(); }
+  if (interruption === 'pause') { h.transport.pause(); await h.settle(); }
+  if (interruption === 'background') { await h.app('background'); await h.app('active'); await h.complete(); }
+  if (interruption === 'retry') { h.transport.retrySource(); await h.complete(); }
+  retired.forEach(callback => callback()); await h.settle();
+  assert.equal(h.transport.phase, 'ready');
+  assert.equal(h.transport.isPlaying, interruption === 'seek');
+  assert.ok(h.players.every(p => p.playing === (interruption === 'seek' && p === h.transport.player)));
+  if (interruption === 'seek') {
+    assert.equal(h.transport.currentMs, 14000);
+    assert.equal(h.transport.player.currentTime, 4);
+    assert.equal(h.transport.player.playbackRate, 1);
+  } else {
+    assert.equal(h.transport.currentMs, 12750);
+    assert.equal(h.views.length, 2);
+    h.transport.play(); await h.complete();
+    assert.ok(h.players.every(p => p.playing), 'explicit play restores both prepared composite legs');
+  }
+});
+
+for (const [endpoint, nativeDuration, expectedMs] of [[8000, undefined, 7999], [6385, undefined, 6384],
+  [7950, undefined, 7949], [8000, Math.fround(7.95), 7949], [8000, Math.fround(7.5), 7999]]) test(
+  `integrated synchronizer respects installed EOF ${endpoint}ms, native=${nativeDuration}`, async t => {
+  const outgoing = { ...clip('out'), sourceStartMs: endpoint - 3000, sourceEndMs: endpoint,
+    availableSourceEndMs: endpoint, transitionAfter: { type: 'crossfade', durationMs: 650 } };
+  const h = harness({ clips: [outgoing, { ...clip('in', 'other'), sourceStartMs: 3000, sourceEndMs: 6000 }],
+    sourceDurationMs: 8000, nativeClock: true, nativeDuration });
+  t.after(() => h.unmount()); await h.complete();
+  h.transport.seek(3324); await h.complete();
+  const slot = h.transport.slots.findIndex(s => s.preparedClipId === 'out');
+  const player = h.players[slot];
+  assert.equal(player.windowEndMs, endpoint === 8000 ? null : endpoint);
+  const actualSeek = h.calls.filter(c => c[0] === 'seek' && c[1] === slot).at(-1)[2];
+  t.diagnostic(JSON.stringify({ endpoint, reportedDuration: player.duration, actualSeek, nativeLongMs: Math.trunc(actualSeek * 1000) }));
+  assert.equal(Math.trunc(actualSeek * 1000), expectedMs, 'reuse bounded EOF adjustment and preserve Android Long targets; do not warp a large native mismatch');
+  assert.equal(h.transport.currentMs, 3324, 'native seek adjustment never changes logical preview time');
+  assert.equal(player.playing, false);
+});
+
+for (const previous of [0, 1]) for (const playing of [false, true]) for (const muted of [false, true]) test(
+  `simultaneous composite exit and controller slot change preserves owner: slot ${previous}, playing=${playing}, muted=${muted}`, async t => {
+  const outgoing = { ...clip('out', 'source'), transitionAfter: { type: 'crossfade', durationMs: 1000 } };
+  const clips = [outgoing, { ...clip('in', 'other'), muted }];
+  if (previous === 1) clips.unshift(clip('lead', 'other'));
+  const h = harness({ clips, sourceDurationMs: 60000 });
+  t.after(() => h.unmount());
+  await h.complete();
+  if (previous === 1) { h.transport.seek(30000); await h.complete(); }
+  const boundary = previous === 1 ? 60000 : 30000;
+  h.transport.seek(boundary - 250); await h.complete();
+  if (playing) { h.transport.play(); await h.complete(); }
+  assert.equal(h.transport.activeSlot, previous);
+  assert.ok(h.players.every(player => player.playing === playing), 'production composite follows transport intent');
+  assert.equal(h.players[1 - previous].muted, !playing || muted, 'prepared composite incoming leg follows playback intent and its clip mute');
+  h.calls.length = 0;
+  // No intervening render: activate the prepared incoming slot and leave the
+  // transition window in the same host commit that removes the composite.
+  h.transport.seek(boundary + 1000);
+  await h.drainWithoutCommit();
+  assert.equal(h.transport.activeSlot, previous, 'published transport is still the old commit');
+  assert.equal(h.players[1 - previous].playing, playing, 'controller activated incoming before commit');
+  assert.equal(h.players[1 - previous].muted, muted, 'controller restored incoming clip audio');
+  h.render(); await h.settle();
+  assert.equal(h.transport.activeSlot, 1 - previous);
+  assert.equal(h.transport.currentMs, boundary + 1000);
+  assert.equal(h.transport.phase, 'ready');
+  assert.equal(h.transport.player.muted, muted, 'retirement must preserve the controller audio owner');
+  assert.equal(h.transport.player.playing, playing, 'retirement must preserve the controller playback owner');
+  assert.equal(h.players[previous].muted, true, 'retired standby is muted');
+  assert.equal(h.players[previous].playing, false, 'retired standby is paused');
+  assert.ok(!h.calls.some(call => call[0] === 'pause' && call[1] === 1 - previous), 'cleanup never pauses the new owner');
+});
+
+test('controller retirement silences transition audio while the ordinary owner remains navigable', async t => {
+  const outgoing = { ...clip('out'), transitionAfter: { type: 'crossfade', durationMs: 1000 } };
+  const h = harness({ clips: [outgoing, clip('in', 'other')], sourceDurationMs: 60000 });
+  t.after(() => h.unmount()); await h.complete();
+  h.transport.seek(29750); await h.complete();
+  h.transport.play(); await h.complete();
+  assert.ok(h.players.every(player => player.playing));
+  h.transport.retireComposite();
+  assert.equal(h.players[1].playing, false);
+  assert.equal(h.players[1].muted, true);
+  assert.equal(h.players[0].playing, true);
+  assert.equal(h.players[0].muted, true);
+  assert.ok(h.players.every(player => player.volume === 0));
+  const epochs = h.transport.slots.map(slot => slot.nativeViewEpoch);
+  // The standby never owns transport. A fresh ordinary-owner sample can move
+  // forward; the still-ready overlay may then explicitly reauthorize its pair.
+  h.players[1].emit('timeUpdate', { currentTime: 12 });
+  await h.settle();
+  assert.equal(h.transport.currentMs, 29750, 'standby cannot advance transport');
+  h.players[0].currentTime = 30.85;
+  await h.positionAck(0);
+  assert.equal(h.transport.currentMs, 29850, 'ordinary source time advances without a frozen play intent');
+  assert.deepEqual(h.transport.slots.map(slot => slot.nativeViewEpoch), epochs);
+  assert.equal(h.transport.isPlaying, true);
+});
+
+for (const previous of [0, 1]) {
+  for (const sources of [['source', 'other', 'source', 'other'], ['source', 'source', 'other', 'other']]) {
+    test(`native ownership held across React commit blocks retirement: slot ${previous}, ${sources.join('/')}`, async t => {
+      const h = harness({ clips: sources.map((source, i) => clip(`cut-${i}`, source)) });
+      t.after(() => h.unmount());
+      await h.complete(); h.transport.play(); await h.complete();
+      if (previous === 1) {
+        h.players[0].emit('playToEnd', {}); await h.complete();
+      }
+      assert.equal(h.transport.activeSlot, previous);
+      const nativeOwner = h.holdNativeOwnership();
+      h.traceRetirement(true);
+      h.players[previous].emit('playToEnd', {});
+      await h.drainWithoutCommit();
+      assert.deepEqual(h.retirementTrace, [], 'pending React commit retains the outgoing source');
+      h.render(); await h.complete();
+      assert.equal(h.transport.activeSlot, 1 - previous, 'React has committed the incoming owner');
+      const mutations = h.retirementTrace.filter(event => event.slot === nativeOwner.slot);
+      const currentView = h.views.find(view => view.player === h.players[previous]);
+      assert.deepEqual({ mutations, epoch: h.transport.slots[previous].nativeViewEpoch, path: currentView.nativePath },
+        { mutations: [], epoch: nativeOwner.nativeViewEpoch, path: nativeOwner.nativePath },
+        'React commit alone cannot authorize source replacement, playback-window installation, or rekey of the held native owner');
+    });
+  }
+}
+
+for (const previous of [0, 1]) {
+  for (const sources of [['source', 'other', 'source', 'other'], ['source', 'source', 'other', 'other']]) {
+    test(`explicit nativeLeaseGrant permits protected retirement: slot ${previous}, ${sources.join('/')}`, async t => {
+      const h = harness({ clips: sources.map((source, i) => clip(`grant-${i}`, source)) });
+      t.after(() => h.unmount()); await h.complete(); h.transport.play(); await h.complete();
+      if (previous === 1) { h.players[0].emit('playToEnd', {}); await h.complete(); }
+      h.holdNativeOwnership(); h.traceRetirement(true);
+      h.players[previous].emit('playToEnd', {}); await h.complete();
+      assert.deepEqual(h.retirementTrace, []);
+      await h.nativeLeaseGrant(previous); await h.complete();
+      assert.ok(h.retirementTrace.some(event => event.slot === previous && event.operation === 'configureVideoPlaybackWindow'));
+      assert.ok(h.calls.some(call => call[0] === 'maskCommit' && call[1] === previous));
+      assert.equal(h.transport.activeSlot, 1 - previous);
+      assert.equal(h.transport.phase, 'ready');
+    });
+  }
+}
+
+for (const interruption of ['seek', 'background', 'unmount', 'failure', 'timeout']) {
+  test(`native lease pending ${interruption} ignores a stale grant without retiring the owner`, async t => {
+    const h = harness({ clips: ['source', 'other', 'source'].map((source, i) => clip(`cancel-${i}`, source)) });
+    t.after(() => h.unmount()); await h.complete(); h.transport.play(); await h.complete();
+    const owner = h.holdNativeOwnership(); h.traceRetirement(true);
+    h.players[0].emit('playToEnd', {}); await h.complete();
+    const lateGrant = h.players[owner.slot].grantMask;
+    assert.equal(typeof lateGrant, 'function');
+    if (interruption === 'seek') { h.transport.seek(35000); await h.settle(); }
+    if (interruption === 'background') await h.app('background');
+    if (interruption === 'unmount') { h.unmount(); await h.settle(); }
+    if (interruption === 'failure') { h.players[owner.slot].failMask(new Error('native mask rejected')); await h.settle(); }
+    if (interruption === 'timeout') await h.advance(5000);
+    lateGrant(); await h.settle();
+    assert.deepEqual(h.retirementTrace.filter(event => event.slot === owner.slot), []);
+    assert.notEqual(h.transport.slots[owner.slot].readiness, 'ready');
+    assert.ok(h.calls.some(call => call[0] === 'maskCancel' && call[1] === owner.slot));
+  });
+}
+
+test('cancellation after native grant invalidates standby cache before late frame preparation can be reused', async t => {
+  const h = harness({ clips: ['source', 'other', 'source'].map((source, i) => clip(`dirty-${i}`, source)) });
+  t.after(() => h.unmount()); await h.complete(); h.transport.play(); await h.complete();
+  h.holdNativeOwnership(); h.traceRetirement(true);
+  h.players[0].emit('playToEnd', {}); await h.complete();
+  h.players[0].holdWindow = true;
+  await h.nativeLeaseGrant(0);
+  const lateWindow = h.players[0].finishWindow;
+  const grantedId = h.players[0].nativeLeaseGrant;
+  assert.equal(typeof lateWindow, 'function');
+  h.transport.seek(35000); await h.settle();
+  assert.equal(h.transport.slots[0].firstFrameReady, false);
+  assert.ok(h.transport.slots[0].playbackUri === undefined || h.transport.slots[0].prepareToken > grantedId,
+    'the cancelled cache is cleared; a later ungranted request may publish its own desired URI');
+  lateWindow(); await h.settle();
+  assert.equal(h.transport.slots[0].firstFrameReady, false);
+  assert.ok(h.calls.some(call => call[0] === 'maskCancel' && call[1] === 0 && call[2] === grantedId));
+  assert.equal(h.calls.some(call => call[0] === 'maskCommit' && call[1] === 0 && call[2] === grantedId), false);
+  h.players[0].holdWindow = false;
+  const replacements = h.calls.filter(call => call[0] === 'replace' && call[1] === 0).length;
+  h.transport.seek(65000); await h.settle();
+  await h.nativeLeaseGrant(0); await h.complete();
+  assert.equal(h.transport.phase, 'ready'); assert.equal(h.transport.activeSlot, 0);
+  assert.ok(h.calls.filter(call => call[0] === 'replace' && call[1] === 0).length > replacements);
+});
+
+for (const phase of ['acquire', 'commit']) {
+  for (const reason of ['abort', 'timeout']) {
+    test(`real mask service ${phase} ${reason} settles once and ignores late native resolution`, async t => {
+      const h = harness({ clips: [] }); t.after(() => h.unmount()); await h.settle();
+      const player = h.players[0], signalOwner = new AbortController();
+      player.holdMaskAcquire = phase === 'acquire'; player.holdMaskCommit = phase === 'commit';
+      const acquisition = h.maskService.acquireVideoMaskLease(player, h.players[1], 1, 1, false, signalOwner.signal);
+      let lease;
+      const task = phase === 'acquire' ? acquisition : (lease = await acquisition).commit();
+      let settlements = 0;
+      const outcome = task.then(() => { settlements++; return undefined; }, error => { settlements++; return error; });
+      await h.settle();
+      const late = phase === 'acquire' ? player.grantMask : player.finishMaskCommit;
+      assert.equal(typeof late, 'function');
+      if (reason === 'abort') { signalOwner.abort(); await h.settle(); }
+      else await h.advance(5000);
+      const error = await outcome;
+      assert.ok(error instanceof Error);
+      if (reason === 'abort') assert.equal(error.name, 'AbortError');
+      else assert.match(error.message, /timed out/);
+      assert.equal(h.timerCount, 0);
+      late(); await h.settle(); signalOwner.abort(); lease?.cancel();
+      assert.equal(settlements, 1);
+      assert.equal(h.calls.filter(call => call[0] === 'maskCancel').length, 1);
+      assert.equal(h.calls.some(call => call[0] === 'maskCommit'), false);
+    });
+  }
+}
+
+test('empty timeline translation and cleanup make no native window or mask calls', async () => {
+  const h = harness({ clips: [] }); await h.settle();
+  const suspension = h.transport.suspendForTranslation(); await h.settle(); await suspension.ready;
+  await suspension.restore(); await h.settle(); h.unmount(); await h.settle();
+  assert.equal(h.calls.some(call => call[0] === 'window' || call[0].startsWith('mask')), false);
+});
+
+test('retirement observer distinguishes a hidden preload from the committed foreground', async t => {
+  const h = harness({ clips: [clip('cut-0', 'source'), clip('cut-1', 'other')] });
+  t.after(() => h.unmount()); h.traceRetirement(true); await h.complete(); h.traceRetirement(false);
+  const standby = h.retirementTrace.filter(event => event.slot === 1);
+  assert.ok(standby.some(event => event.operation === 'configureVideoPlaybackWindow'));
+  assert.ok(standby.every(event => event.committedActiveSlot === 0
+    && event.committedViews.length === 2
+    && event.committedViews.find(view => view.slot === 0).foreground
+    && !event.committedViews.find(view => view.slot === 1).foreground));
+});
+
+for (const sources of [['source', 'other'], ['other', 'source']]) {
+  test(`clean-cut ${sources.join('/')} retirement waits for foreground host commit in both slot directions`, async t => {
+    // A/B/A/B: each decoder is reused for its original URI. This still installs
+    // a fresh native playback window; replaceAsync-only spies miss that path.
+    const clips = Array.from({ length: 4 }, (_, i) => clip(`cut-${i}`, sources[i % 2]));
+    const h = harness({ clips }); t.after(() => h.unmount());
+    await h.complete(); h.transport.play(); await h.complete();
+    assert.equal(h.transport.phase, 'ready');
+    assert.equal(h.transport.activeSlot, 0);
+    assert.deepEqual(Array.from(h.transport.slots, slot => slot.preparedClipId), ['cut-0', 'cut-1']);
+    const paths = h.views.map(view => view.nativePath);
+    const beforeCommits = [];
+    h.traceRetirement(true);
+    for (const [previous, incoming, clipId] of [[0, 1, 'cut-1'], [1, 0, 'cut-2']]) {
+      const start = h.retirementTrace.length;
+      assert.equal(h.transport.activeSlot, previous);
+      h.players[previous].emit('playToEnd', {});
+      await h.drainWithoutCommit();
+      assert.equal(h.transport.activeSlot, previous, 'the previous host commit is still installed');
+      assert.deepEqual(h.views.map(view => view.nativePath), paths, 'no layout or mount change during pending commit');
+      beforeCommits.push({ previous, incoming, operations: h.retirementTrace.slice(start) });
+      h.render(); await h.complete();
+      assert.equal(h.transport.activeSlot, incoming);
+      assert.equal(h.transport.slots[incoming].preparedClipId, clipId);
+      assert.deepEqual(h.views.map(view => view.nativePath), paths, 'handoff retains both native hosts');
+    }
+    h.traceRetirement(false);
+    t.diagnostic(JSON.stringify({ beforeCommits, allInstallations: h.retirementTrace }));
+    const installations = h.retirementTrace.filter(event => event.operation === 'configureVideoPlaybackWindow');
+    assert.ok(installations.some(event => event.slot === 0) && installations.some(event => event.slot === 1),
+      'exercise actual preparation requests for both retired decoder slots');
+    const foregroundInstallations = h.retirementTrace.filter(event =>
+      event.committedViews.some(view => view.slot === event.slot && view.foreground));
+    assert.deepEqual(foregroundInstallations, [],
+      'native item replacement must wait until the retained outgoing host is no longer foreground');
+  });
+}
+
+for (const interruption of ['pause', 'superseding seek', 'rapid A/B/A', 'background', 'active error', 'unmount']) {
+  test(`pending retirement preload respects ${interruption}`, async t => {
+    const h = harness({ clips: [clip('cut-0'), clip('cut-1', 'other'), clip('cut-2')] });
+    t.after(() => h.unmount()); await h.complete();
+    h.transport.play(); await h.complete();
+    const paths = h.views.map(view => view.nativePath);
+    h.traceRetirement(true);
+    h.players[0].emit('playToEnd', {}); await h.drainWithoutCommit();
+    assert.equal(h.transport.activeSlot, 0, 'outgoing host still committed');
+    assert.deepEqual(h.retirementTrace, [], 'no installation while retirement commit is pending');
+    if (interruption === 'pause') h.transport.pause();
+    if (interruption === 'superseding seek') h.transport.seek(31000);
+    if (interruption === 'rapid A/B/A') h.transport.seek(1000);
+    if (interruption === 'background') await h.app('background');
+    if (interruption === 'active error') h.players[1].emit('statusChange', { status: 'error', error: new Error('decoder failed') });
+    if (interruption === 'unmount') h.unmount();
+    await h.drainWithoutCommit();
+    assert.deepEqual(h.retirementTrace, [], 'interrupting work cannot flush the retired preload before commit');
+    h.render(); await h.complete();
+    if (interruption === 'superseding seek') {
+      assert.equal(h.transport.activeSlot, 1);
+      assert.equal(h.transport.currentMs, 31000);
+      assert.equal(h.transport.slots[0].preparedClipId, 'cut-2', 'latest request still preloads after commit');
+      assert.ok(h.retirementTrace.some(event => event.operation === 'configureVideoPlaybackWindow' && event.slot === 0));
+      assert.deepEqual(h.retirementTrace.filter(event =>
+        event.committedViews.some(view => view.slot === event.slot && view.foreground)), []);
+    } else {
+      assert.deepEqual(h.retirementTrace, [], 'cancelled preload cannot restart on a later render');
+    }
+    if (interruption === 'rapid A/B/A') {
+      assert.equal(h.transport.activeSlot, 0);
+      assert.equal(h.transport.currentMs, 1000);
+      assert.equal(h.transport.slots[0].preparedClipId, 'cut-0', 'outgoing decoder survives the uncommitted round trip');
+    }
+    if (interruption === 'background') assert.equal(h.transport.phase, 'suspended');
+    if (interruption === 'active error') assert.equal(h.transport.phase, 'error');
+    if (interruption !== 'background' && interruption !== 'unmount') {
+      if (interruption !== 'active error') assert.equal(h.transport.phase, 'ready');
+      assert.deepEqual(h.views.map(view => view.nativePath), paths);
+    }
+    assert.equal(h.timerCount, 0);
+  });
+}
+
+test('paused clean-cut retirement releases preload after commit without starting playback', async t => {
+  const h = harness({ clips: [clip('cut-0'), clip('cut-1', 'other'), clip('cut-2')] });
+  t.after(() => h.unmount()); await h.complete(); h.traceRetirement(true);
+  h.transport.seek(31000); await h.drainWithoutCommit();
+  assert.equal(h.transport.activeSlot, 0);
+  assert.deepEqual(h.retirementTrace, []);
+  h.render(); await h.complete();
+  assert.equal(h.transport.activeSlot, 1);
+  assert.equal(h.transport.slots[0].preparedClipId, 'cut-2');
+  assert.ok(h.retirementTrace.some(event => event.operation === 'configureVideoPlaybackWindow'));
+  assert.deepEqual(h.retirementTrace.filter(event =>
+    event.committedViews.some(view => view.slot === event.slot && view.foreground)), []);
+  assert.equal(h.calls.some(call => call[0] === 'play'), false);
+  assert.equal(h.timerCount, 0);
+});
+
+test('transition retirement keeps the outgoing decoder until the tail exit commits', async t => {
+  const h = harness({ sourceDurationMs: 60000, clips: [
+    { ...clip('cut-0'), transitionAfter: { type: 'crossfade', durationMs: 1001 } },
+    clip('cut-1', 'other'), clip('cut-2'),
+  ] });
+  t.after(() => h.unmount()); await h.complete(); h.transport.play(); await h.complete();
+  h.transport.seek(30000); await h.complete();
+  assert.equal(h.transport.activeSlot, 1);
+  assert.equal(h.transport.slots[0].preparedClipId, 'cut-0');
+  const paths = h.views.map(view => view.nativePath);
+  h.traceRetirement(true);
+  await h.advance(501);
+  assert.deepEqual(h.retirementTrace, [], 'wall time cannot retire a still-committed composite');
+  h.players[1].currentTime = 1.6;
+  h.players[1].emit('timeUpdate', { currentTime: 1.6 });
+  await h.drainWithoutCommit();
+  assert.deepEqual(h.retirementTrace, [], 'clock advancement without a React commit cannot retire the tail');
+  h.render(); await h.complete();
+  assert.ok(h.transport.currentMs >= 30501);
+  assert.equal(h.transport.slots[0].preparedClipId, 'cut-2');
+  assert.ok(h.retirementTrace.some(event => event.operation === 'configureVideoPlaybackWindow' && event.slot === 0));
+  assert.deepEqual(h.retirementTrace.filter(event =>
+    event.committedViews.some(view => view.slot === event.slot && view.foreground)), []);
+  assert.deepEqual(h.views.map(view => view.nativePath), paths);
+});
 
 test('authored trailing gap still uses its canvas clock through the rounded project endpoint', async t => {
   const final = { ...clip(), sourceStartMs: 0, sourceEndMs: 6385.416666666667, gapAfterMs: 20.25 };
@@ -327,7 +879,7 @@ test('independent app harnesses keep clocks, native calls and teardown isolated'
 });
 
 test('load-time frame plus an unrelated position 115ms away cannot certify preparation', async t => {
-  const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+  const h = harness({ holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
   await h.frame(0); // Source load has not completed and no target has been assigned.
   h.players[0].holdWindow = true;
   h.players[0].finishReplacement(); await h.settle();
@@ -365,7 +917,7 @@ test('iOS legacy: position listener precedes target assignment, including a sync
 });
 
 test('replacement is paused and muted before native load begins', async t => {
-  const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+  const h = harness({ holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
   assert.ok(h.calls.findIndex(call => call[0] === 'pause') < h.calls.findIndex(call => call[0] === 'replace'));
   assert.equal(h.players[0].muted, true);
 });
@@ -792,7 +1344,7 @@ test('background cancels in-flight frame preparation, stays silent, and replaces
 });
 
 test('an interrupted source replacement is not cached as loaded; its late completion cannot activate transport', async t => {
-  const h = harness({ holdReplacement: true }); t.after(() => h.unmount());
+  const h = harness({ holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
   const finishOld = h.players[0].finishReplacement;
   await h.app('background'); finishOld(); await h.settle();
   assert.equal(h.transport.phase, 'suspended'); assert.equal(h.calls.some(call => call[0] === 'play'), false);
@@ -1002,7 +1554,7 @@ for (const interruption of ['native failure', 'cancel', 'new target']) {
 
 
 test('SDK ready precedes native presentation; ACK retains the consumed view without another seek', async t => {
-  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount());
+  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
   h.players[0].holdWindow = true;
   await h.settle(); assert.equal(h.calls.some(c => c[0] === 'window'), false);
   h.players[0].finishReplacement(); await h.settle();
@@ -1034,7 +1586,7 @@ test('same URI trim change and untrim reload full source through SDK', async t =
 
 
 test('native window, position and frame share five seconds after SDK readiness', async t => {
-  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount());
+  const h = harness({ sourceDurationMs: 60000, holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
   h.players[0].holdWindow = true;
   await h.advance(6000); assert.notEqual(h.transport.phase, 'error', 'SDK load has its own existing timeout');
   h.players[0].finishReplacement(); await h.settle();
@@ -1048,7 +1600,7 @@ test('native window, position and frame share five seconds after SDK readiness',
 for (const sourceDurationMs of [31000, 60000]) {
   for (const reason of ['timeout', 'failure', 'background', 'translation', 'changed trim']) {
     test(`native window ${sourceDurationMs} ${reason} retires its cache and ignores late completion`, async t => {
-      const h = harness({ sourceDurationMs, holdReplacement: true }); t.after(() => h.unmount());
+      const h = harness({ sourceDurationMs, holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
       const player = h.players[0]; player.holdWindow = true;
       player.finishReplacement(); await h.settle();
       const late = player.finishWindow, id = h.calls.find(c => c[0] === 'window')[3];
@@ -1240,7 +1792,7 @@ test('finite endpoint uses SDK Long-to-Float milliseconds before Float division'
 
 for (const sourceDurationMs of [31000, 60000]) {
   test(`rotation retains Android ${sourceDurationMs} SDK view during presentation and after ACK`, async t => {
-    const h = harness({ sourceDurationMs, holdReplacement: true }); t.after(() => h.unmount());
+    const h = harness({ sourceDurationMs, holdReplacement: true }); t.after(() => h.unmount()); await h.settle();
     const player = h.players[0]; player.holdWindow = true;
     player.finishReplacement(); await h.settle();
     const path = h.views.find(v => v.player === player).nativePath;
@@ -1262,7 +1814,7 @@ for (const sourceDurationMs of [31000, 60000]) {
 
 test('whole Android source fences zero-frame readiness and retains its final view and target', async t => {
   const h = harness({ holdReplacement: true, clips: [{ ...clip(), sourceStartMs: 0 }] });
-  t.after(() => h.unmount());
+  t.after(() => h.unmount()); await h.settle();
   const player = h.players[0]; player.holdWindow = true;
   player.finishReplacement(); await h.settle();
   const request = h.calls.find(c => c[0] === 'window');
@@ -1307,14 +1859,15 @@ test('paused main and PiP independently require native presentation and retain b
 for (const sourceDurationMs of [31000, 60000]) {
   test(`superseding target while SDK replacement is pending waits for a loaded source: ${sourceDurationMs}`, async t => {
     const h = harness({ holdReplacement: true, sourceDurationMs });
-    t.after(() => h.unmount());
+    t.after(() => h.unmount()); await h.settle();
     const player = h.players[0], finishOld = player.finishReplacement;
     h.transport.seek(3000); await h.settle();
     assert.equal(h.calls.filter(call => call[0] === 'window').length, 0,
       'a desired URI is not proof that the SDK has installed it');
     assert.notEqual(h.transport.phase, 'error');
-    const finishCurrent = player.finishReplacement;
+    assert.equal(player.finishReplacement, finishOld, 'replacement mutations serialize while the lease stays masked');
     finishOld(); await h.settle();
+    const finishCurrent = player.finishReplacement;
     if (finishCurrent !== finishOld) {
       assert.equal(h.calls.filter(call => call[0] === 'window').length, 0,
         'a retired SDK completion cannot certify its replacement');
@@ -1326,3 +1879,61 @@ for (const sourceDurationMs of [31000, 60000]) {
     assert.equal(h.calls.some(call => call[0] === 'play'), false);
   });
 }
+
+test('cleanup disposes the latest actual native mask ID after repeated preparations', async t => {
+  const h = harness({ clips: ['source', 'other', 'source', 'other'].map((source, i) => clip(`dispose-${i}`, source)) });
+  t.after(() => h.unmount());
+  await h.complete(); h.transport.play(); await h.complete();
+  h.players[0].emit('playToEnd', {}); await h.complete();
+  h.players[1].emit('playToEnd', {}); await h.complete();
+  const latest = [0, 1].map(slot => h.calls.filter(call => call[0] === 'maskAcquire' && call[1] === slot).at(-1)[2]);
+  assert.ok(latest.some(id => id > 1), 'exercise a renewed native lease, not just mount-time IDs');
+  h.unmount(); await h.settle();
+  assert.deepEqual(h.calls.filter(call => call[0] === 'maskDispose').map(call => call.slice(1)),
+    [[0, latest[0]], [1, latest[1]]], 'cleanup must dispose the actual lease IDs without snapshotting initial numbers');
+});
+
+// Use the complete controller/overlay harness and its installed Expo Long/Float
+// nativeClock boundary. Short sources use valid bounds and their own cut time.
+for (const endpoint of [1002, 6385, 8000]) for (const full of [false, true]) for (const nativeFloat of [false, true]) test(
+  `EOF seconds precision survives actual overlay: end=${endpoint}, full=${full}, Float=${nativeFloat}`, async t => {
+  const length = Math.min(endpoint, 3000);
+  const outgoing = { ...clip('precision-out'), sourceStartMs: endpoint - length, sourceEndMs: endpoint,
+    availableSourceEndMs: endpoint, transitionAfter: { type: 'crossfade', durationMs: 650 } };
+  const h = harness({ clips: [outgoing, { ...clip('precision-in', 'other'), sourceStartMs: 0, sourceEndMs: length }],
+    sourceDurationMs: full ? endpoint : 10000, nativeClock: true,
+    nativeDuration: nativeFloat ? Math.fround(Math.fround(endpoint) / 1000) : undefined });
+  t.after(() => h.unmount()); await h.complete();
+  assert.ok(outgoing.sourceStartMs >= 0);
+  const timelineMs = length + 324; // one ms before this actual transition window ends
+  h.transport.seek(timelineMs); await h.complete();
+  const slot = h.transport.slots.findIndex(s => s.preparedClipId === outgoing.id);
+  const player = h.players[slot];
+  assert.equal(player.windowEndMs, full ? null : endpoint);
+  const actualSeek = h.calls.filter(c => c[0] === 'seek' && c[1] === slot).at(-1)?.[2];
+  assert.equal(typeof actualSeek, 'number', 'production synchronizer issued the source seek');
+  t.diagnostic(JSON.stringify({ endpoint, full, nativeFloat, timelineMs, reportedDuration: player.duration, actualSeek, nativeLongMs: Math.trunc(actualSeek * 1000) }));
+  assert.equal(Math.trunc(actualSeek * 1000), endpoint - 1, 'preserve the helper ULP through the real Expo seek boundary');
+  assert.equal(player.currentTime, Math.fround(Math.fround(endpoint - 1) / 1000), 'actual nativeClock landed on the final readable ms');
+  assert.equal(h.transport.currentMs, timelineMs, 'source bound must not change the logical timeline');
+  assert.equal(player.playing, false);
+});
+
+for (const [logicalMs, nativeDuration, expectedMs] of [
+  [7900, Math.fround(7.95), 7900], [7960, Math.fround(7.95), 7949], [7990, Math.fround(7.95), 7949],
+  [8000, Math.fround(7.95), 7949], [7990, Math.fround(7.5), 7990], [8000, Math.fround(7.5), 7999],
+]) test(`EOF native playable bound in actual overlay: logical=${logicalMs}, native=${nativeDuration}`, async t => {
+  const outgoing = { ...clip('native-bound-out'), sourceStartMs: 5000, sourceEndMs: 8000,
+    availableSourceEndMs: 8000, transitionAfter: { type: 'crossfade', durationMs: 650 } };
+  const h = harness({ clips: [outgoing, { ...clip('native-bound-in', 'other'), sourceStartMs: 0, sourceEndMs: 3000 }],
+    sourceDurationMs: 8000, nativeClock: true, nativeDuration });
+  t.after(() => h.unmount()); await h.complete();
+  const timelineMs = logicalMs === 8000 ? 3324 : 2675 + (logicalMs - 7675) * 2;
+  h.transport.seek(timelineMs); await h.complete();
+  const slot = h.transport.slots.findIndex(s => s.preparedClipId === outgoing.id);
+  const actualSeek = h.calls.filter(c => c[0] === 'seek' && c[1] === slot).at(-1)?.[2];
+  t.diagnostic(JSON.stringify({ logicalMs, nativeDuration, actualSeek, nativeLongMs: Math.trunc(actualSeek * 1000) }));
+  assert.equal(Math.trunc(actualSeek * 1000), expectedMs, 'bound near-EOF seeks even before declared EOF; preserve interior targets and >250ms mismatch policy');
+  assert.equal(h.transport.currentMs, timelineMs);
+  assert.equal(h.players[slot].playing, false);
+});

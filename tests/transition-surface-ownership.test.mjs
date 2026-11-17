@@ -14,10 +14,24 @@ const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Obje
 const transform = { position: { x: .5, y: .5 }, scale: 1, rotation: 0, fit: 'fit' };
 const flatten = style => Object.assign({}, ...(Array.isArray(style) ? style.flat(Infinity) : [style]).filter(Boolean));
 
+// Locate the existing alpha boundary and its inner matte by actual host props,
+// so changing only the pair's native type cannot hide a lifetime/layout regression.
+const opacityOwner = video => {
+  const owner = video.ancestors.find(node => Object.hasOwn(node.props, 'needsOffscreenAlphaCompositing'));
+  assert.ok(owner, 'retained video has its concrete opacity owner');
+  return owner;
+};
+const pairOf = video => video.ancestors[video.ancestors.indexOf(opacityOwner(video)) - 1];
+const matteOf = video => {
+  const matte = video.ancestors.findLast(node => node.style.backgroundColor != null);
+  assert.ok(matte, 'retained video has its input matte');
+  return matte;
+};
+
 // Executes the actual exported overlay and every component it returns. Native host
 // identity follows keyed parent/type ancestry, including all wrapper components.
 // Only React scheduling and native hosts are substituted; policy modules are real.
-function harness(type, reverse = false) {
+function createHarness(type, reverse = false, platform = 'android', platformVersion = 36) {
   const hosts = new Map(), natives = new Map(), cache = new Map();
   const context = vm.createContext({});
   const effects = [], calls = [];
@@ -38,7 +52,13 @@ function harness(type, reverse = false) {
   };
   const jsx = (type, props, key) => ({ type, props, key });
   const mocks = { react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
-    'react-native': { View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' } };
+    'react-native': { Platform: { OS: platform, Version: platformVersion }, View: 'view', Text: 'text' }, 'expo-video': { VideoView: 'video' },
+    'expo': { requireNativeView(module, name) {
+      assert.equal(platform, 'android', 'native pair is Android only');
+      assert.equal(module, 'CaptionMedia');
+      assert.equal(name, 'CaptionTransitionPair');
+      return 'transition-pair';
+    } } };
   function load(file) {
     if (cache.has(file)) return cache.get(file);
     if (!compiled.has(file)) compiled.set(file, ts.transpileModule(readFileSync(file, 'utf8'), {
@@ -72,7 +92,13 @@ function harness(type, reverse = false) {
     slots: order.map((preparedClipId, i) => ({ preparedClipId, prepareToken: 10 + i, nativeViewEpoch: 100 + i, firstFrameReady: true, readiness: 'ready' })),
     activeSlot: reverse ? 1 : 0, currentTransform: clips[0].transform, currentClipId: 'out',
     onFirstFrameRender(slot, token) { calls.push(['frame', slot, token]); },
-    setCompositeClock(clock) { calls.push(['clock', clock]); } };
+    setCompositeClock(clock) { calls.push(['clock', clock]); },
+    retireComposite() {
+      props.setCompositeClock();
+      players.forEach((player, slot) => {
+        if (slot !== props.activeSlot) { player.muted = true; player.pause(); }
+      });
+    } };
   function walk(node, path, seen, nativeSeen) {
     if (Array.isArray(node)) return node.map((child, i) => walk(child, `${path}/${child?.key ?? i}`, seen, nativeSeen));
     if (!node || typeof node !== 'object') return node;
@@ -117,6 +143,201 @@ const recipes = ['crossfade', 'push-left', 'push-right', 'push-up', 'push-down',
   'iris-circle', 'iris-diamond', 'fold-horizontal', 'fold-vertical', 'zoom-in', 'zoom-out', 'spin',
   'fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'];
 
+// The exported overlay must request the named Expo host; the mock does not
+// compute frontSlot or reorder children. These are JS wiring/lifetime assertions.
+function assertFront(h, front) {
+  const videos = h.videos();
+  if (h.nodes('transition-pair').length) {
+    const [pair] = h.nodes('transition-pair');
+    assert.equal(h.nodes('transition-pair').length, 1);
+    assert.equal(pair.props.frontSlot, front, 'authoritative native frontSlot');
+    const children = pair.children.flat(Infinity).filter(Boolean);
+    assert.deepEqual(children.map(c => c.id), videos.map(v => opacityOwner(v).id),
+      'physical children stay slot 0 then slot 1; only native paint order changes');
+    for (const video of videos) {
+      assert.equal(pairOf(video).id, pair.id, 'pair directly owns opacity layers');
+      const layer = opacityOwner(video);
+      assert.equal(layer.style.zIndex ?? 0, 0, 'fixed Fabric order');
+      assert.equal(layer.style.elevation ?? 0, 0, 'no child elevation ordering');
+      assert.equal(layer.style.translationZ ?? 0, 0, 'no child translationZ ordering');
+    }
+    assert.notEqual(pair.props.renderToHardwareTextureAndroid, true, 'no extra pair cache');
+    assert.notEqual(pair.props.needsOffscreenAlphaCompositing, true, 'no extra alpha owner');
+  } else {
+    // Android must never silently fall back to the defective elevated RN pair.
+    assert.equal(pairOf(h.videos()[0]).type, 'view');
+    for (const [slot, video] of videos.entries())
+      assert.equal(opacityOwner(video).style.zIndex, Number(slot === front));
+  }
+}
+
+for (const platform of ['android', 'ios', 'web']) for (const reverse of [false, true])
+  test(`authoritative pair order and retained ancestry: ${platform}/${reverse}`, t => {
+    for (const recipe of recipes) {
+      const h = createHarness(recipe, reverse, platform); t.after(() => h.unmount());
+      h.render();
+      const identities = () => h.videos().map(v => [...v.ancestors, v].map(n => n.id));
+      const initial = identities();
+      const check = front => {
+        assert.equal(h.videos()[0].ancestors[0].type, 'view', 'root remains RN View');
+        assert.equal(h.videos()[0].ancestors[0].props.pointerEvents, 'none', 'root is the authoritative touch shield');
+        assert.equal(h.nodes('transition-pair').length, Number(platform === 'android'),
+          'Android uses CaptionMedia/CaptionTransitionPair; other platforms retain RN View');
+        assertFront(h, front);
+        assert.deepEqual(identities(), initial, 'all native ancestry survives order and size changes');
+        assert.deepEqual(h.videos().map(v => h.players.indexOf(v.props.player)), [0, 1]);
+      };
+      const isComposite = !['fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'].includes(recipe);
+      for (const timelineMs of [3000, 3500, 3750, 4000, 4499, 4500, 5000, 3750, 3000])
+        for (const activeSlot of [0, 1]) for (const [width, height] of [[300, 200], [200, 300]]) {
+          h.render({ timelineMs, activeSlot, width, height });
+          const composite = isComposite && timelineMs >= 3500 && timelineMs < 4500;
+          check(composite ? Number(!reverse) : activeSlot);
+        }
+      h.phase(.5);
+      const readySlots = h.props.slots;
+      for (const patch of [{ visible: false }, { transportReady: false },
+        ...['preparing', 'cancelled', 'error'].map(readiness => ({ slots: readySlots.map(slot =>
+          ({ ...slot, readiness, firstFrameReady: false })) }))]) {
+        h.render(patch); check(h.props.activeSlot);
+        h.render({ visible: true, transportReady: true, slots: readySlots });
+        check(isComposite ? Number(!reverse) : h.props.activeSlot);
+      }
+      h.unmount();
+    }
+  });
+
+for (const version of [24, 27, 28, 36]) test(`Android named ordering across supported APIs: ${version}`, t => {
+  for (const reverse of [false, true]) {
+    const h = createHarness('crossfade', reverse, 'android', version);
+    t.after(() => h.unmount()); h.render();
+    assert.equal(h.nodes('transition-pair').length, 1);
+    for (const timelineMs of [3000, 3500, 4000, 4500]) {
+      h.render({ timelineMs, activeSlot: timelineMs < 4000 ? Number(reverse) : Number(!reverse) });
+      assertFront(h, timelineMs >= 3500 && timelineMs < 4500 ? Number(!reverse) : h.props.activeSlot);
+    }
+  }
+});
+
+// Preserve the existing opacity, matte and clipping boundaries on API 24-27.
+for (const version of [24, 27]) for (const reverse of [false, true]) test(
+  `Android ${version} drawing-order contract and retained recipe geometry, reversed=${reverse}`, t => {
+  for (const recipe of recipes) {
+    const h = createHarness(recipe, reverse, 'android', version);
+    t.after(() => h.unmount());
+    const initial = h.render().map(v => v.id);
+    for (const timelineMs of [3000, 3500, 3750, 4000, 4499, 4500, 5000, 3750, 3000]) {
+      h.render({ timelineMs, activeSlot: timelineMs < 4000 ? Number(reverse) : Number(!reverse) });
+      assert.deepEqual(h.videos().map(v => v.id), initial);
+      const composite = !['fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'].includes(recipe)
+        && timelineMs >= 3500 && timelineMs < 4500;
+      for (const [slot, video] of h.videos().entries()) {
+        const layerIndex = video.ancestors.indexOf(opacityOwner(video));
+        const layer = video.ancestors[layerIndex];
+        const pair = video.ancestors[layerIndex - 1];
+        const content = matteOf(video);
+        assert.equal(layer.style.backgroundColor, undefined, 'opacity owner stays background free');
+        assert.equal(layer.style.borderWidth, undefined);
+        assert.equal(layer.style.borderRadius, undefined);
+        assert.equal(layer.style.backgroundImage, undefined);
+        assert.equal(layer.style.boxShadow, undefined);
+        assert.equal(layer.style.zIndex ?? 0, 0, 'fixed Fabric mount order on API 24+');
+        assert.equal(layer.style.elevation ?? 0, 0);
+        assertFront(h, composite ? Number(!reverse) : h.props.activeSlot);
+        for (const style of [pair.style, layer.style]) {
+          assert.equal(style.position, 'absolute'); assert.equal(style.inset, 0, 'full-canvas layer and parent bounds');
+        }
+        assert.equal(pair.style.overflow, 'hidden', 'pair retains full-canvas clipping');
+        assert.equal(pair.style.transform, undefined);
+        assert.ok(video.ancestors.every(a => a.props.collapsable === false));
+        assert.equal(video.props.surfaceType, 'textureView'); assert.equal(video.props.useExoShutter, false);
+        assert.equal(layer.props.needsOffscreenAlphaCompositing, layer.style.opacity > 0 && layer.style.opacity < 1);
+        assert.equal(layer.props.renderToHardwareTextureAndroid === true, layer.style.opacity > 0 && layer.style.opacity < 1,
+          'only the fractional incoming group is cached, including on older Android');
+        for (const node of [...h.nodes('view'), ...h.videos()]) {
+          if (!h.videos().some(v => v.ancestors.some(a => a.id === node.id && a.id === opacityOwner(v).id))) {
+            assert.notEqual(node.props.renderToHardwareTextureAndroid, true, 'no cache outside the existing layer boundary');
+          }
+        }
+        assert.equal(content.style.backgroundColor, '#123456', 'every input has an opaque matte on the existing inner content host');
+        if (composite) assert.equal(video.ancestors.filter(a => a.style.backgroundColor != null).length, 2, 'stage plus opaque per-input matte');
+        if (composite) {
+          const incoming = slot === Number(!reverse), phase = (timelineMs - 3500) / 1000;
+          const fades = ['crossfade', 'fold-horizontal', 'fold-vertical', 'zoom-in', 'zoom-out', 'spin'].includes(recipe);
+          const expectedAlpha = incoming && fades ? phase : incoming && recipe.startsWith('iris-') && phase === 0 ? 0 : 1;
+          assert.equal(layer.style.opacity, expectedAlpha, 'recipe alpha stays unchanged on older Android');
+          if (incoming && ['zoom-in', 'zoom-out', 'spin'].includes(recipe)) {
+            const scale = recipe === 'zoom-out' ? 1.8 - phase * .8 : .35 + phase * .65;
+            const rotate = recipe === 'spin' ? `${(1 - phase) * 280}deg` : '0deg';
+            assert.equal(JSON.stringify(layer.style.transform), JSON.stringify([{ scale }, { rotate }]));
+          } else if (incoming && recipe.startsWith('fold-')) {
+            assert.equal(JSON.stringify(layer.style.transform), JSON.stringify([recipe === 'fold-horizontal'
+              ? { scaleY: Math.max(.015, phase) } : { scaleX: Math.max(.015, phase) }]));
+          }
+        }
+        if (!composite) {
+          assert.equal(layer.style.transform, undefined);
+          assert.equal(layer.style.opacity, slot === h.props.activeSlot ? 1 : 0);
+          assert.equal(content.style.position, 'absolute'); assert.equal(content.style.inset, 0);
+        }
+      }
+      if (composite) {
+        const incoming = h.videos()[Number(!reverse)];
+        const styles = incoming.ancestors.map(a => a.style);
+        const phase = (timelineMs - 3500) / 1000;
+        if (recipe.startsWith('push-')) {
+          const axis = ['push-left', 'push-right'].includes(recipe) ? 'translateX' : 'translateY';
+          const distance = axis === 'translateX' ? 300 : 200;
+          const sign = ['push-left', 'push-up'].includes(recipe) ? 1 : -1;
+          assert.ok(styles.some(s => JSON.stringify(s.transform) === JSON.stringify([{ [axis]: sign * distance * (1 - phase) }])));
+        } else if (recipe.startsWith('split-')) {
+          assert.ok(styles.some(s => s.overflow === 'hidden' && (recipe === 'split-horizontal' ? s.height === 200 * phase : s.width === 300 * phase)));
+        } else if (recipe.startsWith('iris-')) {
+          const size = Math.max(1, (recipe === 'iris-circle' ? Math.hypot(300, 200) : 500 / Math.SQRT2) * phase);
+          assert.ok(styles.some(s => s.overflow === 'hidden' && s.width === size && s.height === size));
+        }
+      }
+    }
+    h.unmount();
+  }
+});
+
+for (const platform of ['android', 'ios', 'web']) for (const reverse of [false, true]) {
+  test(`${platform}, reversed slots=${reverse}: retained layer alpha follows ordinary and composite ownership`, t => {
+    for (const recipe of recipes) {
+      const h = createHarness(recipe, reverse, platform); t.after(() => h.unmount());
+      const initial = h.render().map(v => v.id);
+      const composite = !['fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'].includes(recipe);
+      const alpha = view => opacityOwner(view).style.opacity;
+      // Exercise both active-slot directions before, inside and after the window.
+      for (const timelineMs of [3000, 4000, 5000]) for (const activeSlot of [0, 1, 0]) {
+        h.render({ timelineMs, activeSlot });
+        assert.deepEqual(h.videos().map(v => v.id), initial, 'alpha changes retain both native hosts');
+        assert.equal(h.videos().length, 2);
+        for (const [slot, player] of h.players.entries()) {
+          const views = h.videos().filter(v => v.props.player === player);
+          assert.equal(views.length, 1, 'each SDK player keeps exactly one rendered host');
+          const incoming = slot === (reverse ? 0 : 1);
+          const inComposite = composite && timelineMs === 4000;
+          const compositeAlpha = incoming && ['crossfade', 'fold-horizontal', 'fold-vertical', 'zoom-in', 'zoom-out', 'spin'].includes(recipe) ? .5 : 1;
+          const expected = inComposite ? compositeAlpha
+            : platform === 'android' && slot !== activeSlot ? 0 : 1;
+          assert.equal(alpha(views[0]), expected, `${recipe}, time=${timelineMs}, active=${activeSlot}, slot=${slot}`);
+          if (expected > 0) assert.ok(views[0].ancestors.every(a => a.style.opacity !== 0), 'visible layers have no concealed ancestor');
+          assertFront(h, inComposite ? Number(!reverse) : activeSlot);
+        }
+      }
+      h.unmount();
+    }
+  });
+}
+
+// Keep every original ownership, geometry, failure and lifecycle obligation on
+// Android as well as the unchanged iOS path; only inactive Android alpha differs.
+const platformTest = test;
+for (const platform of ['android', 'ios']) {
+const test = (name, body) => platformTest(`${platform}: ${name}`, body);
+const harness = (type, reverse = false) => createHarness(type, reverse, platform);
 test('native hosts and frame callbacks follow view epochs independently of async preparation tokens', t => {
   const h = harness('crossfade'); t.after(() => h.unmount());
   const initial = h.render().map(view => view.id);
@@ -194,14 +415,12 @@ for (const reverse of [false, true]) test(`recipe ordering, phase-zero and exit 
     const h = harness(recipe, reverse); t.after(() => h.unmount());
     const initial = h.render().map(v => v.id); h.phase(0);
     const incoming = h.videos().find(v => v.props.player === h.players[reverse ? 0 : 1]);
-    const outgoing = h.videos().find(v => v.props.player === h.players[reverse ? 1 : 0]);
     const styles = v => v.ancestors.map(a => a.style);
     const composite = !['fade-dark', 'dip-black', 'dip-white', 'flash', 'shutter', 'color-wash-cyan', 'color-wash-magenta'].includes(recipe);
     if (composite) {
-      assert.ok(styles(incoming).some(s => s.zIndex === 1));
-      assert.ok(styles(outgoing).some(s => s.zIndex === 0));
+      assertFront(h, Number(!reverse));
       assert.equal(styles(incoming).some(s => s.backgroundColor != null), true, 'stage retains project background');
-      assert.equal(styles(incoming).filter(s => s.backgroundColor != null).length, 1, 'individual composite layers remain transparent');
+      assert.equal(styles(incoming).filter(s => s.backgroundColor != null).length, 2, 'incoming full frame matte covers outgoing margins at the endpoint');
       if (recipe.startsWith('push-')) {
         const axis = ['push-left', 'push-right'].includes(recipe) ? 'translateX' : 'translateY';
         const offset = { 'push-left': 300, 'push-right': -300, 'push-up': 200, 'push-down': -200 }[recipe];
@@ -212,16 +431,19 @@ for (const reverse of [false, true]) test(`recipe ordering, phase-zero and exit 
       h.phase(.5);
       for (const activeSlot of [0, 1]) {
         h.render({ activeSlot });
-        const layers = h.videos();
-        assert.ok(layers.find(v => v.props.player === h.players[reverse ? 0 : 1]).ancestors.some(a => a.style.zIndex === 1));
+          assertFront(h, Number(!reverse));
       }
     }
     h.phase(1);
     assert.deepEqual(h.videos().map(v => v.id), initial);
     for (const v of h.videos()) {
-      assert.ok(v.ancestors.some(a => a.style.zIndex === (v.props.player === h.players[h.props.activeSlot] ? 1 : 0)));
+      assertFront(h, h.props.activeSlot);
       assert.equal(v.ancestors.some(a => a.style.width === 0 || a.style.height === 0), false, 'exit clears clipped geometry');
-      assert.equal(v.ancestors.some(a => a.style.opacity === 0), false, 'exit clears transition opacity');
+      const zeroAlpha = v.ancestors.filter(a => a.style.opacity === 0);
+      if (platform === 'android' && v.props.player !== h.players[h.props.activeSlot]) {
+        const inactiveLayer = opacityOwner(v);
+        assert.deepEqual(zeroAlpha.map(a => a.id), [inactiveLayer.id], 'only the ordinary inactive Android layer stays excluded');
+      } else assert.equal(zeroAlpha.length, 0, 'exit clears transition opacity from every visible layer');
       assert.ok(v.ancestors.some(a => JSON.stringify(a.style.transform) === JSON.stringify([
         { translateX: 0 }, { translateY: 0 }, { rotate: '12deg' }, { scaleX: 1 }, { scaleY: 1 },
       ])), 'ordinary transform restored at endpoint');
@@ -265,7 +487,7 @@ for (const reverse of [false, true]) test(`clock, muting and cleanup use retaine
   assert.equal(h.players[reverse ? 1 : 0].currentTime, 5);
   assert.equal(h.players[reverse ? 0 : 1].currentTime, 1);
   assert.ok(h.players.every(p => p.playing));
-  assert.equal(h.players[reverse ? 0 : 1].muted, true);
+  assert.equal(h.players[reverse ? 0 : 1].muted, false);
   assert.deepEqual(JSON.parse(JSON.stringify(h.calls.filter(c => c[0] === 'clock').at(-1)[1])), {
     key: h.windows[0].key, slot: reverse ? 1 : 0, prepareToken: reverse ? 11 : 10,
   });
@@ -326,4 +548,30 @@ for (const reverse of [false, true]) test(`recipe geometry at midpoint, reversed
     }
     h.unmount();
   }
+});
+
+}
+
+// Source registration contract complements the executed exported-overlay tests.
+// It checks the actual module, not a substitute module/factory in this harness.
+test('CaptionMedia registers the named transition pair after its existing DEFAULT view', () => {
+  const module = readFileSync(resolve(root, 'modules/caption-media/android/src/main/java/app/captionstudio/media/CaptionMediaModule.kt'), 'utf8');
+  const registrations = [...module.matchAll(/\bView\(\s*(\w+)::class\s*\)\s*\{/g)];
+  assert.equal(registrations[0]?.[1], 'CaptionPresentationView', 'first view remains Expo DEFAULT');
+  const registration = registrations.find(match => match[1] === 'CaptionTransitionPairView');
+  assert.ok(registration, 'actual CaptionMedia module registers production transition pair');
+  const start = registration.index + registration[0].length;
+  let end = start, depth = 1;
+  for (; end < module.length && depth; end++) {
+    if (module[end] === '{') depth++;
+    if (module[end] === '}') depth--;
+  }
+  const body = module.slice(start, end - 1);
+  assert.match(body, /Name\(\s*"CaptionTransitionPair"\s*\)/);
+  assert.match(body, /Prop\(\s*"frontSlot"\s*\)\s*\{\s*(\w+)\s*:\s*CaptionTransitionPairView\s*,\s*(\w+)\s*:\s*Int\s*->\s*\1\.(?:frontSlot\s*=\s*\2|setFrontSlot\(\s*\2\s*\))/,
+    'Expo frontSlot prop forwards to the actual production setter');
+  assert.doesNotMatch(body, /(?:AddChildView|RemoveChildView|GetChild|OnViewDidUpdateProps)/,
+    'normal Expo ViewGroup child management remains authoritative');
+  const config = JSON.parse(readFileSync(resolve(root, 'modules/caption-media/expo-module.config.json'), 'utf8'));
+  assert.ok(config.android.modules.includes('app.captionstudio.media.CaptionMediaModule'));
 });

@@ -290,6 +290,8 @@ export type VideoVisualLayer = Omit<ImageVisualLayer, 'kind'> & {
   sourceStartAtAnchorMs?: number;
   /** Last selected media time; source anchors retain the owner range across speed edits. */
   mediaEndMs?: number;
+  /** Full VIDEO association retained independently of the active sourceAnchors selection. */
+  sourceMapping?: (LayerSourceAnchor & { mediaStartMs: number; ownerRate: number })[];
   sourceDurationMs: number;
   playbackRate: number;
   includeAudio: boolean;

@@ -3,8 +3,18 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import ts from 'typescript';
+
+// Register before initial rendering so assertion failures also retire each host.
+const openHarnesses = new Set();
+afterEach(() => {
+  const failures = [];
+  for (const close of [...openHarnesses]) {
+    try { close(); } catch (error) { failures.push(error); }
+  }
+  if (failures.length) throw new AggregateError(failures, 'harness cleanup failed');
+});
 
 const root = fileURLToPath(new URL('../src/', import.meta.url));
 const compiled = new Map();
@@ -22,15 +32,33 @@ function code(file) {
 // Execute the whole LayerTimeline render, its real hooks/callbacks and the
 // production command interceptor/controller. Only host layout/clamping and the
 // hook scheduler are doubles: these schedules are contracts, not device traces.
-function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform = 'android' } = {}) {
+function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform = 'android', manualIntervals = false } = {}) {
+  let closed = false;
   let cursor = 0, dirty = false, tree, effects = [], horizontal, outer, first = true;
+  const timeouts = new Set(), liveIntervals = new Set();
+  const scheduleTimeout = (fn, delay, ...args) => {
+    const timer = setTimeout(() => { timeouts.delete(timer); if (!closed) fn(...args); }, delay);
+    timeouts.add(timer); return timer;
+  };
+  const cancelTimeout = timer => { clearTimeout(timer); timeouts.delete(timer); };
+  const scheduleInterval = (fn, delay, ...args) => {
+    const timer = setInterval(() => { if (!closed) fn(...args); }, delay);
+    liveIntervals.add(timer); return timer;
+  };
+  const cancelInterval = timer => { clearInterval(timer); liveIntervals.delete(timer); };
+  const intervals = new Map(); let intervalSequence = 0;
   let scrubStarts = 0, timingStarts = 0, timingEnds = 0;
   let slots = [];
   const primarySlots = slots, childSlots = [], modules = new Map(), jobs = [], commands = [], seeks = [], changes = [];
   const springSlots = [], rnJobs = [];
+  const deviceListeners = new Map();
+  const deviceEvents = { addListener(event, listener) {
+    deviceListeners.set(listener, event);
+    return { remove: () => deviceListeners.delete(listener) };
+  } };
   const appStateListeners = new Map();
   const appState = { currentState: 'active', addEventListener(event, listener) {
-    assert.ok(['change', 'blur'].includes(event)); appStateListeners.set(listener, event);
+    assert.ok(['change', 'blur', 'focus'].includes(event)); appStateListeners.set(listener, event);
     return { remove: () => appStateListeners.delete(listener) };
   } };
   let springHost, committedRef;
@@ -42,7 +70,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
     clips: [], sources: [], layers: [], captions: [], translationTracks: [], audioSources: [], audioClips: [],
     onSeek: ms => seeks.push(ms), onScrubStart: () => scrubStarts++,
     onTimingChangeStart: () => timingStarts++, onTimingChangeEnd: () => timingEnds++,
-    onSelectAudioClip() {}, onItemTimingChange: (...args) => changes.push(args), ...initial };
+    onSelectAudioClip() {}, onSelectLayer() {}, onItemTimingChange: (...args) => changes.push(args), ...initial };
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
   const hooks = {
     Fragment: 'Fragment', createContext: value => ({ value, Provider: 'Provider' }), useContext: ctx => ctx.value,
@@ -50,6 +78,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
       const i = cursor++;
       const slot = slots[i] ??= { value: typeof initial === 'function' ? initial() : initial };
       return [slot.value, update => {
+        if (closed) return;
         const value = typeof update === 'function' ? update(slot.value) : update;
         if (!Object.is(slot.value, value)) { slot.value = value; dirty = true; }
       }];
@@ -106,13 +135,15 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
   function load(file) {
     if (modules.has(file)) return modules.get(file);
     const exports = {}; modules.set(file, exports);
-    runInNewContext(code(file), { exports, clearTimeout, setTimeout, clearInterval, setInterval,
+    runInNewContext(code(file), { exports, clearTimeout: cancelTimeout, setTimeout: scheduleTimeout,
+      clearInterval: manualIntervals ? id => intervals.delete(id) : cancelInterval,
+      setInterval: manualIntervals ? fn => { intervals.set(++intervalSequence, fn); return intervalSequence; } : scheduleInterval,
       performance: { now: () => 1 }, require(id) {
         if (id === 'react') return hooks;
         if (id === 'react/jsx-runtime') return { jsx, jsxs: jsx };
         if (id === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'NativeScrollView',
           StyleSheet: { flatten: style => Object.assign({}, ...[style].flat(Infinity).filter(Boolean)) },
-          AppState: appState,
+          AppState: appState, DeviceEventEmitter: deviceEvents,
           AccessibilityInfo: { addEventListener: () => ({ remove() {} }),
             isReduceMotionEnabled: () => ({ then: resolve => resolve(false) }) },
           Platform: { OS: platform }, PanResponder: { create: panHandlers => ({ panHandlers }) },
@@ -143,7 +174,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
   const { interceptSpringScrollCommands } = load(resolve(root, 'components/spring-scroll-gesture.ts'));
   const state = shared({ alive: false, epoch: 0, axis: policy.createScrollSpringAxisState() });
   const node = { scrollTo() { assert.fail('must use production generation guard'); }, scrollToEnd() {},
-    getNativeScrollRef: () => node };
+    getNativeScrollRef: () => node, measureInWindow: callback => callback(0, 0, native.viewport, 200) };
   const controller = fullBinding ? undefined : createScrollSpringController({ state, owner: shared(0), offset: shared(0), id: 1,
     nativeOffset: shared(0), getAnimatedRef: () => () => node, getContentRef: () => () => ({}),
     presentationVersion: shared(0), gesture: gesture() });
@@ -152,6 +183,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
   const restore = fullBinding ? () => {} : interceptSpringScrollCommands(node, () => node, () => native.generation, controller.command);
   if (!fullBinding) controller.activate(1, true);
   function render() {
+    if (closed) return;
     slots = primarySlots; cursor = 0; dirty = false;
     tree = LayerTimeline(props);
     function walk(element) {
@@ -181,6 +213,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
     while (effects.length) effects.shift()();
   }
   function flush(runJobs = true, runRN = true) {
+    if (closed) return;
     for (let i = 0; i < 40; i++) {
       if (runJobs) while (jobs.length) jobs.shift()();
       if (runJobs && runRN) while (rnJobs.length) rnJobs.shift()();
@@ -198,8 +231,35 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
     (fullBinding ? springHost : horizontal).props.onContentSizeChange?.(width, 200);
   }
   function expectedContent() { return horizontal.props.contentContainerStyle.width; }
+  function close() {
+    if (closed) return;
+    closed = true;
+    openHarnesses.delete(close);
+    try {
+      committedRef?.(null);
+      for (const store of [primarySlots, springSlots, ...childSlots]) for (const slot of store) slot?.cleanup?.();
+      assert.equal(intervals.size, 0, 'production unmount cleanup must retire every manual interval');
+    } finally {
+      restore();
+      for (const timer of timeouts) clearTimeout(timer);
+      for (const timer of liveIntervals) clearInterval(timer);
+      timeouts.clear(); liveIntervals.clear(); intervals.clear();
+      jobs.length = 0; rnJobs.length = 0; acknowledgements.length = 0; effects.length = 0;
+      dirty = false;
+    }
+  }
+  openHarnesses.add(close);
   render(); flush();
   return { native, commands, seeks, changes, flush, layout, content, expectedContent,
+    rotate() {
+      for (const [listener, event] of [...deviceListeners]) if (event === 'namedOrientationDidChange') {
+        listener({ name: 'landscape-primary', rotationDegrees: -90, isLandscape: true });
+      }
+      flush();
+    },
+    get deviceListenerCount() { return deviceListeners.size; },
+    tickIntervals() { for (const fn of [...intervals.values()]) fn(); flush(); },
+    get intervalCount() { return intervals.size; },
     captureAppStateListeners: (event = 'change') => [...appStateListeners].filter(([, type]) => type === event).map(([listener]) => listener),
     get appStateListenerCount() { return appStateListeners.size; },
     replayEffects() {
@@ -232,7 +292,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
     find(name) { const found = this.findAll(name); assert.ok(found.length, name); return found.at(-1); },
     holdAcknowledgements() { holdAcknowledgements = true; },
     acknowledge() { jobs.push(...acknowledgements.splice(0)); flush(); },
-    mountItemPan(owner) {
+    mountItemPan(owner, edge = 'end') {
       TimelineNativeGeometryContext.value = geometry;
       function mount(fn) {
         const store = []; childSlots.push(store); slots = store; cursor = 0;
@@ -241,7 +301,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
         slots = primarySlots;
         return result;
       }
-      const timing = mount(() => timingHookForTest(owner, 'end', owner.onTouchLock));
+      const timing = mount(() => timingHookForTest(owner, edge, owner.onTouchLock));
       const wrapper = mount(() => TimelineNativeGestureView({ nativeCallbacks: timing.nativeCallbacks, panHandlers: timing }));
       const pan = wrapper.props.gesture.handlers, calls = [];
       const manager = { activate: () => calls.push('activate'), fail: () => calls.push('fail') };
@@ -275,7 +335,7 @@ function harness(initial = {}, { fullBinding = false, pixelRatio = 1, platform =
     },
     get pendingRN() { return rnJobs.length; },
     deliverRN() { assert.ok(rnJobs.length); rnJobs.shift()(); flush(true, false); },
-    close() { committedRef?.(null); restore(); for (const store of [primarySlots, springSlots, ...childSlots]) for (const slot of store) slot?.cleanup?.(); },
+    close,
   };
 }
 
@@ -286,6 +346,26 @@ function aligned(h) {
   assert.equal(h.native.x, Math.min(1, Math.max(0, h.props.currentMs / h.props.durationMs)) * track);
   assert.deepEqual(h.seeks, [], 'passive geometry must never change transport time');
 }
+
+test('full timeline mount receives same-size rotation through the real hook and retires scrub ownership', () => {
+  const h = harness({ currentMs: 4000 });
+  try {
+    h.ready(); assert.equal(h.deviceListenerCount, 1);
+    h.horizontal.onTouchStart({ nativeEvent: { touches: [{}] } });
+    h.horizontal.onScrollBeginDrag();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 55 } } }); h.flush();
+    const prefix = [...h.seeks], width = h.native.viewport;
+    h.rotate(); assert.equal(h.native.viewport, width);
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 133 } } }); h.flush();
+    assert.deepEqual(h.seeks, prefix, 'rotation rejects old-origin scroll samples');
+    h.replayEffects(); assert.equal(h.deviceListenerCount, 1);
+    h.horizontal.onTouchStart({ nativeEvent: { touches: [{}] } });
+    h.horizontal.onScrollBeginDrag();
+    h.horizontal.onScroll({ nativeEvent: { contentOffset: { x: 100 } } }); h.flush();
+    assert.equal(h.seeks.length, prefix.length + 1, 'a fresh contact can seek');
+  } finally { h.close(); }
+  assert.equal(h.deviceListenerCount, 0);
+});
 
 for (const ending of ['completed', 'blur', 'background']) {
   for (const target of [0, 20, 7060]) test(`repeated scrub: ${ending} then external clock advance seeks the same ${target}ms during a fresh drag`, () => {
@@ -620,7 +700,7 @@ for (const reject of [false, true]) test(`displayed viewport waits for native ac
       };
     };
     const before = snapshot(), count = h.commands.length;
-    assert.deepEqual(before.bodies.map(item => item[0]), ['early audio', 'early cue']);
+    assert.deepEqual(before.bodies.map(item => item[0]), ['early cue', 'early audio']);
     h.holdAcknowledgements();
     if (reject) h.rejectNextCommand();
     h.update({ currentMs: 90000 }, false);
@@ -642,9 +722,9 @@ for (const reject of [false, true]) test(`displayed viewport waits for native ac
     const track = h.expectedContent() - h.native.viewport;
     assert.deepEqual(after.range, [(h.native.x - 360) / track * 120000,
       (h.native.x + 360) / track * 120000]);
-    assert.deepEqual(after.bodies.map(item => item[0]), ['late audio', 'selected late cue']);
-    assert.equal(after.bodies[1][1], true, 'selected cue remains selected when its actual viewport arrives');
-    assert.deepEqual(after.bodies[0].slice(2), after.range, 'waveform virtualization follows acknowledged bounds');
+    assert.deepEqual(after.bodies.map(item => item[0]), ['selected late cue', 'late audio']);
+    assert.equal(after.bodies[0][1], true, 'selected cue remains selected when its actual viewport arrives');
+    assert.deepEqual(after.bodies[1].slice(2), after.range, 'waveform virtualization follows acknowledged bounds');
     assert.equal(h.commands.length, count + 1, 'acknowledgement must not recenter');
     assert.deepEqual(h.seeks, []);
     assert.deepEqual(h.changes, []);
@@ -1033,5 +1113,112 @@ test('horizontal focus-only blur preserves a completed user viewport', () => {
     h.blur();
     assert.equal(h.commands.length, commands); assert.equal(h.native.x, 55);
     assert.deepEqual(h.seeks, seeks);
+  } finally { h.close(); }
+});
+
+// Follow the actual rendered block callbacks across timing updates. A live
+// drag must not move its own target to a different vertical hit region.
+for (const kind of ['video', 'image', 'text', 'watermark', 'caption', 'translation', 'audio']) {
+  test(`${kind}: sliding past a peer keeps the active lane until release`, () => {
+    const ranges = ['a', 'b', 'c'].map((id, i) => ({ id, startMs: i * 500, endMs: 3000 + i * 500, text: id }));
+    function content(items) {
+      if (kind === 'caption') return { layers: [{ id: 'captions', kind: 'captions' }], captions: items };
+      if (kind === 'translation') return { layers: [{ id: 'captions', kind: 'captions' }], captions: ranges,
+        translationTracks: [{ id: 'translated', name: 'Spanish', visible: true, pairs: items.map(cue => ({
+          source: ranges.find(source => source.id === cue.id), translation: { id: `tr-${cue.id}`, status: 'ready' },
+          startMs: cue.startMs, endMs: cue.endMs, timelineVisible: true, displayText: `tr-${cue.id}`,
+        })) }] };
+      if (kind === 'audio') return { audioSources: items.map(item => ({ id: item.id, displayName: item.id })),
+        audioClips: items.map(item => ({ ...item, sourceId: item.id,
+          sourceStartMs: 0, sourceEndMs: item.endMs - item.startMs, playbackRate: 1 })) };
+      return { layers: items.map(item => ({ ...item, kind: kind === 'watermark' ? 'text' : kind,
+        watermark: kind === 'watermark', name: item.id, visible: true })) };
+    }
+    const label = kind === 'translation' ? 'tr-b' : 'b';
+    const h = harness({ ...content(ranges), currentMs: 2000 });
+    try {
+      h.ready();
+      const selected = h.findAll('TimedBlock').find(item => item.label === label);
+      assert.ok(selected); assert.equal(selected.lane, 1);
+      selected.onChangeStart(); h.flush();
+      const moved = ranges.map(item => item.id === 'b' ? { ...item, startMs: 5000, endMs: 8000 } : item);
+      h.update(content(moved));
+      assert.equal(h.findAll('TimedBlock').find(item => item.label === label).lane, 1,
+        'the active item must stay under the original finger while crossing a peer start');
+      selected.onEnd(); h.flush();
+      assert.equal(h.findAll('TimedBlock').find(item => item.label === label).lane, 0,
+        'after release, separated items share the frontmost available lane');
+      assert.equal(h.timingStarts, 1); assert.equal(h.timingEnds, 1);
+      assert.deepEqual(h.seeks, [], 'packing must not seek the shared clock');
+    } finally { h.close(); }
+  });
+}
+
+for (const interruption of ['native cancel', 'resize']) test(`active lane hold ends on ${interruption} through real timing callbacks`, () => {
+  const layers = ['a', 'b', 'c'].map((id, i) => ({ id, name: id, kind: 'video', visible: true,
+    startMs: i * 500, endMs: 3000 + i * 500 }));
+  const h = harness({ layers, currentMs: 2000 });
+  try {
+    h.ready();
+    const item = h.findAll('TimedBlock').find(item => item.label === 'b');
+    const pan = h.mountItemPan(item, 'move');
+    pan.start();
+    const moved = layers.map(item => item.id === 'b' ? { ...item, startMs: 5000, endMs: 8000 } : item);
+    h.update({ layers: moved });
+    assert.equal(h.findAll('TimedBlock').find(item => item.label === 'b').lane, 1);
+    if (interruption === 'native cancel') pan.cancel(); else h.resize(700);
+    assert.equal(h.findAll('TimedBlock').find(item => item.label === 'b').lane, 0);
+    assert.equal(h.timingStarts, 1); assert.equal(h.timingEnds, 1);
+  } finally { h.close(); }
+});
+
+test('lane hold is transient, project-scoped, and refreshed for a second edit', () => {
+  const layers = ['a', 'b', 'c'].map((id, i) => ({ id, name: id, kind: 'image', visible: true,
+    startMs: i * 500, endMs: 3000 + i * 500 }));
+  const h = harness({ layers, currentMs: 2000 });
+  try {
+    h.ready();
+    h.findAll('TimedBlock').find(item => item.label === 'b').onChangeStart(); h.flush();
+    const moved = layers.map(item => item.id === 'b' ? { ...item, startMs: 5000, endMs: 8000 } : item);
+    h.update({ layers: moved });
+    h.findAll('TimedBlock').find(item => item.label === 'b').onEnd(); h.flush();
+    const second = h.findAll('TimedBlock').find(item => item.label === 'b');
+    assert.equal(second.lane, 0);
+    second.onChangeStart(); h.flush(); h.update({ layers });
+    assert.equal(h.findAll('TimedBlock').find(item => item.label === 'b').lane, 0,
+      'second gesture must capture the new resting layout');
+    h.update({ projectId: 'replacement' });
+    assert.equal(h.findAll('TimedBlock').find(item => item.label === 'b').lane, 1,
+      "an old project must not pin another project's layout");
+    assert.deepEqual(h.props.layers, layers, 'ephemeral lane state must not enter project data');
+  } finally { h.close(); }
+});
+
+
+test('held layer reorder scrolls past the viewport and stops on cancellation', () => {
+  const layers = Array.from({ length: 20 }, (_, i) => ({ id: `pip-${i}`, name: `pip-${i}`, kind: 'video',
+    visible: true, startMs: 0, endMs: 1000 }));
+  const h = harness({ layers, currentMs: 0, onReorderVisualLayer() {} }, { manualIntervals: true });
+  const scrolls = [];
+  try {
+    h.ready();
+    const wrappers = h.findAll('TimelineNativeScrollView');
+    for (const props of wrappers.filter(p => !p.horizontal)) {
+      const target = props.testID ? 2 : 1;
+      props.ref.current = { scrollTo: ({ y }) => scrolls.push(y),
+        getNativeScrollRef: () => ({ measureInWindow: callback => callback(0, 100, 82, 100) }) };
+      props.onLayout({ nativeEvent: { target, layout: { height: 100 } } });
+      props.onContentSizeChange(1000, 800); props.onScrollBindingReady();
+    }
+    const item = h.findAll('TimedBlock').find(item => item.label === 'pip-19');
+    item.onTouchLock(true); item.onReorderStart(); h.flush();
+    item.onReorderMove(80); h.flush();
+    assert.equal(h.intervalCount, 1, 'the actual reorder effect must own edge scrolling');
+    const before = scrolls.length;
+    h.tickIntervals();
+    assert.ok(scrolls.slice(before).some(y => y > 0), 'holding near the bottom must reveal off-screen destinations');
+    item.onReorderEnd(true); item.onTouchLock(false); h.flush();
+    assert.equal(h.intervalCount, 0, 'cancel must release the timer');
+    const ended = scrolls.length; h.tickIntervals(); assert.equal(scrolls.length, ended);
   } finally { h.close(); }
 });

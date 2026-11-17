@@ -11,7 +11,7 @@ export const VIDEO_TRANSITION_PRESETS = [
   { id: 'push-down', name: 'Push down', description: 'The next clip pushes the current clip downward', durationMs: 600 },
   { id: 'zoom-in', name: 'Zoom burst', description: 'Pushes through the cut', durationMs: 500 },
   { id: 'zoom-out', name: 'Zoom pullback', description: 'Pulls away from the cut', durationMs: 500 },
-  { id: 'spin', name: 'Spin flash', description: 'Rotating radial flash', durationMs: 600 },
+  { id: 'spin', name: 'Spin flash', description: 'Rotates and flashes into next clip', durationMs: 600 },
   { id: 'fold-horizontal', name: 'Horizontal fold', description: 'Unfolds the next clip from the center', durationMs: 650 },
   { id: 'fold-vertical', name: 'Vertical fold', description: 'Unfolds the next clip from the center', durationMs: 650 },
   { id: 'iris-circle', name: 'Circle iris', description: 'Opens the next clip through a circle', durationMs: 700 },

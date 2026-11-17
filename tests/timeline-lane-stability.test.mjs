@@ -16,8 +16,8 @@ for (const kind of ['image', 'text', 'watermark']) {
       const after = visualTimelineGroups(edited)[0];
       assert.deepEqual([...after.layout.laneById], [...before.layout.laneById]);
       assert.equal(after.layout.laneCount, 5);
-      assert.deepEqual(after.items.map((layer) => layer.id), layers.map((layer) => layer.id));
-      assert.equal(after.items[0], layers[0]);
+      assert.deepEqual(after.items.map((layer) => layer.id), [...layers].reverse().map((layer) => layer.id));
+      assert.equal(after.items[0], layers.at(-1));
       assert.equal(layers[2].endMs, 3000);
       const restored = visualTimelineGroups(JSON.parse(JSON.stringify(edited)))[0];
       assert.deepEqual([...restored.layout.laneById], [...after.layout.laneById]);

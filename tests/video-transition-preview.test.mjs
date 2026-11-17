@@ -11,6 +11,7 @@ import {
   transitionTimelineTimeAt,
 } from '../src/lib/video-transition-preview.ts';
 import { buildClipTimeline } from '../src/lib/video-timeline.ts';
+import { shouldJoinTimelinePreparation } from '../src/lib/video-playback-policy.ts';
 import { readFileSync } from 'node:fs';
 
 const previewOverlaySource = readFileSync(new URL('../src/components/editor/video-transition-overlay.tsx', import.meta.url), 'utf8');
@@ -114,9 +115,43 @@ test('full-source clips advance visible tail and head without frozen frames', ()
   assert.equal(videoTransitionPreviewFrameAt(windows, 4_299).outgoingSourceTimeMs, 4_000);
   assert.equal(videoTransitionPreviewFrameAt(windows, 4_000).incomingSourceTimeMs, 150);
   assert.deepEqual(videoTransitionPlaybackTargets(videoTransitionPreviewFrameAt(windows, 4_000), 0, 1, 1), [
-    { slot: 0, sourceTimeMs: 3_850, playbackRate: 0.5, muted: true },
-    { slot: 1, sourceTimeMs: 150, playbackRate: 0.5, muted: false },
+    { slot: 0, sourceTimeMs: 3_850, playbackRate: 0.5, muted: false, volume: Math.cos(Math.PI / 4) },
+    { slot: 1, sourceTimeMs: 150, playbackRate: 0.5, muted: false, volume: Math.sin(Math.PI / 4) },
   ]);
+});
+
+test('an EOF tail uses native export playable bounds without changing the composite clock', () => {
+  const entries = buildClipTimeline([
+    clip('A2', 'A', {
+      sourceStartMs: 5_000, sourceEndMs: 8_000, availableSourceEndMs: 8_000,
+      transitionAfter: { type: 'crossfade', durationMs: 650 },
+    }),
+    clip('B2', 'B', { sourceStartMs: 3_000, sourceEndMs: 8_000, availableSourceEndMs: 8_000 }),
+  ]).map((entry) => ({
+    ...entry,
+    gapStartMs: entry.gapStartMs + 10_000,
+    startMs: entry.startMs + 10_000,
+    endMs: entry.endMs + 10_000,
+    afterGapEndMs: entry.afterGapEndMs + 10_000,
+  }));
+  const windows = buildVideoTransitionPreviewWindows(entries, [source('A', 8_000), source('B', 8_000)]);
+  const window = windows[0];
+  assert.deepEqual([window.startMs, window.boundaryMs, window.endMs], [12_675, 13_000, 13_325]);
+  assert.equal(window.unavailableReason, undefined);
+  assert.deepEqual(videoTransitionPlaybackTargets(videoTransitionPreviewFrameAt(windows, window.startMs), 0, 1, 0), [
+    { slot: 0, sourceTimeMs: 7_675, playbackRate: 0.5, muted: false, volume: 1 },
+    { slot: 1, sourceTimeMs: 2_675, playbackRate: 1, muted: true, volume: 0 },
+  ]);
+  const lastFrame = videoTransitionPreviewFrameAt(windows, window.endMs - 1);
+  assert.equal(lastFrame.outgoingSourceTimeMs, 8_000, 'keep the native rounded source clock');
+  // TimelineVideoExporter.ManagedRetriever.frame clamps decoding to durationMs - 1.
+  assert.deepEqual(videoTransitionPlaybackTargets(lastFrame, 1, 0, 0), [
+    { slot: 1, sourceTimeMs: 7_999, playbackRate: 0.5, muted: false, volume: Math.cos((649 / 650) * Math.PI / 2) },
+    { slot: 0, sourceTimeMs: 3_324, playbackRate: 1, muted: false, volume: Math.sin((649 / 650) * Math.PI / 2) },
+  ], 'a paused or resynchronized preview must not seek the outgoing player to EOF');
+  assert.equal(videoTransitionPreviewFrameAt(windows, window.endMs), undefined);
+  assert.equal(transitionTimelineTimeAt(windows, 'A2', 13_000, 7_999, window.key), 13_323);
+  assert.equal(videoTransitionPreloadWindow(windows, window.startMs - TRANSITION_PRELOAD_LEAD_MS)?.key, window.key);
 });
 
 test('active transition source clocks preserve timeline progress through a no-handle cut', () => {
@@ -251,12 +286,12 @@ test('both playback targets follow native source clocks through hidden handles',
   );
   const frame = videoTransitionPreviewFrameAt(windows, 4_250);
   assert.deepEqual(videoTransitionPlaybackTargets(frame, 0, 1, 0), [
-    { slot: 0, sourceTimeMs: 5_250, playbackRate: 1, muted: false },
-    { slot: 1, sourceTimeMs: 1_250, playbackRate: 1, muted: true },
+    { slot: 0, sourceTimeMs: 5_250, playbackRate: 1, muted: false, volume: Math.cos(3 * Math.PI / 8) },
+    { slot: 1, sourceTimeMs: 1_250, playbackRate: 1, muted: false, volume: Math.sin(3 * Math.PI / 8) },
   ]);
   assert.deepEqual(videoTransitionPlaybackTargets(frame, 1, 0, 0), [
-    { slot: 1, sourceTimeMs: 5_250, playbackRate: 1, muted: true },
-    { slot: 0, sourceTimeMs: 1_250, playbackRate: 1, muted: false },
+    { slot: 1, sourceTimeMs: 5_250, playbackRate: 1, muted: false, volume: Math.cos(3 * Math.PI / 8) },
+    { slot: 0, sourceTimeMs: 1_250, playbackRate: 1, muted: false, volume: Math.sin(3 * Math.PI / 8) },
   ]);
 });
 
@@ -278,4 +313,49 @@ test('a missing first frame or failed composite has an explicit unavailable stat
   assert.equal(videoTransitionCompositeState(frame, slots.map((slot) => ({ ...slot, firstFrameReady: true }))).status, 'ready');
   assert.match(previewOverlaySource, /compositeState\?\.status !== 'ready'/);
   assert.match(previewOverlaySource, /backgroundColor: props\.backgroundColor/);
+});
+
+for (const peer of ['out', 'in']) test(`matching ${peer} peer preparation error is unavailable, cancellation remains waiting`, () => {
+  const windows = buildVideoTransitionPreviewWindows(
+    buildClipTimeline([
+      clip('out', 'out-source', { transitionAfter: { type: 'crossfade', durationMs: 600 } }),
+      clip('in', 'in-source'),
+    ]),
+    [source('out-source'), source('in-source')],
+  );
+  const frame = videoTransitionPreviewFrameAt(windows, 4_100);
+  const slots = ['out', 'in'].map(id => ({ preparedClipId: id,
+    firstFrameReady: id !== peer, readiness: id === peer ? 'error' : 'ready' }));
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'unavailable', 'a terminal matching peer failure cannot wait forever');
+  const failed = slots.find(slot => slot.preparedClipId === peer);
+  failed.readiness = 'cancelled';
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'waiting');
+  failed.readiness = 'preparing';
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'waiting');
+  failed.readiness = 'ready'; failed.firstFrameReady = true;
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'ready');
+  slots.push({ preparedClipId: 'unrelated', firstFrameReady: false, readiness: 'error' });
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'ready', 'unrelated errors have no authority over this pair');
+});
+
+test('composite peer preparation joins only the same owned source target', () => {
+  const preparation = new AbortController();
+  const runtime = { preparedClipId: 'out', playbackUri: 'file:///out.mp4',
+    preparingTimelineMs: 4250, preparingWindowEndMs: 5500, preparingSourceMs: 5250,
+    readiness: 'preparing', preparation, preparationTask: Promise.resolve(0) };
+  const joins = (expectedSourceMs = 5250, changes = {}, forceReload = false) =>
+    shouldJoinTimelinePreparation({ ...runtime, ...changes }, 'out', 'file:///out.mp4', 4250, forceReload, 5500, expectedSourceMs);
+  assert.equal(joins(), true);
+  assert.equal(shouldJoinTimelinePreparation({ ...runtime, preparingSourceMs: undefined },
+    'out', 'file:///out.mp4', 4250, false, 5500), true, 'ordinary callers retain their existing join contract');
+  assert.equal(joins(5000), false, 'ordinary selected endpoint cannot certify the composite frame');
+  assert.equal(shouldJoinTimelinePreparation(runtime, 'out', 'file:///out.mp4', 4250, false, 5500), false,
+    'ordinary preparation cannot join a composite target override');
+  assert.equal(joins(5250, { preparingSourceMs: undefined }), false,
+    'composite preparation cannot join an ordinary target');
+  assert.equal(joins(5250, { playbackUri: 'file:///relinked.mp4' }), false);
+  assert.equal(joins(5250, { preparingWindowEndMs: 5000 }), false);
+  assert.equal(joins(5250, {}, true), false);
+  preparation.abort();
+  assert.equal(joins(), false);
 });

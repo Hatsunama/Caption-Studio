@@ -4,17 +4,18 @@ import { timelineTouchIntent } from './timeline-touch-intent';
 export { TIMELINE_DRAG_ACTIVATION_PX } from './timeline-touch-intent';
 export const TIMELINE_GRIP_WIDTH = 40;
 export const TIMELINE_CONTROL_HEIGHT = 36;
-export const TIMELINE_PLAYHEAD_DWELL_MS = 250;
 export const TIMELINE_PLAYHEAD_RELEASE_PX = 3;
 
 export type TimelineTrackBounds = { left: number; right: number };
 
-/** Only external viewport/zoom changes invalidate touch coordinates. Draft
+/** Only external viewport/zoom/rotation changes invalidate touch coordinates. Draft
  * duration and reorder filmstrip changes must not cancel their own gesture. */
 export function createTimelineGestureGeometry(initial: { viewportWidth: number; scale: number }) {
   let geometry = { ...initial };
   const listeners = new Set<() => void>();
+  const invalidate = () => { for (const cancel of [...listeners]) cancel(); };
   return {
+    invalidate,
     subscribe(cancel: () => void) {
       listeners.add(cancel);
       return () => { listeners.delete(cancel); };
@@ -23,7 +24,7 @@ export function createTimelineGestureGeometry(initial: { viewportWidth: number; 
       const updated = { ...geometry, ...next };
       if (updated.viewportWidth === geometry.viewportWidth && updated.scale === geometry.scale) return false;
       geometry = updated;
-      for (const cancel of [...listeners]) cancel();
+      invalidate();
       return true;
     },
   };
@@ -82,17 +83,14 @@ export function createTimelineTimingGesture(options: { now?: () => number } = {}
   let activated = false;
   let yieldedToScroll = false;
   let previousBoundary = 0;
-  let detent: { originalSide: number; lastDx: number; lastMovementAt: number } | undefined;
-  let releaseOriginDx: number | undefined;
-  const now = options.now ?? Date.now;
+  let detent = false;
   const end = (cancelled: boolean) => {
     const ended = owner;
     const wasActivated = activated;
     owner = undefined;
     activated = false;
     yieldedToScroll = false;
-    detent = undefined;
-    releaseOriginDx = undefined;
+    detent = false;
     if (wasActivated && ended) {
       if (cancelled && ended.onCancel) ended.onCancel();
       else ended.onEnd();
@@ -105,8 +103,7 @@ export function createTimelineTimingGesture(options: { now?: () => number } = {}
       activated = false;
       yieldedToScroll = false;
       previousBoundary = nextEdge === 'start' ? owner.startMs : owner.endMs;
-      detent = undefined;
-      releaseOriginDx = undefined;
+      detent = previousBoundary === owner.playheadMs;
       owner.onPress();
     },
     move(dx: number, dy: number) {
@@ -127,37 +124,20 @@ export function createTimelineTimingGesture(options: { now?: () => number } = {}
         const playhead = playheadMs as number;
         const requestedBoundary = edge === 'start' ? startMs : endMs;
         const requestedSide = Math.sign(requestedBoundary - playhead);
-        const time = now();
-        if (releaseOriginDx !== undefined) {
-          const boundary = playhead + (dx - releaseOriginDx) * millisecondsPerPixel;
-          if (edge === 'start') startMs = boundary;
-          else endMs = boundary;
-        } else if (detent) {
-          const returnedToOriginalSide = requestedSide === detent.originalSide;
-          const movementPx = Math.abs(dx - detent.lastDx);
-          if (returnedToOriginalSide) {
-            detent = undefined;
-          } else if (
-            time - detent.lastMovementAt >= TIMELINE_PLAYHEAD_DWELL_MS
-            && movementPx >= TIMELINE_PLAYHEAD_RELEASE_PX
-          ) {
-            releaseOriginDx = detent.lastDx;
-            const boundary = playhead + (dx - releaseOriginDx) * millisecondsPerPixel;
-            if (edge === 'start') startMs = boundary;
-            else endMs = boundary;
-          } else {
-            if (movementPx > 0.5) detent = { ...detent, lastDx: dx, lastMovementAt: time };
-            if (edge === 'start') startMs = playhead;
-            else endMs = playhead;
-          }
-        } else {
+        if (!detent) {
           const previousSide = Math.sign(previousBoundary - playhead);
           const crossedPlayhead = previousSide !== 0 && (requestedSide === 0 || requestedSide !== previousSide);
-          if (crossedPlayhead) {
-            detent = { originalSide: previousSide, lastDx: dx, lastMovementAt: time };
-            if (edge === 'start') startMs = playhead;
-            else endMs = playhead;
-          }
+          detent = crossedPlayhead;
+        }
+        if (detent) {
+          // Keep a marker-centered spatial band for the rest of this touch.
+          // Sparse crossings and reversals use the same bounded mapping; no
+          // event position or stationary time becomes a new release origin.
+          const displacement = requestedBoundary - playhead;
+          const boundary = playhead + requestedSide * Math.max(0,
+            Math.abs(displacement) - TIMELINE_PLAYHEAD_RELEASE_PX * millisecondsPerPixel);
+          if (edge === 'start') startMs = boundary;
+          else endMs = boundary;
         }
         previousBoundary = requestedBoundary;
       }

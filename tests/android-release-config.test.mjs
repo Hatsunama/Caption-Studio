@@ -15,6 +15,7 @@ const postinstallScripts = [
   'configure-android-release.js',
   'patch-android-dependencies.js',
   'patch-react-native-gradle.js',
+  'patch-whisper-word-boundaries.js',
   'repair-reanimated-native-props.js',
   'repair-native-scroll-input.js',
   'repair-pressable-accessibility.js',
@@ -120,6 +121,7 @@ test('existing postinstall hook aligns a newly generated Android project without
     // Execute the real entrypoint and configurator; unrelated dependency repairs
     // have their own tests and do not need an installed npm tree in this fixture.
     const unrelatedRepairs = {
+      './patch-whisper-word-boundaries': { patchWhisperWordBoundaries() {} },
       './patch-android-dependencies': { patchAndroidDependencies() {} },
       './repair-reanimated-native-props': { repairReanimatedNativeProps() {} },
       './repair-native-scroll-input': { repairNativeScrollInput() {} },

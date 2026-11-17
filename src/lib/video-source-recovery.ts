@@ -68,9 +68,17 @@ export function loadPlayableVideoSource(player: SourcePlayer, uri: string, timeo
         else if (replaced && status === 'readyToPlay') finish();
       });
       Promise.resolve(player.replaceAsync(uri)).then(() => {
+        // Aborting settles JS work but cannot cancel an Expo source mutation.
+        // Its late completion must not read a player already released on unmount.
+        if (settled) return;
         replaced = true;
-        if (player.status === 'error') finish(new Error('The video could not be loaded.'));
-        else if (player.status === 'readyToPlay') finish();
+        try {
+          const status = player.status;
+          if (status === 'error') finish(new Error('The video could not be loaded.'));
+          else if (status === 'readyToPlay') finish();
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)));
+        }
       }, (error) => finish(error instanceof Error ? error : new Error(String(error))));
     } catch (error) {
       finish(error instanceof Error ? error : new Error(String(error)));

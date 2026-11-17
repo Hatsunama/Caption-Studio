@@ -142,7 +142,7 @@ test('unmounted delivery ignores queued touches and supports strict-effect remou
   assert.equal(f.calls.filter(([kind]) => kind === 'finish').length, 1);
 });
 
-function mountedWrapper({ flushMount = true, beforeGeometry } = {}) {
+export function mountedWrapper({ flushMount = true, beforeGeometry, appState, callbackOverrides = {} } = {}) {
   const effects = [], ui = [], rn = [], handlers = {}, nativeStates = [], liveStates = [], calls = [], exported = {};
   let liveTouch = false;
   let originX = 100;
@@ -158,12 +158,13 @@ function mountedWrapper({ flushMount = true, beforeGeometry } = {}) {
   const scheduleOnUI = (fn, ...args) => { assert.equal(thread, 'rn'); ui.push(() => fn(...args)); };
   runInNewContext(code, { exports: exported, require(name) {
     if (name === 'react') return { createContext: (value) => ({ value }), useContext: (context) => context.value,
-      useState: (initialize) => [initialize()], useEffect: (setup) => effects.push(setup) };
+      useState: (initialize) => [initialize()], useEffect: (setup) => effects.push(setup),
+      useLayoutEffect: (setup) => effects.push(setup) };
     if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }) };
     if (name === '@/components/spring-scroll-view') return {
       SpringScrollView: 'ScrollView', SpringScrollGestureContext: { value: [] },
     };
-    if (name === 'react-native') return { Platform: { OS: 'android' }, View: 'View', ScrollView: 'ScrollView' };
+    if (name === 'react-native') return { AppState: appState ?? { currentState: 'active', addEventListener: () => ({ remove() {} }) }, Platform: { OS: 'android' }, View: 'View', ScrollView: 'ScrollView' };
     if (name === 'react-native-gesture-handler') return { Gesture: { Pan: () => pan }, GestureDetector: 'GestureDetector', State: { FAILED: 1, CANCELLED: 3 } };
     if (name === 'react-native-reanimated') return { useSharedValue: (value) => ({ value }), setGestureState: (...args) => {
       assert.equal(thread, 'ui'); nativeStates.push(args);
@@ -179,7 +180,9 @@ function mountedWrapper({ flushMount = true, beforeGeometry } = {}) {
   exported.TimelineNativeGeometryContext.value = geometry;
   const callbacks = {};
   for (const kind of ['begin', 'move', 'finish', 'cancel']) callbacks[kind] = (...args) => {
-    assert.equal(thread, 'rn'); calls.push([kind, ...args]);
+    assert.equal(thread, 'rn');
+    if (callbackOverrides[kind]) callbackOverrides[kind](...args);
+    else calls.push([kind, ...args]);
   };
   exported.TimelineNativeGestureView({ nativeCallbacks: callbacks, panHandlers: {}, style: { width: 24 } });
   let cleanups = effects.map((setup) => setup()).filter(Boolean);

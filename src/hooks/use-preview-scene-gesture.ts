@@ -3,6 +3,7 @@ import { type GestureResponderEvent, type LayoutChangeEvent, type View } from 'r
 import { createPreviewSceneController, type PreviewSceneOptions } from '@/lib/preview-scene-controller';
 import type { LayerGeometryInput } from '@/lib/layer-geometry';
 import type { PreviewOrigin } from '@/lib/preview-object-hit-test';
+import { useDisplayRotationInvalidation } from '@/hooks/use-display-rotation-invalidation';
 
 export type { PreviewSceneTarget } from '@/lib/preview-scene-controller';
 
@@ -25,13 +26,21 @@ export function usePreviewSceneGesture<T>(options: PreviewSceneOptions<T>) {
     optionsRef.current = options;
     controller.configure(options);
   });
+  const invalidateMeasurement = useCallback(() => {
+    measurement.current++;
+    originRef.current = undefined;
+    controller.cancel();
+  }, [controller]);
+
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      controller.cancel();
+      invalidateMeasurement();
     };
-  }, [controller]);
+  }, [invalidateMeasurement]);
+
+  useDisplayRotationInvalidation(invalidateMeasurement);
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {
     controller.cancel();

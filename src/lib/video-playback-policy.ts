@@ -7,6 +7,7 @@ export function shouldJoinTimelinePreparation(
     preparedClipId?: string;
     playbackUri?: string;
     preparingTimelineMs?: number;
+    preparingSourceMs?: number;
     readiness: string;
     preparation?: AbortController;
     preparationTask?: Promise<unknown>;
@@ -17,11 +18,13 @@ export function shouldJoinTimelinePreparation(
   timelineMs: number,
   forceReload: boolean,
   expectedWindowEndMs?: number,
+  expectedSourceMs?: number,
 ) {
   return !forceReload
     && slot.preparedClipId === clipId
     && slot.playbackUri === playbackUri
     && slot.preparingTimelineMs === timelineMs
+    && slot.preparingSourceMs === expectedSourceMs
     && slot.preparingWindowEndMs === expectedWindowEndMs
     && slot.readiness === 'preparing'
     && Boolean(slot.preparation && !slot.preparation.signal.aborted && slot.preparationTask);

@@ -13,6 +13,7 @@ test('the actual postinstall connects native input and delivery repairs before c
     module,
     require(id) {
       if (id === 'node:path') return path;
+      if (id === './patch-whisper-word-boundaries') return { patchWhisperWordBoundaries: root => calls.push(['whisper', root]) };
       if (id === './patch-android-dependencies') return { patchAndroidDependencies: root => calls.push(['android', root]) };
       if (id === './configure-android-release') return { configureAndroidRelease: root => calls.push(['release', root]) };
       if (id === './repair-reanimated-native-props') return { repairReanimatedNativeProps: root => calls.push(['delivery', root]) };
@@ -24,5 +25,5 @@ test('the actual postinstall connects native input and delivery repairs before c
   context.require.main = module;
   runInNewContext(readFileSync(filename, 'utf8'), context);
   const root = path.join(path.dirname(filename), '..');
-  assert.deepEqual(calls, [['pressable', root], ['input', root], ['delivery', root], ['android', root], ['release', root]]);
+  assert.deepEqual(calls, [['whisper', root], ['pressable', root], ['input', root], ['delivery', root], ['android', root], ['release', root]]);
 });

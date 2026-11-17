@@ -65,6 +65,8 @@ export function previewInteractionAtPoint<T>(
   if (selected) {
     const selectedMode = selectedChromeMode(selected.geometry, point, size, deletable);
     if (selectedMode && selectedMode !== 'move') return { target: selected, mode: selectedMode };
+    // The selected body owns the first pointer, just like its transform chrome.
+    if (previewObjectContainsPoint(selected.geometry, point, size)) return { target: selected, mode: 'move' };
   }
   const target = front;
   if (!target) return undefined;

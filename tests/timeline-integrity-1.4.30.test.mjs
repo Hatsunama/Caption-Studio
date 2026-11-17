@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
 
 import { createCaptionProject } from '../src/lib/project-factory.ts';
-import { splitVideoClip } from '../src/lib/project-editor.ts';
+import { setVideoClipTransform, splitVideoClip } from '../src/lib/project-editor.ts';
+import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
 
 test('splitting video is topology-only for subtitle identity, text, timing, and word references', () => {
   const source = { id: 'source', uri: 'content://video/source', storageMode: 'linked', displayName: 'source.mp4', durationMs: 6_000, width: 1080, height: 1920, rotation: 0 };
@@ -57,18 +59,92 @@ test('preview layers own hit testing, authored lines, stable transform baselines
   assert.doesNotMatch(images, /function ImageCornerHandle/);
 });
 
-test('timeline seeks retain persistent slot ownership instead of replacing a decoder on transient status', () => {
+test('timeline seeks retain persistent slot ownership instead of replacing a decoder on transient status', async () => {
   const controller = readFileSync(new URL('../src/hooks/use-timeline-video-controller.ts', import.meta.url), 'utf8');
   assert.equal((controller.match(/useVideoPlayer\(null, configureTimelinePlayer\)/g) ?? []).length, 2);
-  assert.match(controller, /const sourceChanged = forceReload \|\| runtime\.playbackUri !== uri/);
   assert.match(controller, /runtime\.preparedClipId === entry\.clip\.id && runtime\.firstFrameReady/);
-  assert.match(controller, /const sourceChanged = forceReload \|\| runtime\.playbackUri !== uri\s*\|\| runtime\.sourceId !== source\.id \|\| runtime\.appliedWindowEndMs !== windowEndMs;/);
   const retirement = controller.slice(controller.indexOf('const retireSurfaceFrames ='), controller.indexOf('const suspendForTranslation ='));
   assert.match(retirement, /runtime\.prepareToken = nextPrepareToken\(runtime\.prepareToken\);/);
   assert.match(retirement, /runtime\.firstFrameReady = false/);
   assert.match(retirement, /runtime\.playbackUri = undefined/);
   assert.doesNotMatch(controller, /loadedPlaybackUri/);
-  assert.match(controller, /if \(sourceChanged\) \{[\s\S]*?await loadPlayableVideoSource\(player, uri, 15_000, preparation\.signal\)/);
+  const source = ts.createSourceFile('controller.ts', controller, ts.ScriptTarget.Latest, true);
+  const find = (root, predicate) => {
+    const nodes = [];
+    function visit(node) { if (predicate(node)) nodes.push(node); ts.forEachChild(node, visit); }
+    visit(root); return nodes;
+  };
+  const declaration = (root, name) => {
+    const matches = find(root, node => ts.isVariableDeclaration(node) && node.name.getText(source) === name);
+    assert.equal(matches.length, 1, `one actual ${name} declaration`);
+    return matches[0];
+  };
+  const operation = declaration(source, 'prepareSlotOperation').initializer;
+  const guard = declaration(operation, 'sourceChanged').initializer;
+  const bindings = { forceReload: false, uri: 'file:///authoritative.mp4', source: { id: 'source' }, windowEndMs: 5000 };
+  const runtime = { playbackUri: bindings.uri, sourceId: 'source', appliedWindowEndMs: 5000, sourceMutation: undefined };
+  const changed = (patch = {}, runtimePatch = {}) => runInNewContext(`(${guard.getText(source)})`, {
+    ...bindings, ...patch, runtime: { ...runtime, ...runtimePatch }, player: { status: runtimePatch.status },
+  }, { timeout: 1000 });
+  assert.equal(changed(), false, 'same installed source and window retain the decoder');
+  assert.equal(changed({ forceReload: true }), true);
+  assert.equal(changed({ uri: 'file:///other.mp4' }), true);
+  assert.equal(changed({ source: { id: 'other' } }), true);
+  for (const windowEndMs of [undefined, null, 4000, 6000]) {
+    assert.equal(changed({ windowEndMs }), true, 'a different window requires installation');
+    assert.equal(changed({ windowEndMs }, { appliedWindowEndMs: windowEndMs }), false, 'equal windows retain ownership');
+  }
+  for (const sourceMutation of [undefined, null, Promise.resolve()]) {
+    assert.equal(changed({}, { sourceMutation }), sourceMutation != null, 'pending SDK mutation requires replacement');
+  }
+  for (const status of ['idle', 'loading', 'readyToPlay', 'error']) for (const firstFrameReady of [false, true]) {
+    assert.equal(changed({}, { status, readiness: status, firstFrameReady }), false, 'transient status does not replace a decoder');
+  }
+
+  // Follow the parent AST pattern in timeline-audio-ownership: inspect the actual
+  // awaited call, then execute its small adapter against a single SDK player.
+  const loads = find(source, node => ts.isCallExpression(node) && node.expression.getText(source) === 'loadPlayableVideoSource');
+  assert.equal(loads.length, 1, 'one authoritative SDK loader');
+  const load = loads[0];
+  assert.ok(ts.isAwaitExpression(load.parent));
+  assert.ok(ts.isExpressionStatement(load.parent.parent));
+  const branch = load.parent.parent.parent;
+  assert.ok(ts.isBlock(branch) && ts.isIfStatement(branch.parent));
+  assert.equal(branch.parent.expression.getText(source), 'sourceChanged');
+  assert.equal(branch.parent.thenStatement, branch, 'the SDK loader runs in the changed-source branch');
+  assert.ok(find(operation, node => node === load).length === 1, 'loader belongs to the guarded preparation operation');
+  assert.deepEqual(load.arguments.slice(1).map(argument => argument.getText(source)), ['uri', '15_000', 'preparation.signal']);
+  assert.equal(declaration(operation, 'source').initializer.getText(source), 'sourceForEntry(entry)');
+  assert.equal(declaration(operation, 'uri').initializer.getText(source), 'videoPlaybackUri(source)');
+  assert.equal(declaration(operation, 'windowEndMs').initializer.getText(source), 'windowEndForEntry(entry)');
+  assert.equal(declaration(operation, 'player').initializer.getText(source), 'playerForSlot(slot)');
+  const adapter = load.arguments[0];
+  assert.ok(ts.isConditionalExpression(adapter));
+  assert.equal(adapter.condition.getText(source), "Platform.OS === 'android'");
+  for (const OS of ['android', 'ios', 'web']) for (const reject of [false, true]) {
+    const calls = [];
+    let resolveTask, rejectTask;
+    const task = new Promise((resolve, reject) => { resolveTask = resolve; rejectTask = reject; });
+    const listener = () => {};
+    const subscription = { remove() {} };
+    const player = {
+      status: 'loading',
+      addListener(event, callback) { assert.equal(this, player); calls.push([event, callback]); return subscription; },
+      replaceAsync(uri) { assert.equal(this, player); calls.push(uri); return task; },
+    };
+    const runtime = {};
+    const actual = runInNewContext(`(${adapter.getText(source)})`, { Platform: { OS }, player, runtime }, { timeout: 1000 });
+    if (OS !== 'android') assert.equal(actual, player, 'iOS/web receive the same SDK player directly');
+    assert.equal(actual.status, 'loading'); player.status = 'readyToPlay';
+    assert.equal(actual.status, 'readyToPlay', 'adapter reads live SDK status');
+    assert.equal(actual.addListener('statusChange', listener), subscription);
+    assert.equal(actual.replaceAsync(bindings.uri), task, 'adapter returns the SDK replacement promise');
+    assert.deepEqual(calls, [['statusChange', listener], bindings.uri], 'same SDK receives the listener and authoritative URI');
+    assert.equal(runtime.sourceMutation, OS === 'android' ? task : undefined);
+    if (reject) rejectTask(new Error('SDK replacement failed')); else resolveTask();
+    await task.catch(() => {});
+    assert.equal(runtime.sourceMutation, undefined, 'settled SDK mutations clear on success and failure');
+  }
 });
 
 test('preparation identities advance monotonically and reject invalid or exhausted ownership', () => {
@@ -105,4 +181,17 @@ test('preparation identities advance monotonically and reject invalid or exhaust
   ]) {
     assert.throws(() => nextPrepareToken(invalid), /preparation request identity was exhausted/);
   }
+});
+
+for (const x of [-4, 4]) test(`accepted off-canvas main-video positions survive edits and draft recovery: ${x}`, () => {
+  const sources = ['landscape', 'portrait'].map((id, i) => ({ id, uri: `file:///${id}.mp4`, storageMode: 'copied', displayName: `${id}.mp4`, durationMs: 8000,
+    width: i ? 360 : 640, height: i ? 640 : 360, rotation: 0 }));
+  let project = createCaptionProject({ id: `offcanvas-${x}`, name: 'Synthetic compatibility fixture', sources });
+  const ids = project.clips.map(clip => clip.id);
+  for (const id of ids) project = setVideoClipTransform(project, id, { position: { x, y: .5 } });
+  const recovered = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(project)));
+  assert.deepEqual(recovered.clips.map(clip => clip.id), ids);
+  assert.deepEqual(recovered.clips.map(clip => clip.transform.position), [{ x, y: .5 }, { x, y: .5 }]);
+  assert.deepEqual(recovered.clips.map(clip => [clip.sourceStartMs, clip.sourceEndMs, clip.playbackRate]), [[0, 8000, 1], [0, 8000, 1]],
+    'fixing preview admission must not clamp saved geometry or change the clip timeline');
 });

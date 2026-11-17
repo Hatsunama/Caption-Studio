@@ -1,6 +1,74 @@
 import CaptionMedia from 'caption-media';
 import type { VideoPlayer } from 'expo-video';
 
+export function disposeVideoMaskLease(player: VideoPlayer, requestId: number) {
+  if (requestId > 0) {
+    try { void CaptionMedia.disposeVideoMaskLease(player, requestId).catch(() => {}); } catch { /* released */ }
+  }
+}
+
+/** The native mask remains owned after a grant, including dirty cancellation. */
+export async function acquireVideoMaskLease(
+  player: VideoPlayer, peer: VideoPlayer, requestId: number, generation: number,
+  requireHiddenAncestor: boolean, signal: AbortSignal,
+) {
+  let committed = false;
+  let cancelled = false;
+  const cancel = () => {
+    if (committed || cancelled) return;
+    cancelled = true;
+    try { void CaptionMedia.cancelVideoMaskLease(player, requestId).catch(() => {}); } catch { /* released */ }
+  };
+  const aborted = () => Object.assign(new Error('Video masking was superseded.'), { name: 'AbortError' });
+  if (signal.aborted) throw aborted();
+  signal.addEventListener('abort', cancel, { once: true });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: unknown) => {
+        if (settled) return;
+        settled = true; clearTimeout(timeout); signal.removeEventListener('abort', abort);
+        if (error) reject(error); else resolve();
+      };
+      const abort = () => finish(aborted());
+      const timeout = setTimeout(() => { cancel(); finish(new Error('Video masking timed out.')); }, 5000);
+      signal.addEventListener('abort', abort, { once: true });
+      try {
+        void CaptionMedia.acquireVideoMaskLease(player, peer, requestId, generation, requireHiddenAncestor)
+          .then(() => finish(signal.aborted ? aborted() : undefined), finish);
+      } catch (error) { finish(error); }
+    });
+    return {
+      async commit() {
+        try {
+          if (signal.aborted) throw aborted();
+          await new Promise<void>((resolve, reject) => {
+            let settled = false;
+            const finish = (error?: unknown) => {
+              if (settled) return;
+              settled = true; clearTimeout(timeout); signal.removeEventListener('abort', abort);
+              if (error) reject(error); else resolve();
+            };
+            const abort = () => finish(aborted());
+            const timeout = setTimeout(() => { cancel(); finish(new Error('Video mask release timed out.')); }, 5000);
+            signal.addEventListener('abort', abort, { once: true });
+            try { void CaptionMedia.commitVideoMaskLease(player, requestId, generation).then(() => finish(), finish); }
+            catch (error) { finish(error); }
+          });
+          if (signal.aborted) { cancel(); throw aborted(); }
+          committed = true;
+          signal.removeEventListener('abort', cancel);
+        } catch (error) {
+          cancel(); signal.removeEventListener('abort', cancel); throw error;
+        }
+      },
+      cancel() { cancel(); signal.removeEventListener('abort', cancel); },
+    };
+  } catch (error) {
+    cancel(); signal.removeEventListener('abort', cancel); throw error;
+  }
+}
+
 // undefined is a confirmed full source; null is an invalid/unknown JS contract.
 export function configureVideoPlaybackWindow(
   player: VideoPlayer,
