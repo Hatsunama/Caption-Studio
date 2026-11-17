@@ -244,6 +244,8 @@ export function videoTransitionCompositeState(
   const outgoingSlot = slots.findIndex((slot) => slot.preparedClipId === frame.outgoing?.clipId);
   const incomingSlot = slots.findIndex((slot) => slot.preparedClipId === frame.incoming?.clipId);
   const status = frame.unavailableReason || frame.key === failedPreviewKey || !frame.outgoing || !frame.incoming
+    || (outgoingSlot >= 0 && slots[outgoingSlot].readiness === 'error')
+    || (incomingSlot >= 0 && slots[incomingSlot].readiness === 'error')
     ? 'unavailable'
     : outgoingSlot < 0 || incomingSlot < 0 || outgoingSlot === incomingSlot
       || !slots[outgoingSlot].firstFrameReady || !slots[incomingSlot].firstFrameReady
