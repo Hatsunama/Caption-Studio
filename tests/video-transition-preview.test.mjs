@@ -11,6 +11,7 @@ import {
   transitionTimelineTimeAt,
 } from '../src/lib/video-transition-preview.ts';
 import { buildClipTimeline } from '../src/lib/video-timeline.ts';
+import { shouldJoinTimelinePreparation } from '../src/lib/video-playback-policy.ts';
 import { readFileSync } from 'node:fs';
 
 const previewOverlaySource = readFileSync(new URL('../src/components/editor/video-transition-overlay.tsx', import.meta.url), 'utf8');
@@ -312,4 +313,49 @@ test('a missing first frame or failed composite has an explicit unavailable stat
   assert.equal(videoTransitionCompositeState(frame, slots.map((slot) => ({ ...slot, firstFrameReady: true }))).status, 'ready');
   assert.match(previewOverlaySource, /compositeState\?\.status !== 'ready'/);
   assert.match(previewOverlaySource, /backgroundColor: props\.backgroundColor/);
+});
+
+for (const peer of ['out', 'in']) test(`matching ${peer} peer preparation error is unavailable, cancellation remains waiting`, () => {
+  const windows = buildVideoTransitionPreviewWindows(
+    buildClipTimeline([
+      clip('out', 'out-source', { transitionAfter: { type: 'crossfade', durationMs: 600 } }),
+      clip('in', 'in-source'),
+    ]),
+    [source('out-source'), source('in-source')],
+  );
+  const frame = videoTransitionPreviewFrameAt(windows, 4_100);
+  const slots = ['out', 'in'].map(id => ({ preparedClipId: id,
+    firstFrameReady: id !== peer, readiness: id === peer ? 'error' : 'ready' }));
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'unavailable', 'a terminal matching peer failure cannot wait forever');
+  const failed = slots.find(slot => slot.preparedClipId === peer);
+  failed.readiness = 'cancelled';
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'waiting');
+  failed.readiness = 'preparing';
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'waiting');
+  failed.readiness = 'ready'; failed.firstFrameReady = true;
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'ready');
+  slots.push({ preparedClipId: 'unrelated', firstFrameReady: false, readiness: 'error' });
+  assert.equal(videoTransitionCompositeState(frame, slots).status, 'ready', 'unrelated errors have no authority over this pair');
+});
+
+test('composite peer preparation joins only the same owned source target', () => {
+  const preparation = new AbortController();
+  const runtime = { preparedClipId: 'out', playbackUri: 'file:///out.mp4',
+    preparingTimelineMs: 4250, preparingWindowEndMs: 5500, preparingSourceMs: 5250,
+    readiness: 'preparing', preparation, preparationTask: Promise.resolve(0) };
+  const joins = (expectedSourceMs = 5250, changes = {}, forceReload = false) =>
+    shouldJoinTimelinePreparation({ ...runtime, ...changes }, 'out', 'file:///out.mp4', 4250, forceReload, 5500, expectedSourceMs);
+  assert.equal(joins(), true);
+  assert.equal(shouldJoinTimelinePreparation({ ...runtime, preparingSourceMs: undefined },
+    'out', 'file:///out.mp4', 4250, false, 5500), true, 'ordinary callers retain their existing join contract');
+  assert.equal(joins(5000), false, 'ordinary selected endpoint cannot certify the composite frame');
+  assert.equal(shouldJoinTimelinePreparation(runtime, 'out', 'file:///out.mp4', 4250, false, 5500), false,
+    'ordinary preparation cannot join a composite target override');
+  assert.equal(joins(5250, { preparingSourceMs: undefined }), false,
+    'composite preparation cannot join an ordinary target');
+  assert.equal(joins(5250, { playbackUri: 'file:///relinked.mp4' }), false);
+  assert.equal(joins(5250, { preparingWindowEndMs: 5000 }), false);
+  assert.equal(joins(5250, {}, true), false);
+  preparation.abort();
+  assert.equal(joins(), false);
 });
