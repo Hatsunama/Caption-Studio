@@ -1,0 +1,21 @@
+{
+  "repository": "Hatsunama/Caption-Studio",
+  "source": "55e3fa0fbb62f41d23f954cb60e3dda6edbb3e4d",
+  "sourceTree": "0502b4f55c1362d8a4f95d3a84976e48bc7203ca",
+  "aab": {
+    "sha256": "7c84f4f37b9bde6feaa7de8f939f891b2ecb79948fd9546c546977bb9ad2104b",
+    "size": 141264708,
+    "assetId": 759832160,
+    "releaseId": 448918255
+  },
+  "devices": {
+    "samsung": {
+      "path": "qa/play145/samsung.json",
+      "sha256": "f43571d35f464feb89206797b4eb40f10c6af7df4be25f30210d0b97cc55fefe"
+    },
+    "seeker": {
+      "path": "qa/play145/seeker.json",
+      "sha256": "288489c897735112fc10fa0115656c33d8a9d0c0f524be378b30b5cf461a93c8"
+    }
+  }
+}

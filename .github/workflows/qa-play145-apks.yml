@@ -1,0 +1,61 @@
+name: Final Play 145 unsigned device APK verification
+on:
+  push:
+    branches: [qa/derive-play145-20261117]
+    paths:
+      - .github/workflows/qa-play145-apks.yml
+      - scripts/qa-play145-apks.py
+      - qa/play145/config.json
+      - qa/play145/samsung.json
+      - qa/play145/seeker.json
+permissions:
+  contents: read
+jobs:
+  derive:
+    if: >-
+      github.repository == 'Hatsunama/Caption-Studio' &&
+      github.event.repository.private == false &&
+      github.actor == 'Hatsunama' && github.triggering_actor == 'Hatsunama' &&
+      github.ref == 'refs/heads/qa/derive-play145-20261117' &&
+      github.event.deleted == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: qa-checkout
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 55e3fa0fbb62f41d23f954cb60e3dda6edbb3e4d
+          path: source
+          persist-credentials: false
+      - name: Refuse incomplete config, source drift or insufficient memory
+        run: |
+          mkdir "$RUNNER_TEMP/play145"
+          python3 -I -B qa-checkout/scripts/qa-play145-apks.py check "$GITHUB_WORKSPACE/qa-checkout" "$GITHUB_WORKSPACE/source" "$RUNNER_TEMP/play145"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.23.4
+      - name: Existing pinned pure Node verified JDK downloader and hardener
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" RUNNER_TOOL_CACHE="$RUNNER_TOOL_CACHE" GITHUB_ACTIONS=true GITHUB_REPOSITORY=Hatsunama/Caption-Studio GITHUB_ENV="$GITHUB_ENV" GITHUB_PATH="$GITHUB_PATH" node source/scripts/build-toolchain/verified-java-download.mjs --install "$RUNNER_TOOL_CACHE" --receipt "$RUNNER_TEMP/play145/verified-java.json"
+      - name: Harden only verified disposable JDKs with a credential-free environment
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" RUNNER_TEMP="$RUNNER_TEMP" RUNNER_TOOL_CACHE="$RUNNER_TOOL_CACHE" GITHUB_ACTIONS=true GITHUB_REPOSITORY=Hatsunama/Caption-Studio JAVA_HOME="$JAVA_HOME" JAVA_HOME_17_X64="$JAVA_HOME_17_X64" JAVA_HOME_21_X64="$JAVA_HOME_21_X64" node source/scripts/harden-java-truststores.mjs --ci
+      - name: Prove read-only private draft asset access and exact AAB
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I -B qa-checkout/scripts/qa-play145-apks.py download "$GITHUB_WORKSPACE/qa-checkout" "$GITHUB_WORKSPACE/source" "$RUNNER_TEMP/play145"
+      - name: Validate identity and derive two sequential unsigned device sets
+        run: python3 -I -B qa-checkout/scripts/qa-play145-apks.py derive "$GITHUB_WORKSPACE/qa-checkout" "$GITHUB_WORKSPACE/source" "$RUNNER_TEMP/play145"
+      - name: Retain complete unsigned sets and verification provenance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: play145-UNSIGNED-not-installable-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/play145/out/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
