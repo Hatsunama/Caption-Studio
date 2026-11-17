@@ -381,7 +381,7 @@ for (const timelineMs of [4250, 4700]) test(`paused foreground preparation at ${
     phase: h.transport.phase,
     activeClipId: h.transport.slots[h.transport.activeSlot].preparedClipId,
     playIntent: h.transport.isPlaying,
-    readyClipIds: h.transport.slots.filter(slot => slot.readiness === 'ready' && slot.firstFrameReady)
+    readyClipIds: Array.from(h.transport.slots).filter(slot => slot.readiness === 'ready' && slot.firstFrameReady)
       .map(slot => slot.preparedClipId).sort(),
     visibleClipIds: visibleClipIds(),
     playingClipIds: h.players.flatMap((player, slot) => player.playing
