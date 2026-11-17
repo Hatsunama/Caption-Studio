@@ -12,9 +12,8 @@ permissions:
   contents: read
 jobs:
   derive:
-    permissions:
-      contents: write
     if: >-
+      false &&
       github.repository == 'Hatsunama/Caption-Studio' &&
       github.event.repository.private == false &&
       github.actor == 'Hatsunama' && github.triggering_actor == 'Hatsunama' &&
