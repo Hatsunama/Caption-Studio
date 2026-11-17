@@ -145,8 +145,9 @@ function verifyReleaseOptimization(projectRoot, releaseBuild) {
     if (/(?:^|\s)-dontoptimize(?=\s|$)/m.test(rules)) {
       throw new Error(`Release R8 optimization is disabled by -dontoptimize in ${file}`);
     }
-    // Follow local ProGuard includes too; a visited set permits cyclic includes.
-    for (const match of rules.matchAll(/(?:^|\s)(?:-include\s+|@)(?:"([^"\r\n]+)"|'([^'\r\n]+)'|([^\s]+))/gm)) {
+    // Follow explicit -include directives; Java @annotations are not filenames.
+    // The final artifact gate checks the compiler's complete merged configuration.
+    for (const match of rules.matchAll(/(?:^|\s)-include\s+(?:"([^"\r\n]+)"|'([^'\r\n]+)'|([^\s]+))/gm)) {
       checkRules(path.resolve(path.dirname(file), match[1] || match[2] || match[3]));
     }
   }

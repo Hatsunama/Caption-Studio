@@ -527,3 +527,15 @@ test('R8 release repair preserves a nonoptimizing debug-only default', () => {
     assert.ok(configured.includes(optimizingRules), 'release must remain optimized');
   });
 });
+test('R8 preflight preserves Java annotations in actual-style consumer keep rules', () => {
+  withFixture(root => {
+    write(root, 'node_modules/react-native/ReactAndroid/proguard-rules.pro',
+      '-keep @interface com.facebook.proguard.annotations.DoNotStrip\n' +
+      '-keepclassmembers class * {\n  @com.facebook.proguard.annotations.DoNotStrip *;\n}\n');
+    assert.doesNotThrow(() => verifyAndroidReleaseConfig(root));
+    const rules = join(root, 'android/app/proguard-rules.pro');
+    writeFileSync(rules, readFileSync(rules, 'utf8') + '\n-include explicit-disable.pro\n');
+    write(root, 'android/app/explicit-disable.pro', '-dontoptimize\n');
+    assert.throws(() => verifyAndroidReleaseConfig(root), /dontoptimize/i);
+  });
+});
