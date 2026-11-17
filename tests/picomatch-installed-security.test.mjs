@@ -23,8 +23,9 @@ for (const [owner, consumer] of consumers) {
       { timeout: 1500, encoding: 'utf8', windowsHide: true });
     assert.equal(result.status, 0, owner + ' matcher must not exhaust its subprocess deadline');
     assert.equal(result.stdout, 'completed');
-    assert.match(metadata.name, /^@caption-studio\/picomatch-backport-v[24]$/);
-    assert.match(metadata.version, /^(?:2\.3\.2|4\.0\.7)-caption-studio\.1$/);
+    const major = ['micromatch', 'jest-util'].includes(owner) ? 2 : 4;
+    assert.equal(metadata.name, '@caption-studio/picomatch-backport-v' + major);
+    assert.equal(metadata.version, (major === 2 ? '2.3.2' : '4.0.7') + '-caption-studio.1');
     assert.equal(consumer('picomatch').isMatch('src/a.ts', 'src/*.{ts,tsx}'), true);
     assert.equal(consumer('picomatch').isMatch('assets/a.png', 'src/*.{ts,tsx}'), false);
   });

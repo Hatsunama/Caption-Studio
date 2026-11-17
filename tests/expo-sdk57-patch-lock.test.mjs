@@ -24,7 +24,9 @@ const reviewedOverrides = {
   "shell-quote": "1.11.0",
   "source-map-js": "1.2.2",
   "braces": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/174efab75d927849e53ad58b0bc61b9487347c4b/vendor/reviewed-backports/caption-studio-braces-backport-3.0.3-caption-studio.1.tgz",
-  "node-forge": "1.4.3"
+  "node-forge": "1.4.3",
+  "picomatch@^2": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/02dbbc68517b96ad14bcca443205c4515d79ca11/vendor/reviewed-backports/caption-studio-picomatch-v2-backport-2.3.2-caption-studio.1.tgz",
+  "picomatch@>=3": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/02dbbc68517b96ad14bcca443205c4515d79ca11/vendor/reviewed-backports/caption-studio-picomatch-v4-backport-4.0.7-caption-studio.1.tgz"
 };
 
 for (const [name, floor] of Object.entries(patchFloors)) {
@@ -67,6 +69,19 @@ test('reviewed security overrides and platform pins survive the compatibility re
   }
   for (const [name, spec] of Object.entries(releaseOverrides)) {
     if (typeof spec !== 'string') continue;
+    if (name === 'picomatch@^2' || name === 'picomatch@>=3') {
+      const major = name === 'picomatch@^2' ? 2 : 4;
+      const entries = Object.entries(lock.packages).filter(([key, entry]) =>
+        (key === 'node_modules/picomatch' || key.endsWith('/node_modules/picomatch')) &&
+        entry.name === '@caption-studio/picomatch-backport-v' + major);
+      assert.equal(entries.length, major === 2 ? 2 : 1);
+      for (const [, entry] of entries) {
+        assert.equal(entry.resolved, spec);
+        assert.equal(entry.version, (major === 2 ? '2.3.2' : '4.0.7') + '-caption-studio.1');
+        assert.match(entry.integrity, /^sha512-[A-Za-z0-9+/]+={0,2}$/);
+      }
+      continue;
+    }
     const entries = Object.entries(lock.packages).filter(([key]) => key.endsWith('/node_modules/' + name) || key === 'node_modules/' + name);
     // xcode 4 removes its uuid dependency; an unused override need not have a lock entry.
     if (entries.length === 0) {

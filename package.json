@@ -68,7 +68,9 @@
     "shell-quote": "1.11.0",
     "source-map-js": "1.2.2",
     "braces": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/174efab75d927849e53ad58b0bc61b9487347c4b/vendor/reviewed-backports/caption-studio-braces-backport-3.0.3-caption-studio.1.tgz",
-    "node-forge": "1.4.3"
+    "node-forge": "1.4.3",
+    "picomatch@^2": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/02dbbc68517b96ad14bcca443205c4515d79ca11/vendor/reviewed-backports/caption-studio-picomatch-v2-backport-2.3.2-caption-studio.1.tgz",
+    "picomatch@>=3": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/02dbbc68517b96ad14bcca443205c4515d79ca11/vendor/reviewed-backports/caption-studio-picomatch-v4-backport-4.0.7-caption-studio.1.tgz"
   },
   "scripts": {
     "postinstall": "node ./scripts/patch-react-native-gradle.js",

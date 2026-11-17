@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "advisory": "GHSA-fc5q-39xc-vjpf",
+  "sourceCommit": "02dbbc68517b96ad14bcca443205c4515d79ca11",
+  "packages": {
+    "2": {
+      "originalName": "picomatch",
+      "originalVersion": "2.3.2",
+      "name": "@caption-studio/picomatch-backport-v2",
+      "version": "2.3.2-caption-studio.1",
+      "archive": "caption-studio-picomatch-v2-backport-2.3.2-caption-studio.1.tgz",
+      "resolved": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/02dbbc68517b96ad14bcca443205c4515d79ca11/vendor/reviewed-backports/caption-studio-picomatch-v2-backport-2.3.2-caption-studio.1.tgz",
+      "integrity": "sha512-WfZ3GNxD7ejNQc+BbUftJH/vJaR/zG3kOppaAe7IDTDmm000kVC7Foa9FM+zacZxfQ3mhbW0fiFG5VY2U8iL8w==",
+      "originalResolved": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
+      "originalIntegrity": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==",
+      "originalFiles": {
+        "LICENSE": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+        "lib/constants.js": "980225ab847a88a784f6d315557b8434f7742b2551ce20e354455c61b938c0a5",
+        "index.js": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480",
+        "lib/parse.js": "3a91656f440069aa8f8e15c9d695b9f6b2209df1eab2be8127c72cbcca45ff5f",
+        "lib/picomatch.js": "2cb169cbe17d356036c5f62a377318b85e30817877e59797842aec9d8b15f54b",
+        "lib/scan.js": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535",
+        "lib/utils.js": "809fc29cf35ab0aa76b99cad29182f62c0ae598902481d10f9868eaef71981ee",
+        "package.json": "63264d817e856a4bff57d4304f2b38d2964a4f6df520eb169e7bcdb619f13e9a",
+        "README.md": "f4653b68a1883a32f852083c1b93381ce87f44c6855ce1f01854d39d0563c98c"
+      }
+    },
+    "4": {
+      "originalName": "picomatch",
+      "originalVersion": "4.0.7",
+      "name": "@caption-studio/picomatch-backport-v4",
+      "version": "4.0.7-caption-studio.1",
+      "archive": "caption-studio-picomatch-v4-backport-4.0.7-caption-studio.1.tgz",
+      "resolved": "https://raw.githubusercontent.com/Hatsunama/Caption-Studio/02dbbc68517b96ad14bcca443205c4515d79ca11/vendor/reviewed-backports/caption-studio-picomatch-v4-backport-4.0.7-caption-studio.1.tgz",
+      "integrity": "sha512-TR3mxzQ97cFHuoMlTDoTALHE3iV8YGcj+JAy6PX3yU5za1ovgewaGSn1cu+e72thtNrMomFG3iFzqMSb/H2m+A==",
+      "originalResolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+      "originalIntegrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+      "originalFiles": {
+        "LICENSE": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+        "lib/constants.js": "c28f952d2758261fe5428a121add485cc25b03e0193633f649de903dc0e5e222",
+        "index.js": "02ae26406508e28f9ba0865be16cf77f0b33de6c4d4d49c212c4176df1d5625a",
+        "lib/parse.js": "4e1e05447668aa1e94366c5516a2bcd8f5fff800cc92b1d0cd7d77703b8618c4",
+        "lib/picomatch.js": "fdd249d7ffff853f3bb1c77eafc8baa1a437bea85a94c35877b83c6a40d9ca94",
+        "posix.js": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480",
+        "lib/scan.js": "6457a1764e5c2e543cc3a0c00ce12ebb3764097628868198370b64d4e642aaae",
+        "lib/utils.js": "f04604f70cd1a3f6ace80b84766468674ff38b4bb83818d2ef1d81fc6355f935",
+        "package.json": "479b70b87aa7b44344d62c8a459ae7e53dd2bca6c61f1396bd55e63e9de73fc6",
+        "README.md": "a69b87120fe2b9cb8f9057eaef6b9f9887f803e02185ca2f431e8162f6312220"
+      }
+    }
+  },
+  "baselineFingerPrint": "4ee947319c596588e29912bcfd034a4d232bfaff1d67a55cc825686125cac6b9",
+  "newFingerPrint": "4ce10ecfad043637f13c64f03d7ae89d6269811ef62f5584b8ffc91fdb72f3ef",
+  "changedLockNodes": [
+    "node_modules/jest-util/node_modules/picomatch",
+    "node_modules/micromatch/node_modules/picomatch",
+    "node_modules/picomatch"
+  ]
+}

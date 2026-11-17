@@ -34,7 +34,7 @@ Historical source-pinned retired release helpers retain their historical contrac
 
 The affected runtime boundary is Java/Kotlin bytecode, including Expo module
 registration, React Native/Hermes integration, media rendering/export and local
-AI native bridges. No interface, dependency, Expo version, model, project data
+AI native bridges. No interface, Expo version, model, project data
 format or signing-key changes are authorized in this batch.
 
 ## Acceptance
@@ -70,3 +70,4 @@ Primary references checked 2026-11-17:
 - https://developer.android.com/google/play/vitals/code-optimization
 - https://developer.android.com/topic/performance/app-optimization/enable-app-optimization
 - https://docs.expo.dev/versions/v57.0.0/
+The fresh security gate also requires the separately recorded compatible Picomatch backport in picomatch-security-backport.md; no unrelated dependency update is included.
