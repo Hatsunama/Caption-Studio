@@ -1826,6 +1826,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     if (!selectedClipId) return;
     pushUndo();
     const next = setVideoTransition(editorSession.current(), selectedClipId, type, durationMs);
+    transport.synchronizeProject(next);
     setProject(next);
     persistProjectInBackground();
   };
