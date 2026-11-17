@@ -289,17 +289,26 @@ const repeatedExtglobRecursion = pattern => {
 // Reuse the existing literal fallback; leave proven linear star folds intact.
 const hasRepeatedWildcardStar = branch => {
   let escaped = false;
-  let bracket = 0;
+  let bracket = false;
   let quote = false;
   for (let i = 0; i < branch.length; i++) {
     const ch = branch[i];
     if (escaped) { escaped = false; continue; }
     if (ch === '\\') { escaped = true; continue; }
+    if (bracket) {
+      // A quote or literal '[' inside a character class does not open a
+      // string/nested class. POSIX classes have their own ':]' terminator.
+      if (ch === '[' && branch[i + 1] === ':') {
+        const end = branch.indexOf(':]', i + 2);
+        if (end !== -1) { i = end + 1; continue; }
+      }
+      if (ch === ']') bracket = false;
+      continue;
+    }
     if (ch === '"') { quote = !quote; continue; }
     if (quote) continue;
-    if (ch === '[') { bracket++; continue; }
-    if (ch === ']' && bracket > 0) { bracket--; continue; }
-    if (bracket === 0 && ch === '*' && branch[i + 1] !== '(') return true;
+    if (ch === '[') { bracket = true; continue; }
+    if (ch === '*' && branch[i + 1] !== '(') return true;
   }
   return false;
 };

@@ -35,6 +35,9 @@ for (const major of [2, 4]) {
       ['+(ab)', ['ab', 'abab', 'aba'], ['ab', 'abab']],
       ['file-@(a|b).js', ['file-a.js', 'file-b.js', 'file-c.js'], ['file-a.js', 'file-b.js']],
       ['+([*]a)', ['*a', '*a*a', 'aa'], ['*a', '*a*a']],
+      ['+([[]a)', ['[a', '[a[a', 'aa'], ['[a', '[a[a']],
+      ['+(["]a)', ['"a', '"a"a', 'aa'], ['"a', '"a"a']],
+      ['+([[:alpha:]*]a)', ['aa', '*a', 'aa*a', 'ba', '11'], ['aa', '*a', 'aa*a', 'ba']],
       ['file-?.js', ['file-a.js', 'file-ab.js', 'file-.js'], ['file-a.js']],
       ['+(*(a))', ['a', 'aa', 'aaa', 'b'], ['a', 'aa', 'aaa']],
     ];
