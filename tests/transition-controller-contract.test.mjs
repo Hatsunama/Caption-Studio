@@ -365,3 +365,57 @@ test('late outgoing Cross exit transfers ownership and catches a behind incoming
     assert.ok(h.players[out].muted && !h.players[out].playing);
   } finally { h.unmount(); }
 });
+
+// Real controller + overlay integration; React/native presentation are mocked by
+// the existing host. A paused foreground return must prepare every visible leg,
+// even when the active incoming clip is last and has no next clip to preload.
+for (const timelineMs of [4250, 4700]) test(`paused foreground preparation at ${timelineMs}ms ${timelineMs === 4250 ? 'restores the incoming-half Cross pair' : 'keeps the ordinary outside-window owner'}`, async () => {
+  const clips = [clip('out'), clip('in')];
+  clips[0].transitionAfter = { type: 'crossfade', durationMs: 1000 };
+  const h = harness({ clips, sourceDurationMs: 8000 });
+  const visibleClipIds = () => h.views
+    .filter(view => view.ancestors.every(style => style.opacity !== 0))
+    .map(view => h.transport.slots[h.players.indexOf(view.player)].preparedClipId).sort();
+  const snapshot = () => ({
+    timelineMs: h.transport.currentMs,
+    phase: h.transport.phase,
+    activeClipId: h.transport.slots[h.transport.activeSlot].preparedClipId,
+    playIntent: h.transport.isPlaying,
+    readyClipIds: h.transport.slots.filter(slot => slot.readiness === 'ready' && slot.firstFrameReady)
+      .map(slot => slot.preparedClipId).sort(),
+    visibleClipIds: visibleClipIds(),
+    playingClipIds: h.players.flatMap((player, slot) => player.playing
+      ? [h.transport.slots[slot].preparedClipId] : []).sort(),
+  });
+  try {
+    await h.complete();
+    h.transport.seek(3750); await h.complete();
+    assert.deepEqual(visibleClipIds(), ['in', 'out'], 'warm outgoing-half preparation supplies both retained views');
+    h.transport.seek(timelineMs); await h.complete();
+    assert.equal(h.transport.slots[h.transport.activeSlot].preparedClipId, 'in');
+    assert.equal(h.transport.isPlaying, false);
+    assert.deepEqual(visibleClipIds(), timelineMs === 4250 ? ['in', 'out'] : ['in'],
+      'the paused target is presentable before background invalidation');
+
+    await h.app('background');
+    assert.equal(h.transport.phase, 'suspended');
+    assert.ok(h.transport.slots.every(slot => !slot.firstFrameReady && slot.readiness === 'idle'),
+      'AppState must retire both surface preparations without fixture readiness writes');
+    assert.ok(h.players.every(player => player.muted && !player.playing));
+    const foregroundCalls = h.calls.length;
+    await h.app('active'); await h.complete();
+    const paused = snapshot();
+    assert.ok(h.players.every(player => !player.playing), 'foreground return preserves pause intent');
+    assert.deepEqual(h.calls.slice(foregroundCalls).filter(call => call[0] === 'play' && call[2] === false), [],
+      'foreground return must not request audible playback; muted frame preparation is permitted');
+    h.transport.play(); await h.complete();
+    const playing = snapshot();
+    const requiredClips = timelineMs === 4250 ? ['in', 'out'] : ['in'];
+    const expectedPaused = { timelineMs, phase: 'ready', activeClipId: 'in', playIntent: false,
+      readyClipIds: requiredClips, visibleClipIds: requiredClips, playingClipIds: [] };
+    assert.deepEqual({ paused, playing }, {
+      paused: expectedPaused,
+      playing: { ...expectedPaused, playIntent: true, playingClipIds: requiredClips },
+    }, 'foreground preparation must reveal the required retained views, then play those legs on explicit intent');
+  } finally { h.unmount(); }
+});
