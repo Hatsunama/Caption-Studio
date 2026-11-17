@@ -1,16 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createRequire, Module } from 'node:module';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const rootRequire = createRequire(path.join(root, 'package.json'));
-// Optional integrity-verified, unpacked package for isolated candidate checks.
-// Normal CI resolves the actual installed dependency; no substitute or skip.
-const candidate = process.env.CAPTION_STUDIO_FORGE_TEST_PACKAGE;
-const forgeEntry = candidate ? rootRequire.resolve(path.resolve(candidate)) : rootRequire.resolve('node-forge');
+// Exercise the installed production graph, including each real consumer.
+const forgeEntry = rootRequire.resolve('node-forge');
 const forgeRequire = createRequire(forgeEntry);
 const forge = rootRequire(forgeEntry);
 console.log('FORGE_IMPLEMENTATION ' + forgeEntry);
@@ -71,29 +69,9 @@ test('actual Expo certificate helper and CLI sign and verify fixture manifests',
   const helperPath = cliRequire.resolve('@expo/code-signing-certificates');
   const helperRequire = createRequire(helperPath);
   for (const req of [cliRequire, helperRequire]) {
-    if (!candidate) assert.equal(req.resolve('node-forge'), forgeEntry, 'Expo consumers must resolve the tested forge');
+    assert.equal(req.resolve('node-forge'), forgeEntry, 'Expo consumers must resolve the tested forge');
   }
-  // Candidate mode substitutes only the helper's forge import, not consumer
-  // code. The installed/CI mode has no loader interception.
-  const originalLoad = Module._load;
-  let candidateLoads = 0;
-  let helper;
-  try {
-    if (candidate) {
-      assert.equal(rootRequire.cache[helperPath], undefined, 'Load real helper fresh for isolated candidate');
-      Module._load = function (request, parent, isMain) {
-        if (request === 'node-forge' && parent?.filename === helperPath) {
-          candidateLoads++;
-          return forge;
-        }
-        return originalLoad.call(this, request, parent, isMain);
-      };
-    }
-    helper = cliRequire('@expo/code-signing-certificates');
-  } finally {
-    Module._load = originalLoad;
-  }
-  if (candidate) assert.equal(candidateLoads, 1, 'Real Expo helper must consume the staged candidate');
+  const helper = cliRequire('@expo/code-signing-certificates');
   // Reuse the already-committed public upstream RSA fixture. Never access any
   // user signing material or write generated keys/certificates to disk.
   const fixture = rsaSource.match(/var _pem = (\{[\s\S]*?\n  \});/);
@@ -125,4 +103,8 @@ test('actual Expo certificate helper and CLI sign and verify fixture manifests',
   assert.equal(verify('altered manifest', cliSignature), false);
   assert.throws(() => helper.convertCertificatePEMToCertificate('invalid certificate'));
   assert.throws(() => helper.convertCSRPEMToCSR('invalid CSR'));
+});
+
+test('existing dependency API success and rejection checks remain compatible', () => {
+  rootRequire('./dependency-api-compatibility.cjs');
 });

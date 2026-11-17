@@ -6,13 +6,12 @@ const {
   insertAfterRequired,
   modernizeGroovyAssignments,
   readRequired,
-  replaceKnown,
   replaceLineRequired,
   replaceRange,
 } = require('./android-patch-utils');
 const { media3AlignmentBlock, verifyAndroidReleaseConfig } = require('./verify-android-release-config');
 
-const gradleDistributionSha256 = 'distributionSha256Sum=60ea723356d81263e8002fec0fcf9e2b0eee0c0850c7a3d7ab0a63f2ccc601f3';
+const gradleDistributionSha256 = 'distributionSha256Sum=d8a18a7a841dd5df825d35a685fad6f2d7f12ac0c280e57b67c27b4a520ba228';
 
 const signingProperties = `def captionStudioReleaseStoreFile = findProperty('CAPTION_STUDIO_RELEASE_STORE_FILE')
 def captionStudioReleaseStorePassword = findProperty('CAPTION_STUDIO_RELEASE_STORE_PASSWORD')
@@ -57,7 +56,11 @@ function configureAndroidRelease(projectRoot = path.join(path.dirname(module.fil
   const wrapper = path.join(androidRoot, 'gradle', 'wrapper', 'gradle-wrapper.properties');
   for (const file of [rootBuild, appBuild, properties, wrapper]) readRequired(file);
 
-  replaceKnown(wrapper, 'gradle-9.3.1-bin.zip', 'gradle-9.4.0-bin.zip');
+  replaceLineRequired(
+    wrapper,
+    /^distributionUrl=https\\:\/\/services\.gradle\.org\/distributions\/gradle-(?:9\.3\.1|9\.4\.0|9\.9\.1)-bin\.zip\r?$/m,
+    'distributionUrl=https\\://services.gradle.org/distributions/gradle-9.9.1-bin.zip',
+  );
   const wrapperSource = readRequired(wrapper);
   fs.writeFileSync(
     wrapper,
