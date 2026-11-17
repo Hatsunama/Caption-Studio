@@ -100,7 +100,9 @@ def run(args, env=None, output=None):
     r = subprocess.run(args, env=BASE_ENV if env is None else env,
                        stdin=subprocess.DEVNULL, stdout=output or subprocess.PIPE,
                        stderr=subprocess.PIPE, timeout=420, check=False, shell=False)
-    need(r.returncode == 0, 'Subprocess failed (details suppressed; no credential/URL logging)')
+    status = re.search(rb'HTTP ([0-9]{3})', r.stderr or b'')
+    detail = (' HTTP ' + status[1].decode()) if status else ''
+    need(r.returncode == 0, 'Subprocess failed exit=' + str(r.returncode) + detail)
     return r.stdout if output is None else b''
 
 
@@ -155,11 +157,14 @@ def fetch(c, work, env):
         return run(['gh', 'api', '--hostname', 'github.com', '--method', 'GET',
                     '-H', 'Accept: ' + accept, '-H', 'X-GitHub-Api-Version: 2022-11-28',
                     'repos/' + REPO + '/' + endpoint], env=gh_env, output=output)
+    print('Checking fixed draft release metadata', flush=True)
     release = json.loads(api('releases/' + str(a['releaseId'])), object_pairs_hook=unique)
     need(release.get('id') == a['releaseId'] and release.get('draft') is True, 'Private draft release required')
     need(any(x.get('id') == a['assetId'] for x in release.get('assets', [])), 'Asset not in selected draft')
     endpoint = 'releases/assets/' + str(a['assetId'])
+    print('Checking fixed AAB asset metadata', flush=True)
     metadata(json.loads(api(endpoint), object_pairs_hook=unique), a)
+    print('Downloading exact signed AAB', flush=True)
     with (work / 'final.aab').open('xb') as f:
         api(endpoint, 'application/octet-stream', f)
     verify(work / 'final.aab', SHA, SIZE)
@@ -331,6 +336,7 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except Exception:
-        print('REFUSED: QA verification/derivation failed; no fallback or permission broadening.', file=sys.stderr)
+    except Exception as error:
+        detail = str(error) if isinstance(error, ValueError) else type(error).__name__
+        print('REFUSED: ' + detail + '; no fallback or permission broadening.', file=sys.stderr)
         sys.exit(1)
