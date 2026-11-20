@@ -182,7 +182,7 @@ test('actual caption overlay shares one transcript lookup across cue mounts and 
     word('w1', 'one', 0),
     word('w2', 'two', 1000, { styleOverride: { textColor: '#123456' } }),
   ]);
-  const fontUris = new Map([[DEFAULT_CAPTION_STYLE.font.family, 'file:///fixture-font.ttf']]);
+  const fontUris = new Map();
   const host = presentationHost(fontUris);
   const first = cue('first', 0, 900, { wordIds: ['w1'] });
   const second = cue('second', 1000, 1900, { wordIds: ['w2'] });
@@ -202,7 +202,7 @@ test('shared lookup preserves serialized words, duplicate/missing IDs, styling, 
   ];
   const caption = cue('first', 0, 2000, { wordIds: ['second', 'missing', 'repeat', 'second'],
     styleOverride: { textColor: '#abcdef' } });
-  const fontUris = new Map([[DEFAULT_CAPTION_STYLE.font.family, 'file:///fixture-font.ttf']]);
+  const fontUris = new Map();
   const host = presentationHost(fontUris);
   const before = structuredClone({ words, caption, style: DEFAULT_CAPTION_STYLE });
   const nodes = host.render(propsFor(caption, words));
