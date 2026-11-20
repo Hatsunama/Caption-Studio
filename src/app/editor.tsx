@@ -9,7 +9,7 @@ import { usePreviewSceneGesture, type PreviewSceneTarget } from '@/hooks/use-pre
 import { applyPreviewSceneGeometry } from '@/lib/preview-scene-project';
 import { VIDEO_TRANSFORM_GESTURE_LIMITS, videoClipPreviewGeometry } from '@/lib/video-transform';
 import { LayerTransformOverlay } from '@/components/editor/layer-transform-overlay';
-import { captionPreviewState, projectHasEditorLayer } from '@/lib/caption-preview';
+import { captionContentAtTime, selectedCaptionPreview, projectHasEditorLayer } from '@/lib/caption-preview';
 import { reconcileCaptionScriptDraft } from '@/lib/caption-script';
 import { captionAtTimelinePosition } from '@/lib/caption-timeline-anchor';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -657,9 +657,13 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   const previewCaptions = useMemo(() => scriptEditorOpen
     ? reconcileCaptionScriptDraft(project, scriptDraftCaptions ?? timelineCaptions) : timelineCaptions,
   [project, scriptEditorOpen, scriptDraftCaptions, timelineCaptions]);
-  const { active: activeCaption, activeCaptions, selected: selectedCaption } = useMemo(
-    () => captionPreviewState(previewCaptions, currentMs, selectedCaptionId),
-    [currentMs, previewCaptions, selectedCaptionId],
+  const { active: activeCaption, activeCaptions } = useMemo(
+    () => captionContentAtTime(previewCaptions, currentMs),
+    [currentMs, previewCaptions],
+  );
+  const selectedCaption = useMemo(
+    () => selectedCaptionPreview(previewCaptions, selectedCaptionId),
+    [previewCaptions, selectedCaptionId],
   );
   const selectedClip = project.clips.find((clip) => clip.id === selectedClipId);
   const selectedClipIndex = project.clips.findIndex((clip) => clip.id === selectedClipId);

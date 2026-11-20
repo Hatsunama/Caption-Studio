@@ -26,16 +26,17 @@ function resolveFonts(families: string[]) {
 export const CaptionPresentation = memo(function CaptionPresentation(props: {
   caption: CaptionBlock; words: WordToken[]; projectStyle: CaptionStyle; geometry: LayerGeometryInput;
   currentMs: number; authored: boolean; editingPreview?: boolean;
+  wordById?: ReadonlyMap<string, WordToken>;
 }) {
   const styles = useMemo(() => {
     const style = resolveCaptionStyle(props.projectStyle, props.caption);
-    const byId = new Map(props.words.map((word) => [word.id, word]));
+    const byId = props.wordById ?? new Map(props.words.map((word) => [word.id, word]));
     const words = props.caption.wordIds.flatMap((id) => {
       const word = byId.get(id);
       return word ? [{ ...word, style: resolveCaptionStyle(props.projectStyle, props.caption, word) }] : [];
     });
     return { style, words };
-  }, [props.projectStyle, props.caption, props.words]);
+  }, [props.projectStyle, props.caption, props.words, props.wordById]);
   const families = [...new Set([styles.style, ...styles.words.map((word) => word.style)]
     .filter((style) => style.font.source === 'built-in').map((style) => style.font.family))].sort().join('|');
   const [fonts, setFonts] = useState<{ key: string; uris: ReadonlyMap<string, string> }>({ key: '', uris: new Map() });
