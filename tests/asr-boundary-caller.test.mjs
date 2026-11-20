@@ -15,15 +15,15 @@ const compiled = ts.transpileModule(readFileSync(new URL('../src/services/projec
 }).outputText;
 const fingerprint = createSourceTranscriptionFingerprint('a'.repeat(64));
 
-function harness(composed, { starts = [790, 795], cached, cancel = false } = {}) {
-  const source = { id: 'source', uri: 'file:///source.mp4', displayName: 'Source', storageMode: 'linked', durationMs: 8000, width: 1080, height: 1920, rotation: 0 };
+function harness(composed, { starts = [790, 795], cached, cancel = false, durationMs = 8000, end = 805, vadEnd = 810 } = {}) {
+  const source = { id: 'source', uri: 'file:///source.mp4', displayName: 'Source', storageMode: 'linked', durationMs, width: 1080, height: 1920, rotation: 0 };
   const project = createCaptionProject({ id: 'boundary', name: 'Boundary', sources: [source] });
   if (composed) project.audioClips.push({ id: 'audio', muted: false, volume: 1 });
   project.captions = [{ id: 'saved', text: 'User saved text', startMs: 10, endMs: 100, wordIds: [] }];
   if (cached) project.transcription.sourceResults.source = cached;
   const before = structuredClone(project);
   const synthetic = createCaptionProject({ id: project.id, name: project.name, sources: [{ ...source, id: 'mix', uri: 'file:///mix.m4a' }] });
-  const events = [], durations = [];
+  const events = [], durations = [], checkpoints = [], writes = [], nativeInputs = [];
   const session = createCaptionGenerationSession(async () => {});
   const mocks = {
     'caption-media': { sha256: async () => 'a'.repeat(64) },
@@ -33,18 +33,20 @@ function harness(composed, { starts = [790, 795], cached, cancel = false } = {})
     } },
     '@/services/timeline-transcription-cache': {
       readTimelineTranscription: async (_id, _key, _model, duration) => { durations.push(['read', duration]); return cached; },
-      writeTimelineTranscription: async (_id, _key, _value, duration) => { durations.push(['write', duration]); events.push('write'); },
+      writeTimelineTranscription: async (_id, _key, _value, duration) => { durations.push(['write', duration]); writes.push(structuredClone(_value)); events.push('write'); },
     },
     '@/services/transcription': { transcribeVideoLocally: async (options) => {
       events.push('transcribe'); durations.push(['transcribe', options.durationMs]);
       if (cancel) await session.cancel();
-      return { language: 'en', words: alignWordsToSpeech(coalesceWhisperWords(starts.map((t0, i) => ({ text: ` Token${i}`, t0, t1: 805 }))), [{ t0: 0, t1: 810 }], options.durationMs) };
+      const raw = coalesceWhisperWords(starts.map((t0, i) => ({ text: ` Token${i}`, t0, t1: end })));
+      nativeInputs.push({ raw, before: structuredClone(raw) });
+      return { language: 'en', words: alignWordsToSpeech(raw, [{ t0: 0, t1: vadEnd }], options.durationMs) };
     } },
   };
   const module = { exports: {} };
   new Function('require', 'module', 'exports', compiled)((id) => mocks[id] ?? require('../src/' + id.slice(2) + '.ts'), module, module.exports);
-  const run = () => session.run((context) => module.exports.generateProjectCaptions(project, 'fast', undefined, async () => events.push('checkpoint'), context));
-  return { run, project, before, events, durations };
+  const run = () => session.run((context) => module.exports.generateProjectCaptions(project, 'fast', undefined, async candidate => { checkpoints.push(structuredClone(candidate)); events.push('checkpoint'); }, context));
+  return { run, project, before, events, durations, checkpoints, writes, nativeInputs };
 }
 
 for (const composed of [false, true]) {
@@ -58,7 +60,7 @@ for (const composed of [false, true]) {
     assert.deepEqual(h.project, h.before);
   });
 
-  for (const options of [{ starts: [790, 790] }, { starts: [801] }, { cancel: true }]) {
+  for (const options of [{ starts: [790, 790] }, { starts: [795, 790] }, { cancel: true }, { starts: [1159, 1200], durationMs: 12000, end: 1208.7, vadEnd: 1203, cancel: true }]) {
     test(`${composed ? 'composed' : 'source'} failure/cancellation is atomic: ${JSON.stringify(options)}`, async () => {
       const h = harness(composed, options);
       await assert.rejects(h.run(), /Source word timing quality failure|cancel/i);
@@ -85,6 +87,36 @@ for (const composed of [false, true]) {
       await h.run();
       assert.equal(h.events.includes('transcribe'), oldRevision);
       assert.deepEqual(h.project, h.before);
+    });
+  }
+}
+
+
+for (const composed of [false, true]) {
+  for (const tailStart of [1200, 1201]) {
+    test(`${composed ? 'composed' : 'source'} checkpoints only bounded prefix with EOF token at ${tailStart * 10}ms`, async () => {
+      const h = harness(composed, { starts: [1159, 1199.975, tailStart],
+        durationMs: 12000, end: 1208.7, vadEnd: 1203 });
+      const generated = await h.run();
+      const expected = [['Token0', 11590, 11999.75], ['Token1', 11999.75, 12000]];
+      const intervals = words => words.map(({ text, startMs, endMs }) => [text, startMs, endMs]);
+      assert.deepEqual(intervals(generated.transcription.words), expected);
+      assert.equal(h.checkpoints.length, 1);
+      assert.deepEqual(h.checkpoints[0], generated);
+      for (const candidate of [generated, ...h.checkpoints]) {
+        assert.deepEqual(intervals(candidate.transcription.words), expected);
+        const results = Object.values(candidate.transcription.sourceResults);
+        assert.equal(results.length, 1);
+        assert.deepEqual(intervals(results[0].words), expected);
+      }
+      assert.equal(h.writes.length, Number(composed));
+      for (const result of h.writes) assert.deepEqual(intervals(result.words), expected);
+      assert.ok(h.durations.length > 0);
+      assert.ok(h.durations.every(([, duration]) => duration === 12000));
+      assert.equal(h.events.filter(e => e === 'dispose').length, Number(composed));
+      assert.deepEqual(h.project, h.before);
+      assert.equal(h.nativeInputs.length, 1);
+      assert.deepEqual(h.nativeInputs[0].raw, h.nativeInputs[0].before);
     });
   }
 }

@@ -58,7 +58,7 @@ test('weighted fractional support succeeds and reports actual allocation operati
 // model preparation. In particular, do not mock the diagnostic or alignment.
 function harness({ segments = [], speech = [{ t0: 0, t1: 810 }], nativeError,
   aborted = false, cancel = false, cancelAfterNative = false, releaseError, loggerThrows = false,
-  replayThrows = false, decoded = {} } = {}) {
+  replayThrows = false, decoded = {}, durationMs = 8000 } = {}) {
   const logs = [], events = [], data = new Map(), modules = new Map();
   class Directory {
     constructor(parent, name) { this.uri = `${parent.uri ?? parent}/${name}`; }
@@ -126,7 +126,7 @@ function harness({ segments = [], speech = [{ t0: 0, t1: 810 }], nativeError,
   },
     registerStopper() { return () => events.push('unregister'); } };
   return { load, logs, events, data, service,
-    run: () => service.transcribeVideoLocally({ projectId: secret, videoUri: secret, durationMs: 8000, session }) };
+    run: () => service.transcribeVideoLocally({ projectId: secret, videoUri: secret, durationMs, session }) };
 }
 
 function payload(h, expectedDecoded = { durationMs: 8128, pcmBytes: 260096, sampleRate: 16000, channelCount: 1 }) {
@@ -161,8 +161,8 @@ for (const [name, segments, speech, expected] of [
     { before: [900, 1000], after: [1200, 1200], capped: 1200, index: 0 }],
   ['equal coalesced onsets', [[120, 140], [120, 150]], [{ t0: 120, t1: 200 }],
     { before: [1200, 1200], after: [1200, 1200], capped: 1200, index: 0 }],
-  ['onset outside logical D', [[801, 805]], [{ t0: 0, t1: 810 }],
-    { before: [8010], after: [8010], capped: 8000, index: 0 }],
+  ['decreasing coalesced onsets', [[795, 805], [790, 805]], [{ t0: 0, t1: 810 }],
+    { before: [7950, 7900], after: [7950, 7900], capped: 7900, index: 0 }],
 ]) {
   test(`actual service connects numeric failure diagnostic: ${name}`, async () => {
     // Leading filtered word ensures accepted and coalesced ordinals differ.
@@ -176,7 +176,8 @@ for (const [name, segments, speech, expected] of [
     assert.equal(d.current.startMs, expected.after[0]);
     assert.equal(d.cappedEndMs, expected.capped);
     assert.equal(d.rejected.nonpositiveCappedSupport, true);
-    assert.equal(d.rejected.startOutsideDuration, name === 'onset outside logical D');
+    assert.equal(d.rejected.startOutsideDuration, false);
+    assert.equal(d.rejected.decreasingNextStart, name === 'decreasing coalesced onsets');
     for (const [i, key] of ['currentOrigin', 'nextOrigin'].entries()) {
       if (i >= segments.length) { assert.equal(d[key], null); continue; }
       assert.equal(d[key].coalescedIndex, i + 1);
@@ -245,7 +246,7 @@ for (const mode of ['generic', 'spoofed timing message', 'aborted', 'cancelled',
 }
 
 test('logger failure cannot replace timing rejection or prevent cleanup', async () => {
-  const h = harness({ segments: [{ text: secret, t0: 801, t1: 805 }], loggerThrows: true });
+  const h = harness({ segments: [{ text: secretToken, t0: 790, t1: 805 }, { text: secretToken, t0: 790, t1: 805 }], loggerThrows: true });
   await assert.rejects(h.run(), { message: 'Source word timing quality failure for word-1' });
   payload(h);
   cleaned(h);
@@ -272,7 +273,7 @@ test('word-11 snapshot keeps accepted/coalesced indices and actual merged window
 });
 
 test('decoded fields reject content-bearing values and nonfinite numbers', async () => {
-  const h = harness({ segments: [{ text: secretToken, t0: 801, t1: 805 }],
+  const h = harness({ segments: [{ text: secretToken, t0: 790, t1: 805 }, { text: secretToken, t0: 790, t1: 805 }],
     decoded: { durationMs: secret, pcmBytes: NaN, sampleRate: Infinity, channelCount: { toJSON() { throw new Error(secret); } } } });
   await assert.rejects(h.run(), { message: 'Source word timing quality failure for word-1' });
   payload(h, { durationMs: null, pcmBytes: null, sampleRate: null, channelCount: null });
@@ -281,7 +282,7 @@ test('decoded fields reject content-bearing values and nonfinite numbers', async
 
 test('recognized rejection still logs once if existing release failure overrides it', async () => {
   const releaseError = new Error(secret);
-  const h = harness({ segments: [{ text: secretToken, t0: 801, t1: 805 }], releaseError });
+  const h = harness({ segments: [{ text: secretToken, t0: 790, t1: 805 }, { text: secretToken, t0: 790, t1: 805 }], releaseError });
   await assert.rejects(h.run(), error => error === releaseError);
   payload(h);
   cleaned(h);
@@ -318,7 +319,7 @@ test('literal rejecting predicate metadata covers malformed numeric and content 
 
 test('replay and logger failures preserve quality rejection and cleanup', async () => {
   for (const loggerThrows of [false, true]) {
-    const h = harness({ segments: [{ text: secretToken, t0: 801, t1: 805 }], replayThrows: true, loggerThrows });
+    const h = harness({ segments: [{ text: secretToken, t0: 790, t1: 805 }, { text: secretToken, t0: 790, t1: 805 }], replayThrows: true, loggerThrows });
     await assert.rejects(h.run(), { message: 'Source word timing quality failure for word-1' });
     const d = payload(h);
     assert.equal(d.rawCurrent, null);
@@ -476,4 +477,65 @@ test('literal coalescer outputs and exceptions are invariant with silent, record
     assert.deepEqual(observations, []);
     assert.equal(throwingCalls, 0);
   }
+});
+
+
+// The reported native tail is valid PCM/VAD support, but has no source support.
+for (const tailStart of [1200, 1201]) {
+  test(`actual service retains prefix and silently drops EOF token at ${tailStart * 10}ms`, async () => {
+    const segments = [{ text: ' Prefix', t0: 1159, t1: 1200 },
+      { text: secretToken, t0: tailStart, t1: 1208.7 }];
+    const before = structuredClone(segments);
+    const h = harness({ segments, durationMs: 12000, speech: [{ t0: 1137, t1: 1203 }],
+      decoded: { durationMs: 12027, pcmBytes: 384892 } });
+    assert.deepEqual(await h.run(), { language: 'en', words: [
+      { id: 'word-1', text: 'Prefix', startMs: 11590, endMs: 12000 },
+    ] });
+    assert.deepEqual(segments, before);
+    assert.deepEqual(h.logs, []);
+    cleaned(h);
+    assert.equal(h.events.filter(e => e === 'unregister').length, 1);
+    assert.ok(h.events.indexOf('native-finished') < h.events.indexOf('asr-release'));
+    assert.ok(h.events.indexOf('asr-release') < h.events.indexOf('delete'));
+  });
+}
+
+test('filtered EOF token does not shift genuine rejection provenance', async () => {
+  const h = harness({ segments: [{ text: secretToken, t0: 800, t1: 808.7 },
+    { text: secretToken, t0: 790, t1: 805 }, { text: secretToken, t0: 790, t1: 805 }] });
+  await assert.rejects(h.run(), { message: 'Source word timing quality failure for word-1' });
+  const d = payload(h);
+  assert.equal(d.acceptedIndex, 0);
+  assert.equal(d.acceptedCount, 2);
+  assert.equal(d.currentOrigin.coalescedIndex, 1);
+  assert.equal(d.nextOrigin.coalescedIndex, 2);
+  assert.equal(d.rawCurrent.first.segmentIndex, 1);
+  assert.equal(d.rawNext.first.segmentIndex, 2);
+  assert.deepEqual(d.currentOrigin.before, { startMs: 7900, endMs: 8050 });
+  assert.deepEqual(d.currentOrigin.after, { startMs: 7900, endMs: 8000 });
+  assert.equal(d.cappedEndMs, 7900);
+  assert.equal(d.rejected.nonpositiveCappedSupport, true);
+  assert.equal(d.rejected.startOutsideDuration, false);
+  cleaned(h);
+});
+
+test('padding-only service result retains the no-reliable-words failure and cleans up silently', async () => {
+  const h = harness({ segments: [{ text: secretToken, t0: 1200, t1: 1208.7 }],
+    durationMs: 12000, speech: [{ t0: 1137, t1: 1203 }], decoded: { durationMs: 12027 } });
+  await assert.rejects(h.run(), {
+    message: 'Speech was detected, but no reliable words were found. Try clearer audio or a different recording.',
+  });
+  assert.deepEqual(h.logs, []);
+  cleaned(h);
+});
+
+test('cancellation with a valid prefix and unsupported EOF token stays silent and cleans up', async () => {
+  const h = harness({ segments: [{ text: ' Prefix', t0: 1159, t1: 1200 },
+    { text: secretToken, t0: 1200, t1: 1208.7 }], durationMs: 12000,
+    speech: [{ t0: 1137, t1: 1203 }], decoded: { durationMs: 12027 }, cancelAfterNative: true });
+  await assert.rejects(h.run(), { message: secret });
+  assert.deepEqual(h.logs, []);
+  cleaned(h);
+  assert.ok(h.events.indexOf('native-finished') < h.events.indexOf('asr-release'));
+  assert.ok(h.events.indexOf('asr-release') < h.events.indexOf('delete'));
 });
