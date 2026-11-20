@@ -94,6 +94,10 @@ for (const starts of [[790, 794, 795], [790, 790], [801]]) {
     if (starts[1] === 794) {
       const result = await running;
       assert.deepEqual(result.words.map(({ startMs, endMs }) => [startMs, endMs]), [[7900, 7940], [7940, 7950], [7950, 8000]]);
+    } else if (starts[0] === 801) {
+      await assert.rejects(running, {
+        message: 'Speech was detected, but no reliable words were found. Try clearer audio or a different recording.',
+      });
     } else await assert.rejects(running, /Source word timing quality failure/);
     assert.equal(whisperReleases, 1);
     assert.equal(vadReleases, 1);
