@@ -22,22 +22,38 @@ function selectedWindow(word: WordToken, windows: SpeechWindow[]) {
   });
 }
 
-// Replay only on rejection, using the same selector and existing ordered
+function sourceSupport(word: WordToken, window: SpeechWindow, sourceDurationMs?: number) {
+  const startMs = Math.max(window.startMs, word.startMs);
+  const endMs = Math.min(window.endMs, word.endMs);
+  if (sourceDurationMs === undefined || !Number.isFinite(sourceDurationMs) || sourceDurationMs <= 0) {
+    return { startMs, endMs };
+  }
+  // Only discard valid positive acoustic support entirely beyond [0, D).
+  // Malformed words and invalid durations must still reach canonical validation.
+  if (Number.isFinite(word.startMs) && Number.isFinite(word.endMs)
+    && word.startMs >= 0 && word.endMs > word.startMs
+    && typeof word.text === 'string' && !!word.text.trim()
+    && Number.isFinite(startMs) && Number.isFinite(endMs)
+    && endMs > startMs && startMs >= sourceDurationMs) return null;
+  return { startMs, endMs: Math.min(endMs, sourceDurationMs) };
+}
+
+// Replay only on rejection, using the same selector/support and existing ordered
 // arrays. No per-word provenance allocation or retained trace on success.
-function failureOrigin(words: WordToken[], windows: SpeechWindow[], acceptedIndex: number | null) {
+function failureOrigin(words: WordToken[], windows: SpeechWindow[], acceptedIndex: number | null, sourceDurationMs?: number) {
   if (acceptedIndex === null) return null;
   let accepted = 0;
   for (let index = 0; index < words.length; index += 1) {
     const word = words[index];
     const window = selectedWindow(word, windows);
     if (!window) continue;
+    const support = sourceSupport(word, window, sourceDurationMs);
+    if (!support) continue;
     if (accepted++ === acceptedIndex) {
       return {
         coalescedIndex: index, before: timingDiagnosticInterval(word),
         windowIndex: windows.indexOf(window), window: timingDiagnosticInterval(window),
-        after: timingDiagnosticInterval({
-          startMs: Math.max(window.startMs, word.startMs), endMs: Math.min(window.endMs, word.endMs),
-        }),
+        after: timingDiagnosticInterval(support),
       };
     }
   }
@@ -63,9 +79,9 @@ export function alignWordsToSpeech(
 
     // VAD may clip the left edge, but overlapping endpoints must never move
     // an accepted acoustic onset or fabricate support for a minimum duration.
-    const startMs = Math.max(window.startMs, word.startMs);
-    const endMs = Math.min(window.endMs, word.endMs);
-    aligned.push({ ...word, startMs, endMs });
+    const support = sourceSupport(word, window, sourceDurationMs);
+    if (!support) continue;
+    aligned.push({ ...word, ...support });
   }
 
   return canonicalizeSourceWords(
@@ -73,8 +89,8 @@ export function alignWordsToSpeech(
     sourceDurationMs ?? windows[windows.length - 1].endMs,
     onFailure ? (failure) => onFailure({
       ...failure,
-      currentOrigin: failureOrigin(words, windows, failure.acceptedIndex),
-      nextOrigin: failureOrigin(words, windows, failure.acceptedIndex === null ? null : failure.acceptedIndex + 1),
+      currentOrigin: failureOrigin(words, windows, failure.acceptedIndex, sourceDurationMs),
+      nextOrigin: failureOrigin(words, windows, failure.acceptedIndex === null ? null : failure.acceptedIndex + 1, sourceDurationMs),
     }) : undefined,
   );
 }
@@ -95,3 +111,4 @@ export function mergeSpeechWindows(
   }
   return merged;
 }
+
