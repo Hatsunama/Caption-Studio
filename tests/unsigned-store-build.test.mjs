@@ -6,6 +6,8 @@ import { mkdtemp, readFile, writeFile, rm, access, copyFile, readdir } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import * as gate from '../scripts/unsigned-store-build.mjs';
+import { writeR8Fixture } from './fixtures/local-signing-r8.mjs';
+import { inspectR8Artifacts, r8Entry } from '../scripts/verify-r8-optimization.mjs';
 
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const original = { expo: { name: 'source', version: '1.4.101', android: {
@@ -23,9 +25,13 @@ const abis = ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'];
 const entries = (prefix) => abis.flatMap((abi) => ['libreactnative.so', 'librnwhisper.so',
   ...(['arm64-v8a', 'x86_64'].includes(abi) ? ['liblitertlm_jni.so'] : [])].map((lib) => `${prefix}/${abi}/${lib}`));
 function evidence() {
+  const dexSha = sha(Buffer.from('dex\n035\0synthetic fixture bytecode'));
   return { apkIdentity: identity(), aabIdentity: identity(),
-    apkEntries: ['AndroidManifest.xml', ...entries('lib')],
-    aabEntries: ['base/manifest/AndroidManifest.xml', gate.mappingEntry, ...entries('base/lib')],
+    apkEntries: ['AndroidManifest.xml', 'classes.dex', ...entries('lib')],
+    aabEntries: ['base/manifest/AndroidManifest.xml', gate.mappingEntry, r8Entry, 'base/dex/classes.dex', ...entries('base/lib')],
+    r8: { apk: { hashes: { 'classes.dex': dexSha } }, aab: { hashes: { 'base/dex/classes.dex': dexSha },
+      r8Metadata: JSON.stringify({ options: { isOptimizationsEnabled: true, isShrinkingEnabled: true,
+        isObfuscationEnabled: true }, stats: { noOptimizationPercentage: 12.5 }, dexFiles: [{ checksum: dexSha }] }) } },
     apkJar: 'jar is unsigned', aabJar: 'jar is unsigned', apkManifest: '', aabManifest: '',
     apkSigningBlock: false, bundleConfig: { optimizations: { uncompressNativeLibraries: { alignment: 'PAGE_ALIGNMENT_16K' } } },
     bundletool: true, zipalign16k: true, apkElf16k: true, aabElf16k: true,
@@ -40,9 +46,23 @@ async function fixture(t) {
     files[name] = path.join(root, name);
     await writeFile(files[name], bytes);
   }
+  writeR8Fixture(files);
+  const e = evidence();
+  e.r8 = inspectR8Artifacts(files);
+  for (const key of ['apk', 'aab']) e.payloadHashes[key] = sha(await readFile(files[key]));
   return { root, files, output: path.join(root, 'result'), release: release(),
-    source: { sourceCommit: context.GITHUB_SHA, sourceTree: 'b'.repeat(40) }, context, evidence: evidence() };
+    source: { sourceCommit: context.GITHUB_SHA, sourceTree: 'b'.repeat(40) }, context, evidence: e };
 }
+
+test('publication rejects actual unoptimized or unrelated DEX despite claimed successful evidence', async t => {
+  for (const mutation of ['old-release', 'missing', 'malformed', 'all-unoptimized', 'wrong-checksum', 'apk-dex']) {
+    const f = await fixture(t);
+    writeR8Fixture(f.files, mutation);
+    for (const key of ['apk', 'aab']) f.evidence.payloadHashes[key] = sha(await readFile(f.files[key]));
+    await assert.rejects(gate.publishVerified(f), /R8|optimization|DEX|JSON/i, mutation);
+    await assert.rejects(access(f.output));
+  }
+});
 
 test('canonical inputs use shared package/version validation', () => {
   assert.equal(release().configured.expo.extra.preserved, true);
@@ -84,6 +104,9 @@ test('source is actual HEAD/tree and stamp must equal shared transformation', as
 test('payload checks reject identity, signatures, missing ABI, mapping and alignment failures', () => {
   gate.assertPayload(evidence(), release());
   const mutations = [
+    (e) => { delete e.r8; },
+    (e) => { e.r8.aab.r8Metadata = '{}'; },
+    (e) => { e.r8.apk.hashes['classes.dex'] = '0'.repeat(64); },
     (e) => { e.apkIdentity.minSdk = '23'; }, (e) => { e.aabIdentity.targetSdk = '35'; },
     (e) => { e.apkIdentity.package = 'other'; }, (e) => { e.aabIdentity.versionCode = '147'; },
     (e) => { e.apkEntries.push('META-INF/RELEASE.RSA'); }, (e) => { e.aabJar = 'jar verified.'; },
@@ -236,5 +259,7 @@ with zipfile.ZipFile(symlink,'x') as z:
   assert.equal(gate.inspectZip(clean, run), false);
   assert.equal(gate.inspectZip(signed, run), true);
   assert.throws(() => gate.inspectZip(symlink, run));
-  assert.throws(() => gate.inspectZip(path.join(root, 'apk'), run));
+  const malformed = path.join(root, 'malformed.zip');
+  await writeFile(malformed, 'not a ZIP');
+  assert.throws(() => gate.inspectZip(malformed, run));
 });

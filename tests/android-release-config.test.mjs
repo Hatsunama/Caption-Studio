@@ -23,6 +23,96 @@ const postinstallScripts = [
   'verify-android-release-config.js',
 ];
 
+const optimizingRules = 'proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"';
+const templateRules = 'proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"';
+
+test('R8 repair switches the real Expo default, preserves keeps and is idempotent after regeneration', () => {
+  withFixture(root => {
+    const app = join(root, 'android/app/build.gradle');
+    const rules = join(root, 'android/app/proguard-rules.pro');
+    const original = readFileSync(app, 'utf8');
+    const keeps = readFileSync(rules, 'utf8');
+    assert.ok(original.includes(templateRules));
+    configureAndroidRelease(root);
+    const configured = readFileSync(app, 'utf8');
+    assert.ok(configured.includes(optimizingRules));
+    assert.equal(readFileSync(rules, 'utf8'), keeps);
+    configureAndroidRelease(root);
+    assert.equal(readFileSync(app, 'utf8'), configured);
+    writeFileSync(app, original);
+    configureAndroidRelease(root);
+    assert.equal(readFileSync(app, 'utf8'), configured);
+  }, false);
+});
+
+test('R8 repair handles single quotes and preserves commented defaults byte for byte', () => {
+  withFixture(root => {
+    const app = join(root, 'android/app/build.gradle');
+    const comment = `// ${templateRules}\n      /* ${optimizingRules} */`;
+    writeFileSync(app, readFileSync(app, 'utf8').replace(templateRules, `${comment}\n      ${templateRules.replaceAll('"', "'")}`));
+    configureAndroidRelease(root);
+    const configured = readFileSync(app, 'utf8');
+    assert.ok(configured.includes(comment));
+    assert.ok(configured.includes(optimizingRules.replaceAll('"', "'")));
+    assert.doesNotThrow(() => verifyAndroidReleaseConfig(root));
+    configureAndroidRelease(root);
+    assert.equal(readFileSync(app, 'utf8'), configured);
+  }, false);
+});
+
+for (const [name, mutate] of [
+  ['nonoptimizing default', source => source.replace(optimizingRules, templateRules)],
+  ['comment-only optimize default', source => source.replace(optimizingRules, `// ${optimizingRules}\n      ${templateRules}`)],
+  ['block-comment-only optimize default', source => source.replace(optimizingRules, `/* ${optimizingRules} */`)],
+  ['missing rules', source => source.replace(optimizingRules, '')],
+  ['both defaults', source => source.replace(optimizingRules, `${optimizingRules}\n      ${templateRules}`)],
+]) {
+  test(`R8 gate rejects ${name}`, () => {
+    withFixture(root => {
+      const app = join(root, 'android/app/build.gradle');
+      const source = readFileSync(app, 'utf8');
+      const changed = mutate(source);
+      assert.notEqual(changed, source);
+      writeFileSync(app, changed);
+      assert.throws(() => verifyAndroidReleaseConfig(root), /proguard|optimiz/i);
+    });
+  });
+}
+
+test('R8 gate checks active local and included rules without rejecting comments or changing JNI keeps', () => {
+  withFixture(root => {
+    const rules = join(root, 'android/app/proguard-rules.pro');
+    const keeps = readFileSync(rules, 'utf8');
+    writeFileSync(rules, `${keeps}\n# -dontoptimize\n`);
+    assert.doesNotThrow(() => verifyAndroidReleaseConfig(root));
+    writeFileSync(rules, `${keeps}\n  -dontoptimize # disables R8 optimization\n`);
+    assert.throws(() => verifyAndroidReleaseConfig(root), /dontoptimize/i);
+    assert.throws(() => configureAndroidRelease(root), /dontoptimize/i);
+    assert.equal(readFileSync(rules, 'utf8'), `${keeps}\n  -dontoptimize # disables R8 optimization\n`);
+    writeFileSync(rules, `${keeps}\n-include extra.pro\n`);
+    write(root, 'android/app/extra.pro', '-dontoptimize\n');
+    assert.throws(() => verifyAndroidReleaseConfig(root), /dontoptimize/i);
+    write(root, 'android/app/extra.pro', '# -dontoptimize\n-include proguard-rules.pro\n');
+    assert.doesNotThrow(() => verifyAndroidReleaseConfig(root));
+  });
+});
+
+test('R8 gate checks additional release rule files and available dependency consumer rules', () => {
+  withFixture(root => {
+    const app = join(root, 'android/app/build.gradle');
+    writeFileSync(app, readFileSync(app, 'utf8').replace(optimizingRules, `${optimizingRules}, "extra.pro"`));
+    write(root, 'android/app/extra.pro', '-dontoptimize\n');
+    assert.throws(() => verifyAndroidReleaseConfig(root), /dontoptimize/i);
+    write(root, 'android/app/extra.pro', '# optimization allowed\n');
+    for (const file of ['node_modules/react-native/ReactAndroid/proguard-rules.pro', 'node_modules/expo/android/proguard-rules.pro']) {
+      write(root, file, '-dontoptimize\n');
+      assert.throws(() => verifyAndroidReleaseConfig(root), /dontoptimize/i);
+      write(root, file, '# -dontoptimize\n-keepclassmembers class * { native <methods>; }\n');
+    }
+    assert.doesNotThrow(() => verifyAndroidReleaseConfig(root));
+  });
+});
+
 test('release verifier accepts generated modern Gradle release signing', () => {
   withFixture((root) => {
     const wrapper = readFileSync(join(root, 'android', 'gradle', 'wrapper', 'gradle-wrapper.properties'), 'utf8');
@@ -335,7 +425,8 @@ function writeFixture(root) {
   write(
     root,
     'android/app/build.gradle',
-    `def captionStudioReleaseStoreFile = findProperty('CAPTION_STUDIO_RELEASE_STORE_FILE')
+    `def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBuilds') ?: false).toBoolean()
+def captionStudioReleaseStoreFile = findProperty('CAPTION_STUDIO_RELEASE_STORE_FILE')
 def captionStudioReleaseStorePassword = findProperty('CAPTION_STUDIO_RELEASE_STORE_PASSWORD')
 def captionStudioReleaseKeyAlias = findProperty('CAPTION_STUDIO_RELEASE_KEY_ALIAS')
 def captionStudioReleaseKeyPassword = findProperty('CAPTION_STUDIO_RELEASE_KEY_PASSWORD')
@@ -364,6 +455,10 @@ android {
   buildTypes {
     debug { signingConfig = signingConfigs.debug }
     release {
+      def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
+      shrinkResources enableShrinkResources.toBoolean()
+      minifyEnabled enableMinifyInReleaseBuilds
+      proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
       if (hasCaptionStudioReleaseSigning) {
         signingConfig = signingConfigs.release
       }
@@ -375,6 +470,7 @@ tasks.configureEach { task ->
 }
 `,
   );
+  write(root, 'android/app/proguard-rules.pro', '# Expo template keeps plus a JNI preservation sentinel\n-keep class com.swmansion.reanimated.** { *; }\n-keep class com.facebook.react.turbomodule.** { *; }\n-keepclassmembers,includedescriptorclasses class * { native <methods>; }\n');
   write(
     root,
     'android/build.gradle',
@@ -416,3 +512,30 @@ function write(root, relativePath, contents) {
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, contents);
 }
+
+test('R8 release repair preserves a nonoptimizing debug-only default', () => {
+  withFixture(root => {
+    const app = join(root, 'android/app/build.gradle');
+    const source = readFileSync(app, 'utf8');
+    const debug = 'debug { signingConfig = signingConfigs.debug }';
+    assert.ok(source.includes(debug));
+    writeFileSync(app, source.replace(debug, 'debug {\n      signingConfig = signingConfigs.debug\n      ' + templateRules + '\n    }'));
+    assert.doesNotThrow(() => verifyAndroidReleaseConfig(root));
+    configureAndroidRelease(root);
+    const configured = readFileSync(app, 'utf8');
+    assert.ok(configured.includes(templateRules), 'debug configuration must remain unchanged');
+    assert.ok(configured.includes(optimizingRules), 'release must remain optimized');
+  });
+});
+test('R8 preflight preserves Java annotations in actual-style consumer keep rules', () => {
+  withFixture(root => {
+    write(root, 'node_modules/react-native/ReactAndroid/proguard-rules.pro',
+      '-keep @interface com.facebook.proguard.annotations.DoNotStrip\n' +
+      '-keepclassmembers class * {\n  @com.facebook.proguard.annotations.DoNotStrip *;\n}\n');
+    assert.doesNotThrow(() => verifyAndroidReleaseConfig(root));
+    const rules = join(root, 'android/app/proguard-rules.pro');
+    writeFileSync(rules, readFileSync(rules, 'utf8') + '\n-include explicit-disable.pro\n');
+    write(root, 'android/app/explicit-disable.pro', '-dontoptimize\n');
+    assert.throws(() => verifyAndroidReleaseConfig(root), /dontoptimize/i);
+  });
+});

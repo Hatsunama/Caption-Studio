@@ -9,7 +9,7 @@ const {
   replaceLineRequired,
   replaceRange,
 } = require('./android-patch-utils');
-const { media3AlignmentBlock, verifyAndroidReleaseConfig } = require('./verify-android-release-config');
+const { media3AlignmentBlock, stripGroovyComments, verifyAndroidReleaseConfig } = require('./verify-android-release-config');
 
 const gradleDistributionSha256 = 'distributionSha256Sum=903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856';
 
@@ -88,10 +88,29 @@ function configureAndroidRelease(projectRoot = path.join(path.dirname(module.fil
   const alignmentPattern = /\/\/ BEGIN Caption Studio Media3 alignment[\s\S]*?\/\/ END Caption Studio Media3 alignment/g;
   const withoutAlignment = rootSource.replace(alignmentPattern, '').trimEnd();
   fs.writeFileSync(rootBuild, `${withoutAlignment}\n\n${alignment}\n`);
+  configureReleaseOptimization(appBuild);
   configureSigning(appBuild);
   modernizeGroovyAssignments(appBuild);
   verifyAndroidReleaseConfig(projectRoot);
   return true;
+}
+
+// Expo 57's template still selects proguard-android.txt, which disables R8
+// optimization even when minification and resource shrinking are enabled.
+function configureReleaseOptimization(appBuild) {
+  let source = readRequired(appBuild);
+  const active = stripGroovyComments(source);
+  const types = findNamedBlockRange(active, 'buildTypes', 'build types');
+  const release = findNamedBlockRange(active.slice(types.start, types.end), 'release', 'release build type');
+  const start = types.start + release.start;
+  const releaseSource = active.slice(start, types.start + release.end);
+  const defaults = [...releaseSource.matchAll(/\bgetDefaultProguardFile\(\s*(['"])proguard-android\.txt\1\s*\)/g)];
+  // Work backwards so offsets remain valid and comments/local keeps stay intact.
+  for (const match of defaults.reverse()) {
+    const offset = start + match.index;
+    source = source.slice(0, offset) + match[0].replace('proguard-android.txt', 'proguard-android-optimize.txt') + source.slice(offset + match[0].length);
+  }
+  fs.writeFileSync(appBuild, source);
 }
 
 function configureSigning(appBuild) {

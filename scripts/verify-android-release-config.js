@@ -26,7 +26,7 @@ function resolveExpectedAndroidPackage(environment = process.env) {
 }
 
 function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.filename), '..')) {
-  const appBuild = readRequired(path.join(projectRoot, 'android', 'app', 'build.gradle'));
+  const appBuild = stripGroovyComments(readRequired(path.join(projectRoot, 'android', 'app', 'build.gradle')));
   const rootBuild = readRequired(path.join(projectRoot, 'android', 'build.gradle'));
   requireText(rootBuild.replaceAll('\r\n', '\n'), media3AlignmentBlock(projectRoot), 'global Media3 alignment and resolved-version guard');
   const mediaBuild = readRequired(path.join(projectRoot, 'modules', 'caption-media', 'android', 'build.gradle'));
@@ -67,6 +67,7 @@ function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.
 
   const buildTypes = findNamedBlock(appBuild, 'buildTypes', 'build types');
   const releaseBuild = findNamedBlock(buildTypes, 'release', 'release build type');
+  verifyReleaseOptimization(projectRoot, releaseBuild);
   if (/signingConfigs\.debug|debug\.keystore|androiddebugkey/i.test(releaseBuild)) {
     throw new Error('Generated Android release configuration still uses the debug keystore.');
   }
@@ -117,6 +118,50 @@ function verifyAndroidReleaseConfig(projectRoot = path.join(path.dirname(module.
   }
   if (androidConfig.allowBackup !== false) {
     throw new Error('Android backups must remain disabled for release builds.');
+  }
+}
+
+// Preserve strings and source offsets while removing Groovy line/block comments.
+function stripGroovyComments(source) {
+  return source.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/[^\r\n]*|\/\*[\s\S]*?\*\//g,
+    token => token.startsWith('//') || token.startsWith('/*') ? token.replace(/[^\r\n]/g, ' ') : token);
+}
+
+function verifyReleaseOptimization(projectRoot, releaseBuild) {
+  if (/\bgetDefaultProguardFile\(\s*(['"])proguard-android\.txt\1\s*\)/.test(releaseBuild)) {
+    throw new Error('Release ProGuard configuration selects the nonoptimizing proguard-android.txt default.');
+  }
+  const declarations = [...releaseBuild.matchAll(/^\s*proguardFiles\b([^\r\n]*)/gm)];
+  if (!declarations.some(match => /^\s*(?:\(\s*)?getDefaultProguardFile\(\s*(['"])proguard-android-optimize\.txt\1\s*\)/.test(match[1]))) {
+    throw new Error('Release ProGuard rules must actively select proguard-android-optimize.txt for R8 optimization.');
+  }
+  const appRoot = path.join(projectRoot, 'android', 'app');
+  const visited = new Set();
+  function checkRules(file) {
+    file = path.resolve(file);
+    if (visited.has(file)) return;
+    visited.add(file);
+    const rules = readRequired(file).replace(/#[^\r\n]*/g, '');
+    if (/(?:^|\s)-dontoptimize(?=\s|$)/m.test(rules)) {
+      throw new Error(`Release R8 optimization is disabled by -dontoptimize in ${file}`);
+    }
+    // Follow explicit -include directives; Java @annotations are not filenames.
+    // The final artifact gate checks the compiler's complete merged configuration.
+    for (const match of rules.matchAll(/(?:^|\s)-include\s+(?:"([^"\r\n]+)"|'([^'\r\n]+)'|([^\s]+))/gm)) {
+      checkRules(path.resolve(path.dirname(file), match[1] || match[2] || match[3]));
+    }
+  }
+  checkRules(path.join(appRoot, 'proguard-rules.pro'));
+  for (const declaration of declarations) {
+    for (const match of declaration[1].matchAll(/(['"])([^'"]+\.(?:pro|txt))\1/g)) {
+      if (match[2] !== 'proguard-android-optimize.txt') checkRules(path.resolve(appRoot, match[2]));
+    }
+  }
+  // These consumer rules are available in installed trees, but absent in minimal
+  // config fixtures. Do not edit them: RN's reflection/JNI keeps remain required.
+  for (const relative of ['node_modules/react-native/ReactAndroid/proguard-rules.pro', 'node_modules/expo/android/proguard-rules.pro']) {
+    const file = path.join(projectRoot, relative);
+    if (fs.existsSync(file)) checkRules(file);
   }
 }
 
@@ -197,6 +242,7 @@ function escapeRegExp(value) {
 if (require.main === module) verifyAndroidReleaseConfig();
 
 module.exports = {
+  stripGroovyComments,
   media3AlignmentBlock,
   FIXED_ANDROID_PACKAGE,
   PRODUCTION_ANDROID_PACKAGE,

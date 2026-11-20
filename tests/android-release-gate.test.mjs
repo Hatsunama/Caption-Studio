@@ -29,3 +29,20 @@ test('both release workflows test every owned Android module before building', a
     assert.ok(workflow.indexOf(testCommand) < workflow.indexOf(':app:assembleRelease'));
   }
 });
+
+test('CI validates actual R8 APK/AAB output before successful binary retention', async () => {
+  const workflow = await readFile(new URL('.github/workflows/ci.yml', root), 'utf8');
+  const command = 'node ./scripts/verify-r8-optimization.mjs --apk "$apk" --aab "$aab"';
+  assert.match(workflow, /^\s*node \.\/scripts\/verify-r8-optimization\.mjs --apk "\$apk" --aab "\$aab"\s*$/m);
+  assert.ok(workflow.indexOf(':app:assembleRelease :app:bundleRelease') < workflow.indexOf(command));
+  assert.ok(workflow.indexOf(command) < workflow.indexOf('- name: Retain CI-signed release-validation APK and AAB'));
+});
+test('R8 regression suites run independently without weakening the full release gate', async () => {
+  const workflow = await readFile(new URL('.github/workflows/unsigned-store-build.yml', root), 'utf8');
+  const synthetic = workflow.slice(workflow.indexOf('  synthetic:'), workflow.indexOf('  unsigned:'));
+  for (const suite of ['tests/r8-optimization.test.mjs', 'tests/android-release-config.test.mjs',
+    'tests/android-release-gate.test.mjs', 'tests/local-release-signing.test.mjs'])
+    assert.ok(synthetic.includes(suite), suite + ' must run without installing production dependencies');
+  const release = await readFile(new URL('.github/workflows/ci.yml', root), 'utf8');
+  assert.ok(release.includes('npm audit --omit=dev --audit-level=high'));
+});
