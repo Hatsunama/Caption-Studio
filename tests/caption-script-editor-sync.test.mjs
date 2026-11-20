@@ -12,7 +12,7 @@ import { applyStylePatch, resolveCaptionStyle } from '../src/lib/style-resolver.
 import { captionTransform } from '../src/lib/caption-transform.ts';
 import { replaceVisibleCaptionScript } from '../src/lib/project-editor.ts';
 import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
-import { captionPreviewState } from '../src/lib/caption-preview.ts';
+import { captionPreviewState, captionContentAtTime, selectedCaptionPreview } from '../src/lib/caption-preview.ts';
 import { DEFAULT_CAPTION_STYLE } from '../src/types/project.ts';
 
 // Execute the complete component with deterministic hooks, native layout events,
@@ -64,7 +64,7 @@ function workspaceValue(name, context) {
   const value = evaluate(declaration.initializer.getText(editorAst), { scriptEditorOpen: true, scriptKeyboardOpen: false,
     scriptEditingCaption: undefined, scriptCropActive: false, currentMs: 0, selectedCaptionId: undefined,
     captionAtTimelinePosition, captionTimelineMsRef: { current: context.currentMs ?? 0 }, timelineCaptions: cues,
-    useMemo: (fn) => fn(), captionPreviewState, project: { captions: cues },
+    useMemo: (fn) => fn(), captionPreviewState, captionContentAtTime, selectedCaptionPreview, project: { captions: cues },
     reconcileCaptionScriptDraft: scriptMutations.reconcileCaptionScriptDraft, ...context });
   if (!ts.isObjectBindingPattern(declaration.name)) return value;
   const element = declaration.name.elements.find((entry) => entry.name.getText(editorAst) === name);

@@ -25,10 +25,11 @@ export function CaptionOverlay(props: {
     ?? (props.selectionCaption ? resolveCaptionStyle(props.projectStyle, props.selectionCaption) : style),
   [props.selectionStyle, props.selectionCaption, props.projectStyle, style]);
   const geometry = props.geometry ?? selectionStyle;
+  const wordById = useMemo(() => new Map(props.words.map((word) => [word.id, word])), [props.words]);
   if (!props.caption && !props.selectionCaption) return null;
   return <View pointerEvents="none" collapsable={false} style={{ position: 'absolute', inset: 0 }}>
     {(props.captions ?? (props.caption ? [props.caption] : [])).map((caption) => (
-      <CaptionPresentation key={caption.id} caption={caption} words={props.words} projectStyle={props.projectStyle}
+      <CaptionPresentation key={caption.id} caption={caption} words={props.words} wordById={wordById} projectStyle={props.projectStyle}
         geometry={props.geometryForCaption?.(caption) ?? geometry}
         currentMs={props.currentMs} authored={Boolean(props.preserveLineBreaks)} editingPreview={props.editingPreview} />
     ))}

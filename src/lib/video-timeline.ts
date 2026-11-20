@@ -134,7 +134,20 @@ export function timelineSegmentAt(entries: ClipTimelineEntry[], timelineMs: numb
 }
 
 export function totalClipDuration(clips: VideoClip[]) {
-  return buildClipTimeline(clips).at(-1)?.afterGapEndMs ?? 0;
+  let cursor = 0;
+  let lastVisitedIndex = -1;
+  const length = clips.length;
+  for (let index = 0; index < length; index += 1) {
+    // Match map's hole skipping, including inherited numeric properties.
+    if (!(index in clips)) continue;
+    const clip = clips[index];
+    cursor += validGap(clip.gapBeforeMs);
+    cursor += clipTimelineDuration(clip);
+    cursor += validGap(clip.gapAfterMs);
+    lastVisitedIndex = index;
+  }
+  // A trailing hole in the mapped timeline makes at(-1) undefined.
+  return lastVisitedIndex === length - 1 ? cursor : 0;
 }
 
 export function clipTimelineDuration(clip: VideoClip) {
