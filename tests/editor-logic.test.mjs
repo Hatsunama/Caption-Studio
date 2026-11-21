@@ -588,10 +588,13 @@ test('hold-drag clip reorder keeps the filmstrip mounted, remaps source captions
   assert.deepEqual([byId.c3.startMs, byId.c3.endMs], [100, 400]);
   assert.deepEqual([byId.c1.startMs, byId.c1.endMs], [1_600, 1_900]);
   assert.deepEqual([byId.timeline.startMs, byId.timeline.endMs], [2_100, 2_500]);
-  assert.deepEqual(
-    reordered.project.captions.map(({ startMs, endMs, ...caption }) => caption),
-    project.captions.map(({ startMs, endMs, ...caption }) => caption),
-  );
+  assert.deepEqual(reordered.project.captions.map(caption => caption.id), ['c3', 'c1', 'timeline']);
+  for (const original of project.captions) {
+    const { startMs, endMs, timingMode, ...content } = byId[original.id];
+    const { startMs: previousStart, endMs: previousEnd, timingMode: previousMode, ...expected } = original;
+    assert.deepEqual(content, expected, `preserved caption metadata for ${original.id}`);
+    assert.equal(timingMode, previousMode ?? 'source');
+  }
   const audioById = Object.fromEntries(reordered.project.audioClips.map((item) => [item.id, item]));
   assert.equal(audioById.a3.startMs, 3_050);
   assert.equal(audioById.a1.startMs, 50);
