@@ -683,12 +683,13 @@ test('caption grouping always breaks at hard video cuts', () => {
   ]);
 });
 
-test('splitting video changes only clip topology and preserves subtitle identity, text, and timing', () => {
+test('splitting video partitions source captions and word references while preserving independent layers and audio', () => {
   const sourceWords = [
     { id: 'hello', text: 'hello', startMs: 500, endMs: 900 },
     { id: 'world', text: 'world', startMs: 2_100, endMs: 2_500 },
   ];
   const project = projectFixture({
+    captionTracks: { schemaVersion: 1, translations: [] },
     clips: [clip({ id: 'whole', sourceEndMs: 4_000, availableSourceEndMs: 4_000 })],
     transcription: {
       language: 'en',
@@ -725,6 +726,7 @@ test('splitting video changes only clip topology and preserves subtitle identity
       { id: 'voice-two', sourceId: 'audio-two', anchor: 'timeline', startMs: 1_600, sourceStartMs: 100, sourceEndMs: 1_100, volume: 0.8, muted: false, fadeInMs: 100, fadeOutMs: 200 },
     ],
   });
+  const before = structuredClone(project);
   const audioBefore = structuredClone(project.audioClips);
   const result = splitVideoClip(project, 'whole', 1_500, 'left', 'right');
   assert.ok(result);
@@ -738,19 +740,42 @@ test('splitting video changes only clip topology and preserves subtitle identity
     sourceAnchor: caption.sourceAnchor,
   })), [{
     id: 'sentence',
-    text: 'hello world',
+    text: 'hello',
     startMs: 500,
+    endMs: 1_500,
+    wordIds: ['left-hello'],
+    timingMode: 'source',
+    sourceAnchor: { clipId: 'left', sourceStartMs: 500, sourceEndMs: 1_500, wordIds: ['left-hello'] },
+  }, {
+    id: 'sentence-right',
+    text: 'world',
+    startMs: 1_500,
     endMs: 2_500,
-    wordIds: ['whole-hello', 'whole-world'],
-    timingMode: 'timeline',
-    sourceAnchor: undefined,
+    wordIds: ['right-world'],
+    timingMode: 'source',
+    sourceAnchor: { clipId: 'right', sourceStartMs: 1_500, sourceEndMs: 2_500, wordIds: ['right-world'] },
   }]);
+  assert.equal(result.project.captions[0].endMs, result.project.captions[1].startMs);
+  for (const caption of result.project.captions) {
+    const owner = buildClipTimeline(result.project.clips).find((entry) => entry.clip.id === caption.sourceAnchor.clipId);
+    assert.ok(owner && caption.startMs >= owner.startMs && caption.endMs <= owner.endMs);
+    for (const id of caption.wordIds) {
+      const word = result.project.transcription.words.find((word) => word.id === id);
+      assert.ok(word && word.startMs < caption.endMs && word.endMs > caption.startMs);
+      assert.ok(id.startsWith(`${owner.clip.id}-`));
+    }
+  }
   assert.deepEqual(result.project.layers[1].sourceAnchors.map((anchor) => anchor.clipId), ['left', 'right']);
   assert.deepEqual([result.project.layers[1].startMs, result.project.layers[1].endMs], [500, 2_500]);
   assert.deepEqual(result.project.audioClips, audioBefore);
+  assert.deepEqual(project, before, 'splitting must not mutate the input project');
   const gapped = setVideoClipGap(result.project, 'right', 500);
   assert.ok(gapped);
-  assert.deepEqual(visibleTimelineCaptions(gapped.project.captions).map((caption) => [caption.id, caption.text]), [['sentence', 'hello world']]);
+  assert.deepEqual(visibleTimelineCaptions(gapped.project.captions).map((caption) => [caption.id, caption.text, caption.startMs, caption.endMs]), [
+    ['sentence', 'hello', 500, 1_500],
+    ['sentence-right', 'world', 2_000, 3_000],
+  ]);
+  assert.deepEqual(project, before, 'subsequent layout edits must not mutate the original input');
 });
 
 test('video layout edits cannot infer ownership or delete timeline-owned audio', () => {

@@ -147,23 +147,28 @@ test('video timeline remapping rebuilds automatic Chinese captions without space
   assert.equal(caption.text, '你好，世界！');
 });
 
-test('splitting video under a manual Chinese caption preserves its text, identity, and timing', () => {
+test('splitting video under a manual Chinese caption retains full text and style on exact source-owned fragments', () => {
   const project = projectFixture({
     captions: [{
       id: 'caption',
       text: '你好，世界！',
       textMode: 'manual',
+      styleOverride: { textColor: '#19D98B', italic: true },
       startMs: 0,
       endMs: 1_000,
       wordIds: [],
       sourceAnchor: { clipId: 'clip', sourceStartMs: 0, sourceEndMs: 1_000, wordIds: [] },
     }],
   });
+  const before = structuredClone(project);
   const result = splitVideoClip(project, 'clip', 500, 'left', 'right');
   assert.ok(result);
   assert.deepEqual(result.project.captions.map((caption) => ({
     id: caption.id,
     text: caption.text,
+    textMode: caption.textMode,
+    styleOverride: caption.styleOverride,
+    wordIds: caption.wordIds,
     startMs: caption.startMs,
     endMs: caption.endMs,
     timingMode: caption.timingMode,
@@ -171,11 +176,26 @@ test('splitting video under a manual Chinese caption preserves its text, identit
   })), [{
     id: 'caption',
     text: '你好，世界！',
+    textMode: 'manual',
+    styleOverride: { textColor: '#19D98B', italic: true },
+    wordIds: [],
     startMs: 0,
+    endMs: 500,
+    timingMode: 'source',
+    sourceAnchor: { clipId: 'left', sourceStartMs: 0, sourceEndMs: 500, wordIds: [] },
+  }, {
+    id: 'caption-right',
+    text: '你好，世界！',
+    textMode: 'manual',
+    styleOverride: { textColor: '#19D98B', italic: true },
+    wordIds: [],
+    startMs: 500,
     endMs: 1_000,
-    timingMode: 'timeline',
-    sourceAnchor: undefined,
+    timingMode: 'source',
+    sourceAnchor: { clipId: 'right', sourceStartMs: 500, sourceEndMs: 1_000, wordIds: [] },
   }]);
+  assert.equal(result.project.captions[0].endMs, result.project.captions[1].startMs);
+  assert.deepEqual(project, before, 'splitting must not mutate the input project');
 });
 
 test('ASS per-word styling preserves compact Chinese spacing', () => {

@@ -124,10 +124,10 @@ export function splitTranslationCaptionCues(
   previousCaptions: CaptionBlock[],
   lineage: ReadonlyMap<string, readonly string[]>,
 ): CaptionTrackCollection {
-  if (lineage.size === 0) return project.captionTracks;
+  const tracks = currentCaptionTracks({ ...project, captions: previousCaptions });
+  if (lineage.size === 0) return tracks;
   const previousById = new Map(previousCaptions.map(caption => [caption.id, caption]));
   const currentById = new Map(project.captions.map(caption => [caption.id, caption]));
-  const tracks = project.captionTracks;
   const translations = tracks.translations.map(track => ({
     ...track,
     cues: track.cues.flatMap(cue => {

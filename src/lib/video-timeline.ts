@@ -360,12 +360,42 @@ export function splitSourceCaptionOwners(
   return { captions: fragments, captionSplitLineage };
 }
 
+function indexTimelineWordSupport(words: WordToken[]) {
+  const byId = new Map(words.map(word => [word.id, word]));
+  const ordered = words.map((word, index) => ({ word, index, startMs: word.startMs, endMs: word.endMs }))
+    .filter(item => !Number.isNaN(item.startMs) && !Number.isNaN(item.endMs))
+    .sort((a, b) => a.startMs - b.startMs || a.index - b.index);
+  const maxEnds = new Float64Array(ordered.length);
+  const build = (lo: number, hi: number): number => {
+    if (lo >= hi) return -Infinity;
+    const mid = (lo + hi) >>> 1;
+    return maxEnds[mid] = Math.max(ordered[mid].endMs, build(lo, mid), build(mid + 1, hi));
+  };
+  build(0, ordered.length);
+  const overlapping = (startMs: number, endMs: number, prefix: string) => {
+    const found: typeof ordered = [];
+    const visit = (lo: number, hi: number) => {
+      if (lo >= hi || ordered[lo].startMs >= endMs) return;
+      const mid = (lo + hi) >>> 1;
+      if (maxEnds[mid] <= startMs) return;
+      visit(lo, mid);
+      const item = ordered[mid];
+      if (item.startMs < endMs && item.endMs > startMs && item.word.id.startsWith(prefix)) found.push(item);
+      visit(mid + 1, hi);
+    };
+    visit(0, ordered.length);
+    return found.sort((a, b) => a.index - b.index).map(item => item.word);
+  };
+  return { byId, overlapping };
+}
+
 export function remapCaptionsToTimeline(
   captions: CaptionBlock[],
   clips: VideoClip[],
   timelineWords: WordToken[],
 ) {
   const entryByClipId = new Map(buildClipTimeline(clips).map((entry) => [entry.clip.id, entry]));
+  const wordSupport = indexTimelineWordSupport(timelineWords);
   return captions.map((caption) => {
     if (caption.timingMode === 'timeline') return caption;
     const anchor = caption.sourceAnchor;
@@ -376,17 +406,20 @@ export function remapCaptionsToTimeline(
     const visibleSourceEnd = Math.min(anchor.sourceEndMs, entry.clip.sourceEndMs);
     if (visibleSourceEnd <= visibleSourceStart) {
       const boundaryMs = timelineTimeAt(entry, anchor.sourceStartMs);
-      return { ...caption, startMs: boundaryMs, endMs: boundaryMs, wordIds: [],
-        sourceAnchor: { ...anchor, wordIds: [] }, timelineVisible: false };
+      return { ...caption, startMs: boundaryMs, endMs: boundaryMs, timelineVisible: false };
     }
     const startMs = timelineTimeAt(entry, visibleSourceStart);
     const endMs = timelineTimeAt(entry, visibleSourceEnd);
     // Reconcile both references from the SAME projection, including literal
     // support clipped through a word. The anchor interval remains authoritative
     // so trim/restore can rediscover support without stale clip-prefixed IDs.
-    const support = timelineWords.filter(word => word.id.startsWith(`${entry.clip.id}-`)
-      && word.startMs < endMs && word.endMs > startMs);
-    const wordIds = support.map(word => word.id);
+    const keepExistingWords = timelineWords.length === 0;
+    const explicitSupport = caption.textMode !== 'automatic' && anchor.wordIds.length > 0
+      && anchor.wordIds.every(id => wordSupport.byId.has(id));
+    const support = explicitSupport ? anchor.wordIds.map(id => wordSupport.byId.get(id)!)
+      : wordSupport.overlapping(startMs, endMs, `${entry.clip.id}-`);
+    const wordIds = keepExistingWords ? (anchor.wordIds.length ? anchor.wordIds : caption.wordIds)
+      : support.map(word => word.id);
     const automaticText = joinTimelineWords(support);
     return {
       ...caption,
