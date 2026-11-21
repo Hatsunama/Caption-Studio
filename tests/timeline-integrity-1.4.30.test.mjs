@@ -9,24 +9,69 @@ import { createCaptionProject } from '../src/lib/project-factory.ts';
 import { setVideoClipTransform, splitVideoClip } from '../src/lib/project-editor.ts';
 import { decodeVersionTwoProject, serializeProjectSnapshot } from '../src/lib/project-schema.ts';
 
-test('splitting video is topology-only for subtitle identity, text, timing, and word references', () => {
+test('splitting video preserves source ownership, manual text, and valid child word references through persistence', () => {
   const source = { id: 'source', uri: 'content://video/source', storageMode: 'linked', displayName: 'source.mp4', durationMs: 6_000, width: 1080, height: 1920, rotation: 0 };
   const project = createCaptionProject({ id: 'split-integrity', name: 'Split integrity', sources: [source] });
   const clipId = project.clips[0].id;
-  project.captions = [
-    { id: 'left-caption', text: 'left', textMode: 'automatic', timingMode: 'source', startMs: 400, endMs: 1_200, wordIds: ['word-left'], timelineVisible: true, sourceAnchor: { clipId, sourceStartMs: 400, sourceEndMs: 1_200, wordIds: ['word-left'] } },
-    { id: 'cross-caption', text: 'do not rewrite me', textMode: 'manual', timingMode: 'source', startMs: 2_700, endMs: 3_300, wordIds: ['word-cross'], timelineVisible: true, sourceAnchor: { clipId, sourceStartMs: 2_700, sourceEndMs: 3_300, wordIds: ['word-cross'] } },
-    { id: 'right-caption', text: 'right', textMode: 'automatic', timingMode: 'source', startMs: 4_000, endMs: 4_800, wordIds: ['word-right'], timelineVisible: true, sourceAnchor: { clipId, sourceStartMs: 4_000, sourceEndMs: 4_800, wordIds: ['word-right'] } },
+  const sourceWords = [
+    { id: 'word-left', text: 'left', startMs: 400, endMs: 1_200 },
+    { id: 'word-cross', text: 'original', startMs: 2_700, endMs: 3_300 },
+    { id: 'word-right', text: 'right', startMs: 4_000, endMs: 4_800 },
   ];
-  const immutableFields = project.captions.map(({ id, text, startMs, endMs, wordIds }) => ({ id, text, startMs, endMs, wordIds }));
+  project.transcription = {
+    ...project.transcription,
+    language: 'en',
+    modelId: 'fast',
+    words: sourceWords.map((word) => ({ ...word, id: `${clipId}-${word.id}` })),
+    sourceResults: { source: { language: 'en', modelId: 'fast', generatedAt: '2026-01-01T00:00:00.000Z', words: sourceWords } },
+  };
+  project.captions = [
+    { id: 'left-caption', text: 'left', textMode: 'automatic', timingMode: 'source', startMs: 400, endMs: 1_200, wordIds: [`${clipId}-word-left`], timelineVisible: true, sourceAnchor: { clipId, sourceStartMs: 400, sourceEndMs: 1_200, wordIds: [`${clipId}-word-left`] } },
+    { id: 'cross-caption', text: 'do not rewrite me', textMode: 'manual', timingMode: 'source', startMs: 2_700, endMs: 3_300, wordIds: [`${clipId}-word-cross`], timelineVisible: true, styleOverride: { textColor: '#19D98B', italic: true }, sourceAnchor: { clipId, sourceStartMs: 2_700, sourceEndMs: 3_300, wordIds: [`${clipId}-word-cross`] } },
+    { id: 'right-caption', text: 'right', textMode: 'automatic', timingMode: 'source', startMs: 4_000, endMs: 4_800, wordIds: [`${clipId}-word-right`], timelineVisible: true, sourceAnchor: { clipId, sourceStartMs: 4_000, sourceEndMs: 4_800, wordIds: [`${clipId}-word-right`] } },
+  ];
+  const before = structuredClone(project);
 
   const result = splitVideoClip(project, clipId, 3_000, 'left-clip', 'right-clip');
   assert.ok(result);
-  assert.deepEqual(result.project.captions.map(({ id, text, startMs, endMs, wordIds }) => ({ id, text, startMs, endMs, wordIds })), immutableFields);
-  assert.equal(result.project.captions[0].sourceAnchor.clipId, 'left-clip');
-  assert.equal(result.project.captions[1].timingMode, 'timeline');
-  assert.equal(result.project.captions[1].sourceAnchor, undefined);
-  assert.equal(result.project.captions[2].sourceAnchor.clipId, 'right-clip');
+  const expected = [
+    ['left-caption', 'left', 400, 1_200, 'left-clip', ['left-clip-word-left']],
+    ['cross-caption', 'do not rewrite me', 2_700, 3_000, 'left-clip', ['left-clip-word-cross']],
+    ['cross-caption-right-clip', 'do not rewrite me', 3_000, 3_300, 'right-clip', ['right-clip-word-cross']],
+    ['right-caption', 'right', 4_000, 4_800, 'right-clip', ['right-clip-word-right']],
+  ];
+  const assertSplitCaptions = (current) => {
+    assert.deepEqual(current.captions.map((caption) => [
+      caption.id, caption.text, caption.startMs, caption.endMs, caption.sourceAnchor?.clipId, caption.wordIds,
+    ]), expected);
+    assert.equal(new Set(current.captions.map((caption) => caption.id)).size, 4);
+    for (const caption of current.captions) {
+      assert.equal(caption.timingMode, 'source');
+      assert.equal(caption.timelineVisible, true);
+      assert.deepEqual(caption.sourceAnchor.wordIds, caption.wordIds);
+      assert.deepEqual([caption.sourceAnchor.sourceStartMs, caption.sourceAnchor.sourceEndMs], [caption.startMs, caption.endMs]);
+      const owner = current.clips.find((clip) => clip.id === caption.sourceAnchor.clipId);
+      assert.ok(owner && caption.sourceAnchor.sourceStartMs >= owner.sourceStartMs
+        && caption.sourceAnchor.sourceEndMs <= owner.sourceEndMs);
+      for (const id of caption.wordIds) {
+        const word = current.transcription.words.find((word) => word.id === id);
+        assert.ok(word && word.startMs < caption.endMs && word.endMs > caption.startMs);
+        assert.ok(id.startsWith(`${owner.id}-`));
+      }
+    }
+    for (const caption of current.captions.filter((caption) => caption.id.startsWith('cross-caption'))) {
+      assert.equal(caption.textMode, 'manual');
+      assert.equal(caption.text, before.captions[1].text, 'each child keeps the complete authored text');
+      assert.deepEqual(caption.styleOverride, before.captions[1].styleOverride);
+    }
+    for (let index = 1; index < current.captions.length; index += 1) {
+      assert.ok(current.captions[index - 1].endMs <= current.captions[index].startMs, 'source-owned fragments must not overlap');
+    }
+  };
+  assertSplitCaptions(result.project);
+  const recovered = decodeVersionTwoProject(JSON.parse(serializeProjectSnapshot(result.project)));
+  assertSplitCaptions(recovered);
+  assert.deepEqual(project, before, 'split and persistence must not mutate the input project');
 });
 
 test('preview layers own hit testing, authored lines, stable transform baselines, and timing UI', () => {

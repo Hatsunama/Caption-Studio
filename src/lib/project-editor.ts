@@ -2,7 +2,7 @@ import { projectTimelineDuration } from '@/lib/project-timeline';
 import { activeSourceFrame, orientedVideoSize, resolveSourceCanvas } from '@/lib/project-source-frame';
 import { mergeStyle } from '@/lib/style-resolver';
 import { decodeCaptionDraft, reconcileCaptionScriptDraft, sameCaptionContent } from '@/lib/caption-script';
-import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
+import { remapTranslationTrackTimings, splitTranslationCaptionCues, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { applyCaptionTextChanges, type CaptionTextChanges } from '@/lib/caption-text-edits';
 import { applyTimelineSpliceToAudioClips, remapAudioAfterVideoEdit, splitAttachedAudioForVideo } from '@/lib/audio-timeline';
 
@@ -23,6 +23,7 @@ import {
   mapSourceWordsToTimeline,
   MINIMUM_CLIP_TIMELINE_MS,
   remapCaptionsToTimeline,
+  splitSourceCaptionOwners,
   sourceTimeAt,
   timelineTimeAt,
   totalClipDuration,
@@ -44,6 +45,7 @@ import {
 import { editCanvasTimelineRange, splitTimelineRange, type TimelineTimingEdge } from '@/lib/timeline-item-timing';
 import { editProjectTimelineRange, timelineArtifactEditLimit } from '@/lib/timeline-edit-bounds';
 import { normalizeLayerGeometry } from '@/lib/layer-geometry';
+import { isProjectIdentifier, PROJECT_IDENTIFIER_MAX_LENGTH } from '@/lib/project-identifiers';
 import { hasCanonicalSourceWords } from '@/lib/primary-caption-timing';
 import { applyCaptionMergeDraft } from '@/lib/caption-merge';
 import { videoOverlaySegments } from '@/lib/video-overlay-segments';
@@ -722,37 +724,16 @@ export function previewVideoClipReorder(clips: VideoClip[], clipId: string, toIn
 export function reorderVideoClip(project: CaptionProject, clipId: string, toIndex: number) {
   const clips = previewVideoClipReorder(project.clips, clipId, toIndex);
   if (!clips || clips.every((clip, index) => clip.id === project.clips[index]?.id)) return null;
-  const oldStarts = new Map(
-    buildClipTimeline(project.clips).map((entry) => [entry.clip.id, entry.startMs]),
-  );
-  const newStarts = new Map(
-    buildClipTimeline(clips).map((entry) => [entry.clip.id, entry.startMs]),
-  );
-  const captions = project.captions.map((caption) => {
-    if (caption.timingMode === 'timeline' || !caption.sourceAnchor) return caption;
-
-    const oldStartMs = oldStarts.get(caption.sourceAnchor.clipId);
-    const newStartMs = newStarts.get(caption.sourceAnchor.clipId);
-    if (oldStartMs == null || newStartMs == null || oldStartMs === newStartMs) return caption;
-
-    const deltaMs = newStartMs - oldStartMs;
-    return {
-      ...caption,
-      startMs: caption.startMs + deltaMs,
-      endMs: caption.endMs + deltaMs,
-    };
-  });
   const rebuilt = rebuildAfterLayoutEdit(project, clips, project.captions, { atMs: 0, removeMs: 0, insertMs: 0 });
   const next = completeVideoTimelineEdit({
     ...rebuilt,
-    captions,
     audioClips: remapAudioAfterVideoEdit(project.audioClips, clips),
     captionTracks: remapTranslationTrackTimings(
       project.captionTracks,
       project.captions,
       translationReorderMapping(project.clips, clips),
     ),
-  });
+  }, 'layout', false);
   const entry = buildClipTimeline(next.clips).find((candidate) => candidate.clip.id === clipId);
   return { project: next, seekMs: entry?.startMs ?? 0 };
 }
@@ -776,6 +757,19 @@ export function deleteVideoClip(project: CaptionProject, clipId: string) {
 export function splitVideoClip(project: CaptionProject, clipId: string, timelineMs: number, leftId: string, rightId: string) {
   const entry = buildClipTimeline(project.clips).find((candidate) => candidate.clip.id === clipId);
   if (!entry) return null;
+  if (!Number.isFinite(timelineMs) || !isProjectIdentifier(leftId) || !isProjectIdentifier(rightId)) return null;
+  const reservedClipIds = new Set(project.clips.map(clip => clip.id));
+  const reserveClipId = (base: string) => {
+    let candidate = base;
+    for (let suffix = 2; reservedClipIds.has(candidate); suffix += 1) {
+      const tail = `-${suffix}`;
+      candidate = `${base.slice(0, PROJECT_IDENTIFIER_MAX_LENGTH - tail.length)}${tail}`;
+    }
+    reservedClipIds.add(candidate);
+    return candidate;
+  };
+  leftId = reserveClipId(leftId);
+  rightId = reserveClipId(rightId);
   const sourceSplitMs = sourceTimeAt(entry, timelineMs);
   const minimumSourceDuration = MINIMUM_CLIP_TIMELINE_MS * entry.clip.playbackRate;
   if (
@@ -800,17 +794,27 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
   const clips = [...project.clips];
   const index = clips.findIndex((clip) => clip.id === clipId);
   clips.splice(index, 1, left, right);
-  const captions = anchorCaptionsToClips(project.captions, project.clips, project.transcription.words).map((caption) => {
-    const anchor = caption.sourceAnchor;
-    if (anchor?.clipId !== entry.clip.id) return caption;
-    if (anchor.sourceEndMs <= sourceSplitMs) return { ...caption, sourceAnchor: { ...anchor, clipId: leftId } };
-    if (anchor.sourceStartMs >= sourceSplitMs) return { ...caption, sourceAnchor: { ...anchor, clipId: rightId } };
-    return {
-      ...caption,
-      timingMode: 'timeline' as const,
-      sourceAnchor: undefined,
-    };
-  });
+  const sourceWords = Object.fromEntries(Object.entries(project.transcription.sourceResults)
+    .map(([sourceId, result]) => [sourceId, result.words]));
+  const canonical = project.transcription.wordTiming !== 'timeline'
+    && Object.values(sourceWords).some(words => words.length > 0)
+    && Object.values(sourceWords).every(hasCanonicalSourceWords);
+  // Without a canonical cache, only clip the captured timeline support. Never
+  // persist an inferred source transcript, or invent alignment for edited text.
+  const words = canonical ? mapSourceWordsToTimeline(clips, sourceWords)
+    : project.transcription.words.flatMap(word => {
+      const prefix = `${clipId}-`;
+      if (!word.id.startsWith(prefix)) return [word];
+      return [
+        { ...word, id: `${leftId}-${word.id.slice(prefix.length)}`, endMs: Math.min(word.endMs, timelineMs) },
+        { ...word, id: `${rightId}-${word.id.slice(prefix.length)}`, startMs: Math.max(word.startMs, timelineMs) },
+      ].filter(piece => piece.endMs > piece.startMs);
+    });
+  const { captions: ownedCaptions, captionSplitLineage } = splitSourceCaptionOwners(
+    anchorCaptionsToClips(project.captions, project.clips, project.transcription.words),
+    clipId, leftId, rightId, sourceSplitMs,
+  );
+  const captions = remapCaptionsToTimeline(ownedCaptions, clips, words);
   const layers = reanchorVisualLayersAfterSplit(
     anchorVisualLayers(project.layers, project.clips),
     entry.clip.id,
@@ -821,7 +825,10 @@ export function splitVideoClip(project: CaptionProject, clipId: string, timeline
   const audioClips = remapAudioAfterVideoEdit(
     splitAttachedAudioForVideo(project.audioClips, clipId, leftId, rightId, sourceSplitMs), clips,
   );
-  const next = completeVideoTimelineEdit({ ...project, updatedAt: new Date().toISOString(), clips, captions, layers, audioClips });
+  const splitProject = { ...project, updatedAt: new Date().toISOString(), clips, captions, layers, audioClips,
+    transcription: { ...project.transcription, words } };
+  const next = completeVideoTimelineEdit({ ...splitProject,
+    captionTracks: splitTranslationCaptionCues(splitProject, project.captions, captionSplitLineage) }, 'layout', false);
   return { project: next, rightClipId: right.id };
 }
 
@@ -983,15 +990,27 @@ function rebuildAfterLayoutEdit(
     Object.entries(project.transcription.sourceResults).map(([sourceId, result]) => [sourceId, result.words]),
   );
   const hasCanonicalWords = project.transcription.wordTiming !== 'timeline'
-    && Object.keys(sourceWords).length > 0
+    && Object.values(sourceWords).some(words => words.length > 0)
     && Object.values(project.transcription.sourceResults).every((result) => hasCanonicalSourceWords(result.words));
   const currentWords = hasCanonicalWords
     ? mapSourceWordsToTimeline(project.clips, sourceWords)
     : project.transcription.words;
   const anchoredCaptions = anchorCaptionsToClips(sourceCaptions, project.clips, currentWords);
+  const oldEntries = buildClipTimeline(project.clips).sort((a, b) => b.clip.id.length - a.clip.id.length);
+  const newEntries = new Map(buildClipTimeline(clips).map(entry => [entry.clip.id, entry]));
   const words = hasCanonicalWords
     ? mapSourceWordsToTimeline(clips, sourceWords)
-    : spliceTimedRanges(project.transcription.words, splice);
+    : project.transcription.words.flatMap(word => {
+      // Captured support is sufficient to move a known occurrence, but is not
+      // evidence for a new canonical cache or words outside its captured range.
+      const before = oldEntries.find(entry => word.id.startsWith(`${entry.clip.id}-`));
+      if (!before) return spliceTimedRanges([word], splice);
+      const after = newEntries.get(before.clip.id);
+      if (!after) return [];
+      const startMs = Math.max(after.startMs, timelineTimeAt(after, sourceTimeAt(before, word.startMs)));
+      const endMs = Math.min(after.endMs, timelineTimeAt(after, sourceTimeAt(before, word.endMs)));
+      return endMs > startMs ? [{ ...word, startMs, endMs }] : [];
+    }).sort((a, b) => a.startMs - b.startMs);
   const unanchored = anchoredCaptions
     .filter((caption) => !caption.sourceAnchor)
     .map((caption) => spliceTimedRange(caption, splice))

@@ -119,6 +119,46 @@ export function createEnglishChineseCaptionTrack(
   });
 }
 
+export function splitTranslationCaptionCues(
+  project: CaptionProject,
+  previousCaptions: CaptionBlock[],
+  lineage: ReadonlyMap<string, readonly string[]>,
+): CaptionTrackCollection {
+  const tracks = currentCaptionTracks({ ...project, captions: previousCaptions });
+  if (lineage.size === 0) return tracks;
+  const previousById = new Map(previousCaptions.map(caption => [caption.id, caption]));
+  const currentById = new Map(project.captions.map(caption => [caption.id, caption]));
+  const translations = tracks.translations.map(track => ({
+    ...track,
+    cues: track.cues.flatMap(cue => {
+      const children = lineage.get(cue.sourceCaptionId);
+      const previous = previousById.get(cue.sourceCaptionId);
+      if (!children || !previous) return [cue];
+      const independent = tracks.independentTimingOrigins?.[cue.id] !== undefined
+        || (cue.startMs !== undefined && cue.startMs !== previous.startMs)
+        || (cue.endMs !== undefined && cue.endMs !== previous.endMs);
+      return children.flatMap(id => {
+        const source = currentById.get(id);
+        if (!source) return [];
+        if (independent && id !== cue.sourceCaptionId) {
+          return [{ ...createCue(track.id, source, ''), styleOverride: cue.styleOverride,
+            timelineVisible: cue.timelineVisible !== false && source.timelineVisible !== false,
+            ...(cue.translationSkipped !== undefined ? { translationSkipped: cue.translationSkipped } : {}),
+          }];
+        }
+        const child = {
+          ...cue,
+          id: createCue(track.id, source, '').id,
+          sourceCaptionId: id,
+          ...(independent ? {} : { startMs: source.startMs, endMs: source.endMs }),
+        };
+        return [synchronizeCue(track.id, source, child)];
+      });
+    }),
+  }));
+  return synchronizeCaptionTracks({ ...project, captionTracks: { ...tracks, translations } }, project.captions);
+}
+
 export function createTranslationCaptionTrack(project: CaptionProject, options: TranslationTrackOptions) {
   requiredIdentifier(options.id, 'Caption track');
   requiredLanguageTag(options.languageTag);
