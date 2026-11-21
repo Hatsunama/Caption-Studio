@@ -19,10 +19,14 @@ export function serializeSrt(project: CaptionProject, allowIncompleteTranslation
     const aligned = pairs.filter((pair) => pair.startMs === caption.startMs && pair.endMs === caption.endMs);
     const independent = pairs.filter((pair) => !aligned.includes(pair));
     return [{
+      sourceStartMs: caption.startMs,
+      sourceEndMs: caption.endMs,
       startMs: timing.startMs,
       endMs: timing.endMs,
       text: [normalizeLineEndings(caption.text).trim(), ...aligned.map((pair) => normalizeLineEndings(pair.displayText).trim())].join('\n'),
     }, ...independent.map((pair) => ({
+      sourceStartMs: pair.startMs,
+      sourceEndMs: pair.endMs,
       ...srtRange(pair.startMs, pair.endMs, durationMs),
       text: normalizeLineEndings(pair.displayText).trim(),
     }))];
@@ -31,11 +35,18 @@ export function serializeSrt(project: CaptionProject, allowIncompleteTranslation
   for (const [id, pairs] of translations) {
     if (primaryIds.has(id)) continue;
     pairs.forEach((pair) => events.push({ ...srtRange(pair.startMs, pair.endMs, durationMs),
+      sourceStartMs: pair.startMs, sourceEndMs: pair.endMs,
       text: normalizeLineEndings(pair.displayText).trim() }));
   }
   events.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
-  const cues = events.map((event) => ({ ...event, text: srtCaptionText(event.text) }))
+  const emitted = events.map((event) => ({ ...event, text: srtCaptionText(event.text) }))
     .filter((event) => event.text && event.endMs > event.startMs);
+  const timebase = subtitleTimebase(emitted.map((event) => ({
+    startMs: event.sourceStartMs, endMs: event.sourceEndMs,
+  })), durationMs, 1);
+  const cues = emitted.map((event) => ({ ...event,
+    ...srtRange(event.sourceStartMs, event.sourceEndMs, durationMs, timebase),
+  })).sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
   return cues.length > 0 ? `${cues.map((event, index) => [
     String(index + 1),
     `${srtTime(event.startMs)} --> ${srtTime(event.endMs)}`,
@@ -64,14 +75,21 @@ export function serializeAss(project: CaptionProject, allowIncompleteTranslation
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
   const translations = translationsByCaption(project, allowIncompleteTranslations);
-  const events = visibleCaptions(project).flatMap((caption) => {
+  const captions = visibleCaptions(project);
+  const timebase = subtitleTimebase([
+    ...captions, ...[...translations.values()].flat(),
+  ].filter((event) => {
+    const timing = assRange(event.startMs, event.endMs, durationMs);
+    return timing.endCs > timing.startCs;
+  }), durationMs, 10);
+  const events = captions.flatMap((caption) => {
     const style = resolveCaptionStyle(project.projectStyle, caption);
-    const timing = assRange(caption.startMs, caption.endMs, durationMs);
+    const timing = assRange(caption.startMs, caption.endMs, durationMs, timebase);
     return [
       assDialogue(0, timing, style, width, height, scale, assCaptionText(project, caption, style, scale)),
       ...(translations.get(caption.id) ?? []).map((pair, index) => assDialogue(
         index + 1,
-        assRange(pair.startMs, pair.endMs, durationMs),
+        assRange(pair.startMs, pair.endMs, durationMs, timebase),
         pair.style,
         width,
         height,
@@ -84,7 +102,7 @@ export function serializeAss(project: CaptionProject, allowIncompleteTranslation
   for (const [id, pairs] of translations) {
     if (primaryIds.has(id)) continue;
     pairs.forEach((pair, index) => events.push(assDialogue(index + 1,
-      assRange(pair.startMs, pair.endMs, durationMs), pair.style, width, height, scale,
+      assRange(pair.startMs, pair.endMs, durationMs, timebase), pair.style, width, height, scale,
       assText(transformText(normalizeLineEndings(pair.displayText).trim(), pair.style.textTransform)))));
   }
   return [...header, ...events.filter(Boolean), ''].join('\n');
@@ -252,15 +270,73 @@ function subtitleDuration(project: CaptionProject) {
   return project.clips?.length ? totalClipDuration(project.clips) : projectRenderDuration(project);
 }
 
-function srtRange(startMs: number, endMs: number, durationMs: number) {
+/**
+ * Project only legacy-emitted events onto a shared format clock. Adjacent source
+ * timestamps may coincide on that clock, but every event needs at least one unit.
+ * A single monotone map keeps shared boundaries shared across all export tracks
+ * without flattening authored overlaps or changing project timing.
+ */
+function subtitleTimebase(
+  events: readonly { startMs: number; endMs: number }[],
+  durationMs: number,
+  quantumMs: number,
+) {
+  const clamp = (time: number) => Math.max(0, Math.min(durationMs, time));
+  const ranges = events.map((event) => [clamp(event.startMs), clamp(event.endMs)]);
+  const times = [...new Set(ranges.flat())].sort((a, b) => a - b);
+  const indices = new Map(times.map((time, index) => [time, index]));
+  const incoming: number[][] = times.map(() => []);
+  const outgoing: number[][] = times.map(() => []);
+  for (const [start, end] of ranges) {
+    const left = indices.get(start)!;
+    const right = indices.get(end)!;
+    outgoing[left].push(right);
+    incoming[right].push(left);
+  }
+  const limit = Math.floor(durationMs / quantumMs);
+  // The epsilon tolerates floating point noise at a format-unit boundary only.
+  const epsilon = 1e-9;
+  const lower = times.map((time) => Math.max(0, Math.ceil(time / quantumMs - 1 - epsilon)));
+  const upper = times.map((time) => Math.min(limit, Math.floor(time / quantumMs + 1 + epsilon)));
+  const infeasible = () => {
+    throw new Error(quantumMs === 10
+      ? 'These captions are too closely timed for ASS. Export SRT or adjust their timing.'
+      : 'These captions are too closely timed for SRT. Adjust their timing before exporting.');
+  };
+  // All constraint edges point forward, so a backwards pass bounds every choice
+  // by the room needed for later events, including events near the footage end.
+  for (let index = times.length - 1; index >= 0; index--) {
+    if (index + 1 < times.length) upper[index] = Math.min(upper[index], upper[index + 1]);
+    for (const end of outgoing[index]) upper[index] = Math.min(upper[index], upper[end] - 1);
+    if (lower[index] > upper[index]) infeasible();
+  }
+  const units: number[] = [];
+  for (let index = 0; index < times.length; index++) {
+    let minimum = Math.max(lower[index], index > 0 ? units[index - 1] : 0);
+    for (const start of incoming[index]) minimum = Math.max(minimum, units[start] + 1);
+    if (minimum > upper[index]) infeasible();
+    units.push(Math.max(minimum, Math.min(Math.round(times[index] / quantumMs), upper[index])));
+  }
+  return new Map(times.map((time, index) => [time, units[index]]));
+}
+
+function srtRange(startMs: number, endMs: number, durationMs: number, timebase?: ReadonlyMap<number, number>) {
   const start = Math.max(0, Math.round(startMs));
   const end = Math.min(Math.floor(durationMs), Math.max(start + 1, Math.round(endMs)));
+  if (timebase && end > start) return {
+    startMs: timebase.get(Math.max(0, Math.min(durationMs, startMs)))!,
+    endMs: timebase.get(Math.max(0, Math.min(durationMs, endMs)))!,
+  };
   return { startMs: start, endMs: end };
 }
 
-function assRange(startMs: number, endMs: number, durationMs: number) {
+function assRange(startMs: number, endMs: number, durationMs: number, timebase?: ReadonlyMap<number, number>) {
   const start = Math.max(0, Math.round(startMs / 10));
   const end = Math.min(Math.floor(durationMs / 10), Math.max(start + 1, Math.round(endMs / 10)));
+  if (timebase && end > start) return {
+    startCs: timebase.get(Math.max(0, Math.min(durationMs, startMs)))!,
+    endCs: timebase.get(Math.max(0, Math.min(durationMs, endMs)))!,
+  };
   return { startCs: start, endCs: end };
 }
 
