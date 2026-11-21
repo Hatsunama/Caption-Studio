@@ -3,7 +3,7 @@ import { applyTimelineSpliceToAudioClips, remapAudioAfterVideoEdit } from '@/lib
 import { remapTranslationTrackTimings, synchronizeCaptionTracks } from '@/lib/caption-tracks';
 import { captionLayoutText } from '@/lib/caption-text-breaks';
 import { effectiveVideoTransition } from '@/lib/video-transitions';
-import { isProjectIdentifier } from '@/lib/project-identifiers';
+import { isProjectIdentifier, PROJECT_IDENTIFIER_MAX_LENGTH } from '@/lib/project-identifiers';
 import { primaryCaptionSurvives, primaryCaptionVisible } from '@/lib/primary-caption-timing';
 import { absorbShortCaptionCues } from '@/lib/caption-merge';
 
@@ -336,13 +336,36 @@ export function anchorCaptionsToClips(
   });
 }
 
+/** Explicit lineage for this cut only; never stored in the project model. */
+export function splitSourceCaptionOwners(
+  captions: CaptionBlock[], clipId: string, leftId: string, rightId: string, sourceSplitMs: number,
+) {
+  const reservedIds = new Set(captions.map(caption => caption.id));
+  const captionSplitLineage = new Map<string, string[]>();
+  const fragments = captions.flatMap(caption => {
+    const anchor = caption.sourceAnchor;
+    if (caption.timingMode === 'timeline' || anchor?.clipId !== clipId) return [caption];
+    const owners = [
+      { clipId: leftId, sourceStartMs: anchor.sourceStartMs, sourceEndMs: Math.min(anchor.sourceEndMs, sourceSplitMs) },
+      { clipId: rightId, sourceStartMs: Math.max(anchor.sourceStartMs, sourceSplitMs), sourceEndMs: anchor.sourceEndMs },
+    ].filter(owner => owner.sourceEndMs > owner.sourceStartMs);
+    const pieces = owners.map((owner, index) => ({
+      ...caption,
+      id: index === 0 ? caption.id : reserveDerivedCaptionId(caption.id, owner.clipId, reservedIds),
+      sourceAnchor: { ...anchor, ...owner },
+    }));
+    if (pieces.length > 1) captionSplitLineage.set(caption.id, pieces.map(piece => piece.id));
+    return pieces;
+  });
+  return { captions: fragments, captionSplitLineage };
+}
+
 export function remapCaptionsToTimeline(
   captions: CaptionBlock[],
   clips: VideoClip[],
   timelineWords: WordToken[],
 ) {
   const entryByClipId = new Map(buildClipTimeline(clips).map((entry) => [entry.clip.id, entry]));
-  const wordById = new Map(timelineWords.map((word) => [word.id, word]));
   return captions.map((caption) => {
     if (caption.timingMode === 'timeline') return caption;
     const anchor = caption.sourceAnchor;
@@ -353,18 +376,24 @@ export function remapCaptionsToTimeline(
     const visibleSourceEnd = Math.min(anchor.sourceEndMs, entry.clip.sourceEndMs);
     if (visibleSourceEnd <= visibleSourceStart) {
       const boundaryMs = timelineTimeAt(entry, anchor.sourceStartMs);
-      return { ...caption, startMs: boundaryMs, endMs: boundaryMs, timelineVisible: false };
+      return { ...caption, startMs: boundaryMs, endMs: boundaryMs, wordIds: [],
+        sourceAnchor: { ...anchor, wordIds: [] }, timelineVisible: false };
     }
     const startMs = timelineTimeAt(entry, visibleSourceStart);
     const endMs = timelineTimeAt(entry, visibleSourceEnd);
-    const keepExistingWords = timelineWords.length === 0;
-    const wordIds = keepExistingWords ? (anchor.wordIds.length > 0 ? anchor.wordIds : caption.wordIds) : anchor.wordIds.filter((wordId) => wordById.has(wordId));
-    const automaticText = keepExistingWords ? '' : joinTimelineWords(wordIds.map((wordId) => wordById.get(wordId)!).filter(Boolean));
+    // Reconcile both references from the SAME projection, including literal
+    // support clipped through a word. The anchor interval remains authoritative
+    // so trim/restore can rediscover support without stale clip-prefixed IDs.
+    const support = timelineWords.filter(word => word.id.startsWith(`${entry.clip.id}-`)
+      && word.startMs < endMs && word.endMs > startMs);
+    const wordIds = support.map(word => word.id);
+    const automaticText = joinTimelineWords(support);
     return {
       ...caption,
       startMs,
       endMs,
       wordIds,
+      sourceAnchor: { ...anchor, wordIds },
       text: caption.textMode === 'automatic' && automaticText ? automaticText : caption.text,
       timelineVisible: caption.timelineVisible === false
         && caption.startMs === caption.endMs
@@ -555,7 +584,7 @@ export function setClipPlaybackRate(project: CaptionProject, clipId: string, pla
 }
 
 /** Called by completed edits only. Independent media ranges are never truncated. */
-export function completeVideoTimelineEdit(project: CaptionProject, operation: 'layout' | 'trim' = 'layout'): CaptionProject {
+export function completeVideoTimelineEdit(project: CaptionProject, operation: 'layout' | 'trim' = 'layout', regroupShortCues = true): CaptionProject {
   const first = project.clips[0], last = project.clips.at(-1);
   const leading = first ? validGap(first.gapBeforeMs) : 0;
   const trailing = last ? validGap(last.gapAfterMs) : 0;
@@ -587,7 +616,9 @@ export function completeVideoTimelineEdit(project: CaptionProject, operation: 'l
       audioClips: remapAudioAfterVideoEdit(project.audioClips, clips),
     };
   }
-  return absorbShortCaptionCues(next);
+  // A cut intentionally creates short fragments; split/reorder must retain
+  // their identities for the operation-local lineage and translation consumer.
+  return regroupShortCues ? absorbShortCaptionCues(next) : next;
 }
 
 function rippleRange(
@@ -628,10 +659,13 @@ function joinTimelineWords(words: WordToken[]) {
 }
 
 function reserveDerivedCaptionId(captionId: string, clipId: string, reservedIds: Set<string>) {
-  const base = `${captionId}-${clipId}`;
+  const base = `${captionId}-${clipId}`.slice(0, PROJECT_IDENTIFIER_MAX_LENGTH);
   let candidate = base;
   let suffix = 2;
-  while (reservedIds.has(candidate)) candidate = `${base}-${suffix++}`;
+  while (reservedIds.has(candidate)) {
+    const tail = `-${suffix++}`;
+    candidate = `${base.slice(0, PROJECT_IDENTIFIER_MAX_LENGTH - tail.length)}${tail}`;
+  }
   reservedIds.add(candidate);
   return candidate;
 }
