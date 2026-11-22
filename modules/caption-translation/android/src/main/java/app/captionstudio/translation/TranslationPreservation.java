@@ -256,14 +256,15 @@ final class TranslationPreservation {
       if (trimHorizontal(before[i]).isEmpty() != trimHorizontal(after[i]).isEmpty()) return false;
     }
     // Exact counts apply only to protected tokens recognized in the source.
-    Map<String, Integer> counts = new HashMap<>();
+    java.util.Set<String> operators = new java.util.HashSet<>();
     for (Span span : spans(source)) {
+      String token = source.substring(span.start, span.end);
+      if (operatorEnd(token, 0) == token.length()) operators.add(token);
+    }
+    Map<String, Integer> counts = new HashMap<>();
+    for (Span span : spans(source, operators)) {
       String token = breaks(source.substring(span.start, span.end));
       counts.put(token, counts.getOrDefault(token, 0) + 1);
-    }
-    java.util.Set<String> operators = new java.util.HashSet<>();
-    for (String token : counts.keySet()) {
-      if (operatorEnd(token, 0) == token.length()) operators.add(token);
     }
     for (Span span : spans(translated, operators)) {
       String token = breaks(translated.substring(span.start, span.end));
