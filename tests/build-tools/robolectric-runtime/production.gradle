@@ -1,0 +1,2 @@
+apply plugin: 'java'
+apply from: file(providers.gradleProperty('bootstrap').get())

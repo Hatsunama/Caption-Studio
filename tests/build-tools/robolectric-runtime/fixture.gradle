@@ -1,0 +1,106 @@
+import org.gradle.api.tasks.testing.Test
+
+apply plugin: 'java'
+
+def bootstrap = file(providers.gradleProperty('bootstrap').get())
+assert bootstrap.isFile(): 'Required Robolectric bootstrap/local SDK binding is missing'
+apply from: bootstrap
+
+// Replace only fixture repository URLs with local Maven directories; never contact a server.
+repositories.each { it.url = uri(file('repo')) }
+repositories.maven { url = uri(file('other-repo')) }
+
+tasks.register('verifyContract') {
+  doLast {
+    def runtime = configurations.robolectricRuntime
+    assert runtime.canBeResolved && !runtime.canBeConsumed && !runtime.transitive
+    assert runtime.dependencies.size() == 6: 'Expected complete Robolectric SDK inventory'
+    assert runtime.files*.name.sort() == [
+      'android-all-instrumented-10-robolectric-5803371-i7.jar',
+      'android-all-instrumented-14-robolectric-10818077-i7.jar',
+      'android-all-instrumented-16-robolectric-13921718-i7.jar',
+      'android-all-instrumented-7.0.0_r1-robolectric-r1-i7.jar',
+      'android-all-instrumented-9-robolectric-4913185-2-i7.jar',
+      'nativeruntime-dist-compat-1.0.18.jar'
+    ]
+    assert runtime.files.every { it.text.startsWith('tiny ') }
+    // An unrelated module is available only in the original repository.
+    def unrelated = configurations.detachedConfiguration(dependencies.create('org.robolectric:unrelated:1@jar'))
+    assert unrelated.singleFile.text == 'other repository'
+    def excludedFallback = configurations.detachedConfiguration(dependencies.create('org.robolectric:android-all-instrumented:fixture-only@jar'))
+    try {
+      excludedFallback.resolve()
+      throw new AssertionError('Exclusive module unexpectedly fell back to the other repository')
+    } catch (org.gradle.api.artifacts.ResolveException expected) {
+      assert expected.message.contains('Could not resolve')
+    }
+    def verifier = captionRobolectricJarVerifier
+    def exact = file('exact.jar')
+    exact.text = 'fixture'
+    def hash = java.security.MessageDigest.getInstance('SHA-512').digest(exact.bytes).encodeHex().toString()
+    verifier.verify(exact, 7L, hash)
+    def rejected = { Closure action, String message ->
+      try { action(); throw new AssertionError('Accepted ' + message) }
+      catch (GradleException expected) { assert expected.message.contains(message) }
+    }
+    rejected({ verifier.verify(exact, 8L, hash) }, 'size')
+    exact.text = 'corrupt'
+    rejected({ verifier.verify(exact, 7L, hash) }, 'SHA-512')
+    rejected({ verifier.verify(file('missing.jar'), 7L, hash) }, 'missing')
+    exact.text = 'fixture'
+    def destination = file('sdk-fixture')
+    verifier.copySdk(exact, destination, 7L, hash)
+    assert destination.list().toList() == ['exact.jar']
+    verifier.verify(new File(destination, exact.name), 7L, hash)
+    new File(destination, exact.name).text = 'corrupt'
+    rejected({ verifier.verify(new File(destination, exact.name), 7L, hash) }, 'SHA-512')
+    def sdkDirectory = file('all-sdk-fixture')
+    def sdkJars = runtime.files.findAll { it.name.startsWith('android-all-instrumented-') }
+    sdkJars.each { jar ->
+      def digest = java.security.MessageDigest.getInstance('SHA-512').digest(jar.bytes).encodeHex().toString()
+      verifier.copySdk(jar, sdkDirectory, jar.length(), digest)
+    }
+    assert sdkDirectory.list().sort() == sdkJars*.name.sort()
+    assert sdkDirectory.list().size() == 5
+    def nativeJar = runtime.files.find { it.name.startsWith('nativeruntime-dist-compat-') }
+    def nativeHash = java.security.MessageDigest.getInstance('SHA-512').digest(nativeJar.bytes).encodeHex().toString()
+    verifier.verifyNativeClasspath([nativeJar] as Set, nativeJar.name, nativeJar.length(), nativeHash)
+    rejected({ verifier.verifyNativeClasspath([] as Set, nativeJar.name, nativeJar.length(), nativeHash) }, 'Test classpath')
+    def classpathCopy = file('classpath/' + nativeJar.name)
+    classpathCopy.parentFile.mkdirs()
+    classpathCopy.text = 'bad native!'
+    assert classpathCopy.length() == nativeJar.length()
+    rejected({ verifier.verifyNativeClasspath([classpathCopy] as Set, nativeJar.name, nativeJar.length(), nativeHash) }, 'SHA-512')
+    println 'PASS: real Gradle resolution, verifier, flat SDK copy, corruption checks'
+  }
+}
+
+// Real Test task types, with a tiny assertion action instead of a JUnit worker.
+// This isolates task graph/property wiring without any test framework downloads.
+['fixtureTest', 'lateFixtureTest'].each { name ->
+  tasks.register(name, Test) {
+    // Nonempty inputs let Gradle execute our assertion action instead of NO-SOURCE.
+    // No worker reads this sentinel: the fixture replaces Test's actions below.
+    def classes = file('fixture-classes')
+    classes.mkdirs()
+    new File(classes, 'Sentinel.class').text = 'task input sentinel'
+    testClassesDirs = files(classes)
+    classpath = files(classes)
+    actions.clear()
+    doLast {
+      assert file('prepared.marker').text == 'prepared'
+      assert systemProperties['robolectric.dependency.dir'] == layout.buildDirectory.dir('robolectric-sdk').get().asFile.absolutePath
+      assert taskDependencies.getDependencies(it).contains(tasks.named('prepareRobolectricRuntime').get())
+      file(name + '.marker').text = 'test ran'
+    }
+  }
+}
+
+if (providers.gradleProperty('wiringOnly').isPresent()) {
+  // Only the graph test substitutes the preparation workload. Pin rejection below
+  // runs the unmodified production task against the tiny Maven artifacts.
+  tasks.named('prepareRobolectricRuntime') {
+    actions.clear()
+    doLast { file('prepared.marker').text = 'prepared' }
+  }
+}

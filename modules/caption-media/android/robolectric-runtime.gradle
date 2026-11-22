@@ -1,0 +1,124 @@
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import org.gradle.api.tasks.testing.Test
+
+// Small pure file helper; production expectations below are fixed, never properties/env.
+class CaptionRobolectricJarVerifier {
+  static void verify(File jar, long expectedSize, String expectedSha512) {
+    if (!jar.isFile()) throw new GradleException("Robolectric JAR missing: ${jar}")
+    if (jar.length() != expectedSize) throw new GradleException("Robolectric JAR size mismatch: ${jar}")
+    def digest = MessageDigest.getInstance('SHA-512')
+    jar.withInputStream { input ->
+      byte[] buffer = new byte[65536]
+      int count
+      while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count)
+    }
+    if (digest.digest().encodeHex().toString() != expectedSha512) {
+      throw new GradleException("Robolectric JAR SHA-512 mismatch: ${jar}")
+    }
+  }
+
+  static void copySdk(File jar, File directory, long expectedSize, String expectedSha512) {
+    verify(jar, expectedSize, expectedSha512)
+    Files.createDirectories(directory.toPath())
+    def copy = new File(directory, jar.name)
+    Files.copy(jar.toPath(), copy.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    verify(copy, expectedSize, expectedSha512)
+  }
+
+  static void verifyNativeClasspath(Set<File> classpath, String name, long size, String sha512) {
+    def jars = classpath.findAll { it.name.startsWith('nativeruntime-dist-compat-') && it.name.endsWith('.jar') }
+    if (jars.size() != 1 || jars.first().name != name) {
+      throw new GradleException('Expected pinned Robolectric native runtime on Test classpath')
+    }
+    verify(jars.first(), size, sha512)
+  }
+}
+// Allows the isolated Gradle regression to exercise the same pure helper with tiny files.
+ext.captionRobolectricJarVerifier = CaptionRobolectricJarVerifier
+
+repositories {
+  exclusiveContent {
+    forRepository {
+      maven {
+        name = 'captionRobolectricMirror'
+        url = uri('https://maven-central.storage-download.googleapis.com/maven2/')
+      }
+    }
+    filter {
+      includeModule('org.robolectric', 'android-all-instrumented')
+      includeModule('org.robolectric', 'nativeruntime-dist-compat')
+    }
+  }
+}
+
+def runtime = configurations.create('robolectricRuntime') {
+  canBeResolved = true
+  canBeConsumed = false
+  transitive = false
+}
+// Pinned Maven Central SHA-512 digests and sizes for the existing native test runtimes.
+// Cover every SDK used by this module; local-directory resolution has no remote fallback.
+def sdks = [
+  [version: '7.0.0_r1-robolectric-r1-i7', size: 88212080L,
+    sha512: '0776aacfdcc10a0f11485b22016c04162697506b4c5b30678ca224cafc2550c1f4c0ab36a57f1ed899b1df02d5d8ee7d9130608dcf52173becd879a5689ad9a9'],
+  [version: '9-robolectric-4913185-2-i7', size: 106130412L,
+    sha512: '24687b9ea919eb20f5e27e47274f2aa711e98eb332d4769d34044a3b4952a71393831d0a3f61ba726dc8fe220673a76138c11a0716f304999e5b029146fe88eb'],
+  [version: '10-robolectric-5803371-i7', size: 116486192L,
+    sha512: 'd8907eec0646ae1b71ec306cc61449c76c61a7a08eaca44eb4aa30937cfcf5dcaf7d0938cbea76b3bd85a83646b012ff499faa11cea45e32df7aff62e791951f'],
+  [version: '14-robolectric-10818077-i7', size: 151142227L,
+    sha512: '7cdc0b1306e7865f1acd25a363073149654caee5b8e278c5ae37ff4724185724eff39f0b0111800b521e640bb28698d9d2e655134a801569a0f07470e7b5f455'],
+  [version: '16-robolectric-13921718-i7', size: 213431622L,
+    sha512: '0576318b89abb0a1c9a760a61bb68ccd2d509b33164b8265d6b1fb587a4b7629e1e805b6c7f8fbefab94fc03c8db8100b1d4856a32728803c242d2677aa7ec76']
+].collect { pin -> pin + [name: "android-all-instrumented-${pin.version}.jar".toString(),
+  coordinate: "org.robolectric:android-all-instrumented:${pin.version}".toString()] }
+def nativeRuntime = [name: 'nativeruntime-dist-compat-1.0.18.jar',
+  coordinate: 'org.robolectric:nativeruntime-dist-compat:1.0.18', size: 159128857L,
+  sha512: '1d4122a1c9ea6ad7e5a8ba2d3fc08691fa5d6da9151acfbae93a111c57d2772b65d440e75abee9ed69ebf3b42c42530df1e2e17e7ab48cca2df6c215d4fd4415']
+def pins = sdks + [nativeRuntime]
+pins.each { pin ->
+  // Separate graphs prevent Gradle conflict resolution collapsing five SDK versions to one.
+  def artifact = configurations.detachedConfiguration(dependencies.create("${pin.coordinate}@jar"))
+  artifact.canBeConsumed = false
+  artifact.transitive = false
+  dependencies.add(runtime.name, files(artifact))
+}
+def sdkDirectory = layout.buildDirectory.dir('robolectric-sdk')
+def verifySources = {
+  def jars = runtime.files
+  if (jars.size() != pins.size()) throw new GradleException('Expected exactly six Robolectric bootstrap JARs')
+  pins.collectEntries { pin ->
+    def jar = jars.find { it.name == pin.name }
+    if (jar == null) throw new GradleException("Robolectric JAR missing: ${pin.name}")
+    CaptionRobolectricJarVerifier.verify(jar, pin.size, pin.sha512)
+    [(pin.name): jar]
+  }
+}
+
+def prepare = tasks.register('prepareRobolectricRuntime') {
+  group = 'verification'
+  description = 'Resolve and verify pinned Robolectric JARs and prepare the local SDK directory.'
+  // No tracked outputs: cached/up-to-date state must never bypass byte verification.
+  doLast {
+    def jars = verifySources()
+    sdks.each { sdk ->
+      CaptionRobolectricJarVerifier.copySdk(jars[sdk.name], sdkDirectory.get().asFile, sdk.size, sdk.sha512)
+    }
+  }
+}
+
+// Robolectric's documented local flat SDK directory avoids its separate Maven downloader:
+// https://robolectric.org/blog/2023/11/11/improving-android-all-downloading/
+tasks.withType(Test).configureEach {
+  dependsOn prepare
+  systemProperty 'robolectric.dependency.dir', sdkDirectory.get().asFile.absolutePath
+  doFirst {
+    verifySources()
+    sdks.each { sdk ->
+      CaptionRobolectricJarVerifier.verify(new File(sdkDirectory.get().asFile, sdk.name), sdk.size, sdk.sha512)
+    }
+    // The normal test classpath must carry the same verified native distribution bytes.
+    CaptionRobolectricJarVerifier.verifyNativeClasspath(classpath.files, nativeRuntime.name, nativeRuntime.size, nativeRuntime.sha512)
+  }
+}
