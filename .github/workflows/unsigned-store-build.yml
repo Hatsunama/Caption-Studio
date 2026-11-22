@@ -16,6 +16,9 @@ on:
       - scripts/unsigned-store-build.mjs
       - tests/unsigned-store-build.test.mjs
       - docs/unsigned-local-release-build.md
+      - modules/caption-media/android/build.gradle
+      - modules/caption-media/android/robolectric-runtime.gradle
+      - tests/build-tools/robolectric-runtime/**
 permissions:
   contents: read
 concurrency:
@@ -35,6 +38,37 @@ jobs:
           node-version: 22.23.4
       - name: Synthetic producer acceptance tests (no install, native build or credentials)
         run: node --max-old-space-size=64 --test tests/unsigned-store-build.test.mjs
+  robolectric-bootstrap:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.23.4
+      - name: Verify bootstrap behavior and real pinned runtimes with production Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          mkdir -p evidence
+          curl --fail --location --silent --show-error --retry 3 --max-time 180 --output "$RUNNER_TEMP/gradle-8.14.7-bin.zip" https://downloads.gradle.org/distributions/gradle-8.14.7-bin.zip
+          echo '903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856  '"$RUNNER_TEMP/gradle-8.14.7-bin.zip" | sha256sum --check --status
+          unzip -q "$RUNNER_TEMP/gradle-8.14.7-bin.zip" -d "$RUNNER_TEMP"
+          node tests/build-tools/robolectric-runtime/run-regression.mjs "$RUNNER_TEMP/gradle-8.14.7" | tee evidence/robolectric-fixture.log
+          node tests/build-tools/robolectric-runtime/run-regression.mjs "$RUNNER_TEMP/gradle-8.14.7" --real-artifacts | tee evidence/robolectric-real-artifacts.log
+      - name: Retain bootstrap verification logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: robolectric-bootstrap-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/robolectric-*.log
+          if-no-files-found: warn
+          retention-days: 14
   unsigned:
     if: >-
       github.event_name == 'workflow_dispatch' &&
@@ -136,6 +170,11 @@ jobs:
               grep -Fq 'Unsigned packaging refuses signing credential input:' "$RUNNER_TEMP/unsigned-refusal.log"
             done
           done
+      - name: Prepare verified Robolectric runtime before native compilation
+        working-directory: android
+        env:
+          NODE_ENV: production
+        run: ./gradlew :caption-media:prepareRobolectricRuntime --init-script ../scripts/unsigned-play-release.gradle --no-daemon --stacktrace
       - name: Record resolved app runtime dependencies
         working-directory: android
         env:
