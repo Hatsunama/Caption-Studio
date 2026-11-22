@@ -216,12 +216,14 @@ export function preservesTranslationContent(source: string, translated: string):
   const before = topology(source), after = topology(translated);
   if (before.length !== after.length || before.some((blank, i) => blank !== after[i])) return false;
   // Exact counts apply only to protected tokens recognized in the source.
+  const operators = new Set(spans(source).map(span => source.slice(span.start, span.end))
+    .filter(token => operatorEnd(token, 0) === token.length));
+  // Inventory selected operators identically, including existing source clusters.
   const counts = new Map<string, number>();
-  for (const span of spans(source)) {
+  for (const span of spans(source, operators)) {
     const token = breaks(source.slice(span.start, span.end));
     counts.set(token, (counts.get(token) ?? 0) + 1);
   }
-  const operators = new Set([...counts.keys()].filter(token => operatorEnd(token, 0) === token.length));
   for (const span of spans(translated, operators)) {
     const token = breaks(translated.slice(span.start, span.end));
     if (!counts.has(token)) continue;
