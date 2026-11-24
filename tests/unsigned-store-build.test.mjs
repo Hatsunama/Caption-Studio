@@ -29,6 +29,7 @@ function evidence() {
     apkJar: 'jar is unsigned', aabJar: 'jar is unsigned', apkManifest: '', aabManifest: '',
     apkSigningBlock: false, bundleConfig: { optimizations: { uncompressNativeLibraries: { alignment: 'PAGE_ALIGNMENT_16K' } } },
     bundletool: true, zipalign16k: true, apkElf16k: true, aabElf16k: true,
+    nativeCompatibility: Object.fromEntries(['apk', 'aab'].map(format => [format, { schemaVersion: 1, sha256: sha(format === 'apk' ? 'unsigned apk bytes' : 'unsigned aab bytes'), format, coreMinSdk: 24, translationMinSdk: 26, libraries: 10, abis }])),
     payloadHashes: { apk: sha('unsigned apk bytes'), aab: sha('unsigned aab bytes'), mapping: sha('exact R8 map') },
     generatedMapping: Buffer.from('exact R8 map'), embeddedMapping: Buffer.from('exact R8 map') };
 }
@@ -92,6 +93,11 @@ test('payload checks reject identity, signatures, missing ABI, mapping and align
     (e) => { e.embeddedMapping = Buffer.from('wrong'); }, (e) => { e.generatedMapping = Buffer.alloc(0); },
     (e) => { e.aabEntries = e.aabEntries.filter((name) => name !== gate.mappingEntry); },
     (e) => { e.bundleConfig = {}; },
+    (e) => { delete e.nativeCompatibility; },
+    (e) => { e.nativeCompatibility.apk.sha256 = '0'.repeat(64); },
+    (e) => { e.nativeCompatibility.aab.coreMinSdk = 26; },
+    (e) => { e.nativeCompatibility.aab.translationMinSdk = 24; },
+    (e) => { e.nativeCompatibility.apk.extra = true; },
     ...['bundletool', 'zipalign16k', 'apkElf16k', 'aabElf16k'].map((key) => (e) => { delete e[key]; }),
   ];
   for (const mutate of mutations) { const e = evidence(); mutate(e); assert.throws(() => gate.assertPayload(e, release())); }
@@ -169,6 +175,7 @@ test('tool adapter binds parsed synthetic identities, exact mapping and successf
     objdump: 'llvm-objdump', buildTools: f.root, temporary: f.root };
   const run = (program, args, binary) => {
     calls.push([program, args]);
+    if (['python', 'python3'].includes(program) && args.some(a => a.endsWith('verify-android-native-compatibility.py'))) return JSON.stringify(evidence().nativeCompatibility);
     if (program === 'python3') return args[1].includes('APK Sig Block 42') ? 'unsigned\n' : '';
     if (program === 'jarsigner') return 'jar is unsigned';
     if (program === 'unzip') {

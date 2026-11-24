@@ -30,7 +30,10 @@ const provenance = () => ({ schemaVersion: 1, repository: 'Hatsunama/Caption-Stu
   signing: { status: 'unsigned', certificateSha256: null, storeReady: false, installable: false },
   checks: { bundletoolVersion: '1.18.3', bundletoolSha256: gate.bundletoolSha256, minSdk: 24, targetSdk: 36,
     abi: true, translation64BitOnly: true, apkZipalign16k: true, apkElf16k: true, aabElf16k: true,
-    bundlePageAlignment: 'PAGE_ALIGNMENT_16K', unsignedArchives: true, exactEmbeddedMapping: true },
+    bundlePageAlignment: 'PAGE_ALIGNMENT_16K', unsignedArchives: true, exactEmbeddedMapping: true,
+    nativeCompatibility: Object.fromEntries(['apk', 'aab'].map(format => [format, { schemaVersion: 1,
+      sha256: gate.sha(Buffer.from('abc')), format, coreMinSdk: 24, translationMinSdk: 26,
+      libraries: 10, abis: ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'] }])) },
   payloads: Object.fromEntries(['apk', 'aab', 'mapping'].map(k => [k, { name: gate.inputNames[k], bytes: 3, sha256: gate.sha(Buffer.from('abc')) }])) });
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'local-release-test-'));
@@ -75,7 +78,10 @@ test('source-bound producer schema and production-only identity fail closed', ()
   const mutations = [p => p.sourceCommit = 'c'.repeat(40), p => p.runId = '124', p => p.package = 'migration',
     p => p.version = '1.4.135', p => p.versionCode = 135, p => p.sourceTree = '', p => p.runAttempt = '01',
     p => p.signing.installable = true, p => p.checks.unsignedArchives = false, p => p.checks.bundletoolSha256 = '0'.repeat(64),
-    p => p.payloads.apk.name = '../other', p => p.sourceRef = 'refs/pull/1', p => p.workflowRef = 'other'];
+    p => p.payloads.apk.name = '../other', p => p.sourceRef = 'refs/pull/1', p => p.workflowRef = 'other',
+    p => delete p.checks.nativeCompatibility, p => p.checks.nativeCompatibility.apk.sha256 = '0'.repeat(64),
+    p => p.checks.nativeCompatibility.aab.coreMinSdk = 26, p => p.checks.nativeCompatibility.apk.translationMinSdk = 24,
+    p => p.checks.nativeCompatibility.apk.extra = true];
   for (const mutate of mutations) { const p = provenance(); mutate(p); assert.throws(() => gate.assertProvenance(p, commit, '123')); }
   assert.throws(() => gate.assertLocal({ GITHUB_ACTIONS: '' }));
   gate.assertLocal({});
@@ -429,4 +435,26 @@ test('verification adapter cancellation reaps owned process before rejecting', w
   process.emit('SIGTERM');
   await rejected;
   assert.throws(() => process.kill(pid, 0));
+});
+
+// Exercise the public, key-free parser boundary; trust exact receipts only after
+// actual tool execution and actual file hash binding, before key access.
+test('native compatibility verification refuses tool failure, forged or stale receipts', async t => {
+  const f = await fixture(t), p = provenance();
+  const o = { python, buildTools };
+  const receipts = structuredClone(p.checks.nativeCompatibility);
+  let calls = 0;
+  await gate.verifyNativeCompatibility(o, f.files, p, async (program, args) => {
+    calls++; assert.equal(program, python); assert.ok(args.includes('--apk') && args.includes('--aab') && args.includes('--ndk'));
+    return JSON.stringify(receipts);
+  });
+  assert.equal(calls, 1);
+  await assert.rejects(gate.verifyNativeCompatibility(o, f.files, p, async () => { throw Error('native unavailable'); }));
+  for (const mutate of [r => delete r.aab, r => r.apk.sha256 = '0'.repeat(64),
+    r => r.apk.coreMinSdk = 26, r => r.aab.translationMinSdk = 24, r => r.aab.libraries = 11]) {
+    const r = structuredClone(receipts); mutate(r);
+    await assert.rejects(gate.verifyNativeCompatibility(o, f.files, p, async () => JSON.stringify(r)));
+  }
+  await writeFile(f.files.aab, 'changed');
+  await assert.rejects(gate.verifyNativeCompatibility(o, f.files, p, async () => JSON.stringify(receipts)));
 });

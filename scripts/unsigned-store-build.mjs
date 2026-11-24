@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { configureSidecarApp } from './configure-sidecar-release.mjs';
 import { assertNoSigningInputs, assertUnsigned, assertMapping } from './verify-unsigned-play-aab.mjs';
 import { assertAndroidAbiCoverage } from './verify-android-abi.mjs';
+import { assertNativeCompatibility, verifyAndroidNativeCompatibility } from './verify-android-native-compatibility.mjs';
 
 export const mappingEntry = 'BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map';
 export const bundletoolSha256 = 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29';
@@ -93,6 +94,7 @@ export function assertPayload(evidence, release) {
   assert.ok(evidence.aabEntries.includes(mappingEntry), 'Missing embedded R8 mapping');
   for (const key of ['apk', 'aab', 'mapping'])
     assert.match(evidence.payloadHashes?.[key] ?? '', /^[0-9a-f]{64}$/, `Missing verified ${key} hash`);
+  assertNativeCompatibility(evidence.nativeCompatibility, evidence.payloadHashes);
   const mappingSha = assertMapping(evidence.generatedMapping, evidence.embeddedMapping);
   assert.equal(evidence.payloadHashes.mapping, mappingSha, 'Mapping changed during verification');
   return mappingSha;
@@ -139,7 +141,8 @@ export async function publishVerified(input, { copy = copyFile } = {}) {
       signing: { status: 'unsigned', certificateSha256: null, storeReady: false, installable: false },
       checks: { bundletoolVersion: '1.18.3', bundletoolSha256, minSdk: 24, targetSdk: 36,
         abi: true, translation64BitOnly: true, apkZipalign16k: true, apkElf16k: true, aabElf16k: true,
-        bundlePageAlignment: 'PAGE_ALIGNMENT_16K', unsignedArchives: true, exactEmbeddedMapping: true },
+        bundlePageAlignment: 'PAGE_ALIGNMENT_16K', unsignedArchives: true, exactEmbeddedMapping: true,
+        nativeCompatibility: evidence.nativeCompatibility },
       payloads };
     const staged = path.join(pending, 'provenance.json');
     await writeFile(staged, JSON.stringify(provenance, null, 2) + '\n', { flag: 'wx' });
@@ -185,7 +188,7 @@ export async function collectEvidence(options, run = command) {
 
 // Tool adapter is separately executable with synthetic fixtures. The CLI always
 // enters through collectEvidence, which first verifies the actual JAR checksum.
-export async function inspectPayloads({ source, files, bundletool, objdump, buildTools, temporary }, run = command) {
+export async function inspectPayloads({ source, files, bundletool, objdump, buildTools, temporary, nativeCompatibility = {} }, run = command) {
   const e = {};
   e.payloadHashes = {};
   for (const key of ['apk', 'aab', 'mapping']) e.payloadHashes[key] = await hashFile(files[key]);
@@ -227,6 +230,8 @@ with zipfile.ZipFile(sys.argv[1]) as src, zipfile.ZipFile(sys.argv[2], 'x') as d
 `, files.aab, nativeZip]);
   run('bash', [path.join(source, 'scripts/check-elf-16k-alignment.sh'), nativeZip, objdump]);
   e.aabElf16k = true;
+  e.nativeCompatibility = verifyAndroidNativeCompatibility({ files, objdump, ...nativeCompatibility }, run);
+  assertNativeCompatibility(e.nativeCompatibility, e.payloadHashes);
   e.generatedMapping = await readFile(files.mapping);
   e.embeddedMapping = run('unzip', ['-p', files.aab, mappingEntry], true);
   for (const key of ['apk', 'aab', 'mapping'])

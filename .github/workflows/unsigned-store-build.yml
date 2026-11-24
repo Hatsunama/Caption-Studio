@@ -14,6 +14,12 @@ on:
     paths:
       - .github/workflows/unsigned-store-build.yml
       - scripts/unsigned-store-build.mjs
+      - scripts/verify-android-native-compatibility.*
+      - scripts/local-signing/sign-validation.mjs
+      - config/product-contract.json
+      - tests/native-compatibility-*
+      - tests/verify-android-native-compatibility.test.py
+      - tests/local-release-signing.test.mjs
       - tests/unsigned-store-build.test.mjs
       - docs/unsigned-local-release-build.md
       - modules/caption-media/android/build.gradle
@@ -37,7 +43,9 @@ jobs:
         with:
           node-version: 22.23.4
       - name: Synthetic producer acceptance tests (no install, native build or credentials)
-        run: node --max-old-space-size=64 --test tests/unsigned-store-build.test.mjs
+        run: |
+          python3 -B tests/verify-android-native-compatibility.test.py
+          node --max-old-space-size=64 --test tests/unsigned-store-build.test.mjs tests/local-release-signing.test.mjs
   robolectric-bootstrap:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
@@ -221,7 +229,7 @@ jobs:
       - name: Verify unsigned APK, AAB, exact mapping and atomically publish public provenance
         run: |
           set -euo pipefail
-          ndk_root="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          ndk_root="$ANDROID_HOME/ndk/27.1.12297006"
           objdump="$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
           test -x "$objdump"
           test -x "$ANDROID_HOME/build-tools/36.0.0/zipalign"
