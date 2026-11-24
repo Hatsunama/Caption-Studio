@@ -81,7 +81,7 @@ allprojects {
       }
       assert hash.digest().encodeHex().toString() == '${pin[4]}'` : "assert jars.first().text == 'tiny nativeruntime-dist-compat'"}
       assert tasks.findByName('prepareRobolectricRuntime') == null
-      println 'VERIFIED_LINT_CLASSPATH ' + path + ' ' + jars.first()
+      println 'VERIFIED_LINT_CLASSPATH ' + project.path + ' ' + jars.first()
     }
   }
   tasks.register('verifyUnrelated') {
