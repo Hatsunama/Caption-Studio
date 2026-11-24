@@ -12,7 +12,7 @@ function load(relative, mocks = {}, extra = '') {
   const file = path.join(sourceRoot, relative);
   let source = fs.readFileSync(file, 'utf8');
   source += extra;
-  const js = ts.transpileModule(source, {fileName: file, compilerOptions: {module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022}}).outputText;
+  const js = ts.transpileModule(source, {fileName: file, compilerOptions: {module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, esModuleInterop: true}}).outputText;
   const exports = {};
   const fallback = new Proxy({}, {get: (_, key) => key === '__esModule' ? true : () => { throw new Error('Unexpected dependency ' + String(key)); }});
   vm.runInNewContext(js, {exports, require: id => {
@@ -41,9 +41,9 @@ function service(kind, failure = 'hash') {
   if (failure === 'marker-read') for (const n of names) files.set(n + '.sha256', 12);
   const mocks = {
     'expo-file-system': {Directory, File, Paths: {document: 'document'}},
-    'caption-media': {default: {sha256: async uri => { hashCalls++; if(failure === 'hash') throw new Error('hash read'); return uri.includes(names[0]) ? '818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7' : uri.includes(names[1]) ? '2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987' : 'other-hash'; }}},
+    'caption-media': {__esModule: true, default: {sha256: async uri => { hashCalls++; if(failure === 'hash') throw new Error('hash read'); return uri.includes(names[0]) ? '818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7' : uri.includes(names[1]) ? '2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987' : 'other-hash'; }}},
     '@/lib/model-verification-lease': {sameModelFileIdentity: () => true},
-    'caption-translation': {default: {isLocalTranslationSupported: async () => false}, TRANSLATION_RELEASE_CONTRACT: {id:'natural', label:'Natural', fileName: names[2], downloadBytes:sizes[2], sha256:'other-hash'}},
+    'caption-translation': {__esModule: true, default: {isLocalTranslationSupported: async () => false}, TRANSLATION_RELEASE_CONTRACT: {id:'natural', label:'Natural', fileName: names[2], downloadBytes:sizes[2], sha256:'other-hash'}},
     '@/lib/model-verification': {modelVerificationMarkerMatches: () => false, modelVerificationMarkerIdentityMatches: () => false, encodeModelVerificationMarker: () => 'marker'},
     '@/services/verified-model-download': {downloadVerifiedModel: async () => {downloads++;}, ModelDownloadIntegrityError: class extends Error {}, ModelDownloadPausedError: class extends Error {}, ModelDownloadTransferError: class extends Error {}},
   };
