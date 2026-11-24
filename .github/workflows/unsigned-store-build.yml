@@ -25,6 +25,10 @@ on:
       - modules/caption-media/android/build.gradle
       - modules/caption-media/android/robolectric-runtime.gradle
       - tests/build-tools/robolectric-runtime/**
+      - scripts/robolectric-lint-transport.init.gradle
+      - scripts/first-party-android-lint.gradle
+      - tests/build-tools/robolectric-lint-transport*
+      - tests/build-tools/robolectric-lint-transport/**
 permissions:
   contents: read
 concurrency:
@@ -67,6 +71,9 @@ jobs:
           curl --fail --location --silent --show-error --retry 3 --max-time 180 --output "$RUNNER_TEMP/gradle-8.14.7-bin.zip" https://downloads.gradle.org/distributions/gradle-8.14.7-bin.zip
           echo '903bfc4bc7622323124054c10f509246212a1902948bdaf26c379cca8735e856  '"$RUNNER_TEMP/gradle-8.14.7-bin.zip" | sha256sum --check --status
           unzip -q "$RUNNER_TEMP/gradle-8.14.7-bin.zip" -d "$RUNNER_TEMP"
+          node --max-old-space-size=64 --test tests/build-tools/robolectric-lint-transport.test.mjs
+          node tests/build-tools/robolectric-lint-transport/run-regression.mjs "$RUNNER_TEMP/gradle-8.14.7" | tee evidence/robolectric-lint-transport-fixture.log
+          node tests/build-tools/robolectric-lint-transport/run-regression.mjs "$RUNNER_TEMP/gradle-8.14.7" --real-artifact | tee evidence/robolectric-lint-transport-real.log
           node tests/build-tools/robolectric-runtime/run-regression.mjs "$RUNNER_TEMP/gradle-8.14.7" | tee evidence/robolectric-fixture.log
           node tests/build-tools/robolectric-runtime/run-regression.mjs "$RUNNER_TEMP/gradle-8.14.7" --real-artifacts | tee evidence/robolectric-real-artifacts.log
       - name: Retain bootstrap verification logs
@@ -199,7 +206,7 @@ jobs:
         working-directory: android
         env:
           NODE_ENV: production
-        run: ./gradlew :app:lintRelease --init-script ../scripts/unsigned-play-release.gradle --init-script ../scripts/first-party-android-lint.gradle --no-daemon --stacktrace --warning-mode all
+        run: ./gradlew :app:lintRelease --init-script ../scripts/unsigned-play-release.gradle --init-script ../scripts/first-party-android-lint.gradle --init-script ../scripts/robolectric-lint-transport.init.gradle --no-daemon --stacktrace --warning-mode all
       - name: All original native release unit test responsibilities
         working-directory: android
         env:
