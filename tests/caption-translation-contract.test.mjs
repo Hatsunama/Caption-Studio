@@ -149,7 +149,7 @@ test('project translation orchestration owns concurrency, provenance, and mixed-
   assert.match(controller, /retryRequestRef\.current = request/);
   assert.match(controller, /retryAvailable/);
   assert.doesNotMatch(controller, /\bAlert\b/);
-  assert.match(editor, /retryErrorAvailable=\{translationController\.retryAvailable\}/);
+  assert.match(editor, /retryErrorAvailable=\{canOpenDualCaptions\(localTranslationSupported\) && translationController\.retryAvailable\}/);
   assert.match(editor, /translationController\.retry\(\)/);
   assert.match(dualEditor, /Retry interrupted translation/);
   assert.match(dualEditor, />Retry<\/Text>/);

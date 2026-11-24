@@ -9,6 +9,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 import {
   cancelNaturalCaptionTranslation,
   CaptionTranslationCancelledError,
+  isCaptionTranslationUnsupportedError,
   translateNaturalCaptionBatch,
   type CaptionTranslationProgress,
   type CaptionTranslationCheckpointPolicy,
@@ -252,7 +253,7 @@ export function useProjectCaptionTranslation(options: ControllerOptions) {
         && activeOperationRef.current === operationId
         && !(failure instanceof CaptionTranslationCancelledError)
       ) {
-        if (kind === 'translation') {
+        if (kind === 'translation' && !isCaptionTranslationUnsupportedError(failure)) {
           retryRequestRef.current = request.retryWith?.(optionsRef.current.getCurrentProject()) ?? request;
           setRetryAvailable(true);
         }

@@ -34,6 +34,7 @@ async function serviceFixture(failSecond = false) {
     write() {}
   }
   const native = {
+    isLocalTranslationSupported: async () => true,
     limits,
     addListener(_name, callback) {
       listeners.add(callback);

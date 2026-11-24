@@ -1110,6 +1110,15 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const openDualCaptionEditor = () => {
+    const existing = editorSession.current().captionTracks.translations.find((track) => track.visible)
+      ?? editorSession.current().captionTracks.translations[0];
+    if (existing) {
+      transport.pause();
+      setSelectedTranslationTrackId(existing.id);
+      setDualCaptionEditorOpen(true);
+      // Opening an editor is not permission to replace text or restart inference.
+      return;
+    }
     if (!canOpenDualCaptions(localTranslationSupported)) return;
     if (timelineCaptions.length === 0) {
       Alert.alert('Generate captions first', 'Dual subtitles need a primary caption script to translate.');
@@ -1119,15 +1128,6 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
       projectPrimaryCaptionLanguage(editorSession.current());
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'This caption language is not ready for dual subtitles.');
-      return;
-    }
-    const existing = editorSession.current().captionTracks.translations.find((track) => track.visible)
-      ?? editorSession.current().captionTracks.translations[0];
-    if (existing) {
-      transport.pause();
-      setSelectedTranslationTrackId(existing.id);
-      setDualCaptionEditorOpen(true);
-      // Opening an editor is not permission to replace text or restart inference.
       return;
     }
     Alert.alert(
@@ -1142,6 +1142,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const confirmTranslationModelDownload = async (): Promise<boolean> => {
+    if (!canOpenDualCaptions(localTranslationSupported)) return false;
     if (!needsTranslationModelDownloadConsent(await listDownloadedNaturalTranslationModel())) return true;
     return new Promise<boolean>((resolve) => {
       Alert.alert(
@@ -1157,6 +1158,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const enableDualCaptions = async (targetLanguage: CaptionLanguageTag) => {
+    if (!canOpenDualCaptions(localTranslationSupported)) return;
     let prepared: ReturnType<typeof prepareOptionalDualCaptionTrack> | undefined;
     try {
       if (canAutomaticallyTranslatePair(primaryCaptionLanguage, targetLanguage) && !(await confirmTranslationModelDownload())) return;
@@ -1185,6 +1187,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
     sourceCaptionIds: string[],
     requestedTrack = selectedTranslationTrack,
   ) => {
+    if (!canOpenDualCaptions(localTranslationSupported)) return;
     const track = requestedTrack;
     if (!track) return;
     let sourceLanguage;
@@ -1255,6 +1258,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
   };
 
   const offerTranslationRefresh = (sourceCaptionIds: string[], track: NonNullable<typeof selectedTranslationTrack>) => {
+    if (!canOpenDualCaptions(localTranslationSupported)) return;
     const ids = sourceCaptionIds.filter((id) => !track.cues.find((cue) => cue.sourceCaptionId === id)?.translationSkipped);
     if (!ids.length) return;
     Alert.alert('Check the matching translation',
@@ -2562,7 +2566,7 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
                 <Action label="Yellow" color="#FFE566" onPress={() => queueCaptionStyleChange('Translated text color: yellow', { textColor: '#FFE566' })} />
                 <Action label="Pink" color="#FF8AD4" onPress={() => queueCaptionStyleChange('Translated text color: pink', { textColor: '#FF8AD4' })} />
                 <Action label="Uppercase" onPress={() => queueCaptionStyleChange('Uppercase translated captions', { textTransform: 'uppercase' })} />
-                {selectedTranslationPair ? <Action label="Refresh this translation" onPress={() => requestTranslationRefresh([selectedTranslationPair.source.id])} /> : null}
+                {selectedTranslationPair ? <Action label="Refresh this translation" disabled={!canOpenDualCaptions(localTranslationSupported)} onPress={() => requestTranslationRefresh([selectedTranslationPair.source.id])} /> : null}
                 <Action label={selectedTranslationTrack.visible ? 'Hide second language' : 'Show second language'} onPress={() => { void toggleSelectedTranslationTrack(); }} />
                 <Action label="Remove second language" danger onPress={confirmRemoveSelectedTranslationTrack} />
               </PersistedHorizontalScroll>
@@ -2709,7 +2713,8 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         onSeekTimeline={seekTimeline}
         trackVisible={selectedTranslationTrack?.visible ?? false}
         automaticTranslation={Boolean(
-          selectedTranslationTrack
+          canOpenDualCaptions(localTranslationSupported)
+          && selectedTranslationTrack
           && canAutomaticallyTranslatePair(primaryCaptionLanguage, selectedTranslationTrack.languageTag),
         )}
         busy={Boolean(translationProgress) || translationCancelling}
@@ -2717,9 +2722,10 @@ function EditorWorkspace({ initialProject }: { initialProject: CaptionProject })
         progressLabel={translationCancelling ? 'Cancelling local translation…' : translationProgressLabel(translationProgress)}
         errorMessage={translationController.error}
         warningMessage={translationController.warning}
-        retryErrorAvailable={translationController.retryAvailable}
+        retryErrorAvailable={canOpenDualCaptions(localTranslationSupported) && translationController.retryAvailable}
         onDismissError={translationController.clearError}
         onRetryError={() => {
+          if (!canOpenDualCaptions(localTranslationSupported)) return;
           void (async () => {
             if (await confirmTranslationModelDownload()) await translationController.retry();
           })().catch((caught) => setError(caught instanceof Error ? caught.message : 'The translation model could not be checked.'));

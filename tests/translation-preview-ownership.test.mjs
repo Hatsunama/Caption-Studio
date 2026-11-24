@@ -38,6 +38,7 @@ function serviceHarness(nativeWork = async () => { throw new Error('model failed
       createdAtMs: this.creationTime }); }
   }
   const native = {
+    isLocalTranslationSupported: async () => true,
     limits: { maxCaptionsPerBatch: 32, maxOperationsPerSession: 8, maxBatchesPerSession: 32,
       maxCaptionsPerSession: 100, maxCharactersPerCaption: 100, maxCaptionCharactersPerBatch: 100,
       maxCaptionCharactersPerSession: 1000 },
@@ -103,6 +104,7 @@ test('cancel during suspension skips the model and still restores once', async (
   service.registerCaptionTranslationResources(() => ({ ready: released.promise,
     restore: async () => { events.push('restore'); } }));
   const operation = run();
+  await flush(); // Admission now precedes resource suspension.
   await service.cancelNaturalCaptionTranslation();
   released.resolve();
   await assert.rejects(operation, { name: 'CaptionTranslationCancelledError' });

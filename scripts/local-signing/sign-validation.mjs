@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { bundletoolSha256, parseRelease } from '../unsigned-store-build.mjs';
 import { assertUnsigned } from '../verify-unsigned-play-aab.mjs';
 import { assertAndroidAbiCoverage } from '../verify-android-abi.mjs';
+import { assertNativeCompatibility } from '../verify-android-native-compatibility.mjs';
 import { parseSigningCertificate, validateReleaseMetadata } from '../configure-sidecar-release.mjs';
 export { bundletoolSha256 };
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -48,9 +49,10 @@ export function assertProvenance(p, expectedCommit, expectedRunId) {
   assert.ok(Number.isSafeInteger(p.versionCode) && p.versionCode > contract.publishedBaseline.versionCode, 'Future release code required');
   const v = p.version.split('.').map(Number), baseline = contract.publishedBaseline.version.split('.').map(Number);
   assert.ok(v.some((n, i) => n > baseline[i] && v.slice(0, i).every((x, j) => x === baseline[j])), 'Future version required');
+  assertNativeCompatibility(p.checks?.nativeCompatibility, Object.fromEntries(['apk', 'aab'].map(k => [k, p.payloads?.[k]?.sha256])));
   assert.deepEqual(p.checks, { bundletoolVersion: '1.18.3', bundletoolSha256, minSdk: 24, targetSdk: 36,
     abi: true, translation64BitOnly: true, apkZipalign16k: true, apkElf16k: true, aabElf16k: true,
-    bundlePageAlignment: 'PAGE_ALIGNMENT_16K', unsignedArchives: true, exactEmbeddedMapping: true });
+    bundlePageAlignment: 'PAGE_ALIGNMENT_16K', unsignedArchives: true, exactEmbeddedMapping: true, nativeCompatibility: p.checks.nativeCompatibility });
   assert.deepEqual(Object.keys(p.payloads).sort(), ['aab', 'apk', 'mapping']);
   for (const k of Object.keys(inputNames)) {
     assert.equal(p.payloads[k].name, inputNames[k]);
@@ -227,6 +229,19 @@ export async function verifyNativeIdentity(o, files, p, execute = run) {
   const config = JSON.parse(await java('-jar', o.bundletool, 'dump', 'config', '--bundle=' + files.aab));
   assert.equal(config.optimizations?.uncompressNativeLibraries?.alignment, 'PAGE_ALIGNMENT_16K');
 }
+export async function verifyNativeCompatibility(o, files, p, execute = run) {
+  const ndk = path.resolve(o.buildTools, '../../ndk/27.1.12297006');
+  const script = path.join(root, 'scripts/verify-android-native-compatibility.py');
+  const receipts = JSON.parse(await execute(o.python, ['-B', script, '--apk', files.apk, '--aab', files.aab,
+    '--ndk', ndk, '--contract', path.join(root, 'config/product-contract.json')]));
+  const hashes = Object.fromEntries(await Promise.all(['apk', 'aab'].map(async k => [k, await hashFile(files[k])])));
+  assertNativeCompatibility(receipts, hashes);
+  // Signed ZIP hashes change; the final caller compares every nonsignature ZIP
+  // payload byte to these reverified unsigned archives before publishing.
+  for (const k of ['apk', 'aab']) assert.equal(receipts[k].sha256, p.payloads[k].sha256);
+  assert.deepEqual(receipts, p.checks.nativeCompatibility, 'Native compatibility receipts changed');
+  return receipts;
+}
 async function unsigned(o, files, p) {
   const archives = {};
   for (const k of ['apk', 'aab']) {
@@ -238,6 +253,8 @@ async function unsigned(o, files, p) {
     assertUnsigned(k === 'apk' ? entries.map(n => n === 'AndroidManifest.xml' ? 'base/manifest/AndroidManifest.xml' : n) : entries, jar, a.manifest);
     assertAndroidAbiCoverage(entries, k === 'apk' ? 'apk' : 'base');
   }
+  // Resolve versioned imports on each actual unsigned copy before any key use.
+  await verifyNativeCompatibility(o, files, p);
   assert.equal(archives.aab.mapping, p.payloads.mapping.sha256, 'Embedded mapping mismatch');
   await verifyNativeIdentity(o, files, p);
   return archives;

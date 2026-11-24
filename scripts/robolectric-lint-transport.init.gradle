@@ -1,0 +1,22 @@
+// Lint resolves dependency unit-test models even when it does not execute tests.
+// Reuse caption-media's reviewed transport policy for every model's owning project.
+// Keep the existing module bootstrap, byte verification and SDK binding independent.
+gradle.afterProject { project, state ->
+    if (state.failure != null) return
+    if (project.repositories.findByName('captionRobolectricMirror') != null) return
+
+    project.repositories {
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name = 'captionRobolectricMirror'
+                    url = uri('https://maven-central.storage-download.googleapis.com/maven2/')
+                }
+            }
+            filter {
+                includeModule('org.robolectric', 'android-all-instrumented')
+                includeModule('org.robolectric', 'nativeruntime-dist-compat')
+            }
+        }
+    }
+}

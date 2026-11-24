@@ -45,6 +45,10 @@ jobs:
       - name: Harden and verify Java trust stores
         run: node scripts/harden-java-truststores.mjs --ci
 
+      - name: Test native compatibility gate without installing dependencies
+        run: |
+          python3 -B tests/verify-android-native-compatibility.test.py
+          node --max-old-space-size=64 --test tests/unsigned-store-build.test.mjs tests/local-release-signing.test.mjs tests/build-tools/robolectric-lint-transport.test.mjs
       - name: Install locked dependencies
         run: npm ci
       - name: Audit production dependencies
@@ -126,7 +130,7 @@ jobs:
         env:
           NODE_ENV: production
         working-directory: android
-        run: ./gradlew :app:lintRelease --init-script ../scripts/first-party-android-lint.gradle --no-daemon --stacktrace --warning-mode all
+        run: ./gradlew :app:lintRelease --init-script ../scripts/first-party-android-lint.gradle --init-script ../scripts/robolectric-lint-transport.init.gradle --no-daemon --stacktrace --warning-mode all
 
       - name: Test Caption Studio Android release modules
         env:
@@ -163,9 +167,10 @@ jobs:
           test -x "$build_tools/aapt"
           test -x "$build_tools/apksigner"
           test -x "$build_tools/zipalign"
-          ndk_root="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          ndk_root="$ANDROID_HOME/ndk/27.1.12297006"
           llvm_objdump="$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
           test -x "$llvm_objdump"
+          python3 -B scripts/verify-android-native-compatibility.py --apk "$apk" --aab "$aab" --ndk "$ndk_root" | tee evidence/native-compatibility.json
           badging="$($build_tools/aapt dump badging "$apk")"
           printf '%s\n' "$badging"
           expected_package="$CAPTION_STUDIO_EXPECTED_ANDROID_PACKAGE"
@@ -199,6 +204,7 @@ jobs:
           name: native-release-test-reports-${{ github.sha }}
           path: |
             evidence/verified-java.json
+            evidence/native-compatibility.json
             android/app/build/reports/tests/testReleaseUnitTest/
             android/app/build/test-results/testReleaseUnitTest/
             modules/caption-diagnostics/android/build/reports/tests/testReleaseUnitTest/

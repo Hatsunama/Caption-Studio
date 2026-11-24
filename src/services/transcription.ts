@@ -167,6 +167,26 @@ export async function isCaptionModelReady(): Promise<boolean> {
   ));
 }
 
+/** Stored bytes only; this is not an inference-readiness check. */
+export type StoredTranscriptionModel = Omit<DownloadedTranscriptionModel, 'status'> & {
+  status: 'stored' | 'incomplete';
+};
+
+export async function listStoredTranscriptionModels(): Promise<StoredTranscriptionModel[]> {
+  const directory = new Directory(Paths.document, 'models');
+  const resolve = (name: string) => new File(directory, name);
+  // Include retired owned files without pruning: Privacy inventory never deletes bytes.
+  const sizeBytes = [CAPTION_MODEL.fileName, VAD_MODEL.fileName, ...OBSOLETE_TRANSCRIPTION_MODEL_FILES]
+    .reduce((total, name) => total + storedModelBytes(name, resolve), 0);
+  const model = resolve(CAPTION_MODEL.fileName);
+  const vad = resolve(VAD_MODEL.fileName);
+  const complete = model.exists && model.size === CAPTION_MODEL.downloadBytes
+    && vad.exists && vad.size === VAD_MODEL.downloadBytes;
+  return sizeBytes > 0
+    ? [{ id: CAPTION_MODEL.id, label: CAPTION_MODEL.label, sizeBytes, status: complete ? 'stored' : 'incomplete' }]
+    : [];
+}
+
 export async function listDownloadedTranscriptionModels(): Promise<DownloadedTranscriptionModel[]> {
   pruneObsoleteModelFiles();
   const directory = new Directory(Paths.document, 'models');

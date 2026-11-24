@@ -1,0 +1,149 @@
+name: Verify exact final Android bytes (draft assets, no signing or publishing)
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Numeric owner-created DRAFT release ID targeting the exact source commit
+        required: true
+        type: string
+      expected_source_commit:
+        description: Exact 40-character source SHA from final local signing receipt
+        required: true
+        type: string
+      solana_asset_id:
+        description: Numeric caption-studio-android.apk draft asset ID
+        required: true
+        type: string
+      solana_sha256:
+        description: Expected final Solana APK SHA256
+        required: true
+        type: string
+      play_asset_id:
+        description: Numeric caption-studio-play-universal.apk draft asset ID (derived and Play-signed locally)
+        required: true
+        type: string
+      play_sha256:
+        description: Expected final Play universal APK SHA256
+        required: true
+        type: string
+      aab_asset_id:
+        description: Numeric caption-studio-play-android.aab draft asset ID
+        required: true
+        type: string
+      aab_sha256:
+        description: Expected final locally Play-signed AAB SHA256
+        required: true
+        type: string
+      receipt_asset_id:
+        description: Numeric source-signature-receipt.json draft asset ID
+        required: true
+        type: string
+      receipt_sha256:
+        description: Expected final local source-signature receipt SHA256
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: exact-final-runtime-${{ inputs.release_id }}
+  cancel-in-progress: false
+jobs:
+  runtime:
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.repository == 'Hatsunama/Caption-Studio' &&
+      github.repository_owner == 'Hatsunama' && github.ref == 'refs/heads/main' &&
+      github.actor == 'Hatsunama' && github.triggering_actor == 'Hatsunama'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - api: 24
+            arch: x86
+            ram: 1536M
+          - api: 25
+            arch: x86_64
+            ram: 6144M
+          - api: 26
+            arch: x86_64
+            ram: 6144M
+    steps:
+      - name: Verify exact owner and main dispatch before checkout or token use
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = Hatsunama/Caption-Studio
+          test "$GITHUB_REPOSITORY_OWNER" = Hatsunama
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Hatsunama
+          test "$GITHUB_TRIGGERING_ACTOR" = Hatsunama
+          test "$GITHUB_WORKFLOW_REF" = Hatsunama/Caption-Studio/.github/workflows/verify-final-android-runtime.yml@refs/heads/main
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.23.4
+      - name: Fetch and verify exact signed build JDKs
+        run: |
+          mkdir -p evidence/final-runtime
+          node scripts/build-toolchain/verified-java-download.mjs --install "$RUNNER_TOOL_CACHE" --receipt "$GITHUB_WORKSPACE/evidence/verified-java.json"
+      - name: Harden and verify Java trust stores
+        run: node scripts/harden-java-truststores.mjs --ci
+      - name: Retain verified Java receipt with runtime evidence
+        run: cp evidence/verified-java.json evidence/final-runtime/verified-java.json
+      - name: Run key-free harness regressions
+        run: |
+          python3 -B tests/verify-android-native-compatibility.test.py
+          python3 -B tests/verify-android-native-compatibility-runtime.test.py
+      - name: Download only the selected owner draft assets using read-only contents access
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          EXPECTED_SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
+          SOLANA_ASSET_ID: ${{ inputs.solana_asset_id }}
+          SOLANA_SHA256: ${{ inputs.solana_sha256 }}
+          PLAY_ASSET_ID: ${{ inputs.play_asset_id }}
+          PLAY_SHA256: ${{ inputs.play_sha256 }}
+          AAB_ASSET_ID: ${{ inputs.aab_asset_id }}
+          AAB_SHA256: ${{ inputs.aab_sha256 }}
+          RECEIPT_ASSET_ID: ${{ inputs.receipt_asset_id }}
+          RECEIPT_SHA256: ${{ inputs.receipt_sha256 }}
+        run: python3 -B scripts/verify-android-native-compatibility-runtime.py download --directory "$RUNNER_TEMP/final-assets"
+      - name: Prepare video tool and isolated KVM access
+        run: |
+          set -euo pipefail
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install --no-install-recommends -y ffmpeg; }
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install approved Android Build Tools for exact-byte verification
+        run: sdkmanager "build-tools;36.0.0"
+      - name: Test both final APKs on isolated emulator with actual Home and import interactions
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # verified v2 / 2.38.0
+        with:
+          api-level: ${{ matrix.api }}
+          arch: ${{ matrix.arch }}
+          target: google_apis
+          ram-size: ${{ matrix.ram }}
+          heap-size: 256
+          cores: 2
+          disk-size: 4096M
+          emulator-port: 5554
+          ndk: 27.1.12297006
+          disable-animations: true
+          disable-spellchecker: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none -camera-front none
+          script: bash scripts/verify-android-native-compatibility-runtime.sh '${{ matrix.api }}' '${{ matrix.arch }}'
+      - name: Retain runtime evidence and failure state (never signed asset payloads or keys)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: final-runtime-api${{ matrix.api }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/final-runtime/
+          if-no-files-found: warn
+          retention-days: 14

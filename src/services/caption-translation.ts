@@ -110,6 +110,27 @@ export class CaptionTranslationCancelledError extends Error {
   }
 }
 
+export class CaptionTranslationUnsupportedError extends Error {
+  readonly code = 'E_TRANSLATION_UNSUPPORTED';
+
+  constructor() {
+    super('Local caption translation is unavailable on this device.');
+    this.name = 'CaptionTranslationUnsupportedError';
+  }
+}
+
+export function isCaptionTranslationUnsupportedError(error: unknown): boolean {
+  // Accepted-batch reporting can wrap the native terminal error with cause.
+  const seen = new Set<object>();
+  while (typeof error === 'object' && error !== null && !seen.has(error)) {
+    if (error instanceof CaptionTranslationUnsupportedError
+      || ('code' in error && error.code === 'E_TRANSLATION_UNSUPPORTED')) return true;
+    seen.add(error);
+    error = 'cause' in error ? error.cause : undefined;
+  }
+  return false;
+}
+
 export class CaptionTranslationDownloadError extends Error {
   constructor(message = 'The language-model download stopped before it finished. Try again with a stable connection and keep Caption Studio open.') {
     super(message);
@@ -153,6 +174,23 @@ export function normalizeNaturalCaptionLanguage(languageTag: string): CaptionLan
   const resolved = resolveCaptionLanguage(canonical);
   if (!resolved?.automaticTranslation) throw new Error('Caption Studio cannot translate this language on this phone.');
   return resolved.tag;
+}
+
+/** Stored bytes only; this is not an inference-readiness check. */
+export type StoredNaturalTranslationModel = Omit<DownloadedNaturalTranslationModel, 'status'> & {
+  status: 'stored' | 'incomplete';
+};
+
+export async function listStoredNaturalTranslationModel(): Promise<StoredNaturalTranslationModel[]> {
+  const file = translationModelFile();
+  const sizeBytes = storedModelBytes(
+    NATURAL_TRANSLATION_MODEL.fileName,
+    (name) => new File(translationModelDirectory(), name),
+  );
+  const complete = file.exists && file.size === NATURAL_TRANSLATION_MODEL.downloadBytes;
+  return sizeBytes > 0
+    ? [{ id: NATURAL_TRANSLATION_MODEL.id, label: NATURAL_TRANSLATION_MODEL.label, sizeBytes, status: complete ? 'stored' : 'incomplete' }]
+    : [];
 }
 
 export async function listDownloadedNaturalTranslationModel(): Promise<DownloadedNaturalTranslationModel[]> {
@@ -348,6 +386,11 @@ export async function translateNaturalCaptionOperations(options: {
   let subscription: ReturnType<typeof CaptionTranslation.addListener> | undefined;
   let terminalFailure: { error: unknown } | undefined;
   try {
+    // Own the operation while admission is pending, but do not subscribe,
+    // suspend media resources, inspect storage, or prepare/download the model.
+    const supported = await isLocalCaptionTranslationSupported();
+    throwIfCancelled(run);
+    if (supported !== true) throw new CaptionTranslationUnsupportedError();
     subscription = options.onAcceptedBatch
       ? CaptionTranslation.addListener('onNaturalCaptionBatchAccepted', queueBatch)
       : undefined;

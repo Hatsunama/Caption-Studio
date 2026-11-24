@@ -12,20 +12,20 @@ const protectedRuntimeDependencies = {
   "caption-diagnostics": "file:modules/caption-diagnostics",
   "caption-media": "file:modules/caption-media",
   "caption-translation": "file:modules/caption-translation",
-  "expo": "57.0.33",
-  "expo-asset": "57.0.21",
+  "expo": "57.0.34",
+  "expo-asset": "57.0.22",
   "expo-audio": "~57.0.5",
-  "expo-constants": "57.0.24",
+  "expo-constants": "57.0.25",
   "expo-document-picker": "57.0.3",
   "expo-file-system": "~57.0.7",
   "expo-font": "~57.0.4",
   "expo-haptics": "~57.0.3",
   "expo-image": "~57.0.5",
   "expo-linking": "57.0.14",
-  "expo-router": "57.0.31",
-  "expo-sharing": "57.0.26",
-  "expo-splash-screen": "57.0.11",
-  "expo-sqlite": "57.0.5",
+  "expo-router": "57.0.32",
+  "expo-sharing": "57.0.27",
+  "expo-splash-screen": "57.0.12",
+  "expo-sqlite": "57.0.7",
   "expo-status-bar": "~57.0.1",
   "expo-system-ui": "~57.0.4",
   "expo-video": "~57.0.5",
@@ -130,6 +130,9 @@ test('the reviewed SDK 57 patch graph retains every platform constraint and inte
   // Expo tooling, scoped fingerprint/parser security fixes, glob/PostCSS updates,
   // nested dependency placement, and deepmerge removal. Material Symbols keeps
   // its original version and integrity.
+  // 2026-11-24: review Nov23 Expo floor alignment: 14 required package entries;
+  // retain every other original package object and placement, including font0.4.50.
+  // Registry dist/metadata verified against run45461995509 at f38e50cfee3b.
   // Hash every other package and decoder metadata field, including engines and
   // licensing, against this exact reviewed graph; add no further exclusions.
   // 2026-11-17: rebaseline only the official Forge 1.4.3 replacement.
@@ -141,5 +144,5 @@ test('the reviewed SDK 57 patch graph retains every platform constraint and inte
     resolved: 'https://registry.npmjs.org/decode-uri-component/-/decode-uri-component-0.5.0.tgz',
     integrity: 'sha512-1BiQVoK8C9gUbQU6NzAtO/tkz2qOFpEObMWpcFvhx4fYnj4Oc5yzaJN/LD36ihkVUdXyh5ZekzX+yM+ty/SrPg=='
   };
-  assert.equal(createHash('sha256').update(JSON.stringify(unchanged)).digest('hex'), '4ee947319c596588e29912bcfd034a4d232bfaff1d67a55cc825686125cac6b9');
+  assert.equal(createHash('sha256').update(JSON.stringify(unchanged)).digest('hex'), '72435ec676c1fc328f582dbf82c9b1ba3eb2825856c6c97343780a555eb35bc5');
 });

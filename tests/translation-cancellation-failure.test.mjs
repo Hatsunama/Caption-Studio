@@ -44,6 +44,7 @@ async function serviceFixture(config = {}) {
     write() {}
   }
   const native = {
+    isLocalTranslationSupported: async () => true,
     limits,
     addListener(_name, callback) {
       config.addListener?.();
@@ -309,6 +310,7 @@ async function hookFixture(config = {}) {
     '@/lib/translation-attempt': { translationAttemptMessage: () => undefined,
       commitTranslationAttempt: (current) => ({ ...current }) },
     '@/services/caption-translation': { CaptionTranslationCancelledError,
+      isCaptionTranslationUnsupportedError: (error) => error?.code === 'E_TRANSLATION_UNSUPPORTED',
       translateNaturalCaptionBatch: (options) => config.translate(options),
       cancelNaturalCaptionTranslation: () => config.stop?.() ?? Promise.resolve(true) },
   };
