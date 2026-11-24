@@ -10,6 +10,17 @@ public final class AndroidTranslationEnvironmentTest {
   private static final long GIBIBYTE = 1024L * 1024L * 1024L;
 
   @Test
+  public void enforcesOptionalRuntimeSdkFloorOnOtherwiseCapableHardware() {
+    assertEquals(26, GeneratedProductContract.TRANSLATION_MIN_ANDROID_SDK);
+    assertFalse(AndroidTranslationEnvironment.hasRuntimeCapacity(24, true, false, 8L * GIBIBYTE, true));
+    assertFalse(AndroidTranslationEnvironment.hasRuntimeCapacity(25, true, false, 8L * GIBIBYTE, true));
+    assertTrue(AndroidTranslationEnvironment.hasRuntimeCapacity(26, true, false, 4L * GIBIBYTE, true));
+    assertTrue(AndroidTranslationEnvironment.hasRuntimeCapacity(35, true, false, 8L * GIBIBYTE, true));
+    assertFalse(AndroidTranslationEnvironment.hasRuntimeCapacity(26, true, true, 8L * GIBIBYTE, true));
+    assertFalse(AndroidTranslationEnvironment.hasRuntimeCapacity(26, true, false, 8L * GIBIBYTE, false));
+  }
+
+  @Test
   public void admitsCapableHardwareRegardlessOfTransientAvailableMemory() {
     assertTrue(AndroidTranslationEnvironment.hasHardwareCapacity(true, false, 8L * GIBIBYTE, true));
     assertTrue(AndroidTranslationEnvironment.hasHardwareCapacity(true, false, 4L * GIBIBYTE, true));

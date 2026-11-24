@@ -29,6 +29,7 @@ function serviceHarness(setting) {
       createdAtMs: this.creationTime }); }
   }
   const native = {
+    isLocalTranslationSupported: async () => true,
     limits: { maxCaptionsPerBatch: 32, maxOperationsPerSession: 8, maxBatchesPerSession: 32,
       maxCaptionsPerSession: 100, maxCharactersPerCaption: 100, maxCaptionCharactersPerBatch: 100,
       maxCaptionCharactersPerSession: 1000 },
@@ -99,6 +100,7 @@ function hookHarness(initial, translate) {
   const requests = [];
   const exports = {};
   const service = { CaptionTranslationCancelledError: class extends Error {},
+    isCaptionTranslationUnsupportedError: (error) => error?.code === 'E_TRANSLATION_UNSUPPORTED',
     cancelNaturalCaptionTranslation: async () => false,
     translateNaturalCaptionBatch: async (options) => { requests.push(options); return translate(options, requests.length); },
   };

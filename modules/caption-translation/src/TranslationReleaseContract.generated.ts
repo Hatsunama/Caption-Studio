@@ -1,4 +1,5 @@
 export const TRANSLATION_RELEASE_CONTRACT = {
+  "minimumAndroidSdk": 26,
   "id": "qwen2.5-1.5b-q8",
   "label": "Natural multilingual",
   "fileName": "Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm",

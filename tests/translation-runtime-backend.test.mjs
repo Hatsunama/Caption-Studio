@@ -27,6 +27,7 @@ function harness(setting, overrides = {}) {
     durationMs: 20, initializationMs: 5, generationMs: 15, attempts: 1, repairAttempts: 0,
     generationFailures: 0, invalidOutputs: 0, qualityRejections: 0, outcome: 'completed' };
   const native = {
+    isLocalTranslationSupported: async () => true,
     limits: { maxCaptionsPerBatch: 32, maxOperationsPerSession: 8, maxBatchesPerSession: 32,
       maxCaptionsPerSession: 100, maxCharactersPerCaption: 100, maxCaptionCharactersPerBatch: 100,
       maxCaptionCharactersPerSession: 1000 },

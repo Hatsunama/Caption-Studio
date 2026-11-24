@@ -10,7 +10,7 @@ validate(contract);
 const typescriptPath = path.join(root, 'modules', 'caption-translation', 'src', 'TranslationReleaseContract.generated.ts');
 const javaPath = path.join(root, 'modules', 'caption-translation', 'android', 'src', 'main', 'java', 'app', 'captionstudio', 'translation', 'GeneratedProductContract.java');
 const typescript = `export const TRANSLATION_RELEASE_CONTRACT = ${JSON.stringify(contract.translation, null, 2)} as const;\n`;
-const java = `package app.captionstudio.translation;\n\nfinal class GeneratedProductContract {\n  static final long MODEL_BYTES = ${contract.translation.downloadBytes}L;\n  static final String MODEL_SHA256 = ${javaString(contract.translation.sha256)};\n  static final String MODEL_ID = ${javaString(contract.translation.id)};\n  static final String PROMPT_CONTRACT = ${javaString(contract.translation.promptContract)};\n\n  private GeneratedProductContract() {}\n}\n`;
+const java = `package app.captionstudio.translation;\n\nfinal class GeneratedProductContract {\n  static final int TRANSLATION_MIN_ANDROID_SDK = ${contract.translation.minimumAndroidSdk};\n  static final long MODEL_BYTES = ${contract.translation.downloadBytes}L;\n  static final String MODEL_SHA256 = ${javaString(contract.translation.sha256)};\n  static final String MODEL_ID = ${javaString(contract.translation.id)};\n  static final String PROMPT_CONTRACT = ${javaString(contract.translation.promptContract)};\n\n  private GeneratedProductContract() {}\n}\n`;
 
 if (process.argv.includes('--check')) {
   await requireExact(typescriptPath, typescript);
@@ -56,6 +56,7 @@ function validate(value) {
   }
   if (!/^\d+\.\d+\.\d+$/.test(release.minimumVersion)) throw new Error('Invalid minimum release version.');
   if (!/^[a-f0-9]{64}$/.test(release.signingCertificateSha256)) throw new Error('Invalid release certificate digest.');
+  if (!Number.isSafeInteger(translation.minimumAndroidSdk) || translation.minimumAndroidSdk < 26) throw new Error('Invalid translation minimum Android SDK; the JNI runtime requires API 26 or newer.');
   if (!Number.isSafeInteger(translation.downloadBytes) || translation.downloadBytes < 1) throw new Error('Invalid model byte count.');
   if (!/^[a-f0-9]{64}$/.test(translation.sha256)) throw new Error('Invalid model digest.');
   if (!Number.isSafeInteger(translation.promptVersion) || translation.promptVersion < 1) throw new Error('Invalid prompt version.');

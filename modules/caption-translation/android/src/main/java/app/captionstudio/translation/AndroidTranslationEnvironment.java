@@ -35,7 +35,7 @@ final class AndroidTranslationEnvironment implements TranslationEnvironment {
   public void verifyDeviceCapacity(File model) throws NaturalCaptionTranslator.TranslationFailure {
     if (!Process.is64Bit()) throw unsupported("Local caption translation requires a 64-bit app process.");
     if (!supportsLocalTranslation()) {
-      throw unsupported("Local caption translation requires a 64-bit Android device with at least 4 GB of RAM.");
+      throw unsupported("Local caption translation requires Android 8 or newer, a 64-bit app process, and at least 4 GB of RAM.");
     }
   }
 
@@ -45,7 +45,8 @@ final class AndroidTranslationEnvironment implements TranslationEnvironment {
     if (activityManager == null) return false;
     ActivityManager.MemoryInfo memoryInfo = new ActivityManager.MemoryInfo();
     activityManager.getMemoryInfo(memoryInfo);
-    return hasHardwareCapacity(
+    return hasRuntimeCapacity(
+        Build.VERSION.SDK_INT,
         Build.SUPPORTED_64_BIT_ABIS.length > 0,
         activityManager.isLowRamDevice(),
         memoryInfo.totalMem,
@@ -70,6 +71,19 @@ final class AndroidTranslationEnvironment implements TranslationEnvironment {
     // Unlike cacheDir, this survives process death and Android cache eviction.
     // noBackupFilesDir keeps subtitle text out of cloud/device backups.
     return new File(context.getNoBackupFilesDir(), "caption-translation-checkpoints-v1");
+  }
+
+  static boolean hasRuntimeCapacity(
+      int sdkVersion,
+      boolean supports64Bit,
+      boolean lowRamDevice,
+      long totalMemoryBytes,
+      boolean process64Bit
+  ) {
+    // The optional JNI runtime imports libc symbols introduced in Android O.
+    // Keep this feature floor separate from the application's minimum SDK.
+    return sdkVersion >= GeneratedProductContract.TRANSLATION_MIN_ANDROID_SDK
+        && hasHardwareCapacity(supports64Bit, lowRamDevice, totalMemoryBytes, process64Bit);
   }
 
   static boolean hasHardwareCapacity(

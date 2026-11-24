@@ -1,36 +1,25 @@
-import { useEffect, useState } from 'react';
+import { useModelInventory } from '@/hooks/use-model-inventory';
 import { useRouter } from 'expo-router';
 import { Alert, Pressable, Text, View } from 'react-native';
 import { SpringScrollView as ScrollView } from '@/components/spring-scroll-view';
 
 import { chrome } from '@/lib/ui-theme';
 import {
-  listDownloadedTranscriptionModels,
+  listStoredTranscriptionModels,
   removeDownloadedTranscriptionModels,
-  type DownloadedTranscriptionModel,
 } from '@/services/transcription';
 import {
-  listDownloadedNaturalTranslationModel,
+  listStoredNaturalTranslationModel,
   removeDownloadedNaturalTranslationModel,
-  type DownloadedNaturalTranslationModel,
 } from '@/services/caption-translation';
 import { shareLocalProcessExits } from '@/services/local-diagnostics';
 
 export default function PrivacyScreen() {
   const router = useRouter();
-  const [downloadedModels, setDownloadedModels] = useState<DownloadedTranscriptionModel[]>([]);
-  const [translationModels, setTranslationModels] = useState<DownloadedNaturalTranslationModel[]>([]);
-
-  useEffect(() => {
-    let active = true;
-    void listDownloadedTranscriptionModels().then((models) => {
-      if (active) setDownloadedModels(models);
-    });
-    void listDownloadedNaturalTranslationModel().then((models) => {
-      if (active) setTranslationModels(models);
-    });
-    return () => { active = false; };
-  }, []);
+  const captionInventory = useModelInventory(listStoredTranscriptionModels);
+  const translationInventory = useModelInventory(listStoredNaturalTranslationModel);
+  const downloadedModels = captionInventory.models;
+  const translationModels = translationInventory.models;
 
   const removeTranslationModel = () => {
     const size = formatStorage(translationModels.reduce((total, model) => total + model.sizeBytes, 0));
@@ -44,7 +33,7 @@ export default function PrivacyScreen() {
           style: 'destructive',
           onPress: () => {
             void removeDownloadedNaturalTranslationModel()
-              .then(() => setTranslationModels([]))
+              .then(() => translationInventory.clear())
               .catch((error) => Alert.alert('Could not remove model', error instanceof Error ? error.message : 'Try again.'));
           },
         },
@@ -64,7 +53,7 @@ export default function PrivacyScreen() {
           style: 'destructive',
           onPress: () => {
             void removeDownloadedTranscriptionModels()
-              .then(() => setDownloadedModels([]))
+              .then(() => captionInventory.clear())
               .catch((error) => Alert.alert('Could not remove caption model', error instanceof Error ? error.message : 'Try again.'));
           },
         },
@@ -146,7 +135,14 @@ export default function PrivacyScreen() {
         original media.
       </PolicySection>
       <View style={{ gap: 10 }}>
-        {downloadedModels.length > 0 ? (
+        {captionInventory.status === 'loading' ? (
+          <PolicyStatus label="Loading caption model storage…" />
+        ) : captionInventory.status === 'error' ? (
+          <View style={{ gap: 10 }}>
+            <PolicyStatus label="Could not load caption storage." />
+            <PolicyAction label="Retry caption" onPress={captionInventory.retry} />
+          </View>
+        ) : downloadedModels.length > 0 ? (
           <PolicyAction
             label={`Remove caption model${downloadedModels.some((model) => model.status === 'incomplete') ? ' / unfinished download' : ''} · ${formatStorage(downloadedModels.reduce((total, model) => total + model.sizeBytes, 0))}`}
             onPress={removeOfflineModels}
@@ -156,7 +152,14 @@ export default function PrivacyScreen() {
             <Text style={{ color: chrome.muted, fontSize: 14, fontWeight: '600' }}>Caption model is not downloaded</Text>
           </View>
         )}
-        {translationModels.length > 0 ? (
+        {translationInventory.status === 'loading' ? (
+          <PolicyStatus label="Loading natural translation model storage…" />
+        ) : translationInventory.status === 'error' ? (
+          <View style={{ gap: 10 }}>
+            <PolicyStatus label="Could not load natural translation storage." />
+            <PolicyAction label="Retry natural translation" onPress={translationInventory.retry} />
+          </View>
+        ) : translationModels.length > 0 ? (
           <PolicyAction
             label={`Remove natural translation model${translationModels.some((model) => model.status === 'incomplete') ? ' / unfinished download' : ''} · ${formatStorage(translationModels.reduce((total, model) => total + model.sizeBytes, 0))}`}
             onPress={removeTranslationModel}
@@ -196,3 +199,12 @@ function PolicySection(props: { title: string; children: string }) {
     </View>
   );
 }
+
+function PolicyStatus(props: { label: string }) {
+  return (
+    <View style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: chrome.radius.md, backgroundColor: chrome.surface }}>
+      <Text style={{ color: chrome.muted, fontSize: 14, fontWeight: '600' }}>{props.label}</Text>
+    </View>
+  );
+}
+
