@@ -91,9 +91,11 @@ jobs:
       - name: Fetch and verify exact signed build JDKs
         run: |
           mkdir -p evidence/final-runtime
-          node scripts/build-toolchain/verified-java-download.mjs --install "$RUNNER_TOOL_CACHE" --receipt "$GITHUB_WORKSPACE/evidence/final-runtime/verified-java.json"
+          node scripts/build-toolchain/verified-java-download.mjs --install "$RUNNER_TOOL_CACHE" --receipt "$GITHUB_WORKSPACE/evidence/verified-java.json"
       - name: Harden and verify Java trust stores
         run: node scripts/harden-java-truststores.mjs --ci
+      - name: Retain verified Java receipt with runtime evidence
+        run: cp evidence/verified-java.json evidence/final-runtime/verified-java.json
       - name: Run key-free harness regressions
         run: |
           python3 -B tests/verify-android-native-compatibility.test.py
