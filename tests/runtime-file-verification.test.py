@@ -222,6 +222,38 @@ class FileVerification(unittest.TestCase):
                         self.assertIs(caught.exception, sentinel)
                         configure.assert_called_once()
 
+    def test_fixture_preparation_reports_the_exact_failing_guest_operation(self):
+        self.assertTrue(callable(getattr(self.m, 'prepare_fixture_for_import', None)))
+        video = self.root / 'owned tiny.mp4'
+        stages = ('media_push', 'media_scan', 'wifi_disable', 'data_disable',
+                  'airplane_setting', 'airplane_broadcast')
+        expected = [
+            ('push', video, '/sdcard/Download/ci-tiny.mp4'),
+            ('shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', 'file:///sdcard/Download/ci-tiny.mp4'),
+            ('shell', 'svc', 'wifi', 'disable'),
+            ('shell', 'svc', 'data', 'disable'),
+            ('shell', 'settings', 'put', 'global', 'airplane_mode_on', '1'),
+            ('shell', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true')]
+        calls = []
+        def success(*args, **kwargs):
+            calls.append((args, kwargs))
+            return ''
+        self.m.prepare_fixture_for_import(success, video)
+        self.assertEqual([args for args, _ in calls], expected)
+        self.assertEqual([kwargs['stage'].value for _, kwargs in calls], list(stages))
+        for failed_index in range(len(stages)):
+            calls.clear()
+            def fail(*args, **kwargs):
+                calls.append((args, kwargs))
+                if len(calls) == failed_index + 1:
+                    raise self.m.RuntimeFailure(kwargs['stage'], self.m.Reason.TOOL_EXIT, exit_code=137)
+                return ''
+            with self.subTest(failed=stages[failed_index]), self.assertRaises(self.m.RuntimeFailure) as caught:
+                self.m.prepare_fixture_for_import(fail, video)
+            self.assertEqual(caught.exception.stage.value, stages[failed_index])
+            self.assertEqual(caught.exception.exit_code, 137)
+            self.assertEqual(len(calls), failed_index + 1)
+
     def test_configure_emulator_uses_four_bounded_settings_calls(self):
         self.assertTrue(callable(getattr(self.m, 'configure_emulator', None)), 'export configure_emulator(adb)')
         adb = Mock(return_value='')
