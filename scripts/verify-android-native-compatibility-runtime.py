@@ -177,7 +177,7 @@ def run(args, timeout=60, binary=False, stage=Stage.TOOL):
     try:
         result = subprocess.run([str(a) for a in args], check=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, timeout=timeout)
-        return result.stdout if binary else result.stdout.decode('utf-8')
+        return result.stdout if binary else result.stdout.decode('utf-8').replace('\r\n', '\n')
     except subprocess.CalledProcessError as error:
         raise RuntimeFailure(stage, Reason.TOOL_EXIT, exit_code=error.returncode) from None
     except subprocess.TimeoutExpired:
@@ -377,7 +377,7 @@ def verify_files(directory, tools):
     for role, pin in (('solana', signing['roles']['apk']), ('play', signing['roles']['aab'])):
         file = directory/ASSETS[role]
         require(identity(run([tools/'aapt', 'dump', 'badging', file], stage=Stage(role+'_identity'))) == expected, 'APK identity mismatch')
-        cert = run([tools/'apksigner', '-JXms16m', '-JXmx128m', '-J-XX:ActiveProcessorCount=1', 'verify', '--verbose', '--print-certs', file], stage=Stage(role+'_signature'))
+        cert = run(['java', '-Xms16m', '-Xmx128m', '-XX:ActiveProcessorCount=1', '-jar', tools/'lib/apksigner.jar', 'verify', '--verbose', '--print-certs', file], stage=Stage(role+'_signature'))
         pins = re.findall(r'^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]+)$', cert, re.M)
         require([p.lower() for p in pins] == [pin] and re.search(r'^Verified using v2 scheme .*: true$', cert, re.M), 'APK signature mismatch')
     require(run(['java', '-Xms16m', '-Xmx96m', '-XX:ActiveProcessorCount=1',
