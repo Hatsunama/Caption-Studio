@@ -61,13 +61,14 @@ class FileVerification(unittest.TestCase):
 
     def tool_kind(self, args):
         args = [str(arg) for arg in args]
-        if args[0] == 'java':
+        if args[0] == 'java' and '-jar' not in args:
             return 'aab_signature'
         self.assertIn(args[-1], [str(self.directory / self.m.ASSETS[r]) for r in ('solana', 'play')])
         role = 'solana' if args[-1] == str(self.directory / self.m.ASSETS['solana']) else 'play'
         if args[0] == str(self.tools / 'aapt'):
             return role + '_identity'
-        self.assertEqual(args[0], str(self.tools / 'apksigner'))
+        self.assertEqual(args[0], 'java')
+        self.assertEqual(args[4:6], ['-jar', str(self.tools / 'lib/apksigner.jar')])
         return role + '_signature'
 
     def tool_output(self, kind):
@@ -129,6 +130,13 @@ class FileVerification(unittest.TestCase):
         self.assertEqual(caught.exception.reason, self.m.Reason.TOOL_EXIT)
         self.assert_no_leak(caught.exception, stdout.getvalue() + stderr.getvalue())
 
+    def test_text_tool_output_normalizes_windows_lines_without_changing_binary(self):
+        output = b'certificate: exact\r\nVerified: true\r\n'
+        result = subprocess.CompletedProcess(['public-verifier'], 0, stdout=output, stderr=b'')
+        with patch.object(self.m.subprocess, 'run', return_value=result):
+            self.assertEqual(self.m.run(['public-verifier']), 'certificate: exact\nVerified: true\n')
+            self.assertEqual(self.m.run(['public-verifier'], binary=True), output)
+
     def test_success_checks_all_original_files_and_derived_payload(self):
         self.assertEqual(self.execute(), (self.request, self.receipt))
         self.assertEqual([c[0] for c in self.calls], list(STAGES))
@@ -141,7 +149,7 @@ class FileVerification(unittest.TestCase):
         self.assertEqual(len(signatures), 2)
         for role, args in zip(('solana', 'play'), signatures):
             with self.subTest(role=role):
-                for flag in ('-JXms16m', '-JXmx128m', '-J-XX:ActiveProcessorCount=1'):
+                for flag in ('-Xms16m', '-Xmx128m', '-XX:ActiveProcessorCount=1'):
                     self.assertEqual(args.count(flag), 1)
                 self.assertEqual(args[-4:], ['verify', '--verbose', '--print-certs',
                                              str(self.directory / self.m.ASSETS[role])])
