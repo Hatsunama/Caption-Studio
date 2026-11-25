@@ -50,6 +50,12 @@ class Stage(str, Enum):
     PLAY_SIGNATURE = 'play_signature'
     AAB_SIGNATURE = 'aab_signature'
     EMULATOR_SETUP = 'emulator_setup'
+    MEDIA_PUSH = 'media_push'
+    MEDIA_SCAN = 'media_scan'
+    WIFI_DISABLE = 'wifi_disable'
+    DATA_DISABLE = 'data_disable'
+    AIRPLANE_SETTING = 'airplane_setting'
+    AIRPLANE_BROADCAST = 'airplane_broadcast'
     TRANSFER = 'artifact_transfer'
     TRANSFER_METADATA = 'artifact_metadata'
     IMPORT = 'artifact_validation'
@@ -413,6 +419,14 @@ def configure_emulator(adb):
         adb('shell', 'settings', 'put', 'global', setting, '0.0', timeout=10)
     adb('shell', 'settings', 'put', 'secure', 'spell_checker_enabled', '0', timeout=10)
 
+def prepare_fixture_for_import(adb, tiny):
+    adb('push', tiny, '/sdcard/Download/ci-tiny.mp4', stage=Stage.MEDIA_PUSH)
+    adb('shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', 'file:///sdcard/Download/ci-tiny.mp4', stage=Stage.MEDIA_SCAN)
+    adb('shell', 'svc', 'wifi', 'disable', stage=Stage.WIFI_DISABLE)
+    adb('shell', 'svc', 'data', 'disable', stage=Stage.DATA_DISABLE)
+    adb('shell', 'settings', 'put', 'global', 'airplane_mode_on', '1', stage=Stage.AIRPLANE_SETTING)
+    adb('shell', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true', stage=Stage.AIRPLANE_BROADCAST)
+
 def emulate(directory, evidence, api, arch, tools):
     assert_context(os.environ)
     require(not os.environ.get('GH_TOKEN') and not os.environ.get('GITHUB_TOKEN'), 'Download token must not reach runtime step')
@@ -440,11 +454,7 @@ def emulate(directory, evidence, api, arch, tools):
     tiny = evidence/'ci-tiny.mp4'
     run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=320x240:r=10', '-t', '1',
          '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-y', tiny])
-    adb('push', tiny, '/sdcard/Download/ci-tiny.mp4')
-    adb('shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', 'file:///sdcard/Download/ci-tiny.mp4')
-    adb('shell', 'svc', 'wifi', 'disable'); adb('shell', 'svc', 'data', 'disable')
-    adb('shell', 'settings', 'put', 'global', 'airplane_mode_on', '1')
-    adb('shell', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true')
+    prepare_fixture_for_import(adb, tiny)
     results = []
     for role in ('solana', 'play'):
         folder = evidence/role; folder.mkdir()
