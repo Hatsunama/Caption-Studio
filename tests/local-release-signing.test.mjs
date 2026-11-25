@@ -33,7 +33,7 @@ const provenance = () => ({ schemaVersion: 1, repository: 'Hatsunama/Caption-Stu
     bundlePageAlignment: 'PAGE_ALIGNMENT_16K', unsignedArchives: true, exactEmbeddedMapping: true,
     nativeCompatibility: Object.fromEntries(['apk', 'aab'].map(format => [format, { schemaVersion: 1,
       sha256: gate.sha(Buffer.from('abc')), format, coreMinSdk: 24, translationMinSdk: 26,
-      libraries: 10, abis: ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'] }])) },
+      libraries: 14, abis: ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'] }])) },
   payloads: Object.fromEntries(['apk', 'aab', 'mapping'].map(k => [k, { name: gate.inputNames[k], bytes: 3, sha256: gate.sha(Buffer.from('abc')) }])) });
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'local-release-test-'));

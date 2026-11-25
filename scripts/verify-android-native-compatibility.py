@@ -227,7 +227,8 @@ def verify_archive(archive, format, ndk, contract):
                 entries.setdefault(m[1], {})[m[2]] = info
         require(set(entries) == set(ABIS), 'Missing packaged ABI profile')
         for abi, libs in entries.items():
-            require({'libreactnative.so', 'librnwhisper.so'} <= libs.keys(), 'Missing core ABI libraries')
+            missing = sorted({'libreactnative.so', 'librnwhisper.so', 'libexpo-sqlite.so'} - libs.keys())
+            require(not missing, f'Missing core ABI libraries for {abi}: '+', '.join(missing))
             require((OPTIONAL in libs) == (abi in ('arm64-v8a', 'x86_64')), 'Translation ABI profile mismatch')
 
             def parse(name, api):

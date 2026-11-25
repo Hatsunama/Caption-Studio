@@ -20,7 +20,7 @@ const release = () => gate.parseRelease('1.4.136', '148', original);
 const identity = () => ({ package: original.expo.android.package, version: '1.4.136',
   versionCode: '148', minSdk: '24', targetSdk: '36' });
 const abis = ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'];
-const entries = (prefix) => abis.flatMap((abi) => ['libreactnative.so', 'librnwhisper.so',
+const entries = (prefix) => abis.flatMap((abi) => ['libreactnative.so', 'librnwhisper.so', 'libexpo-sqlite.so',
   ...(['arm64-v8a', 'x86_64'].includes(abi) ? ['liblitertlm_jni.so'] : [])].map((lib) => `${prefix}/${abi}/${lib}`));
 function evidence() {
   return { apkIdentity: identity(), aabIdentity: identity(),
@@ -29,7 +29,7 @@ function evidence() {
     apkJar: 'jar is unsigned', aabJar: 'jar is unsigned', apkManifest: '', aabManifest: '',
     apkSigningBlock: false, bundleConfig: { optimizations: { uncompressNativeLibraries: { alignment: 'PAGE_ALIGNMENT_16K' } } },
     bundletool: true, zipalign16k: true, apkElf16k: true, aabElf16k: true,
-    nativeCompatibility: Object.fromEntries(['apk', 'aab'].map(format => [format, { schemaVersion: 1, sha256: sha(format === 'apk' ? 'unsigned apk bytes' : 'unsigned aab bytes'), format, coreMinSdk: 24, translationMinSdk: 26, libraries: 10, abis }])),
+    nativeCompatibility: Object.fromEntries(['apk', 'aab'].map(format => [format, { schemaVersion: 1, sha256: sha(format === 'apk' ? 'unsigned apk bytes' : 'unsigned aab bytes'), format, coreMinSdk: 24, translationMinSdk: 26, libraries: 14, abis }])),
     payloadHashes: { apk: sha('unsigned apk bytes'), aab: sha('unsigned aab bytes'), mapping: sha('exact R8 map') },
     generatedMapping: Buffer.from('exact R8 map'), embeddedMapping: Buffer.from('exact R8 map') };
 }

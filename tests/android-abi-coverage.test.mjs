@@ -3,7 +3,7 @@ import test from 'node:test';
 import { assertAndroidAbiCoverage } from '../scripts/verify-android-abi.mjs';
 
 const abis = ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'];
-const coreLibraries = ['libreactnative.so', 'librnwhisper.so'];
+const coreLibraries = ['libreactnative.so', 'librnwhisper.so', 'libexpo-sqlite.so'];
 const translationAbis = ['arm64-v8a', 'x86_64'];
 const entries = (format) => {
   const prefix = format === 'apk' ? 'lib' : 'base/lib';
