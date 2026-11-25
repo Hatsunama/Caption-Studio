@@ -558,6 +558,22 @@ def emulate(directory, evidence, api, arch, tools):
     (evidence/'runtime-result.json').write_text(json.dumps(report, indent=2))
 
 
+def collect_emulator_failure(evidence):
+    try:
+        devices = run(['adb', 'devices'], timeout=5).splitlines()[1:]
+        if [line.split() for line in devices if line.strip()] != [[SERIAL, 'device']]:
+            return False
+        if run(['adb', '-s', SERIAL, 'shell', 'getprop', 'ro.kernel.qemu'], timeout=5).strip() != '1':
+            return False
+        log = run(['adb', '-s', SERIAL, 'logcat', '-d', '-b', 'crash', '-t', '80'], timeout=5)
+        if len(log.encode('utf-8')) > 65536:
+            return False
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence/'emulator-crash-log.txt').write_text(log)
+        return True
+    except Exception:
+        return False
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('mode', choices=('download', 'receive', 'run'))
@@ -576,6 +592,12 @@ def main():
                 emulate(args.directory, args.evidence, args.api, args.arch, args.build_tools)
         return 0
     except RuntimeFailure as error:
+        if args.mode == 'run' and not os.environ.get('GH_TOKEN') and not os.environ.get('GITHUB_TOKEN'):
+            try:
+                assert_context(os.environ)
+                collect_emulator_failure(args.evidence)
+            except Exception:
+                pass
         record = dict(schemaVersion=1, status='failed', mode=args.mode,
                       stage=error.stage.value, reason=error.reason.value,
                       httpStatus=error.http_status, exitCode=error.exit_code)

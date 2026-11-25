@@ -295,6 +295,29 @@ class FileVerification(unittest.TestCase):
                 self.assertEqual(caught.exception.reason, self.m.Reason.VALIDATION)
                 self.assertLessEqual(sleep.call_count, 9)
 
+    def test_failure_evidence_never_reads_a_physical_or_ambiguous_target(self):
+        for devices in ('List of devices attached\nreal-phone\tdevice\n',
+                        'List of devices attached\nemulator-5554\tdevice\nreal-phone\tdevice\n'):
+            with self.subTest(devices=devices), patch.object(self.m, 'run', return_value=devices) as run:
+                self.assertFalse(self.m.collect_emulator_failure(self.root / 'diagnostic'))
+                self.assertEqual(run.call_count, 1)
+        with patch.object(self.m, 'run', side_effect=['List of devices attached\nemulator-5554\tdevice\n', '0']) as run:
+            self.assertFalse(self.m.collect_emulator_failure(self.root / 'diagnostic'))
+            self.assertEqual(run.call_count, 2)
+
+    def test_failure_evidence_is_read_only_bounded_and_cannot_replace_original_failure(self):
+        log = 'FATAL TEST FIXTURE\n'
+        replies = ['List of devices attached\nemulator-5554\tdevice\n', '1', log]
+        with patch.object(self.m, 'run', side_effect=replies) as run:
+            self.assertTrue(self.m.collect_emulator_failure(self.root / 'diagnostic'))
+            self.assertEqual([list(c.args[0]) for c in run.call_args_list], [
+                ['adb', 'devices'], ['adb', '-s', 'emulator-5554', 'shell', 'getprop', 'ro.kernel.qemu'],
+                ['adb', '-s', 'emulator-5554', 'logcat', '-d', '-b', 'crash', '-t', '80']])
+            self.assertTrue(all(c.kwargs.get('timeout') == 5 for c in run.call_args_list))
+        self.assertEqual((self.root / 'diagnostic/emulator-crash-log.txt').read_text(), log)
+        with patch.object(self.m, 'run', side_effect=RuntimeError(LEAK)):
+            self.assertFalse(self.m.collect_emulator_failure(self.root / 'diagnostic'))
+
     def test_configure_emulator_uses_four_bounded_settings_calls(self):
         self.assertTrue(callable(getattr(self.m, 'configure_emulator', None)), 'export configure_emulator(adb)')
         adb = Mock(return_value='')
