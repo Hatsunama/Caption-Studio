@@ -1,0 +1,50 @@
+name: Temporary owner-only draft read diagnostic
+on:
+  pull_request:
+    paths: ['.github/workflows/diagnose-draft-read.yml']
+permissions:
+  contents: read
+jobs:
+  diagnose_read:
+    if: github.repository == 'Hatsunama/Caption-Studio' && github.actor == 'Hatsunama' && github.triggering_actor == 'Hatsunama' && github.event.pull_request.number == 179 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'codex/required-native-library-coverage-149'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: GET-only diagnostic; no checkout, mutation, headers or response output
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_DEBUG: ''
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, urllib.request, urllib.error
+          repo = "Hatsunama/Caption-Studio"
+          def probe(stage, path, binary=False):
+              args = ["gh", "api", "--method", "GET"]
+              if binary: args += ["-H", "Accept: application/octet-stream"]
+              args += [path]
+              try:
+                  p = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=180)
+                  match = re.search(rb"HTTP[ /]+([0-9]{3})", p.stderr[-8192:])
+                  print(json.dumps(dict(stage=stage, success=p.returncode == 0,
+                                        httpStatus=200 if p.returncode == 0 else int(match[1]) if match else None)), flush=True)
+                  return p.returncode == 0
+              except Exception as e:
+                  print(json.dumps(dict(stage=stage, success=False, error=type(e).__name__)), flush=True)
+                  return False
+          probe("public_source", f"repos/{repo}/commits/634888f92013af3c8be6bb12ed504cedd1a92247")
+          probe("same_source_compare", f"repos/{repo}/compare/634888f92013af3c8be6bb12ed504cedd1a92247...634888f92013af3c8be6bb12ed504cedd1a92247")
+          if probe("draft_metadata", f"repos/{repo}/releases/457625545"):
+              probe("draft_asset", f"repos/{repo}/releases/assets/789933804", True)
+          url = "https://plugins.gradle.org/m2/org/gradle/toolchains/foojay-resolver-convention/org.gradle.toolchains.foojay-resolver-convention.gradle.plugin/1.0.0/org.gradle.toolchains.foojay-resolver-convention.gradle.plugin-1.0.0.pom"
+          try:
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  response.read(32768)
+                  print(json.dumps(dict(stage="official_plugin_marker", httpStatus=response.status, success=True)), flush=True)
+          except urllib.error.HTTPError as e:
+              print(json.dumps(dict(stage="official_plugin_marker", httpStatus=e.code, success=False)), flush=True)
+          except Exception as e:
+              print(json.dumps(dict(stage="official_plugin_marker", success=False, error=type(e).__name__)), flush=True)
+          
+          PY
