@@ -52,6 +52,7 @@ jobs:
           python3 -B tests/verify-android-native-compatibility-runtime.test.py
           python3 -B tests/runtime-download-diagnostics.test.py
           python3 -B tests/install-runtime-android-build-tools.test.py
+          python3 -B tests/runtime-file-verification.test.py
           node --max-old-space-size=64 --test tests/unsigned-store-build.test.mjs tests/local-release-signing.test.mjs
   robolectric-bootstrap:
     if: github.event_name == 'pull_request'

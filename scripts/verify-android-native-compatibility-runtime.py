@@ -44,6 +44,12 @@ class Stage(str, Enum):
     DOWNLOAD = 'download'
     RUNTIME = 'runtime'
     TOOL = 'tool'
+    SOLANA_IDENTITY = 'solana_identity'
+    SOLANA_SIGNATURE = 'solana_signature'
+    PLAY_IDENTITY = 'play_identity'
+    PLAY_SIGNATURE = 'play_signature'
+    AAB_SIGNATURE = 'aab_signature'
+    EMULATOR_SETUP = 'emulator_setup'
     TRANSFER = 'artifact_transfer'
     TRANSFER_METADATA = 'artifact_metadata'
     IMPORT = 'artifact_validation'
@@ -370,13 +376,13 @@ def verify_files(directory, tools):
     expected = dict(package=PACKAGE, versionCode=receipt['versionCode'], version=receipt['version'], minSdk=24, targetSdk=36)
     for role, pin in (('solana', signing['roles']['apk']), ('play', signing['roles']['aab'])):
         file = directory/ASSETS[role]
-        require(identity(run([tools/'aapt', 'dump', 'badging', file])) == expected, 'APK identity mismatch')
-        cert = run([tools/'apksigner', 'verify', '--verbose', '--print-certs', file])
+        require(identity(run([tools/'aapt', 'dump', 'badging', file], stage=Stage(role+'_identity'))) == expected, 'APK identity mismatch')
+        cert = run([tools/'apksigner', '-JXms16m', '-JXmx128m', '-J-XX:ActiveProcessorCount=1', 'verify', '--verbose', '--print-certs', file], stage=Stage(role+'_signature'))
         pins = re.findall(r'^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]+)$', cert, re.M)
         require([p.lower() for p in pins] == [pin] and re.search(r'^Verified using v2 scheme .*: true$', cert, re.M), 'APK signature mismatch')
     require(run(['java', '-Xms16m', '-Xmx96m', '-XX:ActiveProcessorCount=1',
                  ROOT/'scripts/verify-android-native-compatibility-runtime.java',
-                 directory/ASSETS['aab'], signing['roles']['aab']]).strip() == 'VERIFIED', 'AAB signature verification failed')
+                 directory/ASSETS['aab'], signing['roles']['aab']], stage=Stage.AAB_SIGNATURE).strip() == 'VERIFIED', 'AAB signature verification failed')
     assert_derived_payload(directory/ASSETS['aab'], directory/ASSETS['play'])
     return request, receipt
 
@@ -402,6 +408,11 @@ def find_control(xml, label, package):
     return next(iter(matches.values()))
 
 
+def configure_emulator(adb):
+    for setting in ('window_animation_scale', 'transition_animation_scale', 'animator_duration_scale'):
+        adb('shell', 'settings', 'put', 'global', setting, '0.0', timeout=10)
+    adb('shell', 'settings', 'put', 'secure', 'spell_checker_enabled', '0', timeout=10)
+
 def emulate(directory, evidence, api, arch, tools):
     assert_context(os.environ)
     require(not os.environ.get('GH_TOKEN') and not os.environ.get('GITHUB_TOKEN'), 'Download token must not reach runtime step')
@@ -411,8 +422,8 @@ def emulate(directory, evidence, api, arch, tools):
     devices = run(['adb', 'devices']).splitlines()[1:]
     require([s.split() for s in devices if s.strip()] == [[SERIAL, 'device']], 'Only one isolated emulator permitted')
 
-    def adb(*args, timeout=30, binary=False):
-        return run(['adb', '-s', SERIAL, *args], timeout, binary)
+    def adb(*args, timeout=30, binary=False, stage=Stage.RUNTIME):
+        return run(['adb', '-s', SERIAL, *args], timeout, binary, stage=stage)
 
     require(adb('shell', 'getprop', 'ro.kernel.qemu').strip() == '1', 'Physical target refused')
     require(adb('shell', 'getprop', 'ro.build.version.sdk').strip() == str(api), 'Wrong emulator API')
@@ -423,6 +434,7 @@ def emulate(directory, evidence, api, arch, tools):
     if api >= 25:
         require(memory >= 4*1024**3 and adb('shell', 'getprop', 'ro.config.low_ram').strip() != 'true', 'Qualifying 64-bit >=4GiB guest required')
     else: require(memory < 4*1024**3, 'API24 must exercise low-memory fallback')
+    configure_emulator(lambda *args, **kwargs: adb(*args, stage=Stage.EMULATOR_SETUP, **kwargs))
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence/'hardware.json').write_text(json.dumps(dict(api=api, abis=abis, memoryBytes=memory)))
     tiny = evidence/'ci-tiny.mp4'
