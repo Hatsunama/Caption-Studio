@@ -100,7 +100,7 @@ def fixtures(root, core_new=False, optional_new=True):
                 z.writestr('BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map', 'exact R8 map')
             for abi in ABIS:
                 imports = [('strtod_l', 1, 'LIBC_O')] if core_new else []
-                for name in ('libreactnative.so', 'librnwhisper.so'):
+                for name in ('libreactnative.so', 'librnwhisper.so', 'libexpo-sqlite.so'):
                     z.writestr(f'{prefix}/{abi}/{name}', elf(abi, imports=imports))
                 if abi in ('arm64-v8a', 'x86_64'):
                     z.writestr(f'{prefix}/{abi}/liblitertlm_jni.so', elf(abi, imports=[('strtod_l', 1, 'LIBC_O')] if optional_new else []))

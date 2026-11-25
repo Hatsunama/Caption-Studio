@@ -17,7 +17,7 @@ export function assertNativeCompatibility(receipts, hashes) {
   assert.deepEqual(Object.keys(receipts ?? {}).sort(), ['aab', 'apk'], 'Missing native compatibility receipts');
   for (const format of ['apk', 'aab']) {
     const r = receipts[format];
-    assert.ok(Number.isSafeInteger(r?.libraries) && r.libraries >= 10, 'Native library count');
+    assert.ok(Number.isSafeInteger(r?.libraries) && r.libraries >= 14, 'Native library count');
     assert.deepEqual(r, { schemaVersion: 1, sha256: hashes[format], format,
       coreMinSdk: 24, translationMinSdk, libraries: r.libraries, abis }, 'Native compatibility receipt mismatch');
     assert.match(r.sha256, /^[0-9a-f]{64}$/);

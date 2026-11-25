@@ -4,7 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const requiredAbis = ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'];
-const coreLibraries = ['libreactnative.so', 'librnwhisper.so'];
+// SQLite is loaded from Java; missing ABI copies need not appear in DT_NEEDED.
+const coreLibraries = ['libreactnative.so', 'librnwhisper.so', 'libexpo-sqlite.so'];
 const translationAbis = ['arm64-v8a', 'x86_64'];
 
 export function assertAndroidAbiCoverage(entries, format) {

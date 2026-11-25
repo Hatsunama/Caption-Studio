@@ -55,9 +55,44 @@ class NativeCompatibility(unittest.TestCase):
     def test_optional_api26_allowed_without_raising_core_floor(self):
         for fmt in ('apk', 'aab'):
             result = self.gate(fmt)
-            self.assertEqual(result['libraries'], 10)
+            self.assertEqual(result['libraries'], 14)
             self.assertEqual(result['coreMinSdk'], 24)
             self.assertEqual(result['translationMinSdk'], 26)
+
+    def omit_sqlite(self, abis, fmt):
+        prefix = 'lib' if fmt == 'apk' else 'base/lib'
+        omitted = {f'{prefix}/{abi}/libexpo-sqlite.so' for abi in abis}
+        with zipfile.ZipFile(self.paths[fmt]) as z:
+            entries = [(i, z.read(i)) for i in z.infolist() if i.filename not in omitted]
+        with zipfile.ZipFile(self.paths[fmt], 'w') as z:
+            for info, data in entries: z.writestr(info, data)
+
+    def test_sqlite_required_on_every_abi_in_apk_and_aab(self):
+        for fmt in ('apk', 'aab'):
+            for missing in [(abi,) for abi in f.ABIS] + [('armeabi-v7a', 'x86', 'x86_64')]:
+                with self.subTest(fmt=fmt, missing=missing):
+                    self.paths = f.fixtures(self.root)
+                    self.omit_sqlite(missing, fmt)
+                    with self.assertRaisesRegex(ValueError, 'libexpo-sqlite[.]so'):
+                        self.gate(fmt)
+
+    def test_sqlite_is_checked_at_core_api24_in_both_formats(self):
+        for fmt in ('apk', 'aab'):
+            prefix = 'lib' if fmt == 'apk' else 'base/lib'
+            self.rewrite(f'{prefix}/x86_64/libexpo-sqlite.so',
+                         f.elf(imports=[('strtod_l', 1, 'LIBC_O')]), fmt)
+            with self.subTest(fmt=fmt), self.assertRaisesRegex(ValueError, 'libexpo-sqlite[.]so API24.*strtod_l'):
+                self.gate(fmt)
+
+    def test_actual_producer_rejects_missing_sqlite_archive_bytes(self):
+        for fmt in ('apk', 'aab'):
+            self.paths = f.fixtures(self.root)
+            self.omit_sqlite(('armeabi-v7a', 'x86', 'x86_64'), fmt)
+            (self.root/'aab-native.zip').unlink(missing_ok=True)
+            result = self.producer()
+            with self.subTest(fmt=fmt):
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('libexpo-sqlite.so', result.stderr)
 
     def test_core_cannot_transitively_load_optional_library(self):
         self.rewrite('lib/x86_64/libreactnative.so', f.elf(needed=('liblitertlm_jni.so',)))
