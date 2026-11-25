@@ -26,7 +26,7 @@ class RuntimeHarness(unittest.TestCase):
         self.assertIn('cp evidence/verified-java.json evidence/final-runtime/verified-java.json', workflow)
         self.assertLess(setup, verified)
         self.assertLess(verified, hardened)
-        self.assertLess(hardened, workflow.index('sdkmanager "build-tools;36.0.0"'))
+        self.assertLess(hardened, workflow.index('python3 -B scripts/install-runtime-android-build-tools.py'))
         self.assertLess(hardened, workflow.index('uses: reactivecircus/android-emulator-runner@'))
         self.assertNotIn('npm ci', workflow)
         wrapper = (root/'scripts/verify-android-native-compatibility-runtime.sh').read_text()
@@ -40,8 +40,8 @@ class RuntimeHarness(unittest.TestCase):
         workflow = (root/'.github/workflows/verify-final-android-runtime.yml').read_text()
         self.assertIn('--build-tools "$ANDROID_HOME/build-tools/36.0.0"', wrapper)
         self.assertNotIn('37.0.0', wrapper)
-        self.assertRegex(workflow, r'sdkmanager[^\n]*[\"\']build-tools;36\.0\.0[\"\']')
-        self.assertLess(workflow.index('build-tools;36.0.0'), workflow.index('uses: reactivecircus/android-emulator-runner@'))
+        self.assertIn('run: python3 -B scripts/install-runtime-android-build-tools.py', workflow)
+        self.assertLess(workflow.index('python3 -B scripts/install-runtime-android-build-tools.py'), workflow.index('uses: reactivecircus/android-emulator-runner@'))
 
     def setUp(self):
         spec = importlib.util.spec_from_file_location('runtime', SCRIPT)
