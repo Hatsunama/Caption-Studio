@@ -177,6 +177,7 @@ jobs:
           python3 -B tests/verify-android-native-compatibility-runtime.test.py
           python3 -B tests/runtime-download-diagnostics.test.py
           python3 -B tests/install-runtime-android-build-tools.test.py
+          python3 -B tests/runtime-file-verification.test.py
       - name: Retrieve this run's immutable inputs and independently rebind source and hashes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -207,8 +208,8 @@ jobs:
           disk-size: 4096M
           emulator-port: 5554
           ndk: 27.1.12297006
-          disable-animations: true
-          disable-spellchecker: true
+          disable-animations: false
+          disable-spellchecker: false
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none -camera-front none
           script: bash scripts/verify-android-native-compatibility-runtime.sh '${{ matrix.api }}' '${{ matrix.arch }}'
       - name: Retain runtime evidence and failure state (never signed asset payloads or keys)

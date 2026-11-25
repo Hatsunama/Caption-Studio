@@ -110,7 +110,7 @@ class RuntimeHarness(unittest.TestCase):
                 (root/self.m.ASSETS['receipt']).write_text(json.dumps(value))
                 for role, name in self.m.ASSETS.items(): request[role+'_sha256'] = self.m.sha(root/name)
                 (root/'request.json').write_text(json.dumps(request))
-            def execute(args):
+            def execute(args, **kwargs):
                 if 'badging' in args:
                     return f"package: name='{self.m.PACKAGE}' versionCode='161' versionName='1.4.149'\nsdkVersion:'24'\ntargetSdkVersion:'36'"
                 if '--print-certs' in args:
@@ -126,7 +126,7 @@ class RuntimeHarness(unittest.TestCase):
                 save(receipt)
                 with patch.object(self.m, 'run', return_value='wrong binary identity'):
                     with self.assertRaises(ValueError): self.m.verify_files(root, root)
-                def wrong_certificate(args):
+                def wrong_certificate(args, **kwargs):
                     return execute(args).replace(roles['apk'], '0'*64) if '--print-certs' in args else execute(args)
                 with patch.object(self.m, 'run', side_effect=wrong_certificate):
                     with self.assertRaisesRegex(ValueError, 'signature'): self.m.verify_files(root, root)
