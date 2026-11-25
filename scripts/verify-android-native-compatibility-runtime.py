@@ -5,16 +5,23 @@ No app build, signing, private key, publishing, model download, or physical ADB
 target. Download credentials exist only in the separate download step.
 """
 import argparse
+from contextlib import contextmanager
+from enum import Enum
 import hashlib
+from http.client import IncompleteRead
 import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
 import zipfile
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 REPO = 'Hatsunama/Caption-Studio'
 PACKAGE = 'com.xmilo_at_your_side.caption_studio'
@@ -22,6 +29,131 @@ ASSETS = {'solana': 'caption-studio-android.apk', 'play': 'caption-studio-play-u
           'aab': 'caption-studio-play-android.aab', 'receipt': 'source-signature-receipt.json'}
 ROOT = Path(__file__).resolve().parent.parent
 SERIAL = 'emulator-5554'
+
+
+class Stage(str, Enum):
+    CONTEXT = 'context'
+    REQUEST = 'request'
+    RELEASE = 'release_metadata'
+    COMMIT = 'source_commit'
+    COMPARE = 'source_compare'
+    SOLANA = 'asset_solana'
+    PLAY = 'asset_play'
+    AAB = 'asset_aab'
+    RECEIPT = 'asset_receipt'
+    DOWNLOAD = 'download'
+    RUNTIME = 'runtime'
+    TOOL = 'tool'
+    TRANSFER = 'artifact_transfer'
+    TRANSFER_METADATA = 'artifact_metadata'
+    IMPORT = 'artifact_validation'
+
+
+class Reason(str, Enum):
+    HTTP = 'http_error'
+    TIMEOUT = 'timeout'
+    TRANSPORT = 'transport_error'
+    TOOL_EXIT = 'tool_exit'
+    TOOL_MISSING = 'tool_missing'
+    VALIDATION = 'validation'
+    REDIRECT = 'unsafe_redirect'
+    UNEXPECTED = 'unexpected'
+
+
+class RuntimeFailure(Exception):
+    """Only enum values and bounded integers may enter logs or evidence."""
+    def __init__(self, stage, reason, http_status=None, exit_code=None):
+        self.stage, self.reason = Stage(stage), Reason(reason)
+        self.http_status = http_status if type(http_status) is int and 100 <= http_status <= 599 else None
+        self.exit_code = exit_code if type(exit_code) is int and -255 <= exit_code <= 255 else None
+        super().__init__(self.stage.value+':'+self.reason.value)
+
+
+@contextmanager
+def operation(stage):
+    try:
+        yield
+    except RuntimeFailure:
+        raise
+    except ValueError:
+        raise RuntimeFailure(stage, Reason.VALIDATION) from None
+    except Exception:
+        raise RuntimeFailure(stage, Reason.UNEXPECTED) from None
+
+
+class AssetRedirect(HTTPRedirectHandler):
+    def __init__(self, stage=Stage.DOWNLOAD):
+        self.stage = stage
+        super().__init__()
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        try:
+            target = urlsplit(newurl)
+            allowed = (target.scheme == 'https' and target.hostname in
+                ('api.github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'))
+            allowed = allowed and target.port in (None, 443) and not target.username and not target.password
+        except ValueError:
+            allowed = False
+        if not allowed:
+            raise RuntimeFailure(self.stage, Reason.REDIRECT, http_status=code)
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        # Even same-host redirects do not need repository credentials. Never
+        # forward Authorization to a signed asset URL or include URLs in errors.
+        redirected.remove_header('Authorization')
+        return redirected
+
+
+def http_open(request, timeout):
+    # Default TLS verification remains enabled. HTTPError bodies are never read.
+    return build_opener(AssetRedirect(getattr(request, 'runtime_stage', Stage.DOWNLOAD))).open(request, timeout=timeout)
+
+
+def api_get(endpoint, stage, destination=None, max_bytes=2*1024*1024):
+    """GET only: retain numeric HTTP status, discard all remote error text."""
+    headers = {'Accept': 'application/octet-stream' if destination else 'application/vnd.github+json',
+               'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'caption-studio-runtime-verifier'}
+    request = Request('https://api.github.com/repos/'+REPO+'/'+endpoint, headers=headers, method='GET')
+    request.runtime_stage = stage
+    # Unredirected headers are never copied to another request by urllib.
+    request.add_unredirected_header('Authorization', 'Bearer '+os.environ['GH_TOKEN'])
+    for attempt in range(3):
+        try:
+            with http_open(request, timeout=300 if destination else 60) as response:
+                if response.status != 200:
+                    raise RuntimeFailure(stage, Reason.HTTP, http_status=response.status)
+                if destination:
+                    total = 0
+                    with destination.open('wb') as out:
+                        while True:
+                            block = response.read(65536)
+                            if not block: break
+                            total += len(block)
+                            require(total <= max_bytes, 'Asset exceeds expected size')
+                            out.write(block)
+                    return
+                body = response.read(max_bytes+1)
+                require(len(body) <= max_bytes, 'Metadata response too large')
+                return json.loads(body)
+        except HTTPError as error:
+            status = error.code
+            error.close()
+            failure = RuntimeFailure(stage, Reason.HTTP, http_status=status)
+            retry = status in (429, 500, 502, 503, 504)
+        except TimeoutError:
+            failure, retry = RuntimeFailure(stage, Reason.TIMEOUT), True
+        except URLError as error:
+            reason = Reason.TIMEOUT if isinstance(error.reason, TimeoutError) else Reason.TRANSPORT
+            failure, retry = RuntimeFailure(stage, reason), True
+        except (ConnectionError, IncompleteRead):
+            failure, retry = RuntimeFailure(stage, Reason.TRANSPORT), True
+        except RuntimeFailure:
+            raise
+        except ValueError:
+            raise RuntimeFailure(stage, Reason.VALIDATION) from None
+        except Exception:
+            raise RuntimeFailure(stage, Reason.UNEXPECTED) from None
+        if not retry or attempt == 2: raise failure from None
+        time.sleep(attempt+1)
 
 
 def require(value, message):
@@ -35,10 +167,104 @@ def sha(path):
     return h.hexdigest()
 
 
-def run(args, timeout=60, binary=False):
-    result = subprocess.run([str(a) for a in args], check=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, timeout=timeout)
-    return result.stdout if binary else result.stdout.decode('utf-8')
+def run(args, timeout=60, binary=False, stage=Stage.TOOL):
+    try:
+        result = subprocess.run([str(a) for a in args], check=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, timeout=timeout)
+        return result.stdout if binary else result.stdout.decode('utf-8')
+    except subprocess.CalledProcessError as error:
+        raise RuntimeFailure(stage, Reason.TOOL_EXIT, exit_code=error.returncode) from None
+    except subprocess.TimeoutExpired:
+        raise RuntimeFailure(stage, Reason.TIMEOUT) from None
+    except FileNotFoundError:
+        raise RuntimeFailure(stage, Reason.TOOL_MISSING) from None
+    except Exception:
+        raise RuntimeFailure(stage, Reason.UNEXPECTED) from None
+
+
+def workflow_request():
+    """Original dispatch inputs, never imported artifact claims."""
+    with operation(Stage.REQUEST):
+        request = {k.lower(): os.environ.get(k, '') for k in
+                   ['RELEASE_ID', 'EXPECTED_SOURCE_COMMIT'] +
+                   [r.upper()+s for r in ASSETS for s in ('_ASSET_ID', '_SHA256')]}
+        require(re.fullmatch(r'[1-9][0-9]*', request['release_id']), 'Canonical release ID required')
+        require(re.fullmatch('[0-9a-f]{40}', request['expected_source_commit']), 'Exact source commit required')
+        require(re.fullmatch('[0-9a-f]{40}', os.environ.get('GITHUB_SHA', '')), 'Exact workflow commit required')
+        for role in ASSETS:
+            require(re.fullmatch(r'[1-9][0-9]*', request[role+'_asset_id']), 'Canonical asset ID required')
+            require(re.fullmatch('[0-9a-f]{64}', request[role+'_sha256']), 'Canonical asset hash required')
+        require(len({request[r+'_asset_id'] for r in ASSETS}) == len(ASSETS), 'Duplicate asset ID')
+        return request
+
+
+def validate_public_source(request):
+    """Independently bind the receipt tree and ancestry to public GitHub data."""
+    commit = api_get('commits/'+request['expected_source_commit'], Stage.COMMIT)
+    with operation(Stage.COMMIT):
+        require(commit.get('sha') == request['expected_source_commit'], 'Wrong public source commit')
+        tree = commit['commit']['tree']['sha']
+        require(re.fullmatch('[0-9a-f]{40}', tree), 'Exact source tree required')
+        require(request.get('source_tree', tree) == tree, 'Imported source tree differs from public commit')
+        request['source_tree'] = tree
+    comparison = api_get('compare/'+request['expected_source_commit']+'...'+os.environ['GITHUB_SHA'], Stage.COMPARE)
+    with operation(Stage.COMPARE):
+        require(comparison.get('status') in ('ahead', 'identical'), 'Source must be in dispatched main history')
+
+
+def validate_import(directory, expected):
+    """Reject links/extra paths before reading metadata, hashing, or invoking tools."""
+    with operation(Stage.IMPORT):
+        require(stat.S_ISDIR(directory.lstat().st_mode), 'Canonical import directory required')
+        entries = list(directory.iterdir())
+        require({p.name for p in entries} == set(ASSETS.values()) | {'request.json'}, 'Noncanonical import files')
+        for p in entries:
+            info = p.lstat()
+            require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1, 'Import must contain plain independent files')
+            cap = 65536 if p.name == 'request.json' else (1024*1024 if p.name == ASSETS['receipt'] else 1024**3)
+            require(0 < info.st_size <= cap, 'Import file size outside bounds')
+        request = json.loads((directory/'request.json').read_text())
+        require(type(request) is dict and set(request) == set(expected) | {'source_tree'}, 'Canonical request schema required')
+        require(all(request[k] == v for k, v in expected.items()), 'Import differs from original workflow inputs')
+        require(re.fullmatch('[0-9a-f]{40}', request['source_tree']), 'Canonical imported source tree required')
+        for role, name in ASSETS.items():
+            require(sha(directory/name) == expected[role+'_sha256'], 'Import hash differs from original workflow input')
+        return request
+
+
+def receive(directory):
+    with operation(Stage.CONTEXT):
+        assert_context(os.environ)
+        require(os.environ.get('GH_TOKEN'), 'Read-only artifact retrieval token required')
+    expected = workflow_request()
+    with operation(Stage.REQUEST):
+        run_id, attempt = os.environ.get('GITHUB_RUN_ID', ''), os.environ.get('GITHUB_RUN_ATTEMPT', '')
+        artifact_id = os.environ.get('PREPARE_ARTIFACT_ID', '')
+        require(all(re.fullmatch(r'[1-9][0-9]*', v) for v in (run_id, attempt, artifact_id)),
+                'Canonical same-run artifact identity required')
+        # A failed-job rerun can reuse a successful prepare from an earlier
+        # attempt. Trust only that job's exported name, then bind it to this run
+        # and to the immutable ID/server metadata below.
+        name = os.environ.get('PREPARE_ARTIFACT_NAME', '')
+        producer = re.fullmatch('final-signed-inputs-'+run_id+r'-([1-9][0-9]*)', name)
+        require(producer and int(producer[1]) <= int(attempt),
+                'Canonical same-run prepare attempt must not be in the future')
+    artifact = api_get('actions/artifacts/'+artifact_id, Stage.TRANSFER_METADATA)
+    with operation(Stage.TRANSFER_METADATA):
+        require(artifact.get('id') == int(artifact_id) and artifact.get('name') == name and
+                artifact.get('expired') is False and
+                artifact.get('workflow_run', {}).get('id') == int(run_id) and
+                artifact.get('workflow_run', {}).get('head_sha') == os.environ['GITHUB_SHA'],
+                'Artifact must be the immutable prepare output of this exact run')
+    with operation(Stage.TRANSFER):
+        directory.mkdir()  # Exclusive destination; no old ready marker.
+        # Only same run + validated producer name, never an arbitrary source.
+        # Child output is captured; CLI failures retain exit code without
+        # guessing an HTTP status from potentially secret-bearing stderr.
+        run(['gh', 'run', 'download', run_id, '--repo', REPO, '--name', name,
+             '--dir', directory], timeout=600, stage=Stage.TRANSFER)
+    imported = validate_import(directory, expected)
+    validate_public_source(imported)
 
 
 def assert_context(env):
@@ -71,29 +297,23 @@ def validate_assets(request, release):
 
 
 def download(directory):
-    assert_context(os.environ)
-    require(os.environ.get('GH_TOKEN'), 'Read-only GH_TOKEN required in download step')
-    request = {k.lower(): os.environ.get(k, '') for k in
-               ['RELEASE_ID', 'EXPECTED_SOURCE_COMMIT'] + [r.upper()+s for r in ASSETS for s in ('_ASSET_ID', '_SHA256')]}
-    require(re.fullmatch(r'[1-9][0-9]*', request['release_id']), 'Canonical release ID required')
-    release = json.loads(run(['gh', 'api', f'repos/{REPO}/releases/{request["release_id"]}']))
-    validate_assets(request, release)
-    commit = json.loads(run(['gh', 'api', f'repos/{REPO}/commits/{request["expected_source_commit"]}']))
-    require(commit.get('sha') == request['expected_source_commit'], 'Source commit not in expected repository')
-    request['source_tree'] = commit['commit']['tree']['sha']
-    require(re.fullmatch('[0-9a-f]{40}', os.environ.get('GITHUB_SHA', '')), 'Exact workflow commit required')
-    comparison = json.loads(run(['gh', 'api', f'repos/{REPO}/compare/{request["expected_source_commit"]}...{os.environ["GITHUB_SHA"]}']))
-    require(comparison.get('status') in ('ahead', 'identical'), 'Binary source commit must be in dispatched main history')
+    with operation(Stage.CONTEXT):
+        assert_context(os.environ)
+        require(os.environ.get('GH_TOKEN'), 'GH_TOKEN required only in download step')
+    request = workflow_request()
+    release = api_get('releases/'+request['release_id'], Stage.RELEASE)
+    with operation(Stage.RELEASE):
+        validate_assets(request, release)
+    validate_public_source(request)
     directory.mkdir()  # Exclusive ownership; a partial download is never ready.
     for role, name in ASSETS.items():
         p = directory/name
-        with p.open('xb') as out:
-            subprocess.run(['gh', 'api', '-H', 'Accept: application/octet-stream',
-                            f'repos/{REPO}/releases/assets/{request[role+"_asset_id"]}'], stdout=out,
-                           stderr=subprocess.PIPE, check=True, timeout=300)
-        require(sha(p) == request[role+'_sha256'], 'Downloaded asset hash mismatch: '+role)
         meta = next(a for a in release['assets'] if a['id'] == int(request[role+'_asset_id']))
-        require(p.stat().st_size == meta['size'], 'Downloaded asset size mismatch')
+        stage = Stage('asset_'+role)
+        with operation(stage):
+            api_get('releases/assets/'+request[role+'_asset_id'], stage, p, meta['size'])
+            require(sha(p) == request[role+'_sha256'], 'Downloaded asset hash mismatch: '+role)
+            require(p.stat().st_size == meta['size'], 'Downloaded asset size mismatch')
     (directory/'request.json').write_text(json.dumps(request, sort_keys=True))
 
 
@@ -184,8 +404,9 @@ def find_control(xml, label, package):
 
 def emulate(directory, evidence, api, arch, tools):
     assert_context(os.environ)
-    require(not os.environ.get('GH_TOKEN'), 'Download token must not reach runtime step')
+    require(not os.environ.get('GH_TOKEN') and not os.environ.get('GITHUB_TOKEN'), 'Download token must not reach runtime step')
     require((api, arch) in ((24, 'x86'), (25, 'x86_64'), (26, 'x86_64')), 'Unknown emulator matrix cell')
+    validate_import(directory, workflow_request())
     request, receipt = verify_files(directory, tools)
     devices = run(['adb', 'devices']).splitlines()[1:]
     require([s.split() for s in devices if s.strip()] == [[SERIAL, 'device']], 'Only one isolated emulator permitted')
@@ -246,7 +467,7 @@ def emulate(directory, evidence, api, arch, tools):
                             except ValueError: continue
                             tap(control); break
                         raise
-                except (ValueError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as caught:
+                except (ValueError, RuntimeFailure) as caught:
                     error = caught; time.sleep(1)
             raise ValueError('Timed out waiting for '+label) from error
 
@@ -295,25 +516,34 @@ def emulate(directory, evidence, api, arch, tools):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode', choices=('download', 'run'))
+    p.add_argument('mode', choices=('download', 'receive', 'run'))
     p.add_argument('--directory', type=Path, required=True)
     p.add_argument('--evidence', type=Path); p.add_argument('--api', type=int)
     p.add_argument('--arch'); p.add_argument('--build-tools', type=Path)
     args = p.parse_args()
-    if args.mode == 'download': download(args.directory)
-    else:
-        require(args.evidence and args.build_tools, 'Evidence/build-tools required')
-        try: emulate(args.directory, args.evidence, args.api, args.arch, args.build_tools)
-        except Exception as error:
+    try:
+        with operation(Stage.REQUEST):
+            require(args.evidence, 'Evidence required for both lifecycle modes')
+        with operation(Stage.RUNTIME if args.mode == 'run' else Stage.DOWNLOAD):
+            if args.mode == 'download': download(args.directory)
+            elif args.mode == 'receive': receive(args.directory)
+            else:
+                require(args.build_tools, 'Build-tools required')
+                emulate(args.directory, args.evidence, args.api, args.arch, args.build_tools)
+        return 0
+    except RuntimeFailure as error:
+        record = dict(schemaVersion=1, status='failed', mode=args.mode,
+                      stage=error.stage.value, reason=error.reason.value,
+                      httpStatus=error.http_status, exitCode=error.exit_code)
+        # No exception messages, child stdout/stderr, URLs, headers, or tokens.
+        try:
             args.evidence.mkdir(parents=True, exist_ok=True)
-            (args.evidence/'runtime-failure.json').write_text(json.dumps(dict(status='failed',
-                error=type(error).__name__, reason=str(error) if isinstance(error, ValueError) else 'Tool execution failed')))
-            raise
+            (args.evidence/'runtime-failure.json').write_text(json.dumps(record, sort_keys=True))
+        except Exception:
+            pass  # Even evidence I/O failure must never dump exception text.
+        print(json.dumps(record, sort_keys=True), file=sys.stderr)
+        return 1
 
 
 if __name__ == '__main__':
-    try: main()
-    except Exception as error:
-        # GH CLI errors may contain authenticated URLs; never print child output.
-        print('Final signed-byte runtime verification FAILED: '+type(error).__name__, file=sys.stderr)
-        sys.exit(1)
+    sys.exit(main())

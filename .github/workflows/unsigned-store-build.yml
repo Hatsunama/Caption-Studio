@@ -49,6 +49,8 @@ jobs:
       - name: Synthetic producer acceptance tests (no install, native build or credentials)
         run: |
           python3 -B tests/verify-android-native-compatibility.test.py
+          python3 -B tests/verify-android-native-compatibility-runtime.test.py
+          python3 -B tests/runtime-download-diagnostics.test.py
           node --max-old-space-size=64 --test tests/unsigned-store-build.test.mjs tests/local-release-signing.test.mjs
   robolectric-bootstrap:
     if: github.event_name == 'pull_request'
