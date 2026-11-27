@@ -444,7 +444,7 @@ def prepare_fixture_for_import(adb, tiny):
     adb('shell', 'settings', 'put', 'global', 'airplane_mode_radios', 'cell,bluetooth,wifi,nfc,wimax', stage=Stage.AIRPLANE_SETTING)
     adb('shell', 'settings', 'put', 'global', 'airplane_mode_toggleable_radios', 'none', stage=Stage.AIRPLANE_SETTING)
     adb('shell', 'settings', 'put', 'global', 'airplane_mode_on', '1', stage=Stage.AIRPLANE_SETTING)
-    adb('shell', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true', stage=Stage.AIRPLANE_BROADCAST)
+    adb('shell', 'su', '0', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true', timeout=10, stage=Stage.AIRPLANE_BROADCAST)
     verify_guest_offline(adb)
 
 def emulate(directory, evidence, api, arch, tools):
