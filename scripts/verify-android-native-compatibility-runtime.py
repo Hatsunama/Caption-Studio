@@ -56,6 +56,7 @@ class Stage(str, Enum):
     DATA_DISABLE = 'data_disable'
     AIRPLANE_SETTING = 'airplane_setting'
     AIRPLANE_BROADCAST = 'airplane_broadcast'
+    GUEST_OFFLINE = 'guest_offline'
     TRANSFER = 'artifact_transfer'
     TRANSFER_METADATA = 'artifact_metadata'
     IMPORT = 'artifact_validation'
@@ -419,13 +420,32 @@ def configure_emulator(adb):
         adb('shell', 'settings', 'put', 'global', setting, '0.0', timeout=10)
     adb('shell', 'settings', 'put', 'secure', 'spell_checker_enabled', '0', timeout=10)
 
+def guest_network_is_offline(snapshot):
+    if len(snapshot) > 1024*1024:
+        return False
+    defaults = re.findall(r'^Active default network: (\S+)\s*$', snapshot, re.M)
+    sections = re.findall(r'^Current Networks:\s*\n(.*?)^Network Requests:', snapshot, re.M | re.S)
+    return defaults == ['none'] and len(sections) == 1 and not sections[0].strip()
+
+
+def verify_guest_offline(adb):
+    for attempt in range(10):
+        airplane = adb('shell', 'settings', 'get', 'global', 'airplane_mode_on', timeout=5, stage=Stage.GUEST_OFFLINE)
+        connectivity = adb('shell', 'dumpsys', 'connectivity', '--short', timeout=5, stage=Stage.GUEST_OFFLINE)
+        if airplane.strip() == '1' and guest_network_is_offline(connectivity):
+            return
+        if attempt < 9:
+            time.sleep(1)
+    raise RuntimeFailure(Stage.GUEST_OFFLINE, Reason.VALIDATION)
+
 def prepare_fixture_for_import(adb, tiny):
     adb('push', tiny, '/sdcard/Download/ci-tiny.mp4', stage=Stage.MEDIA_PUSH)
     adb('shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', 'file:///sdcard/Download/ci-tiny.mp4', stage=Stage.MEDIA_SCAN)
-    adb('shell', 'svc', 'wifi', 'disable', stage=Stage.WIFI_DISABLE)
-    adb('shell', 'svc', 'data', 'disable', stage=Stage.DATA_DISABLE)
+    adb('shell', 'settings', 'put', 'global', 'airplane_mode_radios', 'cell,bluetooth,wifi,nfc,wimax', stage=Stage.AIRPLANE_SETTING)
+    adb('shell', 'settings', 'put', 'global', 'airplane_mode_toggleable_radios', 'none', stage=Stage.AIRPLANE_SETTING)
     adb('shell', 'settings', 'put', 'global', 'airplane_mode_on', '1', stage=Stage.AIRPLANE_SETTING)
     adb('shell', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true', stage=Stage.AIRPLANE_BROADCAST)
+    verify_guest_offline(adb)
 
 def emulate(directory, evidence, api, arch, tools):
     assert_context(os.environ)
@@ -455,8 +475,10 @@ def emulate(directory, evidence, api, arch, tools):
     run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=320x240:r=10', '-t', '1',
          '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-y', tiny])
     prepare_fixture_for_import(adb, tiny)
+    (evidence/'offline.json').write_text(json.dumps(dict(airplaneMode=True, activeDefaultNetwork=False, currentNetworks=0)))
     results = []
     for role in ('solana', 'play'):
+        verify_guest_offline(adb)
         folder = evidence/role; folder.mkdir()
         # Distinct signing certificates require a clean uninstall between roles.
         if 'package:'+PACKAGE in adb('shell', 'pm', 'list', 'packages', PACKAGE):
@@ -536,6 +558,22 @@ def emulate(directory, evidence, api, arch, tools):
     (evidence/'runtime-result.json').write_text(json.dumps(report, indent=2))
 
 
+def collect_emulator_failure(evidence):
+    try:
+        devices = run(['adb', 'devices'], timeout=5).splitlines()[1:]
+        if [line.split() for line in devices if line.strip()] != [[SERIAL, 'device']]:
+            return False
+        if run(['adb', '-s', SERIAL, 'shell', 'getprop', 'ro.kernel.qemu'], timeout=5).strip() != '1':
+            return False
+        log = run(['adb', '-s', SERIAL, 'logcat', '-d', '-b', 'crash', '-t', '80'], timeout=5)
+        if len(log.encode('utf-8')) > 65536:
+            return False
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence/'emulator-crash-log.txt').write_text(log)
+        return True
+    except Exception:
+        return False
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('mode', choices=('download', 'receive', 'run'))
@@ -554,6 +592,12 @@ def main():
                 emulate(args.directory, args.evidence, args.api, args.arch, args.build_tools)
         return 0
     except RuntimeFailure as error:
+        if args.mode == 'run' and not os.environ.get('GH_TOKEN') and not os.environ.get('GITHUB_TOKEN'):
+            try:
+                assert_context(os.environ)
+                collect_emulator_failure(args.evidence)
+            except Exception:
+                pass
         record = dict(schemaVersion=1, status='failed', mode=args.mode,
                       stage=error.stage.value, reason=error.reason.value,
                       httpStatus=error.http_status, exitCode=error.exit_code)

@@ -222,23 +222,24 @@ class FileVerification(unittest.TestCase):
                         self.assertIs(caught.exception, sentinel)
                         configure.assert_called_once()
 
-    def test_fixture_preparation_reports_the_exact_failing_guest_operation(self):
-        self.assertTrue(callable(getattr(self.m, 'prepare_fixture_for_import', None)))
+    def test_fixture_preparation_stops_on_each_failure_and_requires_offline_proof(self):
         video = self.root / 'owned tiny.mp4'
-        stages = ('media_push', 'media_scan', 'wifi_disable', 'data_disable',
-                  'airplane_setting', 'airplane_broadcast')
         expected = [
             ('push', video, '/sdcard/Download/ci-tiny.mp4'),
             ('shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', 'file:///sdcard/Download/ci-tiny.mp4'),
-            ('shell', 'svc', 'wifi', 'disable'),
-            ('shell', 'svc', 'data', 'disable'),
+            ('shell', 'settings', 'put', 'global', 'airplane_mode_radios', 'cell,bluetooth,wifi,nfc,wimax'),
+            ('shell', 'settings', 'put', 'global', 'airplane_mode_toggleable_radios', 'none'),
             ('shell', 'settings', 'put', 'global', 'airplane_mode_on', '1'),
             ('shell', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true')]
+        stages = ('media_push', 'media_scan', 'airplane_setting', 'airplane_setting',
+                  'airplane_setting', 'airplane_broadcast')
         calls = []
         def success(*args, **kwargs):
             calls.append((args, kwargs))
             return ''
-        self.m.prepare_fixture_for_import(success, video)
+        with patch.object(self.m, 'verify_guest_offline') as verify:
+            self.m.prepare_fixture_for_import(success, video)
+            verify.assert_called_once_with(success)
         self.assertEqual([args for args, _ in calls], expected)
         self.assertEqual([kwargs['stage'].value for _, kwargs in calls], list(stages))
         for failed_index in range(len(stages)):
@@ -248,11 +249,74 @@ class FileVerification(unittest.TestCase):
                 if len(calls) == failed_index + 1:
                     raise self.m.RuntimeFailure(kwargs['stage'], self.m.Reason.TOOL_EXIT, exit_code=137)
                 return ''
-            with self.subTest(failed=stages[failed_index]), self.assertRaises(self.m.RuntimeFailure) as caught:
-                self.m.prepare_fixture_for_import(fail, video)
+            with self.subTest(failed=failed_index), patch.object(self.m, 'verify_guest_offline') as verify:
+                with self.assertRaises(self.m.RuntimeFailure) as caught:
+                    self.m.prepare_fixture_for_import(fail, video)
+                verify.assert_not_called()
             self.assertEqual(caught.exception.stage.value, stages[failed_index])
             self.assertEqual(caught.exception.exit_code, 137)
             self.assertEqual(len(calls), failed_index + 1)
+
+    def test_offline_check_rejects_live_unknown_truncated_and_duplicate_network_state(self):
+        valid = 'NetworkFactories for: WIFI\n\nActive default network: none\n\nCurrent Networks:\n\nNetwork Requests:\n  request data\n'
+        self.assertTrue(self.m.guest_network_is_offline(valid))
+        bad = [valid.replace('none', '100'),
+               valid.replace('Current Networks:\n', 'Current Networks:\n  NetworkAgentInfo WIFI connected\n'),
+               valid.replace('Current Networks:', 'Unexpected schema:'),
+               valid.split('Network Requests:')[0],
+               valid + 'Active default network: 100\n', '', 'x' * 1048577]
+        for value in bad:
+            with self.subTest(value=value[:60]):
+                self.assertFalse(self.m.guest_network_is_offline(value))
+
+    def test_offline_wait_requires_airplane_and_actual_network_disconnection(self):
+        good = 'Active default network: none\nCurrent Networks:\n\nNetwork Requests:\n'
+        live = good.replace('none', '100')
+        snapshots = iter([live, good])
+        calls = []
+        def adb(*args, **kwargs):
+            calls.append((args, kwargs))
+            if args[-1] == 'airplane_mode_on':
+                return '1\n'
+            return next(snapshots)
+        with patch.object(self.m.time, 'sleep') as sleep:
+            self.m.verify_guest_offline(adb)
+            sleep.assert_called_once_with(1)
+        self.assertTrue(all(kwargs == {'timeout': 5, 'stage': self.m.Stage.GUEST_OFFLINE} for _, kwargs in calls))
+        self.assertEqual(calls[0][0], ('shell', 'settings', 'get', 'global', 'airplane_mode_on'))
+        self.assertEqual(calls[1][0], ('shell', 'dumpsys', 'connectivity', '--short'))
+        for airplane in ('0', 'null', '1'):
+            def never(*args, **kwargs):
+                return airplane if args[-1] == 'airplane_mode_on' else live
+            with self.subTest(airplane=airplane), patch.object(self.m.time, 'sleep') as sleep:
+                with self.assertRaises(self.m.RuntimeFailure) as caught:
+                    self.m.verify_guest_offline(never)
+                self.assertEqual(caught.exception.stage, self.m.Stage.GUEST_OFFLINE)
+                self.assertEqual(caught.exception.reason, self.m.Reason.VALIDATION)
+                self.assertLessEqual(sleep.call_count, 9)
+
+    def test_failure_evidence_never_reads_a_physical_or_ambiguous_target(self):
+        for devices in ('List of devices attached\nreal-phone\tdevice\n',
+                        'List of devices attached\nemulator-5554\tdevice\nreal-phone\tdevice\n'):
+            with self.subTest(devices=devices), patch.object(self.m, 'run', return_value=devices) as run:
+                self.assertFalse(self.m.collect_emulator_failure(self.root / 'diagnostic'))
+                self.assertEqual(run.call_count, 1)
+        with patch.object(self.m, 'run', side_effect=['List of devices attached\nemulator-5554\tdevice\n', '0']) as run:
+            self.assertFalse(self.m.collect_emulator_failure(self.root / 'diagnostic'))
+            self.assertEqual(run.call_count, 2)
+
+    def test_failure_evidence_is_read_only_bounded_and_cannot_replace_original_failure(self):
+        log = 'FATAL TEST FIXTURE\n'
+        replies = ['List of devices attached\nemulator-5554\tdevice\n', '1', log]
+        with patch.object(self.m, 'run', side_effect=replies) as run:
+            self.assertTrue(self.m.collect_emulator_failure(self.root / 'diagnostic'))
+            self.assertEqual([list(c.args[0]) for c in run.call_args_list], [
+                ['adb', 'devices'], ['adb', '-s', 'emulator-5554', 'shell', 'getprop', 'ro.kernel.qemu'],
+                ['adb', '-s', 'emulator-5554', 'logcat', '-d', '-b', 'crash', '-t', '80']])
+            self.assertTrue(all(c.kwargs.get('timeout') == 5 for c in run.call_args_list))
+        self.assertEqual((self.root / 'diagnostic/emulator-crash-log.txt').read_text(), log)
+        with patch.object(self.m, 'run', side_effect=RuntimeError(LEAK)):
+            self.assertFalse(self.m.collect_emulator_failure(self.root / 'diagnostic'))
 
     def test_configure_emulator_uses_four_bounded_settings_calls(self):
         self.assertTrue(callable(getattr(self.m, 'configure_emulator', None)), 'export configure_emulator(adb)')

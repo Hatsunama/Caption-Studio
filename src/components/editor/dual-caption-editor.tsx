@@ -344,6 +344,9 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   // Recovery belongs to the opening session, even as committed pairs update.
   const [openingRecovery] = useState(() => ({ pairs: props.pairs, trackId: props.trackId }));
   const editCount = useSyncExternalStore(store.subscribeDirty, store.getDirtyCount, store.getDirtyCount);
+  // Raw drafts also own recovery/refresh protection, even when blank text cannot
+  // be committed. A boolean snapshot avoids parent renders on every keystroke.
+  const hasRecoveryChanges = useSyncExternalStore(store.subscribeChanges, store.hasRecoveryChanges, store.hasRecoveryChanges);
   const [journalReady, setJournalReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -468,7 +471,7 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
   )), [includedPairs]);
   const selectedPairs = useMemo(() => includedPairs.filter((pair) => selectedIds.has(pair.source.id)), [includedPairs, selectedIds]);
   const skippedCount = props.pairs.length - includedPairs.length;
-  const dirty = editCount > 0;
+  const dirty = hasRecoveryChanges;
   const disabled = props.busy || saving || closing || !journalReady;
 
   const retryCleanup = useCallback(async function retrySavedRecoveryCleanup(): Promise<void> {
@@ -616,9 +619,9 @@ function DualCaptionEditorSession(props: DualCaptionEditorProps) {
               onPress={() => { void save(); }}
               style={{ alignItems: 'center', minHeight: 44, justifyContent: 'center', paddingHorizontal: shortWide ? 12 : undefined, paddingVertical: shortWide ? 8 : 16, borderRadius: chrome.radius.lg, backgroundColor: editCount > 0 ? chrome.accent : chrome.fill }}>
               <Text style={{ color: editCount > 0 ? chrome.accentInk : chrome.muted, fontSize: 16, fontWeight: '700' }}>
-                {cleanupPending && !store.hasRecoveryChanges() ? 'Retry recovery cleanup' : editCount > 0
+                {cleanupPending && !hasRecoveryChanges ? 'Retry recovery cleanup' : editCount > 0
                   ? `Save ${editCount} change${editCount === 1 ? '' : 's'}`
-                  : 'No unsaved changes'}
+                  : hasRecoveryChanges ? 'Enter text to save changes' : 'No unsaved changes'}
               </Text>
             </Pressable>
           ) : null;

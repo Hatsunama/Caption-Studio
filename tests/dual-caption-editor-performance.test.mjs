@@ -289,6 +289,8 @@ if (name === '@/components/editor/keyboard-viewport') return { KeyboardViewport:
   render();
   return {
     calls, all, button, input, flush, act, Store: exports.Store,
+    get store() { return [...instances.values()].flatMap(instance => instance.slots)
+      .find(slot => slot?.value instanceof exports.Store)?.value; },
     captureAppStateListeners: (event = 'change') => [...appStateListeners].filter(([, type]) => type === event).map(([listener]) => listener),
     get appStateListenerCount() { return appStateListeners.size; },
     replayEffects: () => act(() => {
@@ -506,6 +508,122 @@ test('dual recovery revision changes with committed captions even when updatedAt
   const changed = mount({ pairs: revised }); await changed.flush(); changed.edit(0, 'Second draft'); await changed.advance(600);
   assert.notEqual(original.calls.writes[0][2], changed.calls.writes[0][2]);
   assert.match(original.calls.writes[0][2], /^dual-v2:/);
+});
+
+const saveLabel = (h) => h.button('Save dual subtitle edits').props.children.props.children;
+
+for (const language of ['English', 'Chinese']) for (const value of ['', ' \t\n ']) {
+  test(`raw-only ${language} draft ${JSON.stringify(value)} agrees with Close and protects refresh`, async () => {
+    const data = pairs(); data[1].translation.status = 'stale';
+    const h = mount({ pairs: data }); await h.flush();
+    assert.equal(saveLabel(h), 'No unsaved changes');
+    h.press('Select all');
+    h.edit(0, value, language);
+    assert.equal(h.button('Save dual subtitle edits').props.disabled, true);
+    // Clear selection first: Close retains its existing selection-dismiss priority.
+    h.press('Clear selection');
+    h.press('Close dual subtitle editor');
+    assert.equal(h.calls.alerts.at(-1)[0], 'Discard unsaved subtitle edits?');
+    h.choose('Keep editing');
+    assert.equal(saveLabel(h), 'Enter text to save changes');
+    h.press('Select all');
+    for (const label of ['Refresh unfinished (1)', 'Refresh selected (3)', 'Refresh all (3)',
+      'Refresh translation for subtitle 1', 'Hide Chinese line', 'Remove second language', 'Skip second line']) {
+      assert.equal(h.button(label).props.disabled, true, label);
+    }
+    assert.equal(h.button('Clear selection').props.disabled, false);
+    await h.advance(600);
+    const field = language === 'English' ? 'primaryText' : 'translatedText';
+    assert.equal(h.calls.writes.at(-1)[3]['cue-0'][field], value, 'journal preserves raw text');
+    assert.deepEqual(h.calls.saves, []);
+    h.edit(0, language === 'English' ? 'Source 0' : 'Translation 0', language);
+    assert.equal(saveLabel(h), 'No unsaved changes');
+    assert.equal(h.button('Refresh all (3)').props.disabled, false);
+    h.press('Clear selection'); h.press('Close dual subtitle editor'); await h.flush();
+    assert.equal(h.calls.close, 1);
+    h.update({ visible: false });
+  });
+}
+
+test('raw-only typing rerenders parent only on boolean transitions and unsubscribes on unmount', async () => {
+  const h = mount(); await h.flush();
+  const store = h.store;
+  const initial = h.calls.renders.get('DualCaptionEditorSession');
+  h.edit(0, '', 'Chinese');
+  assert.equal(h.calls.renders.get('DualCaptionEditorSession'), initial + 1);
+  const before = new Map(h.calls.renders), identity = h.input(0, 'Chinese').identity;
+  const renderItem = h.all(node => node.type === 'FlatList')[0].props.renderItem;
+  for (let index = 1; index <= 30; index++) h.edit(0, ' '.repeat(index), 'Chinese');
+  assert.equal(h.calls.renders.get('DualCaptionEditorSession'), before.get('DualCaptionEditorSession'));
+  assert.equal(h.calls.renders.get('row:cue-0'), before.get('row:cue-0') + 30);
+  assert.equal(h.calls.renders.get('row:cue-1'), before.get('row:cue-1'));
+  assert.equal(h.all(node => node.type === 'FlatList')[0].props.renderItem, renderItem);
+  assert.equal(h.input(0, 'Chinese').identity, identity);
+  h.edit(0, 'Translation 0', 'Chinese');
+  assert.equal(h.calls.renders.get('DualCaptionEditorSession'), initial + 2);
+  h.update({ visible: false }); await h.flush();
+  assert.equal(store.changeListeners.size, 0);
+  assert.equal(store.dirtyListeners.size, 0);
+  assert.equal(store.cueListeners.size, 0);
+  const renders = new Map(h.calls.renders), writes = h.calls.writes.length;
+  h.act(() => store.setDraft('cue-0', 'translatedText', 'late event'));
+  await h.advance(1000);
+  assert.deepEqual(h.calls.renders, renders);
+  assert.equal(h.calls.writes.length, writes);
+});
+
+test('save acceptance retains concurrent blank typing and a newly received translation', async () => {
+  let complete;
+  const h = mount({ onSave: () => new Promise(resolve => { complete = resolve; }) });
+  await h.flush();
+  h.edit(0, 'Submitted source');
+  assert.equal(saveLabel(h), 'Save 1 change');
+  const queuedInput = h.input(0).props.onChangeText;
+  h.press('Save dual subtitle edits');
+  assert.equal(h.input(0).props.editable, false);
+  h.act(() => queuedInput('  ')); // Native delivery queued before inputs were disabled.
+  const next = plain(h.props.pairs); next[0].translation.text = 'New translation';
+  h.update({ pairs: next });
+  complete(true); await h.flush();
+  assert.equal(h.input(0).props.value, '  ');
+  assert.equal(h.input(0, 'Chinese').props.value, 'New translation');
+  assert.equal(h.store.committed['cue-0'].primaryText, 'Submitted source');
+  assert.equal(h.button('Save dual subtitle edits').props.disabled, true);
+  assert.equal(saveLabel(h), 'Enter text to save changes');
+  await h.advance(600);
+  assert.equal(h.calls.writes.at(-1)[3]['cue-0'].primaryText, '  ');
+  h.press('Close dual subtitle editor');
+  assert.equal(h.calls.alerts.at(-1)[0], 'Discard unsaved subtitle edits?');
+  h.choose('Keep editing');
+  h.edit(0, 'Submitted source');
+  assert.equal(saveLabel(h), 'No unsaved changes');
+  h.edit(0, '', 'Chinese');
+  const newer = plain(h.props.pairs); newer[0].translation.text = 'Even newer translation';
+  h.update({ pairs: newer });
+  assert.equal(h.input(0, 'Chinese').props.value, '');
+  assert.equal(saveLabel(h), 'Enter text to save changes');
+  h.update({ pairs: newer.slice(1) });
+  assert.equal(saveLabel(h), 'No unsaved changes', 'removing the last raw draft updates status');
+  h.update({ visible: false });
+});
+
+test('cleanup retry label yields to raw-only drafts and returns when typing is restored', async () => {
+  const storage = { clearError: true };
+  let saves = 0;
+  const h = mount({ onSave: async () => { saves++; return true; } }, storage);
+  await h.flush(); h.edit(0, 'Saved'); h.press('Save dual subtitle edits'); await h.flush();
+  assert.equal(saveLabel(h), 'Retry recovery cleanup');
+  h.edit(0, '', 'Chinese');
+  assert.equal(saveLabel(h), 'Enter text to save changes');
+  h.press('Save dual subtitle edits'); await h.flush();
+  assert.equal(saves, 1, 'raw-only draft cannot commit or trigger cleanup');
+  assert.equal(h.input(0, 'Chinese').props.value, '');
+  h.edit(0, 'Translation 0', 'Chinese');
+  assert.equal(saveLabel(h), 'Retry recovery cleanup');
+  storage.clearError = false;
+  h.press('Retry recovery cleanup'); await h.flush();
+  assert.equal(saveLabel(h), 'No unsaved changes');
+  h.update({ visible: false });
 });
 
 test('whitespace and blank input keep the existing committed fallback semantics', async () => {
