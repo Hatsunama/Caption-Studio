@@ -79,6 +79,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$GITHUB_REPOSITORY" = Hatsunama/Caption-Studio
           test "$GITHUB_REPOSITORY_OWNER" = Hatsunama
@@ -151,6 +152,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$GITHUB_REPOSITORY" = Hatsunama/Caption-Studio
           test "$GITHUB_REPOSITORY_OWNER" = Hatsunama
@@ -181,6 +183,8 @@ jobs:
           python3 -B tests/install-runtime-android-build-tools.test.py
           python3 -B tests/runtime-file-verification.test.py
           python3 -B tests/runtime-adb-diagnostics.test.py
+          python3 -B tests/runtime-old-api-network.test.py
+          python3 -B tests/runtime-log-boundary.test.py
       - name: Retrieve this run's immutable inputs and independently rebind source and hashes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -196,25 +200,16 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Install approved Android Build Tools for exact-byte verification
         run: python3 -B scripts/install-runtime-android-build-tools.py
+      - name: Run bounded launcher behavioral regressions (host only)
+        env:
+          GH_TOKEN: ''
+          GITHUB_TOKEN: ''
+        run: python3 -B tests/bounded-emulator-launcher.test.py
       - name: Test both final APKs on isolated emulator with actual Home and import interactions
         env:
           GH_TOKEN: ''
           GITHUB_TOKEN: ''
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # verified v2 / 2.38.0
-        with:
-          api-level: ${{ matrix.api }}
-          arch: ${{ matrix.arch }}
-          target: google_apis
-          ram-size: ${{ matrix.ram }}
-          heap-size: 256
-          cores: 2
-          disk-size: 4096M
-          emulator-port: 5554
-          ndk: 27.1.12297006
-          disable-animations: false
-          disable-spellchecker: false
-          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none -camera-front none
-          script: bash scripts/verify-android-native-compatibility-runtime.sh '${{ matrix.api }}' '${{ matrix.arch }}'
+        run: python3 -B scripts/launch-runtime-emulator.py --api '${{ matrix.api }}' --arch '${{ matrix.arch }}'
       - name: Retain runtime evidence and failure state (never signed asset payloads or keys)
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

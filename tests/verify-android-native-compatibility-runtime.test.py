@@ -27,7 +27,7 @@ class RuntimeHarness(unittest.TestCase):
         self.assertLess(setup, verified)
         self.assertLess(verified, hardened)
         self.assertLess(hardened, workflow.index('python3 -B scripts/install-runtime-android-build-tools.py'))
-        self.assertLess(hardened, workflow.index('uses: reactivecircus/android-emulator-runner@'))
+        self.assertLess(hardened, workflow.index('run: python3 -B scripts/launch-runtime-emulator.py'))
         self.assertNotIn('npm ci', workflow)
         wrapper = (root/'scripts/verify-android-native-compatibility-runtime.sh').read_text()
         self.assertIn('export JAVA_HOME="${JAVA_HOME_17_X64:?JDK17 required}"', wrapper)
@@ -41,7 +41,7 @@ class RuntimeHarness(unittest.TestCase):
         self.assertIn('--build-tools "$ANDROID_HOME/build-tools/36.0.0"', wrapper)
         self.assertNotIn('37.0.0', wrapper)
         self.assertIn('run: python3 -B scripts/install-runtime-android-build-tools.py', workflow)
-        self.assertLess(workflow.index('python3 -B scripts/install-runtime-android-build-tools.py'), workflow.index('uses: reactivecircus/android-emulator-runner@'))
+        self.assertLess(workflow.index('python3 -B scripts/install-runtime-android-build-tools.py'), workflow.index('run: python3 -B scripts/launch-runtime-emulator.py'))
 
     def setUp(self):
         spec = importlib.util.spec_from_file_location('runtime', SCRIPT)

@@ -229,8 +229,9 @@ class AdbDiagnostics:
             ('shell', 'su', '0', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true'),
             ('shell', 'am', 'start', '-W', '-n', PACKAGE+'/.MainActivity'),
             ('shell', 'pidof', PACKAGE),
-            ('shell', 'uiautomator', 'dump', '/sdcard/caption-runtime.xml'),
-            ('logcat', '-c')})
+            ('shell', 'uiautomator', 'dump', '/sdcard/caption-runtime.xml')})
+        self.commands.update({('shell', 'log', '-p', 'i', '-t', 'CaptionStudioRuntime',
+                               'CAPTION_STUDIO_QA_START_'+role.upper()) for role in ('solana', 'play')})
 
     @staticmethod
     def check_context():
@@ -518,8 +519,10 @@ def guest_network_is_offline(snapshot):
     if len(snapshot) > 1024*1024:
         return False
     defaults = re.findall(r'^Active default network: (\S+)\s*$', snapshot, re.M)
-    sections = re.findall(r'^Current Networks:\s*\n(.*?)^Network Requests:', snapshot, re.M | re.S)
-    return defaults == ['none'] and len(sections) == 1 and not sections[0].strip()
+    sections = re.findall(r'^Current Networks:[ \t]*\n(.*?)^(?:Metered Interfaces|Network Requests):', snapshot, re.M | re.S)
+    return (defaults == ['none'] and len(sections) == 1 and not sections[0].strip()
+            and len(re.findall(r'^Current Networks:[ \t]*$', snapshot, re.M)) == 1
+            and len(re.findall(r'^Network Requests:[ \t]*$', snapshot, re.M)) == 1)
 
 
 def verify_guest_offline(adb):
@@ -540,6 +543,22 @@ def prepare_fixture_for_import(adb, tiny):
     adb('shell', 'settings', 'put', 'global', 'airplane_mode_on', '1', stage=Stage.AIRPLANE_SETTING)
     adb('shell', 'su', '0', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true', timeout=10, stage=Stage.AIRPLANE_BROADCAST)
     verify_guest_offline(adb)
+
+def begin_log_capture(adb, role):
+    require(role in ('solana', 'play'), 'Unknown runtime role')
+    marker = 'CAPTION_STUDIO_QA_START_'+role.upper()
+    adb('shell', 'log', '-p', 'i', '-t', 'CaptionStudioRuntime', marker, timeout=10)
+    return marker
+
+
+def logs_since_marker(logs, marker):
+    require(marker in ('CAPTION_STUDIO_QA_START_SOLANA', 'CAPTION_STUDIO_QA_START_PLAY'), 'Unknown log marker')
+    lines = logs.splitlines(keepends=True)
+    pattern = r'\bI\s+CaptionStudioRuntime\s*:\s*'+re.escape(marker)+r'\s*$'
+    positions = [index for index, line in enumerate(lines) if re.search(pattern, line)]
+    require(len(positions) == 1, 'Runtime log boundary missing or ambiguous')
+    return ''.join(lines[positions[0]:])
+
 
 def emulate(directory, evidence, api, arch, tools):
     assert_context(os.environ)
@@ -585,7 +604,7 @@ def emulate(directory, evidence, api, arch, tools):
         if 'package:'+PACKAGE in adb('shell', 'pm', 'list', 'packages', PACKAGE):
             require('Success' in adb('shell', 'pm', 'uninstall', PACKAGE), 'Old test package uninstall failed')
         require('Success' in adb('install', '--no-streaming', directory/ASSETS[role], timeout=180), 'APK installation failed')
-        adb('logcat', '-c')
+        marker = begin_log_capture(adb, role)
         start = time.monotonic()
         snapshots = 0
 
@@ -649,10 +668,15 @@ def emulate(directory, evidence, api, arch, tools):
             results.append(dict(role=role, apkSha256=request[role+'_sha256'], firstUsableHomeSeconds=first_home,
                                 importedTinyVideo=True, dualSubtitlesEnabled=dual['enabled'], status='passed'))
         finally:
-            (folder/'screen.png').write_bytes(adb('exec-out', 'screencap', '-p', binary=True))
-            logs = adb('logcat', '-d', '-v', 'threadtime')
-            (folder/'logcat.txt').write_text(logs)
-            require(not re.search(r'UnsatisfiedLinkError|cannot locate symbol|FATAL EXCEPTION', logs), 'Runtime crash/linker failure in isolated emulator')
+            pending_failure = sys.exc_info()[1]
+            try:
+                (folder/'screen.png').write_bytes(adb('exec-out', 'screencap', '-p', binary=True))
+                logs = logs_since_marker(adb('logcat', '-d', '-v', 'threadtime'), marker)
+                (folder/'logcat.txt').write_text(logs)
+                require(not re.search(r'UnsatisfiedLinkError|cannot locate symbol|FATAL EXCEPTION', logs), 'Runtime crash/linker failure in isolated emulator')
+            except Exception:
+                if pending_failure is None:
+                    raise
     report = dict(schemaVersion=1, status='passed', sourceCommit=request['expected_source_commit'],
                   workflowCommit=os.environ['GITHUB_SHA'], api=api, arch=arch, memoryBytes=memory,
                   receiptSha256=request['receipt_sha256'], signedAabSha256=request['aab_sha256'], runs=results)
