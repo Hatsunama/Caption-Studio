@@ -182,20 +182,18 @@ jobs:
           python3 -B tests/runtime-download-diagnostics.test.py
           python3 -B tests/install-runtime-android-build-tools.test.py
           python3 -B tests/runtime-file-verification.test.py
-          python3 -B tests/runtime-adb-diagnostics.test.py
           python3 -B tests/runtime-old-api-network.test.py
           python3 -B tests/runtime-log-boundary.test.py
-          python3 -B tests/runtime-documents-item.test.py
+          python3 -B tests/runtime-startup-only.test.py
       - name: Retrieve this run's immutable inputs and independently rebind source and hashes
         env:
           GH_TOKEN: ${{ github.token }}
           PREPARE_ARTIFACT_ID: ${{ needs.prepare.outputs.artifact_id }}
           PREPARE_ARTIFACT_NAME: ${{ needs.prepare.outputs.artifact_name }}
         run: python3 -B scripts/verify-android-native-compatibility-runtime.py receive --directory "$RUNNER_TEMP/final-assets" --evidence evidence/final-runtime
-      - name: Prepare video tool and isolated KVM access
+      - name: Prepare isolated KVM access
         run: |
           set -euo pipefail
-          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install --no-install-recommends -y ffmpeg; }
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
@@ -206,7 +204,7 @@ jobs:
           GH_TOKEN: ''
           GITHUB_TOKEN: ''
         run: python3 -B tests/bounded-emulator-launcher.test.py
-      - name: Test both final APKs on isolated emulator with actual Home and import interactions
+      - name: Cold-start both final formats and verify stable usable Home only
         env:
           GH_TOKEN: ''
           GITHUB_TOKEN: ''

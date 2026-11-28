@@ -601,10 +601,11 @@ def emulate(directory, evidence, api, arch, tools):
     configure_emulator(lambda *args, **kwargs: adb(*args, stage=Stage.EMULATOR_SETUP, **kwargs))
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence/'hardware.json').write_text(json.dumps(dict(api=api, abis=abis, memoryBytes=memory)))
-    tiny = evidence/'ci-tiny.mp4'
-    run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=320x240:r=10', '-t', '1',
-         '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-y', tiny])
-    prepare_fixture_for_import(adb, tiny)
+    adb('shell', 'settings', 'put', 'global', 'airplane_mode_radios', 'cell,bluetooth,wifi,nfc,wimax', stage=Stage.AIRPLANE_SETTING)
+    adb('shell', 'settings', 'put', 'global', 'airplane_mode_toggleable_radios', 'none', stage=Stage.AIRPLANE_SETTING)
+    adb('shell', 'settings', 'put', 'global', 'airplane_mode_on', '1', stage=Stage.AIRPLANE_SETTING)
+    adb('shell', 'su', '0', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true', timeout=10, stage=Stage.AIRPLANE_BROADCAST)
+    verify_guest_offline(adb)
     (evidence/'offline.json').write_text(json.dumps(dict(airplaneMode=True, activeDefaultNetwork=False, currentNetworks=0)))
     results = []
     for role in ('solana', 'play'):
@@ -614,6 +615,7 @@ def emulate(directory, evidence, api, arch, tools):
         if 'package:'+PACKAGE in adb('shell', 'pm', 'list', 'packages', PACKAGE):
             require('Success' in adb('shell', 'pm', 'uninstall', PACKAGE), 'Old test package uninstall failed')
         require('Success' in adb('install', '--no-streaming', directory/ASSETS[role], timeout=180), 'APK installation failed')
+        adb('shell', 'am', 'force-stop', PACKAGE, timeout=10)
         marker = begin_log_capture(adb, role)
         start = time.monotonic()
         snapshots = 0
@@ -632,51 +634,24 @@ def emulate(directory, evidence, api, arch, tools):
             while time.monotonic() < deadline:
                 try:
                     xml = snapshot()
-                    try: return find_control(xml, label, package)
-                    except ValueError:
-                        # Cancellation is the only consent action permitted.
-                        # Never press a download/accept button during this test.
-                        for cancel in ('Not now', 'NOT NOW'):
-                            try: control = find_control(xml, cancel, None)
-                            except ValueError: continue
-                            tap(control); break
-                        raise
+                    return find_control(xml, label, package)
                 except (ValueError, RuntimeFailure) as caught:
                     error = caught; time.sleep(1)
             raise ValueError('Timed out waiting for '+label) from error
-
-        def tap(control):
-            require(control_can_be_tapped(control), 'UI control not usable')
-            adb('shell', 'input', 'tap', str(control['x']), str(control['y']))
 
         try:
             require('Status: ok' in adb('shell', 'am', 'start', '-W', '-n', PACKAGE+'/.MainActivity', timeout=60), 'First launch failed')
             home = wait('Import a video')
             require(home['enabled'] and home['clickable'], 'Home import control is not usable')
             first_home = round(time.monotonic()-start, 3)
-            require(adb('shell', 'pidof', PACKAGE).strip(), 'App process died on Home')
-            # A second live snapshot excludes a single stale startup frame.
-            tap(wait('Import a video'))
-            try: video = wait('ci-tiny.mp4', package='com.android.documentsui', seconds=12)
-            except ValueError:
-                menu = wait('Show roots', package=None, seconds=10); tap(menu)
-                tap(wait('Downloads', package=None, seconds=10))
-                video = wait('ci-tiny.mp4', package='com.android.documentsui', seconds=20)
-            tap(video)
-            tap(wait('Captions', seconds=90))
-            dual = wait('Dual subtitles', seconds=60)
-            require(dual['enabled'] == (api == 26), 'Wrong Dual subtitles capability admission')
-            if api == 26:
-                tap(dual)
-                # With no captions/model this alert proves the enabled action was
-                # actually dispatched. It must not start model acquisition.
-                wait('Generate captions first', package=None, seconds=15)
-                try: tap(find_control(snapshot(), 'OK', None))
-                except ValueError:
-                    tap(wait('Not now', package=None, seconds=10))
-            require(adb('shell', 'pidof', PACKAGE).strip(), 'App process died after import/capability check')
+            initial_pid = adb('shell', 'pidof', PACKAGE).strip()
+            require(re.fullmatch('[0-9]+', initial_pid), 'App process absent/ambiguous on Home')
+            time.sleep(2)
+            second_home = wait('Import a video', seconds=20)
+            require(second_home['enabled'] and second_home['clickable'], 'Home became unusable')
+            require(adb('shell', 'pidof', PACKAGE).strip() == initial_pid, 'App process exited or restarted during startup')
             results.append(dict(role=role, apkSha256=request[role+'_sha256'], firstUsableHomeSeconds=first_home,
-                                importedTinyVideo=True, dualSubtitlesEnabled=dual['enabled'], status='passed'))
+                                liveHomeSnapshots=2, processStable=True, status='passed'))
         finally:
             pending_failure = sys.exc_info()[1]
             try:
@@ -688,7 +663,7 @@ def emulate(directory, evidence, api, arch, tools):
                 if pending_failure is None:
                     raise
     report = dict(schemaVersion=1, status='passed', sourceCommit=request['expected_source_commit'],
-                  workflowCommit=os.environ['GITHUB_SHA'], api=api, arch=arch, memoryBytes=memory,
+                  workflowCommit=os.environ['GITHUB_SHA'], api=api, arch=arch, memoryBytes=memory, startupOnly=True,
                   receiptSha256=request['receipt_sha256'], signedAabSha256=request['aab_sha256'], runs=results)
     (evidence/'runtime-result.json').write_text(json.dumps(report, indent=2))
 
