@@ -255,10 +255,11 @@ def main():
         env.update(ANDROID_AVD_HOME=str(owned / 'avd'), ANDROID_USER_HOME=str(owned / 'android'),
                    ANDROID_EMULATOR_HOME=str(owned / 'emulator'), ANDROID_SDK_HOME=str(owned),
                    ANDROID_HOME=str(root), ANDROID_SDK_ROOT=str(root))
-        Path(env['ANDROID_AVD_HOME']).mkdir()
+        for key in ('ANDROID_AVD_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'):
+            Path(env[key]).mkdir()
         avdmanager = manager.parent / 'avdmanager'
         events.append({'stage': 'avd-create'})
-        run_child([str(avdmanager), 'create', 'avd', '--force', '--name', 'bounded-runtime', '--package', image],
+        run_child([str(avdmanager), '--verbose', 'create', 'avd', '--force', '--name', 'bounded-runtime', '--package', image],
                   env, 120, input_text='no\n', diagnostic=True)
         events.append({'stage': 'avd-config'})
         config = Path(env['ANDROID_AVD_HOME']) / 'bounded-runtime.avd/config.ini'

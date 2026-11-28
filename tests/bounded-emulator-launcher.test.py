@@ -196,6 +196,8 @@ if 'ndk;27.1.12297006' in args:
     (ndk / 'source.properties').write_text('Pkg.Revision = 27.1.12297006\\n')
     (ndk / 'package.xml').write_text('<sdk-repository><localPackage path="ndk;27.1.12297006"/></sdk-repository>')
 if 'avdmanager' in args[0]:
+    for key in ('ANDROID_AVD_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'):
+        pathlib.Path(os.environ[key]).resolve(strict=True)
     avd = pathlib.Path(os.environ['ANDROID_AVD_HOME']) / 'bounded-runtime.avd'
     avd.mkdir()
     (avd / 'config.ini').write_text('hw.cpu.ncore=1\\n')
