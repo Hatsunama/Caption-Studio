@@ -22,6 +22,10 @@ def child(code):
 
 
 class LauncherTests(unittest.TestCase):
+    def test_api25_startup_uses_official_aosp_image_without_translation_ram_requirement(self):
+        self.assertEqual(m.MATRIX['25'], ('x86_64', '2048M'))
+        self.assertEqual(m.system_image('25', 'x86_64'), 'system-images;android-25;default;x86_64')
+
     def test_keyguard_dismissal_does_not_inject_the_hanging_menu_key(self):
         calls = []
         def adb(*args):

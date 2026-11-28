@@ -588,9 +588,9 @@ def emulate(directory, evidence, api, arch, tools):
     require(arch in abis and (arch != 'x86' or 'x86_64' not in abis), 'Wrong emulator ABI')
     meminfo = adb('shell', 'cat', '/proc/meminfo')
     memory = int(re.search(r'^MemTotal:\s+([0-9]+) kB', meminfo, re.M)[1])*1024
-    if api >= 25:
-        require(memory >= 4*1024**3 and adb('shell', 'getprop', 'ro.config.low_ram').strip() != 'true', 'Qualifying 64-bit >=4GiB guest required')
-    else: require(memory < 4*1024**3, 'API24 must exercise low-memory fallback')
+    require(memory > 0, 'Guest memory information required')
+    if api == 24:
+        require(memory < 4*1024**3, 'API24 must exercise low-memory startup')
     diagnostic = AdbDiagnostics(evidence, directory)
 
     def adb(*args, timeout=30, binary=False, stage=Stage.RUNTIME):

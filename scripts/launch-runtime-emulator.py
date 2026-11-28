@@ -22,10 +22,17 @@ CONTEXT = {
     'GITHUB_TRIGGERING_ACTOR': 'Hatsunama',
     'GITHUB_WORKFLOW_REF': 'Hatsunama/Caption-Studio/.github/workflows/verify-final-android-runtime.yml@' + BRANCH,
 }
-MATRIX = {'24': ('x86', '1536M'), '25': ('x86_64', '6144M'), '26': ('x86_64', '6144M')}
+MATRIX = {'24': ('x86', '1536M'), '25': ('x86_64', '2048M'), '26': ('x86_64', '6144M')}
 SERIAL = 'emulator-5554'
 NDK = '27.1.12297006'
 OUTPUT_LIMIT = 16384
+
+
+def system_image(api, arch):
+    if api not in MATRIX or MATRIX[api][0] != arch:
+        raise ValueError('Unsupported startup image')
+    target = 'default' if api == '25' else 'google_apis'
+    return f'system-images;android-{api};{target};{arch}'
 
 
 def assert_context(env):
@@ -240,7 +247,7 @@ def main():
         events.append({'stage': 'build-tools-verify'})
         if not (root / 'build-tools/36.0.0/source.properties').is_file():
             raise ValueError('approved Build Tools36 missing')
-        image = f'system-images;android-{args.api};google_apis;{args.arch}'
+        image = system_image(args.api, args.arch)
         events.append({'stage': 'sdk-licenses'})
         run_child([str(manager), '--sdk_root=' + str(root), '--licenses'], env, 120,
                   input_text='y\n' * 100, diagnostic=True)

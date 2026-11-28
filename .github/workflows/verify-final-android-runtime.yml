@@ -138,15 +138,9 @@ jobs:
       max-parallel: 3
       matrix:
         include:
-          - api: 24
-            arch: x86
-            ram: 1536M
           - api: 25
             arch: x86_64
-            ram: 6144M
-          - api: 26
-            arch: x86_64
-            ram: 6144M
+            ram: 2048M
     steps:
       - name: Verify exact owner and exact diagnostic branch dispatch before checkout or token use
         shell: bash

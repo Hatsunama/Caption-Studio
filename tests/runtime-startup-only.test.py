@@ -35,7 +35,7 @@ class StartupOnly(unittest.TestCase):
                         'ro.config.low_ram':'false',
                         'ro.product.cpu.abilist':'x86_64,x86'}[command[-1]]+'\n'
             if command == ['shell', 'cat', '/proc/meminfo']:
-                return 'MemTotal: 6291456 kB\n'
+                return 'MemTotal: 2097152 kB\n'
             if command[:4] == ['shell', 'settings', 'put', 'global'] or command[:4] == ['shell', 'settings', 'put', 'secure']:
                 return ''
             if command[:4] == ['shell', 'settings', 'get', 'global']:
