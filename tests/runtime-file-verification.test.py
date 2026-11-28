@@ -230,7 +230,7 @@ class FileVerification(unittest.TestCase):
             ('shell', 'settings', 'put', 'global', 'airplane_mode_radios', 'cell,bluetooth,wifi,nfc,wimax'),
             ('shell', 'settings', 'put', 'global', 'airplane_mode_toggleable_radios', 'none'),
             ('shell', 'settings', 'put', 'global', 'airplane_mode_on', '1'),
-            ('shell', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true')]
+            ('shell', 'su', '0', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true')]
         stages = ('media_push', 'media_scan', 'airplane_setting', 'airplane_setting',
                   'airplane_setting', 'airplane_broadcast')
         calls = []
@@ -241,6 +241,7 @@ class FileVerification(unittest.TestCase):
             self.m.prepare_fixture_for_import(success, video)
             verify.assert_called_once_with(success)
         self.assertEqual([args for args, _ in calls], expected)
+        self.assertEqual(calls[-1][1], {'timeout': 10, 'stage': self.m.Stage.AIRPLANE_BROADCAST})
         self.assertEqual([kwargs['stage'].value for _, kwargs in calls], list(stages))
         for failed_index in range(len(stages)):
             calls.clear()
@@ -256,6 +257,75 @@ class FileVerification(unittest.TestCase):
             self.assertEqual(caught.exception.stage.value, stages[failed_index])
             self.assertEqual(caught.exception.exit_code, 137)
             self.assertEqual(len(calls), failed_index + 1)
+
+    def airplane_policy_fixture(self, su_exit=0, live=False):
+        """Model AMS UID policy through the real bounded process runner."""
+        calls = []
+        protected = ['am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE',
+                     '--ez', 'state', 'true']
+        offline = 'Active default network: none\nCurrent Networks:\n\nNetwork Requests:\n'
+
+        def process(args, **kwargs):
+            self.assertEqual(args[:3], ['adb', '-s', self.m.SERIAL])
+            command = args[3:]
+            calls.append((command, kwargs))
+            if command == ['shell', *protected]:
+                raise subprocess.CalledProcessError(1, args, stderr=b'Permission Denial: protected broadcast')
+            if command == ['shell', 'su', '0', *protected]:
+                self.assertEqual(kwargs['timeout'], 10)
+                if su_exit:
+                    raise subprocess.CalledProcessError(su_exit, args, stderr=b'su unavailable or denied')
+                output = 'Broadcast completed: result=0'
+            elif command == ['shell', 'settings', 'get', 'global', 'airplane_mode_on']:
+                output = '1'
+            elif command == ['shell', 'dumpsys', 'connectivity', '--short']:
+                output = offline.replace('none', '100') if live else offline
+            else:
+                self.assertTrue(command[:1] == ['push'] or command[:3] in (
+                    ['shell', 'am', 'broadcast'], ['shell', 'settings', 'put']))
+                self.assertNotIn('su', command)
+                output = ''
+            return subprocess.CompletedProcess(args, 0, stdout=output.encode(), stderr=b'')
+
+        def adb(*args, **kwargs):
+            return self.m.run(['adb', '-s', self.m.SERIAL, *args], **kwargs)
+
+        return calls, process, adb
+
+    def test_protected_airplane_broadcast_uses_root_only_for_broadcast(self):
+        calls, process, adb = self.airplane_policy_fixture()
+        with patch.object(self.m.subprocess, 'run', side_effect=process), \
+             patch.object(self.m.time, 'sleep'):
+            self.m.prepare_fixture_for_import(adb, self.root / 'tiny.mp4')
+        self.assertEqual([c for c, _ in calls if 'su' in c], [[
+            'shell', 'su', '0', 'am', 'broadcast', '-a',
+            'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true']])
+        self.assertEqual(calls[-2][0], ['shell', 'settings', 'get', 'global', 'airplane_mode_on'])
+        self.assertEqual(calls[-1][0], ['shell', 'dumpsys', 'connectivity', '--short'])
+
+    def test_protected_airplane_su_unavailable_or_denied_fails_closed(self):
+        for exit_code in (127, 1, 255):
+            calls, process, adb = self.airplane_policy_fixture(su_exit=exit_code)
+            with self.subTest(exit_code=exit_code), \
+                 patch.object(self.m.subprocess, 'run', side_effect=process), \
+                 patch.object(self.m, 'verify_guest_offline') as verify:
+                with self.assertRaises(self.m.RuntimeFailure) as caught:
+                    self.m.prepare_fixture_for_import(adb, self.root / 'tiny.mp4')
+                self.assertEqual(caught.exception.stage, self.m.Stage.AIRPLANE_BROADCAST)
+                self.assertEqual(caught.exception.reason, self.m.Reason.TOOL_EXIT)
+                self.assertEqual(caught.exception.exit_code, exit_code)
+                self.assertEqual(calls[-1][0][:4], ['shell', 'su', '0', 'am'])
+                verify.assert_not_called()
+
+    def test_protected_airplane_success_cannot_pass_with_live_connectivity(self):
+        calls, process, adb = self.airplane_policy_fixture(live=True)
+        with patch.object(self.m.subprocess, 'run', side_effect=process), \
+             patch.object(self.m.time, 'sleep'):
+            with self.assertRaises(self.m.RuntimeFailure) as caught:
+                self.m.prepare_fixture_for_import(adb, self.root / 'tiny.mp4')
+        self.assertEqual(caught.exception.stage, self.m.Stage.GUEST_OFFLINE)
+        self.assertEqual(caught.exception.reason, self.m.Reason.VALIDATION)
+        self.assertEqual(sum(c == ['shell', 'dumpsys', 'connectivity', '--short'] for c, _ in calls), 10)
 
     def test_offline_check_rejects_live_unknown_truncated_and_duplicate_network_state(self):
         valid = 'NetworkFactories for: WIFI\n\nActive default network: none\n\nCurrent Networks:\n\nNetwork Requests:\n  request data\n'
