@@ -503,11 +503,21 @@ def find_control(xml, label, package):
         require(bounds, 'Missing UI control bounds')
         x1, y1, x2, y2 = map(int, bounds.groups())
         require(x2 > x1 and y2 > y1 and x2 <= 4096 and y2 <= 4096, 'Invalid UI bounds')
+        lists = [i for i, p in enumerate(chain)
+                 if p.get('resource-id') == 'com.android.documentsui:id/dir_list'
+                 and p.get('class', '').endswith('.RecyclerView')]
+        delegated = (package == actual_package == 'com.android.documentsui' and label == 'ci-tiny.mp4'
+                     and len(lists) == 1 and any(p.get('focusable') == 'true' for p in chain[:lists[0]]))
         matches[(x1, y1, x2, y2)] = dict(enabled=not any(p.get('enabled') == 'false' for p in chain),
                                       clickable=any(p.get('clickable') == 'true' for p in chain),
+                                      delegatedClick=delegated,
                                       x=(x1+x2)//2, y=(y1+y2)//2)
     require(len(matches) == 1, 'UI control missing/ambiguous: '+label)
     return next(iter(matches.values()))
+
+
+def control_can_be_tapped(control):
+    return control['enabled'] and (control['clickable'] or control.get('delegatedClick', False))
 
 
 def configure_emulator(adb):
@@ -636,7 +646,7 @@ def emulate(directory, evidence, api, arch, tools):
             raise ValueError('Timed out waiting for '+label) from error
 
         def tap(control):
-            require(control['enabled'] and control['clickable'], 'UI control not usable')
+            require(control_can_be_tapped(control), 'UI control not usable')
             adb('shell', 'input', 'tap', str(control['x']), str(control['y']))
 
         try:
@@ -647,11 +657,11 @@ def emulate(directory, evidence, api, arch, tools):
             require(adb('shell', 'pidof', PACKAGE).strip(), 'App process died on Home')
             # A second live snapshot excludes a single stale startup frame.
             tap(wait('Import a video'))
-            try: video = wait('ci-tiny.mp4', package=None, seconds=12)
+            try: video = wait('ci-tiny.mp4', package='com.android.documentsui', seconds=12)
             except ValueError:
                 menu = wait('Show roots', package=None, seconds=10); tap(menu)
                 tap(wait('Downloads', package=None, seconds=10))
-                video = wait('ci-tiny.mp4', package=None, seconds=20)
+                video = wait('ci-tiny.mp4', package='com.android.documentsui', seconds=20)
             tap(video)
             tap(wait('Captions', seconds=90))
             dual = wait('Dual subtitles', seconds=60)

@@ -107,7 +107,7 @@ def run_child(argv, env, timeout, input_text=None, capture=True, diagnostic=Fals
 def unlock(adb):
     for attempt in range(3):
         try:
-            adb('shell', 'input', 'keyevent', '82')
+            adb('shell', 'wm', 'dismiss-keyguard')
             return
         except subprocess.TimeoutExpired:
             if attempt == 2:

@@ -22,6 +22,17 @@ def child(code):
 
 
 class LauncherTests(unittest.TestCase):
+    def test_keyguard_dismissal_does_not_inject_the_hanging_menu_key(self):
+        calls = []
+        def adb(*args):
+            calls.append(args)
+            if args == ('shell', 'input', 'keyevent', '82'):
+                raise subprocess.TimeoutExpired(args, 5)
+            self.assertEqual(args, ('shell', 'wm', 'dismiss-keyguard'))
+            return ''
+        m.unlock(adb)
+        self.assertEqual(calls, [('shell', 'wm', 'dismiss-keyguard')])
+
     def test_rejected_context_has_failure_evidence_without_starting_tools(self):
         with tempfile.TemporaryDirectory() as folder, contextlib.chdir(folder), \
              mock.patch.dict(os.environ, {}, clear=True), \
@@ -134,7 +145,7 @@ else:
     if args[2:] == ['shell', 'getprop', 'ro.kernel.qemu']: print('1')
     elif args[2:] == ['shell', 'getprop', 'sys.boot_completed']: print('0' if os.environ.get('BOOTING') else '1')
     elif args[2:] == ['shell', 'service', 'check', 'input']: print('Service input: found')
-    else: assert args[2:] in (['shell', 'input', 'keyevent', '82'], ['shell', 'settings', 'put', 'secure', 'show_ime_with_hard_keyboard', '0'])
+    else: assert args[2:] in (['shell', 'wm', 'dismiss-keyguard'], ['shell', 'settings', 'put', 'secure', 'show_ime_with_hard_keyboard', '0'])
 """)
             for mode in ('verifier-failure', 'foreign', 'boot-deadline'):
                 foreign = mode == 'foreign'

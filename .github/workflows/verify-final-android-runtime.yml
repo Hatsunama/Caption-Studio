@@ -185,6 +185,7 @@ jobs:
           python3 -B tests/runtime-adb-diagnostics.test.py
           python3 -B tests/runtime-old-api-network.test.py
           python3 -B tests/runtime-log-boundary.test.py
+          python3 -B tests/runtime-documents-item.test.py
       - name: Retrieve this run's immutable inputs and independently rebind source and hashes
         env:
           GH_TOKEN: ${{ github.token }}
