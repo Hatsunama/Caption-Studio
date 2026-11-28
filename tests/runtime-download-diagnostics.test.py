@@ -36,8 +36,8 @@ class Diagnostics(unittest.TestCase):
         self.env = dict(GITHUB_ACTIONS='true', GITHUB_EVENT_NAME='workflow_dispatch',
             GITHUB_REPOSITORY=self.m.REPO, GITHUB_REPOSITORY_OWNER='Hatsunama',
             GITHUB_ACTOR='Hatsunama', GITHUB_TRIGGERING_ACTOR='Hatsunama',
-            GITHUB_REF='refs/heads/main', GITHUB_SHA='b'*40,
-            GITHUB_WORKFLOW_REF=self.m.REPO+'/.github/workflows/verify-final-android-runtime.yml@refs/heads/main',
+            GITHUB_REF='refs/heads/codex/final150-runtime-diagnostic', GITHUB_SHA='b'*40,
+            GITHUB_WORKFLOW_REF=self.m.REPO+'/.github/workflows/verify-final-android-runtime.yml@refs/heads/codex/final150-runtime-diagnostic',
             GH_TOKEN=SECRET, RELEASE_ID='123', EXPECTED_SOURCE_COMMIT='a'*40)
         self.release = dict(id=123, draft=True, author={'login':'Hatsunama'},
                             target_commitish='a'*40, assets=[])
@@ -290,7 +290,7 @@ class Diagnostics(unittest.TestCase):
         for job in (prepare, runtime):
             self.assertIn("github.actor == 'Hatsunama'", job)
             self.assertIn("github.triggering_actor == 'Hatsunama'", job)
-            self.assertIn("github.ref == 'refs/heads/main'", job)
+            self.assertIn("github.ref == 'refs/heads/codex/final150-runtime-diagnostic'", job)
 
     def test_receive_uses_only_same_run_fixed_name_and_rechecks_public_source(self):
         root, request = self.imported_fixture()

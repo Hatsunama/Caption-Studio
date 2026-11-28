@@ -180,19 +180,113 @@ def sha(path):
     return h.hexdigest()
 
 
-def run(args, timeout=60, binary=False, stage=Stage.TOOL):
+def run(args, timeout=60, binary=False, stage=Stage.TOOL, diagnostic=None):
     try:
         result = subprocess.run([str(a) for a in args], check=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, timeout=timeout)
+        if diagnostic is not None:
+            diagnostic.record(args, stage, result.stdout, result.stderr)
         return result.stdout if binary else result.stdout.decode('utf-8').replace('\r\n', '\n')
     except subprocess.CalledProcessError as error:
+        if diagnostic is not None:
+            diagnostic.record(args, stage, error.stdout, error.stderr, Reason.TOOL_EXIT, error.returncode)
         raise RuntimeFailure(stage, Reason.TOOL_EXIT, exit_code=error.returncode) from None
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as error:
+        if diagnostic is not None:
+            diagnostic.record(args, stage, error.stdout, error.stderr, Reason.TIMEOUT)
         raise RuntimeFailure(stage, Reason.TIMEOUT) from None
     except FileNotFoundError:
         raise RuntimeFailure(stage, Reason.TOOL_MISSING) from None
     except Exception:
         raise RuntimeFailure(stage, Reason.UNEXPECTED) from None
+
+
+class AdbDiagnostics:
+    """QA-only public fixture output, created inside emulate AFTER all guest checks.
+
+    No global subprocess hook: download/receive/identity tools never opt in.
+    Keep only the last two offline reads and the FIRST failed allowed command.
+    Limits apply to UTF-8 streams and the complete serialized JSON on disk.
+    """
+    STREAM_LIMIT = 16*1024
+    TOTAL_LIMIT = 256*1024
+
+    def __init__(self, evidence, directory):
+        self.check_context()
+        self.evidence = evidence
+        self.records = {}
+        self.commands = {
+            ('install', '--no-streaming', str(directory/ASSETS[role]))
+            for role in ('solana', 'play')}
+        self.commands.update({
+            ('shell', 'pm', 'list', 'packages', PACKAGE),
+            ('shell', 'pm', 'uninstall', PACKAGE),
+            ('shell', 'settings', 'get', 'global', 'airplane_mode_on'),
+            ('shell', 'dumpsys', 'connectivity', '--short'),
+            ('shell', 'settings', 'put', 'global', 'airplane_mode_radios', 'cell,bluetooth,wifi,nfc,wimax'),
+            ('shell', 'settings', 'put', 'global', 'airplane_mode_toggleable_radios', 'none'),
+            ('shell', 'settings', 'put', 'global', 'airplane_mode_on', '1'),
+            ('shell', 'su', '0', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', 'true'),
+            ('shell', 'am', 'start', '-W', '-n', PACKAGE+'/.MainActivity'),
+            ('shell', 'pidof', PACKAGE),
+            ('shell', 'uiautomator', 'dump', '/sdcard/caption-runtime.xml'),
+            ('logcat', '-c')})
+
+    @staticmethod
+    def check_context():
+        assert_context(os.environ)
+        require(not os.environ.get('GH_TOKEN') and not os.environ.get('GITHUB_TOKEN'),
+                'Credentials forbidden in diagnostic runtime')
+
+    def allowed(self, args):
+        args = tuple(str(a) for a in args)
+        return (args[:3] == ('adb', '-s', SERIAL) and args[3:] in self.commands and
+                not any('://' in a or any(ord(c) < 32 for c in a) for a in args))
+
+    def run(self, args, timeout=30, binary=False, stage=Stage.RUNTIME):
+        self.check_context()
+        require(self.allowed(args) and not binary and stage in (
+            Stage.RUNTIME, Stage.GUEST_OFFLINE, Stage.AIRPLANE_SETTING, Stage.AIRPLANE_BROADCAST),
+            'Diagnostic scope denied')
+        return run(args, timeout, binary, stage=stage, diagnostic=self)
+
+    def record(self, args, stage, stdout, stderr, reason=None, exit_code=None):
+        # Evidence failures must never mask the original tool exit/timeout.
+        try:
+            self.check_context()
+            require(self.allowed(args), 'Diagnostic command denied')
+            command = [str(a) for a in args]
+            if reason is not None:
+                key = 'first_failure'
+                if key in self.records:
+                    return
+            elif stage == Stage.GUEST_OFFLINE and command[-1] in ('airplane_mode_on', '--short'):
+                key = command[-1]
+            else:
+                return
+            record = dict(command=command, stage=Stage(stage).value,
+                          reason=reason.value if reason else None, exitCode=exit_code)
+            for name, value in (('stdout', stdout), ('stderr', stderr)):
+                raw = value if isinstance(value, bytes) else (value or '').encode('utf-8')
+                record[name] = raw[:self.STREAM_LIMIT].decode('utf-8', errors='replace')
+                # Replacement characters can expand invalid UTF-8: bound again.
+                record[name] = record[name].encode('utf-8')[:self.STREAM_LIMIT].decode('utf-8', errors='ignore')
+                record[name+'Truncated'] = len(raw) > self.STREAM_LIMIT
+                record[name+'Bytes'] = len(raw)
+            self.records[key] = record
+            report = dict(schemaVersion=1, scope='verified-isolated-qemu-run', records=list(self.records.values()))
+            while True:
+                payload = json.dumps(report, ensure_ascii=False, sort_keys=True).encode('utf-8')
+                if len(payload) <= self.TOTAL_LIMIT:
+                    break
+                biggest, stream = max(((r, k) for r in report['records'] for k in ('stdout', 'stderr')),
+                                      key=lambda pair: len(pair[0][pair[1]]))
+                biggest[stream] = biggest[stream][:len(biggest[stream])//2]
+                biggest[stream+'Truncated'] = True
+            self.evidence.mkdir(parents=True, exist_ok=True)
+            (self.evidence/'adb-diagnostic.json').write_bytes(payload)
+        except Exception:
+            pass
 
 
 def workflow_request():
@@ -222,7 +316,7 @@ def validate_public_source(request):
         request['source_tree'] = tree
     comparison = api_get('compare/'+request['expected_source_commit']+'...'+os.environ['GITHUB_SHA'], Stage.COMPARE)
     with operation(Stage.COMPARE):
-        require(comparison.get('status') in ('ahead', 'identical'), 'Source must be in dispatched main history')
+        require(comparison.get('status') in ('ahead', 'identical'), 'Source must be in dispatched diagnostic branch history')
 
 
 def validate_import(directory, expected):
@@ -284,8 +378,8 @@ def assert_context(env):
     for k, value in dict(GITHUB_ACTIONS='true', GITHUB_EVENT_NAME='workflow_dispatch',
                         GITHUB_REPOSITORY=REPO, GITHUB_REPOSITORY_OWNER='Hatsunama',
                         GITHUB_ACTOR='Hatsunama', GITHUB_TRIGGERING_ACTOR='Hatsunama',
-                        GITHUB_REF='refs/heads/main',
-                        GITHUB_WORKFLOW_REF=REPO+'/.github/workflows/verify-final-android-runtime.yml@refs/heads/main').items():
+                        GITHUB_REF='refs/heads/codex/final150-runtime-diagnostic',
+                        GITHUB_WORKFLOW_REF=REPO+'/.github/workflows/verify-final-android-runtime.yml@refs/heads/codex/final150-runtime-diagnostic').items():
         require(env.get(k) == value, 'Unauthorized runtime verification context: '+k)
 
 
@@ -468,6 +562,13 @@ def emulate(directory, evidence, api, arch, tools):
     if api >= 25:
         require(memory >= 4*1024**3 and adb('shell', 'getprop', 'ro.config.low_ram').strip() != 'true', 'Qualifying 64-bit >=4GiB guest required')
     else: require(memory < 4*1024**3, 'API24 must exercise low-memory fallback')
+    diagnostic = AdbDiagnostics(evidence, directory)
+
+    def adb(*args, timeout=30, binary=False, stage=Stage.RUNTIME):
+        command = ['adb', '-s', SERIAL, *args]
+        runner = diagnostic.run if diagnostic.allowed(command) and not binary else run
+        return runner(command, timeout, binary, stage=stage)
+
     configure_emulator(lambda *args, **kwargs: adb(*args, stage=Stage.EMULATOR_SETUP, **kwargs))
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence/'hardware.json').write_text(json.dumps(dict(api=api, abis=abis, memoryBytes=memory)))

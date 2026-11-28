@@ -47,11 +47,11 @@ class RuntimeHarness(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('runtime', SCRIPT)
         self.m = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.m)
 
-    def test_owner_main_context_is_mandatory(self):
+    def test_owner_diagnostic_context_is_mandatory(self):
         env = dict(GITHUB_ACTIONS='true', GITHUB_EVENT_NAME='workflow_dispatch',
                    GITHUB_REPOSITORY='Hatsunama/Caption-Studio', GITHUB_REPOSITORY_OWNER='Hatsunama',
-                   GITHUB_ACTOR='Hatsunama', GITHUB_TRIGGERING_ACTOR='Hatsunama', GITHUB_REF='refs/heads/main',
-                   GITHUB_WORKFLOW_REF='Hatsunama/Caption-Studio/.github/workflows/verify-final-android-runtime.yml@refs/heads/main')
+                   GITHUB_ACTOR='Hatsunama', GITHUB_TRIGGERING_ACTOR='Hatsunama', GITHUB_REF='refs/heads/codex/final150-runtime-diagnostic',
+                   GITHUB_WORKFLOW_REF='Hatsunama/Caption-Studio/.github/workflows/verify-final-android-runtime.yml@refs/heads/codex/final150-runtime-diagnostic')
         self.m.assert_context(env)
         for k in env:
             with self.subTest(k=k), self.assertRaises(ValueError): self.m.assert_context({**env, k: 'other'})

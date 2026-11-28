@@ -62,8 +62,9 @@ jobs:
   prepare:
     if: >-
       github.event_name == 'workflow_dispatch' && github.repository == 'Hatsunama/Caption-Studio' &&
-      github.repository_owner == 'Hatsunama' && github.ref == 'refs/heads/main' &&
-      github.actor == 'Hatsunama' && github.triggering_actor == 'Hatsunama'
+      github.repository_owner == 'Hatsunama' && github.ref == 'refs/heads/codex/final150-runtime-diagnostic' &&
+      github.actor == 'Hatsunama' && github.triggering_actor == 'Hatsunama' &&
+      github.workflow_ref == 'Hatsunama/Caption-Studio/.github/workflows/verify-final-android-runtime.yml@refs/heads/codex/final150-runtime-diagnostic'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Read-only owner probe returned403 for drafts; only this GET/hash job needs push access.
@@ -74,17 +75,17 @@ jobs:
       artifact_id: ${{ steps.signed_inputs.outputs.artifact-id }}
       artifact_name: ${{ steps.prepare_identity.outputs.artifact_name }}
     steps:
-      - name: Verify exact owner and main dispatch before checkout or token use
+      - name: Verify exact owner and exact diagnostic branch dispatch before checkout or token use
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$GITHUB_REPOSITORY" = Hatsunama/Caption-Studio
           test "$GITHUB_REPOSITORY_OWNER" = Hatsunama
-          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REF" = refs/heads/codex/final150-runtime-diagnostic
           test "$GITHUB_ACTOR" = Hatsunama
           test "$GITHUB_TRIGGERING_ACTOR" = Hatsunama
-          test "$GITHUB_WORKFLOW_REF" = Hatsunama/Caption-Studio/.github/workflows/verify-final-android-runtime.yml@refs/heads/main
+          test "$GITHUB_WORKFLOW_REF" = Hatsunama/Caption-Studio/.github/workflows/verify-final-android-runtime.yml@refs/heads/codex/final150-runtime-diagnostic
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
@@ -126,8 +127,9 @@ jobs:
       actions: read
     if: >-
       github.event_name == 'workflow_dispatch' && github.repository == 'Hatsunama/Caption-Studio' &&
-      github.repository_owner == 'Hatsunama' && github.ref == 'refs/heads/main' &&
-      github.actor == 'Hatsunama' && github.triggering_actor == 'Hatsunama'
+      github.repository_owner == 'Hatsunama' && github.ref == 'refs/heads/codex/final150-runtime-diagnostic' &&
+      github.actor == 'Hatsunama' && github.triggering_actor == 'Hatsunama' &&
+      github.workflow_ref == 'Hatsunama/Caption-Studio/.github/workflows/verify-final-android-runtime.yml@refs/heads/codex/final150-runtime-diagnostic'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -145,17 +147,17 @@ jobs:
             arch: x86_64
             ram: 6144M
     steps:
-      - name: Verify exact owner and main dispatch before checkout or token use
+      - name: Verify exact owner and exact diagnostic branch dispatch before checkout or token use
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$GITHUB_REPOSITORY" = Hatsunama/Caption-Studio
           test "$GITHUB_REPOSITORY_OWNER" = Hatsunama
-          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REF" = refs/heads/codex/final150-runtime-diagnostic
           test "$GITHUB_ACTOR" = Hatsunama
           test "$GITHUB_TRIGGERING_ACTOR" = Hatsunama
-          test "$GITHUB_WORKFLOW_REF" = Hatsunama/Caption-Studio/.github/workflows/verify-final-android-runtime.yml@refs/heads/main
+          test "$GITHUB_WORKFLOW_REF" = Hatsunama/Caption-Studio/.github/workflows/verify-final-android-runtime.yml@refs/heads/codex/final150-runtime-diagnostic
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
@@ -178,6 +180,7 @@ jobs:
           python3 -B tests/runtime-download-diagnostics.test.py
           python3 -B tests/install-runtime-android-build-tools.test.py
           python3 -B tests/runtime-file-verification.test.py
+          python3 -B tests/runtime-adb-diagnostics.test.py
       - name: Retrieve this run's immutable inputs and independently rebind source and hashes
         env:
           GH_TOKEN: ${{ github.token }}
