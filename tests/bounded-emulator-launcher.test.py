@@ -196,6 +196,8 @@ if 'ndk;27.1.12297006' in args:
     (ndk / 'source.properties').write_text('Pkg.Revision = 27.1.12297006\\n')
     (ndk / 'package.xml').write_text('<sdk-repository><localPackage path="ndk;27.1.12297006"/></sdk-repository>')
 if 'avdmanager' in args[0]:
+    if any(os.environ.get(key) for key in ('ANDROID_SDK_HOME', 'ANDROID_PREFS_ROOT')):
+        raise SystemExit(42)
     for key in ('ANDROID_AVD_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'):
         pathlib.Path(os.environ[key]).resolve(strict=True)
     avd = pathlib.Path(os.environ['ANDROID_AVD_HOME']) / 'bounded-runtime.avd'
@@ -220,6 +222,7 @@ if 'adb' in args[0]: print('List of devices attached')
                     original_run(child('raise SystemExit(37)'), os.environ.copy(), 2)
                 env = dict(os.environ, **m.CONTEXT, GH_TOKEN='', GITHUB_TOKEN='',
                            RUNNER_TEMP=str(root), FAKE_MODE=mode)
+                env.update(ANDROID_SDK_HOME='inherited-legacy-prefs', ANDROID_PREFS_ROOT='other-legacy-prefs')
                 for key in ('ANDROID_SERIAL', 'ADB_SERVER_SOCKET', 'ADB_SERVER_PORT', 'ANDROID_ADB_SERVER_PORT'):
                     env.pop(key, None)
                 with contextlib.chdir(root), mock.patch.dict(os.environ, env, clear=True), \

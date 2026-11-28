@@ -252,8 +252,10 @@ def main():
         adb = root / 'platform-tools/adb'
         assert_devices(run_child([str(adb), 'devices'], env, 5), False)
         owned = Path(tempfile.mkdtemp(prefix='bounded-emulator-', dir=temp_root))
+        for deprecated in ('ANDROID_SDK_HOME', 'ANDROID_PREFS_ROOT'):
+            env.pop(deprecated, None)
         env.update(ANDROID_AVD_HOME=str(owned / 'avd'), ANDROID_USER_HOME=str(owned / 'android'),
-                   ANDROID_EMULATOR_HOME=str(owned / 'emulator'), ANDROID_SDK_HOME=str(owned),
+                   ANDROID_EMULATOR_HOME=str(owned / 'emulator'),
                    ANDROID_HOME=str(root), ANDROID_SDK_ROOT=str(root))
         for key in ('ANDROID_AVD_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'):
             Path(env[key]).mkdir()
